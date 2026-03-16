@@ -1264,6 +1264,55 @@ tr:hover {
     color: var(--text-primary);
 }
 
+/* Window shake animation (like Windows MessageBeep) */
+@keyframes windowShake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    10% {
+        transform: translateX(-6px);
+    }
+
+    20% {
+        transform: translateX(6px);
+    }
+
+    30% {
+        transform: translateX(-5px);
+    }
+
+    40% {
+        transform: translateX(5px);
+    }
+
+    50% {
+        transform: translateX(-3px);
+    }
+
+    60% {
+        transform: translateX(3px);
+    }
+
+    70% {
+        transform: translateX(-2px);
+    }
+
+    80% {
+        transform: translateX(2px);
+    }
+
+    90% {
+        transform: translateX(-1px);
+    }
+}
+
+.window-shake {
+    animation: windowShake 0.5s ease-in-out;
+}
+
 .predictive-titlebar {
     display: flex;
     justify-content: space-between;
@@ -1337,6 +1386,13 @@ tr:hover {
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--border);
     transition: opacity 0.2s;
+}
+
+.config-section-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-secondary);
 }
 
 .config-section.config-disabled {
@@ -2231,6 +2287,30 @@ tr:hover {
 
 .fg-field input:focus {
     border-color: var(--accent-color);
+}
+
+/* Build Model Button */
+.fg-build-model-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    background: linear-gradient(135deg, #059669, #047857);
+    color: white;
+    border: none;
+    border-radius: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 0.15rem;
+}
+
+.fg-build-model-btn:hover {
+    filter: brightness(1.15);
+    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.35);
 }
 
 /* Status Dot */

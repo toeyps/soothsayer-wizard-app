@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { CsvMetadata, SensorMetadata } from "../types";
@@ -19,7 +19,6 @@ export default function PredictiveModelBuild() {
     const [targetSensor, setTargetSensor] = useState<string>("");
     const [predictorSensors, setPredictorSensors] = useState<string[]>([]);
     const [allSensors, setAllSensors] = useState<string[]>([]);
-    const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [loading, setLoading] = useState(true);
 
     // Plot mode
@@ -68,7 +67,6 @@ export default function PredictiveModelBuild() {
                 setTargetSensor(d.targetSensor);
                 setPredictorSensors(d.predictorSensors);
                 setAllSensors(d.sensorHeaders);
-                setSensorMetadata(d.sensorMetadata);
                 if (d.predictorSensors.length > 0) {
                     setScatterXSensor(d.predictorSensors[0]);
                 }
@@ -88,7 +86,26 @@ export default function PredictiveModelBuild() {
         };
     }, []);
 
+    // Shake animation when FailureGroup tries to close
+    const containerRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        let unlistenShake: (() => void) | undefined;
+        const setupShake = async () => {
+            unlistenShake = await listen('predictive-model-shake', () => {
+                if (containerRef.current) {
+                    containerRef.current.classList.add('window-shake');
+                    setTimeout(() => {
+                        containerRef.current?.classList.remove('window-shake');
+                    }, 500);
+                }
+            });
+        };
+        setupShake();
+        return () => { if (unlistenShake) unlistenShake(); };
+    }, []);
+
     const handleClose = async () => {
+        await emit('predictive-model-closed');
         await getCurrentWindow().close();
     };
 
@@ -138,7 +155,7 @@ export default function PredictiveModelBuild() {
     }
 
     return (
-        <div className="predictive-container">
+        <div className="predictive-container" ref={containerRef}>
             {/* Title Bar */}
             <div data-tauri-drag-region className="predictive-titlebar">
                 <h2 className="predictive-title">Predictive Mode — Model Build</h2>
@@ -150,7 +167,7 @@ export default function PredictiveModelBuild() {
                 {/* LEFT PANEL - Configuration */}
                 <div className="predictive-left-panel">
                     {/* Target Sensor */}
-                    <div className="config-section">
+                    <div className="config-section config-section-sticky">
                         <div className="config-section-header">Target Sensor</div>
                         <div className="config-readonly-value">
                             <BarChart3 size={14} />
@@ -502,9 +519,8 @@ export default function PredictiveModelBuild() {
 
                     {/* Save Button */}
                     <div className="sensor-list-panel-footer">
-                        <button className="save-model-btn" onClick={handleSaveModel}>
+                        <button className="save-model-btn" onClick={handleSaveModel} title="Save Model">
                             <Save size={16} />
-                            Save This Sensor Model(s)
                         </button>
                     </div>
                 </div>

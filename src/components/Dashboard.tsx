@@ -1,14 +1,16 @@
-import { useState, useMemo, useEffect, useDeferredValue, useRef } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
-import { ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig } from '../types';
+import { saveWorkspaceData } from '../workspaceManager';
+import { ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, WorkspaceState } from '../types';
 import DataTable from './DataTable';
 import Chart from './Chart';
-import FilterPanel, { ValueFilter } from './FilterPanel';
+import FilterPanel from './FilterPanel';
 import SensorSelection from './SensorSelection';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { Plus, EyeOff, BarChart3, Radio, Table, Download, Filter, Calendar, ArrowRight } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Plus, EyeOff, BarChart3, Radio, Table, Download, Filter, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 
 // Panel configuration
 const PANELS = {
@@ -25,10 +27,105 @@ interface DashboardProps {
     metadata: CsvMetadata;
     sensorMetadata: SensorMetadata[] | null;
     onBack: () => void;
+    initialState: WorkspaceState | null;
 }
 
-export default function Dashboard({ metadata, sensorMetadata, onBack }: DashboardProps) {
+export interface DashboardRef {
+    saveWorkspace: () => Promise<void>;
+    saveWorkspaceAs: () => Promise<void>;
+    renameWorkspace: (newName: string) => void;
+}
+
+const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata, onBack, initialState }, ref) => {
     const [_, setAnalysisResult] = useState<string>("");
+    const [localName, setLocalName] = useState(initialState?.name || "");
+
+    const [sensorHeaders, setSensorHeaders] = useState<string[]>(() =>
+        metadata.headers.filter(h => {
+            const lower = h.trim().toLowerCase();
+            return lower !== 'timestamp' && lower !== 'time';
+        })
+    );
+
+    const [selectedSensors, setSelectedSensors] = useState<string[]>(initialState?.selectedSensors || []);
+    const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
+    const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(initialState?.operationConfig || null);
+
+    useImperativeHandle(ref, () => ({
+        saveWorkspace: async () => {
+            if (initialState) {
+                const updatedState: WorkspaceState = {
+                    ...initialState,
+                    name: localName,
+                    lastRoute: 'dashboard',
+                    selectedSensors,
+                    visibleSensors,
+                    operationConfig
+                };
+                await saveWorkspaceData(updatedState);
+                alert(`Workspace "${localName}" Saved Successfully!`);
+            }
+        },
+        saveWorkspaceAs: async () => {
+            // Open new window instead of prompt
+            const webview = new WebviewWindow('save-as', {
+                url: '/?window=save-as',
+                title: 'Save Workspace As',
+                width: 450,
+                height: 350,
+                center: true,
+                alwaysOnTop: true,
+                decorations: false,
+                resizable: false,
+                skipTaskbar: true
+            });
+
+            await webview.once('tauri://error', (e) => {
+                console.error('Failed to create Save As window:', e);
+            });
+        },
+        renameWorkspace: (newName: string) => {
+            setLocalName(newName);
+        }
+    }));
+
+    // Listen for Save As window requests and submissions
+    useEffect(() => {
+        let unlistenReq: (() => void) | undefined;
+        let unlistenSubmit: (() => void) | undefined;
+
+        const setupSaveAsListeners = async () => {
+            unlistenReq = await listen('request-save-as-data', async () => {
+                await emit('request-save-as-data-response', { currentName: localName });
+            });
+
+            unlistenSubmit = await listen<{ newName: string }>('save-as-submit', async (event) => {
+                if (initialState) {
+                    const newId = `ws_${Date.now()}`;
+                    const newState: WorkspaceState = {
+                        ...initialState,
+                        id: newId,
+                        name: event.payload.newName,
+                        lastRoute: 'dashboard',
+                        selectedSensors,
+                        visibleSensors,
+                        operationConfig
+                    };
+                    await saveWorkspaceData(newState);
+                    setLocalName(event.payload.newName);
+                    // We also need to notify the parent App to update its workspaceName state
+                    await emit('workspace-renamed-internal', { newName: event.payload.newName });
+                    alert(`New workspace "${event.payload.newName}" created!`);
+                }
+            });
+        };
+
+        setupSaveAsListeners();
+        return () => {
+            if (unlistenReq) unlistenReq();
+            if (unlistenSubmit) unlistenSubmit();
+        };
+    }, [localName, initialState, selectedSensors, visibleSensors, operationConfig]);
 
     const handleAnalysis = async () => {
         try {
@@ -42,20 +139,28 @@ export default function Dashboard({ metadata, sensorMetadata, onBack }: Dashboar
         }
     };
 
-    const [sensorHeaders, setSensorHeaders] = useState<string[]>(() =>
-        metadata.headers.filter(h => {
-            const lower = h.trim().toLowerCase();
-            return lower !== 'timestamp' && lower !== 'time';
-        })
-    );
+    
+    // Auto-save state changes
+    useEffect(() => {
+        if (initialState) {
+            const saveState = async () => {
+                const updatedState: WorkspaceState = {
+                    ...initialState,
+                    name: localName,
+                    lastRoute: 'dashboard',
+                    selectedSensors,
+                    visibleSensors,
+                    operationConfig
+                };
+                await saveWorkspaceData(updatedState);
+            };
+            saveState();
+        }
+    }, [selectedSensors, visibleSensors, operationConfig, initialState, localName]);
 
-    const [selectedSensors, setSelectedSensors] = useState<string[]>([]);
-    const [visibleSensors, setVisibleSensors] = useState<string[]>([]);
-    const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(null);
     const deferredSensors = useDeferredValue(selectedSensors);
     const [chartData, setChartData] = useState<ProcessedData | null>(null);
     const [loading, setLoading] = useState(false);
-    const [valueFilters, setValueFilters] = useState<ValueFilter[]>([]);
 
     // Sync visibleSensors with selectedSensors when selectedSensors changes
     useEffect(() => {
@@ -281,11 +386,6 @@ export default function Dashboard({ metadata, sensorMetadata, onBack }: Dashboar
         // But `filteredData` only returns rows. `Chart` uses `chartData.headers`.
         // We might need to handle this by modifying how Chart receives headers, or by returning a different structure.
 
-        // Simpler approach for now: Modify the values in place. 
-        // If Single Op: Modify each value.
-        // If Multi Op: Replace the whole `values` array with a single value [Result].
-        // AND we'll need to tell the Chart that we now have 1 sensor called "Result" (or Op Name).
-
         if (operationConfig) {
             if (operationConfig.mode === 'single' && operationConfig.singleOp) {
                 const { type, value } = operationConfig.singleOp;
@@ -509,6 +609,14 @@ export default function Dashboard({ metadata, sensorMetadata, onBack }: Dashboar
                         <div className="chart-section-large">
                             <div className="section-header collapsible-header">
                                 <div className="section-header-left">
+                                    <button 
+                                        onClick={onBack}
+                                        className="collapse-btn" 
+                                        title="Back to Import"
+                                        style={{ marginRight: '0.5rem', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                                    >
+                                        <ArrowLeft size={18} />
+                                    </button>
                                     <h3>Sensor Readings</h3>
                                     <span className="section-badge">{samplingMethod.toUpperCase()} (1h)</span>
                                     <span className="section-badge">{visibleFilteredData.length.toLocaleString()} Points</span>
@@ -754,10 +862,7 @@ export default function Dashboard({ metadata, sensorMetadata, onBack }: Dashboar
                             </div>
                             <div className="widget-content filter-content">
                                 <FilterPanel
-                                    onBack={onBack}
                                     selectedSensors={selectedSensors}
-                                    valueFilters={valueFilters}
-                                    onValueFiltersChange={setValueFilters}
                                 />
                             </div>
                         </div>
@@ -778,16 +883,20 @@ export default function Dashboard({ metadata, sensorMetadata, onBack }: Dashboar
                                         title: 'Predictive Mode - Failure Group Creation',
                                         width: Math.round(screenW * 0.25),
                                         height: Math.round(screenH * 0.8),
-                                        center: true,
+                                        x: 15,
+                                        y: Math.round(screenH * 0.1),
                                         decorations: false,
                                     });
-                                    webview.once('tauri://created', async () => {
-                                        // Send data to new window
+                                    // Wait for the failure-group window to request data (after React mounts),
+                                    // then respond and close the dashboard
+                                    const unlisten = await listen('request-failure-group-data', async () => {
                                         await emit('failure-group-data', {
                                             sensorHeaders,
                                             sensorMetadata,
                                             metadata
                                         });
+                                        unlisten();
+                                        await getCurrentWindow().close();
                                     });
                                     webview.once('tauri://error', (e) => {
                                         console.error('Failed to create failure group window:', e);
@@ -805,5 +914,6 @@ export default function Dashboard({ metadata, sensorMetadata, onBack }: Dashboar
             </div>
         </div>
     );
-}
+});
 
+export default Dashboard;

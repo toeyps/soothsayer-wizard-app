@@ -35,3 +35,21 @@ export interface SensorOperationConfig {
     };
     customName?: string;
 }
+
+export interface WorkspaceMetadata {
+    id: string;
+    name: string;
+    lastModified: number;
+    filePath: string;
+}
+
+export interface WorkspaceState {
+    id: string;
+    name: string;
+    lastRoute: 'import' | 'dashboard';
+    dataFilePaths: string[];
+    metadataFilePath: string | null;
+    selectedSensors: string[];
+    visibleSensors: string[];
+    operationConfig: SensorOperationConfig | null;
+}

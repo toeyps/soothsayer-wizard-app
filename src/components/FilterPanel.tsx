@@ -24,17 +24,11 @@ export interface ValueFilter {
 }
 
 interface FilterPanelProps {
-    onBack: () => void;
     selectedSensors?: string[];
-    valueFilters?: ValueFilter[];
-    onValueFiltersChange?: (filters: ValueFilter[]) => void;
 }
 
 export default function FilterPanel({
-    onBack,
     selectedSensors = [],
-    valueFilters = [],
-    onValueFiltersChange
 }: FilterPanelProps) {
 
     const [logicBlocks, setLogicBlocks] = useState<LogicBlock[]>([]);

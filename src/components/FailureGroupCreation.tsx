@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
 import { CsvMetadata, SensorMetadata } from "../types";
-import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus } from "lucide-react";
+import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, BarChart3 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ function getSensorName(tag: string, meta: SensorMetadata[] | null): string {
 export default function FailureGroupCreation() {
     const [allSensors, setAllSensors] = useState<string[]>([]);
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
+    const [metadata, setMetadata] = useState<CsvMetadata | null>(null);
     const [loading, setLoading] = useState(true);
 
     const [groups, setGroups] = useState<FailureGroup[]>([
@@ -66,6 +68,7 @@ export default function FailureGroupCreation() {
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const [showModelPanel, setShowModelPanel] = useState(false);
+    const [isBuildModelOpen, setIsBuildModelOpen] = useState(false);
 
     // ── Setup ────────────────────────────────────────────────────
 
@@ -78,6 +81,7 @@ export default function FailureGroupCreation() {
                 const d = event.payload;
                 setAllSensors(d.sensorHeaders);
                 setSensorMetadata(d.sensorMetadata);
+                setMetadata(d.metadata);
                 setLoading(false);
             });
             await emit('request-failure-group-data');
@@ -100,9 +104,73 @@ export default function FailureGroupCreation() {
         if (showNewGroupDialog && newGroupInputRef.current) newGroupInputRef.current.focus();
     }, [showNewGroupDialog]);
 
+    // ── Build Model ──────────────────────────────────────────────
+
+    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[] } | null>(null);
+
+    useEffect(() => {
+        let unlistenReq: (() => void) | undefined;
+        const setupModelListener = async () => {
+            unlistenReq = await listen('request-predictive-data', async () => {
+                if (pendingModelDataRef.current && metadata) {
+                    await emit('predictive-model-data', {
+                        targetSensor: pendingModelDataRef.current.targetSensor,
+                        predictorSensors: pendingModelDataRef.current.predictorSensors,
+                        sensorHeaders: allSensors,
+                        sensorMetadata,
+                        metadata,
+                    });
+                }
+            });
+        };
+        setupModelListener();
+        return () => { if (unlistenReq) unlistenReq(); };
+    }, [allSensors, sensorMetadata, metadata]);
+
+    const handleBuildModel = async (row: SensorRow) => {
+        if (!row.mappedSensorTag) return;
+        pendingModelDataRef.current = { targetSensor: row.mappedSensorTag, predictorSensors: [] };
+        try {
+            const screenW = window.screen.width;
+            const screenH = window.screen.height;
+            const webview = new WebviewWindow('predictive-model', {
+                url: '/?window=predictive-model',
+                title: `Predictive Model — ${row.mappedSensorTag}`,
+                width: Math.round(screenW * 0.75),
+                height: Math.round(screenH * 0.85),
+                center: true,
+                decorations: false,
+            });
+            webview.once('tauri://created', () => {
+                setIsBuildModelOpen(true);
+            });
+            webview.once('tauri://error', (e) => {
+                console.error('Failed to open predictive model window:', e);
+            });
+            // Listen for custom close event from BuildModel window
+            const unlistenClose = await listen('predictive-model-closed', () => {
+                setIsBuildModelOpen(false);
+                unlistenClose();
+            });
+        } catch (err) {
+            console.error('Error opening predictive model window:', err);
+        }
+    };
+
     // ── Group Actions ─────────────────────────────────────────────
 
-    const handleClose = async () => { await getCurrentWindow().close(); };
+    const handleClose = async () => {
+        if (isBuildModelOpen) {
+            // Focus the BuildModel window and trigger a shake animation
+            try {
+                const bmWindow = await WebviewWindow.getByLabel('predictive-model');
+                if (bmWindow) await bmWindow.setFocus();
+            } catch (_) { /* ignore */ }
+            await emit('predictive-model-shake');
+            return;
+        }
+        await getCurrentWindow().close();
+    };
 
     const createGroup = () => {
         const name = newGroupName.trim() || `Group ${groups.length}`;
@@ -380,6 +448,16 @@ export default function FailureGroupCreation() {
                                                                         <input type="text" value={row.additionalNotes} placeholder="Additional..." onChange={e => updateRow(row.id, 'additionalNotes', e.target.value)} />
                                                                     </div>
                                                                 </div>
+
+                                                                {/* Build Model Button */}
+                                                                {row.mappedSensorTag && (
+                                                                    <button
+                                                                        className="fg-build-model-btn"
+                                                                        onClick={(e) => { e.stopPropagation(); handleBuildModel(row); }}
+                                                                    >
+                                                                        <BarChart3 size={12} /> Build Model
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                         );
                                                     })}
