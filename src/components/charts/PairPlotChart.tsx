@@ -10,11 +10,6 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
         const dataCount = data.length;
         const isLargeData = dataCount > 10000;
 
-        const commonOption = {
-            backgroundColor: 'transparent',
-            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' }
-        };
-
         const n = sensors.length;
         if (n < 2) return {};
 
@@ -90,49 +85,22 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
 
                 if (k === i) {
                     grids.push({
-                        left: `${colLeft}%`,
-                        top: `${rowTop}%`,
-                        width: `${cellWidth}%`,
-                        height: `${cellHeight}%`,
-                        containLabel: false,
-                        show: true,
-                        borderColor: '#475569',
-                        borderWidth: 1
+                        left: `${colLeft}%`, top: `${rowTop}%`, width: `${cellWidth}%`, height: `${cellHeight}%`,
+                        containLabel: false, show: true, borderColor: '#475569', borderWidth: 1
                     });
-
                     xAxes.push({
-                        gridIndex,
-                        type: 'value',
-                        name: 'Count',
-                        nameLocation: 'middle',
-                        nameGap: 10,
-                        nameTextStyle: { fontSize: 9, color: '#64748b' },
-                        show: true,
-                        axisLabel: { show: true, fontSize: 8, color: '#94a3b8' },
-                        splitLine: { show: false },
-                        min: 0
+                        gridIndex, type: 'value', name: 'Count', nameLocation: 'middle', nameGap: 10,
+                        nameTextStyle: { fontSize: 9, color: '#64748b' }, show: true,
+                        axisLabel: { show: true, fontSize: 8, color: '#94a3b8' }, splitLine: { show: false }, min: 0
                     });
-
                     yAxes.push({
-                        gridIndex,
-                        type: 'value',
-                        name: sensorY,
-                        nameLocation: 'middle',
-                        nameGap: 25,
-                        nameRotate: 90,
-                        nameTextStyle: { fontSize: 10, color: '#cbd5e1' },
-                        show: true,
+                        gridIndex, type: 'value', name: sensorY, nameLocation: 'middle', nameGap: 25, nameRotate: 90,
+                        nameTextStyle: { fontSize: 10, color: '#cbd5e1' }, show: true,
                         axisLabel: { show: true, color: '#94a3b8', fontSize: 9, margin: 2 },
-                        axisTick: { show: false },
-                        splitLine: { show: false },
-                        scale: true
+                        axisTick: { show: false }, splitLine: { show: false }, scale: true
                     });
-
                     series.push({
-                        type: 'custom',
-                        xAxisIndex: gridIndex,
-                        yAxisIndex: gridIndex,
-                        data: dataY.hist,
+                        type: 'custom', xAxisIndex: gridIndex, yAxisIndex: gridIndex, data: dataY.hist,
                         renderItem: (_params: any, api: any) => {
                             const count = api.value(0);
                             const yMin = api.value(2);
@@ -141,52 +109,28 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                             const end = api.coord([count, yMin]);
                             const width = end[0] - start[0];
                             const height = end[1] - start[1];
-                            return {
-                                type: 'rect',
-                                shape: { x: start[0], y: start[1], width: width, height: height },
-                                style: api.style()
-                            };
+                            return { type: 'rect', shape: { x: start[0], y: start[1], width, height }, style: api.style() };
                         },
-                        encode: { x: 0, y: [2, 3] },
-                        itemStyle: { color: '#6366f1', opacity: 0.8 }
+                        encode: { x: 0, y: [2, 3] }, itemStyle: { color: '#6366f1', opacity: 0.8 }
                     });
                 } else if (k > i) {
                     const sensorX = sensors[k];
                     const dataX = sensorDataMap.find(d => d.name === sensorX)!;
                     grids.push({
-                        left: `${colLeft}%`,
-                        top: `${rowTop}%`,
-                        width: `${cellWidth}%`,
-                        height: `${cellHeight}%`,
-                        containLabel: false,
-                        show: true,
-                        borderColor: '#475569',
-                        borderWidth: 1
+                        left: `${colLeft}%`, top: `${rowTop}%`, width: `${cellWidth}%`, height: `${cellHeight}%`,
+                        containLabel: false, show: true, borderColor: '#475569', borderWidth: 1
                     });
                     xAxes.push({
-                        gridIndex,
-                        type: 'value',
-                        name: i === 0 ? sensorX : '',
-                        nameLocation: 'middle',
-                        nameGap: 5,
-                        position: 'top',
-                        show: true,
-                        nameTextStyle: { fontSize: 10, color: '#f8fafc' },
+                        gridIndex, type: 'value', name: i === 0 ? sensorX : '', nameLocation: 'middle', nameGap: 5,
+                        position: 'top', show: true, nameTextStyle: { fontSize: 10, color: '#f8fafc' },
                         axisLabel: { show: i === 0, color: '#94a3b8', fontSize: 9, margin: 2 },
-                        axisTick: { show: false },
-                        axisLine: { show: false },
-                        splitLine: { show: false },
-                        scale: true
+                        axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: false }, scale: true
                     });
                     yAxes.push({ gridIndex, type: 'value', show: false, scale: true });
                     series.push({
-                        type: isLargeData ? 'scatterGL' : 'scatter',
-                        symbol: 'circle',
-                        xAxisIndex: gridIndex,
-                        yAxisIndex: gridIndex,
-                        itemStyle: { color: colors[0], opacity: 0.6 },
-                        symbolSize: 3,
-                        large: false,
+                        type: isLargeData ? 'scatterGL' : 'scatter', symbol: 'circle',
+                        xAxisIndex: gridIndex, yAxisIndex: gridIndex,
+                        itemStyle: { color: colors[0], opacity: 0.6 }, symbolSize: 3, large: false,
                         data: data.map(d => {
                             const valX = d.values[dataX.idx];
                             const valY = d.values[dataY.idx];
@@ -202,46 +146,24 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                 const colIdx = n;
                 const colLeft = matrixLeft + (colIdx * (cellWidth + gap));
                 grids.push({
-                    left: `${colLeft}%`,
-                    top: `${rowTop}%`,
-                    width: `${cellWidth}%`,
-                    height: `${cellHeight}%`,
-                    containLabel: false,
-                    show: true,
-                    borderColor: '#939dacff',
-                    borderWidth: 1
+                    left: `${colLeft}%`, top: `${rowTop}%`, width: `${cellWidth}%`, height: `${cellHeight}%`,
+                    containLabel: false, show: true, borderColor: '#939dacff', borderWidth: 1
                 });
                 xAxes.push({
-                    gridIndex,
-                    type: 'time',
-                    name: i === 0 ? 'timeseries' : '',
-                    nameLocation: 'middle',
-                    nameGap: 5,
-                    position: 'top',
-                    nameTextStyle: { fontSize: 10, color: '#f8fafc' },
+                    gridIndex, type: 'time', name: i === 0 ? 'timeseries' : '', nameLocation: 'middle', nameGap: 5,
+                    position: 'top', nameTextStyle: { fontSize: 10, color: '#f8fafc' },
                     axisLabel: { show: i === 0, formatter: '{yyyy}-{MM}', color: '#cbd5e1', fontSize: 9, margin: 2 },
-                    axisLine: { show: false },
-                    splitLine: { show: false },
-                    axisTick: { show: false },
-                    show: true
+                    axisLine: { show: false }, splitLine: { show: false }, axisTick: { show: false }, show: true
                 });
                 yAxes.push({
-                    gridIndex,
-                    type: 'value',
-                    show: true,
-                    position: 'right',
+                    gridIndex, type: 'value', show: true, position: 'right',
                     axisLabel: { show: true, color: '#94a3b8', fontSize: 9, margin: 2 },
-                    splitLine: { show: false },
-                    scale: true
+                    splitLine: { show: false }, scale: true
                 });
                 series.push({
-                    type: isLargeData ? 'scatterGL' : 'scatter',
-                    symbol: 'circle',
-                    xAxisIndex: gridIndex,
-                    yAxisIndex: gridIndex,
-                    symbolSize: 3,
-                    itemStyle: { color: '#60a5fa', opacity: 0.8 },
-                    large: false,
+                    type: isLargeData ? 'scatterGL' : 'scatter', symbol: 'circle',
+                    xAxisIndex: gridIndex, yAxisIndex: gridIndex, symbolSize: 3,
+                    itemStyle: { color: '#60a5fa', opacity: 0.8 }, large: false,
                     data: data.map(d => {
                         const val = d.values[dataY.idx];
                         if (val == null || !d.timestamp) return null;
@@ -252,7 +174,8 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
         });
 
         return {
-            ...commonOption,
+            backgroundColor: 'transparent',
+            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
             tooltip: {
                 trigger: 'item',
                 formatter: (params: any) => {
@@ -271,10 +194,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                     return '';
                 }
             },
-            grid: grids,
-            xAxis: xAxes,
-            yAxis: yAxes,
-            series: series
+            grid: grids, xAxis: xAxes, yAxis: yAxes, series: series
         };
     }, [data, sensors, headers]);
 

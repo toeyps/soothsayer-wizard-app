@@ -3,7 +3,7 @@ import Split from 'split.js';
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
-import { SensorMetadata, SensorOperationConfig } from "../types";
+import { SensorMetadata, SensorOperationConfig } from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
 

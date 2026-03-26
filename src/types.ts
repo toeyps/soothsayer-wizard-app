@@ -43,6 +43,20 @@ export interface WorkspaceMetadata {
     filePath: string;
 }
 
+export interface WorkspaceSensorFilter {
+    id: string;
+    sensor: string;
+    operation: 'less_than' | 'greater_than' | 'between' | 'equals';
+    value1: string;
+    value2: string;
+}
+
+export interface WorkspaceFilterState {
+    timestampStart: string;
+    timestampEnd: string;
+    sensorFilters: WorkspaceSensorFilter[];
+}
+
 export interface WorkspaceState {
     id: string;
     name: string;
@@ -52,4 +66,10 @@ export interface WorkspaceState {
     selectedSensors: string[];
     visibleSensors: string[];
     operationConfig: SensorOperationConfig | null;
+    filters?: WorkspaceFilterState;
+    chartType?: 'line' | 'scatter' | 'pair';
+    samplingMethod?: 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';
+    collapsedPanels?: string[];
+    mappingFilePath?: string | null;
+    mappingKeyColumn?: string | null;
 }

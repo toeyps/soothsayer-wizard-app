@@ -1,15 +1,17 @@
-import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
-import { saveWorkspaceData } from '../workspaceManager';
-import { ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, WorkspaceState } from '../types';
+import { saveWorkspaceData } from '../../workspaceManager';
+import { ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, WorkspaceState } from '../../types';
 import DataTable from './DataTable';
-import Chart from './Chart';
-import FilterPanel from './FilterPanel';
+import { Chart } from '../charts';
+import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { Plus, EyeOff, BarChart3, Radio, Table, Download, Filter, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 
 // Panel configuration
@@ -51,18 +53,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(initialState?.operationConfig || null);
 
+    // Ref to access buildWorkspaceState from imperative handle and early effects
+    const buildStateRef = useRef<(overrides?: Partial<WorkspaceState>) => WorkspaceState>(() => initialState!);
+
     useImperativeHandle(ref, () => ({
         saveWorkspace: async () => {
             if (initialState) {
-                const updatedState: WorkspaceState = {
-                    ...initialState,
-                    name: localName,
-                    lastRoute: 'dashboard',
-                    selectedSensors,
-                    visibleSensors,
-                    operationConfig
-                };
-                await saveWorkspaceData(updatedState);
+                await saveWorkspaceData(buildStateRef.current());
                 alert(`Workspace "${localName}" Saved Successfully!`);
             }
         },
@@ -102,18 +99,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             unlistenSubmit = await listen<{ newName: string }>('save-as-submit', async (event) => {
                 if (initialState) {
                     const newId = `ws_${Date.now()}`;
-                    const newState: WorkspaceState = {
-                        ...initialState,
-                        id: newId,
-                        name: event.payload.newName,
-                        lastRoute: 'dashboard',
-                        selectedSensors,
-                        visibleSensors,
-                        operationConfig
-                    };
+                    const newState = buildStateRef.current({ id: newId, name: event.payload.newName });
                     await saveWorkspaceData(newState);
                     setLocalName(event.payload.newName);
-                    // We also need to notify the parent App to update its workspaceName state
                     await emit('workspace-renamed-internal', { newName: event.payload.newName });
                     alert(`New workspace "${event.payload.newName}" created!`);
                 }
@@ -125,7 +113,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             if (unlistenReq) unlistenReq();
             if (unlistenSubmit) unlistenSubmit();
         };
-    }, [localName, initialState, selectedSensors, visibleSensors, operationConfig]);
+    }, [localName, initialState]);
 
     const handleAnalysis = async () => {
         try {
@@ -139,25 +127,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     };
 
-    
-    // Auto-save state changes
-    useEffect(() => {
-        if (initialState) {
-            const saveState = async () => {
-                const updatedState: WorkspaceState = {
-                    ...initialState,
-                    name: localName,
-                    lastRoute: 'dashboard',
-                    selectedSensors,
-                    visibleSensors,
-                    operationConfig
-                };
-                await saveWorkspaceData(updatedState);
-            };
-            saveState();
-        }
-    }, [selectedSensors, visibleSensors, operationConfig, initialState, localName]);
-
     const deferredSensors = useDeferredValue(selectedSensors);
     const [chartData, setChartData] = useState<ProcessedData | null>(null);
     const [loading, setLoading] = useState(false);
@@ -168,7 +137,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [selectedSensors]);
 
     // Collapsed panels state
-    const [collapsedPanels, setCollapsedPanels] = useState<Set<PanelId>>(new Set());
+    const [collapsedPanels, setCollapsedPanels] = useState<Set<PanelId>>(
+        new Set((initialState?.collapsedPanels ?? []) as PanelId[])
+    );
 
     const togglePanel = (panelId: PanelId) => {
         setCollapsedPanels(prev => {
@@ -189,68 +160,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             return newSet;
         });
     };
-
-    // Fetch data when sensors change
-    useEffect(() => {
-        let unlistenChunk: UnlistenFn | undefined;
-        let unlistenEnd: UnlistenFn | undefined;
-
-        const fetchData = async () => {
-            // Reset state
-            // setChartData(null); // Keep previous data to prevent flickering
-
-            if (deferredSensors.length === 0) {
-                setChartData({ headers: [], rows: [] });
-                return;
-            }
-
-            setLoading(true);
-            const accumRows: CsvRecord[] = [];
-            let headers: string[] = [];
-
-            try {
-                // Setup listeners BEFORE invoking
-                unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
-                    const chunk = event.payload;
-                    if (headers.length === 0) {
-                        headers = chunk.headers;
-                    }
-                    accumRows.push(...chunk.rows);
-
-                    // Optional: Update intermediate state if we want real-time visualization
-                    // But for performance, usually better to wait or throttle updates.
-                    // Here we will just accumulate and update at end for safety/simplicity first,
-                    // or we could update setChartData incrementally if desired.
-                    // Given the request is about "sending as chunk", let's wait for end for the *chart*
-                    // render to avoid thrashing, or maybe show a progress count.
-                });
-
-                unlistenEnd = await listen('data-stream-end', () => {
-                    setChartData({
-                        headers: headers.length > 0 ? headers : deferredSensors,
-                        rows: accumRows
-                    });
-                    setLoading(false);
-                });
-
-                console.time("invoke_get_data_stream");
-                // invoke now just starts the process
-                await invoke("get_data", { sensors: deferredSensors });
-                console.timeEnd("invoke_get_data_stream");
-
-            } catch (err) {
-                console.error("Failed to fetch data:", err);
-                setLoading(false);
-            }
-        };
-
-        fetchData();
-
-        return () => {
-            if (unlistenChunk) unlistenChunk();
-            if (unlistenEnd) unlistenEnd();
-        };
-    }, [deferredSensors]);
 
     // Event handling for Add Sensor Window communication
     // Use ref to keep track of latest state without re-binding listeners
@@ -333,9 +242,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
     }, []);
 
-    const [dateRange, setDateRange] = useState<{ start: string, end: string } | null>(null);
-    const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>('line');
-    const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>('raw');
+    const [filters, setFilters] = useState<FilterState>(initialState?.filters ?? { timestampStart: '', timestampEnd: '', sensorFilters: [] });
+    const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
+    const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
 
     // Filter logic (Client side filtering of the fetched subset)
@@ -348,43 +257,226 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return chartData.headers.filter(h => visibleSensors.includes(h));
     }, [chartData, operationConfig, visibleSensors]);
 
+    // Fetch filtered data from Rust backend
+    // Abort mechanism: cancel stale requests when a new one starts
+    const fetchIdRef = useRef(0);
+    const activeListenersRef = useRef<{ chunk?: UnlistenFn; end?: UnlistenFn }>({});
+    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const fetchFilteredData = useCallback(async (appliedFilters: FilterState) => {
+        if (selectedSensors.length === 0) return;
+
+        // Cancel previous fetch's listeners
+        if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
+        if (activeListenersRef.current.end) activeListenersRef.current.end();
+        activeListenersRef.current = {};
+
+        const myFetchId = ++fetchIdRef.current;
+        setLoading(true);
+
+        const accumRows: CsvRecord[] = [];
+        let headers: string[] = [];
+
+        try {
+            let resolveStreamDone: () => void;
+            const streamDone = new Promise<void>((resolve) => {
+                resolveStreamDone = resolve;
+            });
+
+            const unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
+                if (fetchIdRef.current !== myFetchId) return; // stale
+                const chunk = event.payload;
+                if (headers.length === 0) headers = chunk.headers;
+                accumRows.push(...chunk.rows);
+            });
+            const unlistenEnd = await listen('data-stream-end', () => {
+                // Only resolve if this is still the active fetch
+                if (fetchIdRef.current === myFetchId) {
+                    resolveStreamDone();
+                }
+            });
+
+            // Store for cleanup by next call
+            activeListenersRef.current = { chunk: unlistenChunk, end: unlistenEnd };
+
+            await invoke("get_filtered_data", {
+                filter: {
+                    sensors: selectedSensors,
+                    timestamp_start: appliedFilters.timestampStart || null,
+                    timestamp_end: appliedFilters.timestampEnd || null,
+                    value_filters: appliedFilters.sensorFilters
+                        .filter(sf => sf.value1 !== '')
+                        .map(sf => ({
+                            sensor: sf.sensor,
+                            operation: sf.operation,
+                            value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                            value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+                        })),
+                },
+            });
+
+            await streamDone;
+
+            // Only apply if this is still the latest request
+            if (fetchIdRef.current !== myFetchId) return;
+
+            setChartData({
+                headers: headers.length > 0 ? headers : selectedSensors,
+                rows: accumRows,
+            });
+            setLoading(false);
+        } catch (err) {
+            if (fetchIdRef.current === myFetchId) {
+                console.error("Failed to fetch filtered data:", err);
+                setLoading(false);
+            }
+        } finally {
+            // Clean up only if we're still the active fetch
+            if (fetchIdRef.current === myFetchId) {
+                if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
+                if (activeListenersRef.current.end) activeListenersRef.current.end();
+                activeListenersRef.current = {};
+            }
+        }
+    }, [selectedSensors]);
+
+    // Debounced filter change handler — prevents rapid backend calls when typing in datetime inputs
+    const handleFiltersChange = useCallback((newFilters: FilterState) => {
+        setFilters(newFilters);
+
+        // Cancel any pending debounced fetch
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+        }
+
+        debounceTimerRef.current = setTimeout(() => {
+            fetchFilteredData(newFilters);
+        }, 300);
+    }, [fetchFilteredData]);
+
+    // Build workspace state helper for saving
+    const buildWorkspaceState = useCallback((overrides?: Partial<WorkspaceState>): WorkspaceState => ({
+        ...initialState!,
+        name: localName,
+        lastRoute: 'dashboard',
+        selectedSensors,
+        visibleSensors,
+        operationConfig,
+        filters,
+        chartType,
+        samplingMethod,
+        collapsedPanels: Array.from(collapsedPanels),
+        ...overrides,
+    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels]);
+
+    // Keep ref in sync for imperative handle usage
+    buildStateRef.current = buildWorkspaceState;
+
+    // Auto-save state changes
+    useEffect(() => {
+        if (initialState) {
+            saveWorkspaceData(buildWorkspaceState());
+        }
+    }, [buildWorkspaceState, initialState]);
+
+    // Fetch data when sensors change — use filtered fetch if filters are active
+    const filtersRef = useRef(filters);
+    filtersRef.current = filters;
+
+    useEffect(() => {
+        const fetchData = async () => {
+            if (deferredSensors.length === 0) {
+                setChartData({ headers: [], rows: [] });
+                return;
+            }
+
+            const currentFilters = filtersRef.current;
+            const hasFilters = currentFilters.timestampStart || currentFilters.timestampEnd || currentFilters.sensorFilters.length > 0;
+
+            // If filters are active (e.g. restored from workspace), use filtered fetch
+            if (hasFilters) {
+                fetchFilteredData(currentFilters);
+                return;
+            }
+
+            // Cancel any previous fetch listeners (from either path)
+            if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
+            if (activeListenersRef.current.end) activeListenersRef.current.end();
+            activeListenersRef.current = {};
+
+            const myFetchId = ++fetchIdRef.current;
+            setLoading(true);
+            const accumRows: CsvRecord[] = [];
+            let headers: string[] = [];
+
+            try {
+                let resolveStreamDone: () => void;
+                const streamDone = new Promise<void>((resolve) => {
+                    resolveStreamDone = resolve;
+                });
+
+                const unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
+                    if (fetchIdRef.current !== myFetchId) return;
+                    const chunk = event.payload;
+                    if (headers.length === 0) {
+                        headers = chunk.headers;
+                    }
+                    accumRows.push(...chunk.rows);
+                });
+
+                const unlistenEnd = await listen('data-stream-end', () => {
+                    if (fetchIdRef.current === myFetchId) {
+                        resolveStreamDone();
+                    }
+                });
+
+                activeListenersRef.current = { chunk: unlistenChunk, end: unlistenEnd };
+
+                await invoke("get_data", { sensors: deferredSensors });
+                await streamDone;
+
+                if (fetchIdRef.current !== myFetchId) return;
+
+                setChartData({
+                    headers: headers.length > 0 ? headers : deferredSensors,
+                    rows: accumRows
+                });
+                setLoading(false);
+            } catch (err) {
+                if (fetchIdRef.current === myFetchId) {
+                    console.error("Failed to fetch data:", err);
+                    setLoading(false);
+                }
+            } finally {
+                if (fetchIdRef.current === myFetchId) {
+                    if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
+                    if (activeListenersRef.current.end) activeListenersRef.current.end();
+                    activeListenersRef.current = {};
+                }
+            }
+        };
+
+        fetchData();
+
+        return () => {
+            // Cancel any active listeners on cleanup
+            if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
+            if (activeListenersRef.current.end) activeListenersRef.current.end();
+            activeListenersRef.current = {};
+            // Cancel any pending debounced fetch
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+            // Invalidate current fetch
+            fetchIdRef.current++;
+        };
+    }, [deferredSensors, fetchFilteredData]);
+
     const filteredData = useMemo(() => {
         if (!chartData) return [];
 
         let rows = chartData.rows.filter(r => r.timestamp !== null);
-
-        // 1. Filter by Date Range first (optimization)
-        if (dateRange && dateRange.start && dateRange.end) {
-            const start = new Date(dateRange.start).getTime();
-            const end = new Date(dateRange.end).getTime();
-            rows = rows.filter(r => {
-                if (!r.timestamp) return false;
-                const t = new Date(r.timestamp).getTime();
-                if (isNaN(t)) return false; // Skip invalid dates
-                return t >= start && t <= end;
-            });
-        }
-
-        // 2. Aggregation / Sampling
-        // First, apply Operation Logic if exists (Transform values before sampling or after? 
-        // Better to transform raw rows first if we want accurate aggregation, 
-        // BUT for performance on large data, maybe after? 
-        // For accurate Single op (A+10), order doesn't matter much vs sampling.
-        // For Multi op (A+B), we need rows to have aligned timestamps. Data is row-based, so A and B are in `values` array.
-
         let processedRows = rows;
-
-        // Apply Multi-Sensor Operation (Reduces to 1 "sensor" usually, or transforms?)
-        // If Multi Op: "Sum", we probably want to visualize the SUM. 
-        // The headers currently correspond to `chartData.headers`.
-        // If we compute a new value, we need to map it to a "Chartable" format.
-        // The Chart component takes `data` and `sensors`.
-        // We might need to override the data being passed to Chart if we change the shape.
-        // Doing this inside `filteredData` which returns `CsvRecord[]` is tricky if headers don't match.
-        // **Compromise**: We will perform the calculation and place it in a generated "Result" column, 
-        // and ideally we should update the headers passed to Chart. 
-        // But `filteredData` only returns rows. `Chart` uses `chartData.headers`.
-        // We might need to handle this by modifying how Chart receives headers, or by returning a different structure.
 
         if (operationConfig) {
             if (operationConfig.mode === 'single' && operationConfig.singleOp) {
@@ -529,7 +621,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         aggregated.sort((a, b) => new Date(a.timestamp!).getTime() - new Date(b.timestamp!).getTime());
 
         return aggregated;
-    }, [chartData, dateRange, samplingMethod, operationConfig]);
+    }, [chartData, samplingMethod, operationConfig]);
 
     // Filter data values by visible sensors
     const visibleFilteredData = useMemo(() => {
@@ -554,26 +646,31 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Calculate data range for auto-filling inputs
     const dataRange = useMemo(() => {
         if (!chartData || chartData.rows.length === 0) return undefined;
-        // Assuming sorted by timestamp, but let's be safe.
-        // Actually, large data might be unsorted? Usually sorted.
-        // If data is huge, this might be slow. But rows is usually filtered? No, chartData.rows is "all" fetched data.
-        // We should just take first and last if sorted.
-        // Let's assume sorted for O(1). If not, we fix later.
-        // Backend usually returns sorted.
 
         const first = chartData.rows[0].timestamp;
         const last = chartData.rows[chartData.rows.length - 1].timestamp;
 
         if (first && last) {
-            // Check if sorted?
-            // Let's just trust first and last for optimization on large datasets.
-            return {
-                min: first,
-                max: last
-            };
+            return { min: first, max: last };
         }
         return undefined;
     }, [chartData]);
+
+    // Format timestamp for datetime-local input
+    const formatForInput = useCallback((dateStr: string) => {
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return '';
+            const offset = date.getTimezoneOffset() * 60000;
+            return (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
+        } catch {
+            return '';
+        }
+    }, []);
+
+    // Display values: show data range when filter is empty
+    const displayTimestampStart = filters.timestampStart || (dataRange ? formatForInput(dataRange.min) : '');
+    const displayTimestampEnd = filters.timestampEnd || (dataRange ? formatForInput(dataRange.max) : '');
 
 
     return (
@@ -654,8 +751,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 <Calendar size={14} />
                                                 <input
                                                     type="datetime-local"
-                                                    value={dateRange?.start || ''}
-                                                    onChange={(e) => setDateRange(prev => ({ start: e.target.value, end: prev?.end || '' }))}
+                                                    value={displayTimestampStart}
+                                                    onChange={(e) => handleFiltersChange({ ...filters, timestampStart: e.target.value })}
                                                     placeholder="Start Date"
                                                 />
                                             </div>
@@ -664,8 +761,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 <Calendar size={14} />
                                                 <input
                                                     type="datetime-local"
-                                                    value={dateRange?.end || ''}
-                                                    onChange={(e) => setDateRange(prev => ({ start: prev?.start || '', end: e.target.value }))}
+                                                    value={displayTimestampEnd}
+                                                    onChange={(e) => handleFiltersChange({ ...filters, timestampEnd: e.target.value })}
                                                     placeholder="End Date"
                                                 />
                                             </div>
@@ -696,24 +793,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             </select>
                                         </div>
                                     </div>
-                                    {dataRange && (
+                                    {dataRange && filters.timestampStart && (
                                         <button
                                             className="reset-range-btn"
                                             onClick={() => {
-                                                const formatForInput = (dateStr: string) => {
-                                                    try {
-                                                        const date = new Date(dateStr);
-                                                        if (isNaN(date.getTime())) return '';
-                                                        const offset = date.getTimezoneOffset() * 60000;
-                                                        const localISOTime = (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
-                                                        return localISOTime;
-                                                    } catch (e) {
-                                                        return '';
-                                                    }
-                                                };
-                                                setDateRange({
-                                                    start: formatForInput(dataRange.min),
-                                                    end: formatForInput(dataRange.max)
+                                                handleFiltersChange({
+                                                    ...filters,
+                                                    timestampStart: '',
+                                                    timestampEnd: ''
                                                 });
                                             }}
                                         >
@@ -738,32 +825,32 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 <div className="section-header-actions">
                                     <button
                                         className="export-btn-header"
-                                        onClick={() => {
+                                        onClick={async () => {
                                             if (visibleFilteredData.length === 0) return;
-                                            const csvHeaders = ['Timestamp', ...displayHeaders].join(',');
-                                            const csvRows = visibleFilteredData.map(row => {
-                                                const values = [
-                                                    row.timestamp || '',
-                                                    ...row.values.map(v => v !== null ? v.toString() : '')
-                                                ];
-                                                return values.map(val => {
-                                                    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-                                                        return `"${val.replace(/"/g, '""')}"`;
-                                                    }
-                                                    return val;
-                                                }).join(',');
-                                            });
-                                            const csvContent = [csvHeaders, ...csvRows].join('\n');
-                                            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                                            const link = document.createElement('a');
-                                            const url = URL.createObjectURL(blob);
-                                            link.setAttribute('href', url);
-                                            link.setAttribute('download', `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`);
-                                            link.style.visibility = 'hidden';
-                                            document.body.appendChild(link);
-                                            link.click();
-                                            document.body.removeChild(link);
-                                            URL.revokeObjectURL(url);
+                                            try {
+                                                const filePath = await save({
+                                                    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+                                                    defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
+                                                });
+                                                if (!filePath) return;
+                                                const csvHeaders = ['Timestamp', ...displayHeaders].join(',');
+                                                const csvRows = visibleFilteredData.map(row => {
+                                                    const values = [
+                                                        row.timestamp || '',
+                                                        ...row.values.map(v => v !== null ? v.toString() : '')
+                                                    ];
+                                                    return values.map(val => {
+                                                        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                                                            return `"${val.replace(/"/g, '""')}"`;
+                                                        }
+                                                        return val;
+                                                    }).join(',');
+                                                });
+                                                const csvContent = [csvHeaders, ...csvRows].join('\n');
+                                                await writeTextFile(filePath, csvContent);
+                                            } catch (err) {
+                                                console.error('Export failed:', err);
+                                            }
                                         }}
                                         title="Export to CSV"
                                         disabled={visibleFilteredData.length === 0}
@@ -863,6 +950,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             <div className="widget-content filter-content">
                                 <FilterPanel
                                     selectedSensors={selectedSensors}
+                                    filters={filters}
+                                    onFiltersChange={handleFiltersChange}
                                 />
                             </div>
                         </div>

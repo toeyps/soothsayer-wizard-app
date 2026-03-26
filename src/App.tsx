@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { Window } from "@tauri-apps/api/window";
-import ImportScreen from "./components/ImportScreen";
-import Dashboard, { DashboardRef } from "./components/Dashboard";
+import { DataUploadPage } from "./components/upload";
+import { Dashboard, DashboardRef } from "./components/dashboard";
 import { CsvMetadata, SensorMetadata, WorkspaceState } from "./types";
+import { buildSensorMetadataFromMapping } from "./hooks/useMappingData";
+import type { MappingData, MappingResult } from "./types/dataUpload";
 import { getLastWorkspaceId, loadWorkspaceData, setLastWorkspaceId } from "./workspaceManager";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -49,8 +51,25 @@ function App() {
             // Re-invoke backend to load data since backend state is cleared on app restart
             const dataMetadata = await invoke<CsvMetadata>("load_csv", { paths: state.dataFilePaths });
             let sm: SensorMetadata[] | null = null;
-            if (state.metadataFilePath) {
-                sm = await invoke<SensorMetadata[]>("load_metadata_command", { path: state.metadataFilePath });
+            // Reload mapping data if saved with workspace
+            if (state.mappingFilePath && state.mappingKeyColumn) {
+                try {
+                    const mappingData = await invoke<MappingData>("load_mapping_csv", { path: state.mappingFilePath });
+                    const mappingResult = await invoke<MappingResult>("apply_sensor_mapping", {
+                        keyColumn: state.mappingKeyColumn,
+                        mappingData,
+                        datasetHeaders: dataMetadata.headers,
+                    });
+                    sm = buildSensorMetadataFromMapping(mappingData, mappingResult, state.mappingKeyColumn);
+                } catch (mappingErr) {
+                    console.warn("Failed to reload mapping on resume:", mappingErr);
+                }
+            }
+            // Fallback to metadata file
+            if (!sm && state.metadataFilePath) {
+                try {
+                    sm = await invoke<SensorMetadata[]>("load_metadata_command", { path: state.metadataFilePath });
+                } catch { /* ignore */ }
             }
             setMetadata(dataMetadata);
             setSensorMetadata(sm);
@@ -142,12 +161,14 @@ function App() {
       />
       <main className="app-container">
         {!metadata ? (
-          <ImportScreen onDataReady={(csv, sensor, state) => {
-            setMetadata(csv);
-            setSensorMetadata(sensor);
-            setInitialWorkspaceState(state);
-            setWorkspaceName(state.name);
-          }} />
+          <DataUploadPage
+            onDataReady={(data, workspaceState, sm) => {
+              setMetadata(data);
+              setSensorMetadata(sm ?? null);
+              setInitialWorkspaceState(workspaceState);
+              setWorkspaceName(workspaceState.name);
+            }}
+          />
         ) : (
           <Dashboard
             ref={dashboardRef}

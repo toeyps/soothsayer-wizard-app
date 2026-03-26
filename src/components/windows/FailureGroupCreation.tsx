@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
-import { CsvMetadata, SensorMetadata } from "../types";
+import { CsvMetadata, SensorMetadata } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, BarChart3 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────

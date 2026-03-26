@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CsvRecord } from '../types';
+import { CsvRecord } from '../../types';
 
 interface DataTableProps {
     headers: string[];

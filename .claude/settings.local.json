@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(cargo check:*)",
+      "Bash(npm install:*)",
+      "Bash(cargo test:*)",
+      "Bash(npx vitest:*)",
+      "Bash(grep -h \"import.*from.*components\" src/components/*.tsx)",
+      "Bash(ls -la /d/Github/vibe/*.json /d/Github/vibe/*.ts /d/Github/vibe/*.js)",
+      "Bash(cd:*)",
+      "Bash(cp src/components/Dashboard.tsx src/components/dashboard/Dashboard.tsx)",
+      "Bash(cp src/components/DataTable.tsx src/components/dashboard/DataTable.tsx)",
+      "Bash(cp src/components/FilterPanel.tsx src/components/dashboard/FilterPanel.tsx)",
+      "Bash(cp src/components/SensorSelection.tsx src/components/dashboard/SensorSelection.tsx)",
+      "Bash(cp src/components/AddSensorWindow.tsx src/components/windows/AddSensorWindow.tsx)",
+      "Bash(cp src/components/SensorExplorer.tsx src/components/windows/SensorExplorer.tsx)",
+      "Bash(cp src/components/SensorTooling.tsx src/components/windows/SensorTooling.tsx)",
+      "Bash(cp src/components/PredictiveModelBuild.tsx src/components/windows/PredictiveModelBuild.tsx)",
+      "Bash(cp src/components/FailureGroupCreation.tsx src/components/windows/FailureGroupCreation.tsx)",
+      "Bash(npx vite:*)"
+    ]
+  }
+}

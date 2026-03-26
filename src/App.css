@@ -1107,7 +1107,7 @@ tr:hover {
     box-sizing: border-box;
 }
 
-/* Custom Scrollbar for ImportScreen */
+/* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
     height: 6px;
 }

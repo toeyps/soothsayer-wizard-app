@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { SensorOperationConfig, SingleOperationType, MultiOperationType, SensorMetadata } from "../types";
+import { SensorOperationConfig, SingleOperationType, MultiOperationType, SensorMetadata } from "../../types";
 import { Calculator, Users } from "lucide-react";
 
 interface SensorToolingProps {

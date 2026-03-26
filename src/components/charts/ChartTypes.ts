@@ -1,4 +1,4 @@
-import { CsvRecord } from '../types';
+import { CsvRecord } from '../../types';
 
 export interface ChartProps {
     data: CsvRecord[];

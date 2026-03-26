@@ -23,16 +23,12 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
         const dataCount = data.length;
         const isLargeData = dataCount > 10000;
 
-        const commonOption = {
-            backgroundColor: 'transparent',
-            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' }
-        };
-
         const xIndex = headers.indexOf(scatterX);
         const yIndex = headers.indexOf(scatterY);
 
         return {
-            ...commonOption,
+            backgroundColor: 'transparent',
+            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
             animation: !isLargeData,
             toolbox: {
                 show: true,
@@ -106,13 +102,6 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
     }, [data, sensors, headers, scatterX, scatterY]);
 
     if ((sensors.length < 2)) {
-        // Although the original code had this check at the bottom for scatter/pair, I'll include it here
-        // Actually the rendering logic handles it but the selector UI needs at least 2 or 1 sensor.
-        // Original code logic: if scatter and sensors < 2, return "Select at least 2".
-        // But line 26: if sensors.length === 1 setScatterX(s[0]), setScatterY(s[0])
-        // So creating a scatter plot of X vs X is possible?
-        // Line 521 says: if ((chartType === 'scatter' || chartType === 'pair') && sensors.length < 2) return ... Select at least 2 sensors
-        // So actually it requires 2 sensors.
         return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
 

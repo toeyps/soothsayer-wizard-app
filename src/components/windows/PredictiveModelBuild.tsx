@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { CsvMetadata, SensorMetadata } from "../types";
+import { CsvMetadata, SensorMetadata } from "../../types";
 import { ChevronDown, Check, Save, BarChart3, GitBranch, Layers } from "lucide-react";
 
 interface PredictiveModelData {

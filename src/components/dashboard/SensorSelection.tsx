@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Filter } from 'lucide-react';
-import { SensorMetadata } from '../types';
+import { SensorMetadata } from '../../types';
 
 
 

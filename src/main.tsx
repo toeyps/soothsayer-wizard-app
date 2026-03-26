@@ -1,10 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import AddSensorWindow from "./components/AddSensorWindow";
-import PredictiveModelBuild from "./components/PredictiveModelBuild";
-import FailureGroupCreation from "./components/FailureGroupCreation";
-import SaveAsWindow from "./components/SaveAsWindow";
+import { AddSensorWindow, PredictiveModelBuild, FailureGroupCreation, SaveAsWindow } from "./components/windows";
 import "./App.css";
 
 const urlParams = new URLSearchParams(window.location.search);

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, Clock, Filter, FileText } from 'lucide-react';
-import { SensorMetadata } from '../types';
+import { SensorMetadata } from '../../types';
 
 interface SensorExplorerProps {
     sensors: string[];

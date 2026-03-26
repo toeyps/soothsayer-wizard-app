@@ -1,5 +1,8 @@
-mod csv_processor;
-use csv_processor::{load_metadata, CsvMetadata, ProcessedData, SensorMetadata};
+pub mod csv_processor;
+use csv_processor::{
+    load_metadata, CsvLoadReport, MappingData, MappingResult, ProcessedData,
+    SensorMetadata,
+};
 use serde::Deserialize;
 use std::sync::Mutex;
 use tauri::{Emitter, State};
@@ -12,17 +15,17 @@ struct SessionData {
 struct AppState(Mutex<Option<SessionData>>);
 
 #[tauri::command]
-fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvMetadata, String> {
-    let data = csv_processor::read_merge_csvs(paths.clone())?;
-    let metadata = CsvMetadata {
-        headers: data.headers.clone(),
-        total_rows: data.rows.len(),
-    };
+fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport, String> {
+    let merge_result = csv_processor::read_merge_csvs_with_report(paths.clone())?;
+    let report = csv_processor::build_load_report(&merge_result);
 
     let mut state_lock = state.0.lock().map_err(|e| e.to_string())?;
-    *state_lock = Some(SessionData { data, paths });
+    *state_lock = Some(SessionData {
+        data: merge_result.data,
+        paths,
+    });
 
-    Ok(metadata)
+    Ok(report)
 }
 
 #[tauri::command]
@@ -52,12 +55,7 @@ fn get_data(
         }
     }
 
-    // Using chunks to stream data
-    // Chunk size 5000 seems reasonable for UI responsiveness vs IPC overhead
     const CHUNK_SIZE: usize = 5000;
-
-    // Notify start (optional, but good for UI loading state if needed)
-    // window.emit("data-stream-start", data.rows.len()).map_err(|e| e.to_string())?;
 
     for (_chunk_idx, chunk) in data.rows.chunks(CHUNK_SIZE).enumerate() {
         let chunk_data: Vec<csv_processor::CsvRecord> = chunk
@@ -79,7 +77,6 @@ fn get_data(
             })
             .collect();
 
-        // Emit chunk
         window
             .emit(
                 "data-stream-chunk",
@@ -89,12 +86,8 @@ fn get_data(
                 },
             )
             .map_err(|e| e.to_string())?;
-
-        // Optional: Yield to event loop if needed, but in a command it might not help much unless async.
-        // But since this is regular command, it runs on a thread pool (tauri default).
     }
 
-    // Emit end
     window
         .emit("data-stream-end", {})
         .map_err(|e| e.to_string())?;
@@ -119,7 +112,6 @@ use tauri_plugin_shell::ShellExt;
 
 #[tauri::command]
 async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
-    // Use mock data for testing
     let data = ProcessedData {
         headers: vec![
             "Timestamp".to_string(),
@@ -142,10 +134,8 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
         ],
     };
 
-    // Serialize data to JSON string
     let json_data = serde_json::to_string(&data).map_err(|e| e.to_string())?;
 
-    // Write to stdin
     println!("Rust: Spawning sidecar...");
     let sidecar_command = app.shell().sidecar("backend").map_err(|e| e.to_string())?;
     let (mut rx, mut child) = sidecar_command.spawn().map_err(|e| e.to_string())?;
@@ -158,7 +148,6 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     println!("Rust: Data written.");
 
-    // Read stdout
     let mut output = String::new();
     while let Some(event) = rx.recv().await {
         match event {
@@ -183,21 +172,21 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
 #[derive(Debug, Deserialize)]
 struct SingleOperation {
     #[serde(rename = "type")]
-    op_type: String, // 'add', 'subtract', 'multiply', 'divide', 'power'
+    op_type: String,
     value: f64,
 }
 
 #[derive(Debug, Deserialize)]
 struct MultiOperation {
     #[serde(rename = "type")]
-    op_type: String, // 'sum', 'mean', 'median', 'product', 'subtract', 'divide'
+    op_type: String,
     #[serde(rename = "baseSensor")]
     base_sensor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SensorOperationConfig {
-    mode: String, // 'single', 'multi'
+    mode: String,
     #[serde(rename = "singleOp")]
     single_op: Option<SingleOperation>,
     #[serde(rename = "multiOp")]
@@ -216,12 +205,10 @@ fn calculate_new_sensor(
     let session = state_lock.as_mut().ok_or("No data loaded")?;
     let data = &mut session.data;
 
-    // Validation
     if sensors.is_empty() {
         return Err("No sensors selected".to_string());
     }
 
-    // Identify indices
     let mut indices = Vec::new();
     for sensor in &sensors {
         match data.headers.iter().position(|h| h == sensor) {
@@ -230,7 +217,6 @@ fn calculate_new_sensor(
         }
     }
 
-    // Determine new sensor name and logic
     let mut new_sensor_name;
 
     if config.mode == "single" {
@@ -248,7 +234,6 @@ fn calculate_new_sensor(
         };
         new_sensor_name = format!("{} {} {}", sensors[0], op_symbol, op.value);
 
-        // Calculation Loop
         for row in &mut data.rows {
             let val = row.values[indices[0]];
             let new_val = match val {
@@ -262,7 +247,7 @@ fn calculate_new_sensor(
                         } else {
                             None
                         }
-                    } // Handle div by zero?
+                    }
                     "power" => Some(v.powf(op.value)),
                     _ => None,
                 },
@@ -293,22 +278,13 @@ fn calculate_new_sensor(
             new_sensor_name = format!("{}({:?})", op_name, sensors);
         }
 
-        // Calculation Loop
         for row in &mut data.rows {
             let mut valid_values = Vec::new();
             let mut base_val = None;
 
-            // For subtract/divide, separate base from others
             if op.op_type == "subtract" || op.op_type == "divide" {
                 let base_sensor = op.base_sensor.as_ref().ok_or("Missing base sensor")?;
-                // Find base index logic (re-find or use pre-calc indices?)
-                // We relied on `sensors` list. The frontend should pass `baseSensor` IN `sensors` list?
-                // Usually yes.
-                // Let's iterate `sensors` and map usage.
-
-                // Re-map values based on whether they are base or others
                 let mut others_sum = 0.0;
-                let mut count = 0;
 
                 for (i, sensor_name) in sensors.iter().enumerate() {
                     let val_opt = row.values[indices[i]];
@@ -317,7 +293,6 @@ fn calculate_new_sensor(
                             base_val = Some(v);
                         } else {
                             others_sum += v;
-                            count += 1;
                         }
                     }
                 }
@@ -326,19 +301,16 @@ fn calculate_new_sensor(
                     Some(b) => {
                         if op.op_type == "subtract" {
                             Some(b - others_sum)
+                        } else if others_sum != 0.0 {
+                            Some(b / others_sum)
                         } else {
-                            if others_sum != 0.0 {
-                                Some(b / others_sum)
-                            } else {
-                                None
-                            }
+                            None
                         }
                     }
                     None => None,
                 };
                 row.values.push(new_val);
             } else {
-                // Aggregation
                 for &idx in &indices {
                     if let Some(v) = row.values[idx] {
                         valid_values.push(v);
@@ -373,17 +345,218 @@ fn calculate_new_sensor(
         return Err("Invalid mode".to_string());
     }
 
-    // Override with custom name if provided
     if let Some(name) = config.custom_name {
         if !name.trim().is_empty() {
             new_sensor_name = name;
         }
     }
 
-    // Update Headers
     data.headers.push(new_sensor_name.clone());
 
     Ok(new_sensor_name)
+}
+
+#[tauri::command]
+fn load_mapping_csv(path: String) -> Result<MappingData, String> {
+    csv_processor::load_mapping_csv_data(&path)
+}
+
+#[tauri::command]
+fn apply_sensor_mapping(
+    key_column: String,
+    mapping_data: MappingData,
+    dataset_headers: Vec<String>,
+) -> Result<MappingResult, String> {
+    csv_processor::apply_mapping(&key_column, &mapping_data, &dataset_headers)
+}
+
+#[derive(Debug, Deserialize)]
+struct ValueFilter {
+    sensor: String,
+    operation: String, // "greater_than" | "less_than" | "between" | "equals"
+    value1: Option<f64>,
+    value2: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DataFilter {
+    sensors: Vec<String>,
+    timestamp_start: Option<String>,
+    timestamp_end: Option<String>,
+    value_filters: Vec<ValueFilter>,
+}
+
+#[tauri::command]
+fn get_filtered_data(
+    filter: DataFilter,
+    window: tauri::Window,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let data = &session.data;
+
+    // Resolve sensor indices
+    let sensor_indices: Vec<usize> = filter
+        .sensors
+        .iter()
+        .filter_map(|s| data.headers.iter().position(|h| h == s))
+        .collect();
+
+    // Parse timestamp bounds once
+    let ts_start = filter
+        .timestamp_start
+        .as_deref()
+        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok());
+    let ts_end = filter
+        .timestamp_end
+        .as_deref()
+        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok());
+
+    // Pre-resolve value filter indices
+    struct ResolvedFilter {
+        sensor_idx: usize,
+        operation: String,
+        value1: Option<f64>,
+        value2: Option<f64>,
+    }
+    let resolved_filters: Vec<ResolvedFilter> = filter
+        .value_filters
+        .iter()
+        .filter_map(|vf| {
+            data.headers
+                .iter()
+                .position(|h| h == &vf.sensor)
+                .map(|idx| ResolvedFilter {
+                    sensor_idx: idx,
+                    operation: vf.operation.clone(),
+                    value1: vf.value1,
+                    value2: vf.value2,
+                })
+        })
+        .collect();
+
+    const CHUNK_SIZE: usize = 5000;
+    let mut chunk_buf: Vec<csv_processor::CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
+
+    for row in &data.rows {
+        // Timestamp filter
+        if ts_start.is_some() || ts_end.is_some() {
+            if let Some(ref ts_str) = row.timestamp {
+                // Try multiple common formats (NaiveDateTime first, then timezone-aware)
+                let parsed = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%.f")
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S"))
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M"))
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f"))
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S"))
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M"))
+                    // Timezone-aware formats (e.g. "2019-10-22 09:00:00+07:00")
+                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%:z").map(|dt| dt.naive_local()))
+                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%:z").map(|dt| dt.naive_local()))
+                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f%:z").map(|dt| dt.naive_local()))
+                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%.f%:z").map(|dt| dt.naive_local()));
+
+                if let Ok(ts) = parsed {
+                    if let Some(ref start) = ts_start {
+                        if ts < *start {
+                            continue;
+                        }
+                    }
+                    if let Some(ref end) = ts_end {
+                        if ts > *end {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue; // skip rows with unparseable timestamps
+                }
+            } else {
+                continue; // skip rows without timestamp
+            }
+        }
+
+        // Value filters — all must pass (AND logic)
+        let mut pass = true;
+        for rf in &resolved_filters {
+            let val = if rf.sensor_idx < row.values.len() {
+                row.values[rf.sensor_idx]
+            } else {
+                None
+            };
+
+            let ok = match val {
+                None => false,
+                Some(v) => match rf.operation.as_str() {
+                    "greater_than" => rf.value1.map_or(true, |v1| v > v1),
+                    "less_than" => rf.value1.map_or(true, |v1| v < v1),
+                    "equals" => rf.value1.map_or(true, |v1| (v - v1).abs() < f64::EPSILON),
+                    "between" => match (rf.value1, rf.value2) {
+                        (Some(v1), Some(v2)) => v >= v1 && v <= v2,
+                        _ => true,
+                    },
+                    _ => true,
+                },
+            };
+            if !ok {
+                pass = false;
+                break;
+            }
+        }
+        if !pass {
+            continue;
+        }
+
+        // Build projected row (only requested sensor columns)
+        let new_values: Vec<Option<f64>> = sensor_indices
+            .iter()
+            .map(|&idx| {
+                if idx < row.values.len() {
+                    row.values[idx]
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        chunk_buf.push(csv_processor::CsvRecord {
+            timestamp: row.timestamp.clone(),
+            values: new_values,
+        });
+
+        if chunk_buf.len() >= CHUNK_SIZE {
+            window
+                .emit(
+                    "data-stream-chunk",
+                    ProcessedData {
+                        headers: filter.sensors.clone(),
+                        rows: std::mem::replace(
+                            &mut chunk_buf,
+                            Vec::with_capacity(CHUNK_SIZE),
+                        ),
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Flush remaining
+    if !chunk_buf.is_empty() {
+        window
+            .emit(
+                "data-stream-chunk",
+                ProcessedData {
+                    headers: filter.sensors.clone(),
+                    rows: chunk_buf,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+    }
+
+    window
+        .emit("data-stream-end", {})
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -402,7 +575,10 @@ pub fn run() {
             load_metadata_command,
             run_python_analysis,
             get_loaded_paths,
-            calculate_new_sensor
+            calculate_new_sensor,
+            load_mapping_csv,
+            apply_sensor_mapping,
+            get_filtered_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
