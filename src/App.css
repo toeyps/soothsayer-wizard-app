@@ -1067,7 +1067,11 @@ tr:hover {
     padding-left: 1rem;
     font-size: 0.8rem;
     color: var(--text-secondary);
-    /* -webkit-app-region: drag;  <-- This is handled by data-tauri-drag-region in v2 usually, or specifically in the element properties */
+}
+
+/* macOS: add left padding to avoid overlapping native traffic light buttons */
+.titlebar.macos .titlebar-drag-region {
+    padding-left: 70px;
 }
 
 .titlebar-actions {
