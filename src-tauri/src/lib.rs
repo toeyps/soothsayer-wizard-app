@@ -567,6 +567,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(|_app| {
+            // On non-macOS platforms, disable native decorations so we use the custom titlebar.
+            // macOS uses native decorations with Overlay titlebar style (traffic lights).
+            #[cfg(not(target_os = "macos"))]
+            {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
+                    window.set_decorations(false).ok();
+                }
+            }
+            Ok(())
+        })
         .manage(AppState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             load_csv,
