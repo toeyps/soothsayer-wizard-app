@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
+import * as XLSX from "xlsx";
 import { CsvMetadata, SensorMetadata } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, BarChart3 } from "lucide-react";
 
@@ -70,11 +73,33 @@ export default function FailureGroupCreation() {
     const [showModelPanel, setShowModelPanel] = useState(false);
     const [isBuildModelOpen, setIsBuildModelOpen] = useState(false);
 
+    // ── Persistence Keys ─────────────────────────────────────────
+    const STORAGE_KEY_GROUPS = 'fg-groups';
+    const STORAGE_KEY_ROWS = 'fg-rows';
+
     // ── Setup ────────────────────────────────────────────────────
 
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
+
+        // Restore persisted state
+        try {
+            const savedGroups = localStorage.getItem(STORAGE_KEY_GROUPS);
+            const savedRows = localStorage.getItem(STORAGE_KEY_ROWS);
+            if (savedGroups) setGroups(JSON.parse(savedGroups));
+            if (savedRows) {
+                const parsed = JSON.parse(savedRows) as SensorRow[];
+                setRows(parsed);
+                // Ensure _rowId counter stays ahead of restored rows
+                const maxId = parsed.reduce((max, r) => {
+                    const num = parseInt(r.id.replace('row-', ''), 10);
+                    return num > max ? num : max;
+                }, 0);
+                if (maxId >= _rowId) _rowId = maxId;
+            }
+        } catch { /* ignore corrupt data */ }
+
         let unlistenData: (() => void) | undefined;
         const setup = async () => {
             unlistenData = await listen<FailureGroupData>('failure-group-data', (event) => {
@@ -103,6 +128,15 @@ export default function FailureGroupCreation() {
     useEffect(() => {
         if (showNewGroupDialog && newGroupInputRef.current) newGroupInputRef.current.focus();
     }, [showNewGroupDialog]);
+
+    // ── Persist state on change ──────────────────────────────────
+    useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(groups));
+    }, [groups]);
+
+    useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_ROWS, JSON.stringify(rows));
+    }, [rows]);
 
     // ── Build Model ──────────────────────────────────────────────
 
@@ -236,6 +270,15 @@ export default function FailureGroupCreation() {
     };
 
     const selectSensorTag = (rowId: string, tag: string) => {
+        // Prevent duplicate sensor tag within the same group
+        const currentRow = rows.find(r => r.id === rowId);
+        if (currentRow) {
+            const groupRows = rows.filter(r => r.groupNo === currentRow.groupNo && r.id !== rowId);
+            if (groupRows.some(r => r.mappedSensorTag.toLowerCase() === tag.toLowerCase())) {
+                alert(`Sensor tag "${tag}" already exists in this group.`);
+                return;
+            }
+        }
         updateRow(rowId, 'mappedSensorTag', tag);
         setDropdownRowId(null);
         setDropdownSearch("");
@@ -253,33 +296,95 @@ export default function FailureGroupCreation() {
     const filteredSensors = allSensors.filter(s => s.toLowerCase().includes(dropdownSearch.toLowerCase()));
     const sortedGroups = [...groups].sort((a, b) => a.no - b.no);
 
-    // ── Upload / Download / Save ──────────────────────────────────
+    // ── Upload / Download / Save (XLSX) ─────────────────────────────
 
-    const handleUpload = () => { alert("Upload .xlsx functionality is coming soon."); };
+    const XLSX_HEADERS = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
+
+    const handleUpload = async () => {
+        try {
+            const selected = await openDialog({
+                multiple: false,
+                filters: [{ name: 'Excel Files', extensions: ['xlsx', 'xls'] }],
+            });
+            if (!selected) return;
+            const filePath = Array.isArray(selected) ? selected[0] : selected;
+            if (!filePath) return;
+
+            const fileBytes = await readFile(filePath);
+            const workbook = XLSX.read(fileBytes, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            if (!sheetName) return;
+            const sheet = workbook.Sheets[sheetName];
+            const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+            if (jsonRows.length === 0) return;
+
+            const newGroups: FailureGroup[] = [{ no: 0, name: "Not in Group", isCollapsed: false }];
+            const newRows: SensorRow[] = [];
+            const seenGroups = new Set<number>([0]);
+
+            for (const raw of jsonRows) {
+                const groupNo = Number(raw["No."] ?? raw["No"] ?? 0) || 0;
+                const groupName = String(raw["Group Name"] ?? "").trim();
+                const tag = String(raw["Mapped Sensor Tag"] ?? "").trim();
+                const statusRaw = String(raw["Status"] ?? "").trim().toLowerCase();
+
+                if (groupNo !== 0 && !seenGroups.has(groupNo)) {
+                    seenGroups.add(groupNo);
+                    newGroups.push({ no: groupNo, name: groupName || `Group ${groupNo}`, isCollapsed: false });
+                }
+
+                newRows.push({
+                    id: nextId(),
+                    groupNo,
+                    conceptSensor: String(raw["Concept Sensor"] ?? "").trim(),
+                    mappedSensorTag: tag,
+                    mappedSensorName: getSensorName(tag, sensorMetadata),
+                    modelType: String(raw["Model Type"] ?? "").trim(),
+                    modelNotes: String(raw["Model Notes"] ?? "").trim(),
+                    additionalNotes: String(raw["Additional Notes"] ?? "").trim(),
+                    status: statusRaw === "yes" || statusRaw === "true" || statusRaw === "1",
+                });
+            }
+
+            setGroups(newGroups);
+            setRows(newRows);
+            setSelectedRowId(null);
+            setShowModelPanel(false);
+        } catch (err) {
+            console.error('Failed to upload .xlsx:', err);
+        }
+    };
 
     const handleDownloadTemplate = () => {
-        const headers = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
-        const blob = new Blob([headers.join(",") + "\n"], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = 'failure_group_template.csv';
-        link.click();
-        URL.revokeObjectURL(link.href);
+        const ws = XLSX.utils.aoa_to_sheet([XLSX_HEADERS]);
+        // Set column widths
+        ws['!cols'] = XLSX_HEADERS.map(h => ({ wch: Math.max(h.length + 4, 18) }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Failure Groups');
+        XLSX.writeFile(wb, 'failure_group_template.xlsx');
     };
 
     const handleSave = () => {
-        const headers = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
-        const csvRows = rows.map(r => {
+        const data = rows.map(r => {
             const group = groups.find(g => g.no === r.groupNo);
-            return [r.groupNo, group?.name || '', r.conceptSensor, r.mappedSensorTag, r.mappedSensorName, r.modelType, r.modelNotes, r.additionalNotes, r.status ? "Yes" : "No"]
-                .map(v => { const s = String(v); return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s; }).join(",");
+            return {
+                "No.": r.groupNo,
+                "Group Name": group?.name || '',
+                "Concept Sensor": r.conceptSensor,
+                "Mapped Sensor Tag": r.mappedSensorTag,
+                "Mapped Sensor Name": r.mappedSensorName,
+                "Model Type": r.modelType,
+                "Model Notes": r.modelNotes,
+                "Additional Notes": r.additionalNotes,
+                "Status": r.status ? "Yes" : "No",
+            };
         });
-        const blob = new Blob([[headers.join(","), ...csvRows].join("\n")], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `failure_groups_${new Date().toISOString().slice(0, 10)}.csv`;
-        link.click();
-        URL.revokeObjectURL(link.href);
+        const ws = XLSX.utils.json_to_sheet(data, { header: XLSX_HEADERS });
+        ws['!cols'] = XLSX_HEADERS.map(h => ({ wch: Math.max(h.length + 4, 18) }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Failure Groups');
+        XLSX.writeFile(wb, `failure_groups_${new Date().toISOString().slice(0, 10)}.xlsx`);
     };
 
     // ── Render ────────────────────────────────────────────────────
