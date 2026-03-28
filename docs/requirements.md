@@ -128,3 +128,4 @@ export type TauriCommands = {
 #### Out of Scope
 - This page is NOT a general-purpose data formatting tool (like Python pandas)
 - No data editing/transformation on this page — only validation and mapping
+
