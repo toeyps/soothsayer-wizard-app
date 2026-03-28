@@ -3,8 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
-import * as XLSX from "xlsx";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import { CsvMetadata, SensorMetadata } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, BarChart3 } from "lucide-react";
 
@@ -296,27 +295,69 @@ export default function FailureGroupCreation() {
     const filteredSensors = allSensors.filter(s => s.toLowerCase().includes(dropdownSearch.toLowerCase()));
     const sortedGroups = [...groups].sort((a, b) => a.no - b.no);
 
-    // ── Upload / Download / Save (XLSX) ─────────────────────────────
+    // ── CSV Helpers ────────────────────────────────────────────────
 
-    const XLSX_HEADERS = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
+    const CSV_HEADERS = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
+
+    /** Parse a CSV string into an array of Record objects using the header row as keys. Handles quoted fields with commas/newlines. */
+    const parseCsv = (text: string): Record<string, string>[] => {
+        const result: Record<string, string>[] = [];
+        const lines: string[][] = [];
+        let current: string[] = [];
+        let field = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (text[i + 1] === '"') { field += '"'; i++; }
+                    else inQuotes = false;
+                } else { field += ch; }
+            } else {
+                if (ch === '"') { inQuotes = true; }
+                else if (ch === ',') { current.push(field); field = ''; }
+                else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+                    current.push(field); field = '';
+                    lines.push(current); current = [];
+                    if (ch === '\r') i++;
+                } else { field += ch; }
+            }
+        }
+        if (field || current.length > 0) { current.push(field); lines.push(current); }
+
+        if (lines.length < 2) return result;
+        const headers = lines[0].map(h => h.trim());
+        for (let i = 1; i < lines.length; i++) {
+            const vals = lines[i];
+            if (vals.length === 1 && vals[0].trim() === '') continue; // skip empty lines
+            const row: Record<string, string> = {};
+            headers.forEach((h, idx) => { row[h] = (vals[idx] ?? '').trim(); });
+            result.push(row);
+        }
+        return result;
+    };
+
+    /** Escape a value for CSV output */
+    const csvEscape = (v: string | number | boolean): string => {
+        const s = String(v);
+        return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    // ── Upload / Download / Save (CSV) ───────────────────────────────
 
     const handleUpload = async () => {
         try {
             const selected = await openDialog({
                 multiple: false,
-                filters: [{ name: 'Excel Files', extensions: ['xlsx', 'xls'] }],
+                filters: [{ name: 'CSV Files', extensions: ['csv'] }],
             });
             if (!selected) return;
             const filePath = Array.isArray(selected) ? selected[0] : selected;
             if (!filePath) return;
 
-            const fileBytes = await readFile(filePath);
-            const workbook = XLSX.read(fileBytes, { type: 'array' });
-            const sheetName = workbook.SheetNames[0];
-            if (!sheetName) return;
-            const sheet = workbook.Sheets[sheetName];
-            const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
-
+            const csvText = await readTextFile(filePath);
+            const jsonRows = parseCsv(csvText);
             if (jsonRows.length === 0) return;
 
             const newGroups: FailureGroup[] = [{ no: 0, name: "Not in Group", isCollapsed: false }];
@@ -324,10 +365,10 @@ export default function FailureGroupCreation() {
             const seenGroups = new Set<number>([0]);
 
             for (const raw of jsonRows) {
-                const groupNo = Number(raw["No."] ?? raw["No"] ?? 0) || 0;
-                const groupName = String(raw["Group Name"] ?? "").trim();
-                const tag = String(raw["Mapped Sensor Tag"] ?? "").trim();
-                const statusRaw = String(raw["Status"] ?? "").trim().toLowerCase();
+                const groupNo = Number(raw["No."] || raw["No"] || 0) || 0;
+                const groupName = (raw["Group Name"] ?? "").trim();
+                const tag = (raw["Mapped Sensor Tag"] ?? "").trim();
+                const statusRaw = (raw["Status"] ?? "").trim().toLowerCase();
 
                 if (groupNo !== 0 && !seenGroups.has(groupNo)) {
                     seenGroups.add(groupNo);
@@ -337,12 +378,12 @@ export default function FailureGroupCreation() {
                 newRows.push({
                     id: nextId(),
                     groupNo,
-                    conceptSensor: String(raw["Concept Sensor"] ?? "").trim(),
+                    conceptSensor: (raw["Concept Sensor"] ?? "").trim(),
                     mappedSensorTag: tag,
                     mappedSensorName: getSensorName(tag, sensorMetadata),
-                    modelType: String(raw["Model Type"] ?? "").trim(),
-                    modelNotes: String(raw["Model Notes"] ?? "").trim(),
-                    additionalNotes: String(raw["Additional Notes"] ?? "").trim(),
+                    modelType: (raw["Model Type"] ?? "").trim(),
+                    modelNotes: (raw["Model Notes"] ?? "").trim(),
+                    additionalNotes: (raw["Additional Notes"] ?? "").trim(),
                     status: statusRaw === "yes" || statusRaw === "true" || statusRaw === "1",
                 });
             }
@@ -352,39 +393,31 @@ export default function FailureGroupCreation() {
             setSelectedRowId(null);
             setShowModelPanel(false);
         } catch (err) {
-            console.error('Failed to upload .xlsx:', err);
+            console.error('Failed to upload CSV:', err);
         }
     };
 
     const handleDownloadTemplate = () => {
-        const ws = XLSX.utils.aoa_to_sheet([XLSX_HEADERS]);
-        // Set column widths
-        ws['!cols'] = XLSX_HEADERS.map(h => ({ wch: Math.max(h.length + 4, 18) }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Failure Groups');
-        XLSX.writeFile(wb, 'failure_group_template.xlsx');
+        const blob = new Blob([CSV_HEADERS.join(",") + "\n"], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'failure_group_template.csv';
+        link.click();
+        URL.revokeObjectURL(link.href);
     };
 
     const handleSave = () => {
-        const data = rows.map(r => {
+        const csvRows = rows.map(r => {
             const group = groups.find(g => g.no === r.groupNo);
-            return {
-                "No.": r.groupNo,
-                "Group Name": group?.name || '',
-                "Concept Sensor": r.conceptSensor,
-                "Mapped Sensor Tag": r.mappedSensorTag,
-                "Mapped Sensor Name": r.mappedSensorName,
-                "Model Type": r.modelType,
-                "Model Notes": r.modelNotes,
-                "Additional Notes": r.additionalNotes,
-                "Status": r.status ? "Yes" : "No",
-            };
+            return [r.groupNo, group?.name || '', r.conceptSensor, r.mappedSensorTag, r.mappedSensorName, r.modelType, r.modelNotes, r.additionalNotes, r.status ? "Yes" : "No"]
+                .map(csvEscape).join(",");
         });
-        const ws = XLSX.utils.json_to_sheet(data, { header: XLSX_HEADERS });
-        ws['!cols'] = XLSX_HEADERS.map(h => ({ wch: Math.max(h.length + 4, 18) }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Failure Groups');
-        XLSX.writeFile(wb, `failure_groups_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        const blob = new Blob([[CSV_HEADERS.join(","), ...csvRows].join("\n")], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `failure_groups_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
     };
 
     // ── Render ────────────────────────────────────────────────────
