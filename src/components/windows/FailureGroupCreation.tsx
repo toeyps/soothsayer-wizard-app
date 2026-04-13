@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import { CsvMetadata, SensorMetadata } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, BarChart3 } from "lucide-react";
 
@@ -70,11 +72,33 @@ export default function FailureGroupCreation() {
     const [showModelPanel, setShowModelPanel] = useState(false);
     const [isBuildModelOpen, setIsBuildModelOpen] = useState(false);
 
+    // ── Persistence Keys ─────────────────────────────────────────
+    const STORAGE_KEY_GROUPS = 'fg-groups';
+    const STORAGE_KEY_ROWS = 'fg-rows';
+
     // ── Setup ────────────────────────────────────────────────────
 
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
+
+        // Restore persisted state
+        try {
+            const savedGroups = localStorage.getItem(STORAGE_KEY_GROUPS);
+            const savedRows = localStorage.getItem(STORAGE_KEY_ROWS);
+            if (savedGroups) setGroups(JSON.parse(savedGroups));
+            if (savedRows) {
+                const parsed = JSON.parse(savedRows) as SensorRow[];
+                setRows(parsed);
+                // Ensure _rowId counter stays ahead of restored rows
+                const maxId = parsed.reduce((max, r) => {
+                    const num = parseInt(r.id.replace('row-', ''), 10);
+                    return num > max ? num : max;
+                }, 0);
+                if (maxId >= _rowId) _rowId = maxId;
+            }
+        } catch { /* ignore corrupt data */ }
+
         let unlistenData: (() => void) | undefined;
         const setup = async () => {
             unlistenData = await listen<FailureGroupData>('failure-group-data', (event) => {
@@ -103,6 +127,15 @@ export default function FailureGroupCreation() {
     useEffect(() => {
         if (showNewGroupDialog && newGroupInputRef.current) newGroupInputRef.current.focus();
     }, [showNewGroupDialog]);
+
+    // ── Persist state on change ──────────────────────────────────
+    useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(groups));
+    }, [groups]);
+
+    useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_ROWS, JSON.stringify(rows));
+    }, [rows]);
 
     // ── Build Model ──────────────────────────────────────────────
 
@@ -236,6 +269,15 @@ export default function FailureGroupCreation() {
     };
 
     const selectSensorTag = (rowId: string, tag: string) => {
+        // Prevent duplicate sensor tag within the same group
+        const currentRow = rows.find(r => r.id === rowId);
+        if (currentRow) {
+            const groupRows = rows.filter(r => r.groupNo === currentRow.groupNo && r.id !== rowId);
+            if (groupRows.some(r => r.mappedSensorTag.toLowerCase() === tag.toLowerCase())) {
+                alert(`Sensor tag "${tag}" already exists in this group.`);
+                return;
+            }
+        }
         updateRow(rowId, 'mappedSensorTag', tag);
         setDropdownRowId(null);
         setDropdownSearch("");
@@ -253,13 +295,110 @@ export default function FailureGroupCreation() {
     const filteredSensors = allSensors.filter(s => s.toLowerCase().includes(dropdownSearch.toLowerCase()));
     const sortedGroups = [...groups].sort((a, b) => a.no - b.no);
 
-    // ── Upload / Download / Save ──────────────────────────────────
+    // ── CSV Helpers ────────────────────────────────────────────────
 
-    const handleUpload = () => { alert("Upload .xlsx functionality is coming soon."); };
+    const CSV_HEADERS = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
+
+    /** Parse a CSV string into an array of Record objects using the header row as keys. Handles quoted fields with commas/newlines. */
+    const parseCsv = (text: string): Record<string, string>[] => {
+        const result: Record<string, string>[] = [];
+        const lines: string[][] = [];
+        let current: string[] = [];
+        let field = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (text[i + 1] === '"') { field += '"'; i++; }
+                    else inQuotes = false;
+                } else { field += ch; }
+            } else {
+                if (ch === '"') { inQuotes = true; }
+                else if (ch === ',') { current.push(field); field = ''; }
+                else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+                    current.push(field); field = '';
+                    lines.push(current); current = [];
+                    if (ch === '\r') i++;
+                } else { field += ch; }
+            }
+        }
+        if (field || current.length > 0) { current.push(field); lines.push(current); }
+
+        if (lines.length < 2) return result;
+        const headers = lines[0].map(h => h.trim());
+        for (let i = 1; i < lines.length; i++) {
+            const vals = lines[i];
+            if (vals.length === 1 && vals[0].trim() === '') continue; // skip empty lines
+            const row: Record<string, string> = {};
+            headers.forEach((h, idx) => { row[h] = (vals[idx] ?? '').trim(); });
+            result.push(row);
+        }
+        return result;
+    };
+
+    /** Escape a value for CSV output */
+    const csvEscape = (v: string | number | boolean): string => {
+        const s = String(v);
+        return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    // ── Upload / Download / Save (CSV) ───────────────────────────────
+
+    const handleUpload = async () => {
+        try {
+            const selected = await openDialog({
+                multiple: false,
+                filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+            });
+            if (!selected) return;
+            const filePath = Array.isArray(selected) ? selected[0] : selected;
+            if (!filePath) return;
+
+            const csvText = await readTextFile(filePath);
+            const jsonRows = parseCsv(csvText);
+            if (jsonRows.length === 0) return;
+
+            const newGroups: FailureGroup[] = [{ no: 0, name: "Not in Group", isCollapsed: false }];
+            const newRows: SensorRow[] = [];
+            const seenGroups = new Set<number>([0]);
+
+            for (const raw of jsonRows) {
+                const groupNo = Number(raw["No."] || raw["No"] || 0) || 0;
+                const groupName = (raw["Group Name"] ?? "").trim();
+                const tag = (raw["Mapped Sensor Tag"] ?? "").trim();
+                const statusRaw = (raw["Status"] ?? "").trim().toLowerCase();
+
+                if (groupNo !== 0 && !seenGroups.has(groupNo)) {
+                    seenGroups.add(groupNo);
+                    newGroups.push({ no: groupNo, name: groupName || `Group ${groupNo}`, isCollapsed: false });
+                }
+
+                newRows.push({
+                    id: nextId(),
+                    groupNo,
+                    conceptSensor: (raw["Concept Sensor"] ?? "").trim(),
+                    mappedSensorTag: tag,
+                    mappedSensorName: getSensorName(tag, sensorMetadata),
+                    modelType: (raw["Model Type"] ?? "").trim(),
+                    modelNotes: (raw["Model Notes"] ?? "").trim(),
+                    additionalNotes: (raw["Additional Notes"] ?? "").trim(),
+                    status: statusRaw === "yes" || statusRaw === "true" || statusRaw === "1",
+                });
+            }
+
+            setGroups(newGroups);
+            setRows(newRows);
+            setSelectedRowId(null);
+            setShowModelPanel(false);
+        } catch (err) {
+            console.error('Failed to upload CSV:', err);
+        }
+    };
 
     const handleDownloadTemplate = () => {
-        const headers = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
-        const blob = new Blob([headers.join(",") + "\n"], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob([CSV_HEADERS.join(",") + "\n"], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = 'failure_group_template.csv';
@@ -268,13 +407,12 @@ export default function FailureGroupCreation() {
     };
 
     const handleSave = () => {
-        const headers = ["No.", "Group Name", "Concept Sensor", "Mapped Sensor Tag", "Mapped Sensor Name", "Model Type", "Model Notes", "Additional Notes", "Status"];
         const csvRows = rows.map(r => {
             const group = groups.find(g => g.no === r.groupNo);
             return [r.groupNo, group?.name || '', r.conceptSensor, r.mappedSensorTag, r.mappedSensorName, r.modelType, r.modelNotes, r.additionalNotes, r.status ? "Yes" : "No"]
-                .map(v => { const s = String(v); return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s; }).join(",");
+                .map(csvEscape).join(",");
         });
-        const blob = new Blob([[headers.join(","), ...csvRows].join("\n")], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob([[CSV_HEADERS.join(","), ...csvRows].join("\n")], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `failure_groups_${new Date().toISOString().slice(0, 10)}.csv`;

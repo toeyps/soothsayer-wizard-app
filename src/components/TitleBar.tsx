@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X, Sun, Moon, Save } from "lucide-react";
 
+const isMacOS = navigator.userAgent.includes("Mac");
+
 interface TitleBarProps {
   theme: "light" | "dark";
   toggleTheme: () => void;
@@ -60,7 +62,7 @@ export default function TitleBar({
   };
 
   return (
-    <div className="titlebar">
+    <div className={`titlebar ${isMacOS ? "macos" : ""}`}>
       <div className="titlebar-drag-region" data-tauri-drag-region>
         <span
           style={{ marginRight: "1rem", opacity: 0.7, pointerEvents: "none" }}
@@ -210,41 +212,46 @@ export default function TitleBar({
         >
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
-        <div
-          style={{
-            width: "1px",
-            height: "16px",
-            background: "var(--border)",
-            margin: "auto 0",
-          }}
-        ></div>
-        <button
-          className="titlebar-button"
-          onClick={() => {
-            console.log("minimize");
-            appWindow.minimize();
-          }}
-        >
-          <Minus size={16} />
-        </button>
-        <button
-          className="titlebar-button"
-          onClick={() => {
-            console.log("maximize");
-            appWindow.toggleMaximize();
-          }}
-        >
-          <Square size={14} />
-        </button>
-        <button
-          className="titlebar-button close"
-          onClick={() => {
-            console.log("close");
-            appWindow.close();
-          }}
-        >
-          <X size={16} />
-        </button>
+        {/* Window controls: only shown on non-macOS (macOS uses native traffic lights) */}
+        {!isMacOS && (
+          <>
+            <div
+              style={{
+                width: "1px",
+                height: "16px",
+                background: "var(--border)",
+                margin: "auto 0",
+              }}
+            ></div>
+            <button
+              className="titlebar-button"
+              onClick={() => {
+                console.log("minimize");
+                appWindow.minimize();
+              }}
+            >
+              <Minus size={16} />
+            </button>
+            <button
+              className="titlebar-button"
+              onClick={() => {
+                console.log("maximize");
+                appWindow.toggleMaximize();
+              }}
+            >
+              <Square size={14} />
+            </button>
+            <button
+              className="titlebar-button close"
+              onClick={() => {
+                console.log("close");
+                appWindow.close();
+              }}
+            >
+              <X size={16} />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
