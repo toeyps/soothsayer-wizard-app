@@ -18,7 +18,10 @@
       "Bash(cp src/components/SensorTooling.tsx src/components/windows/SensorTooling.tsx)",
       "Bash(cp src/components/PredictiveModelBuild.tsx src/components/windows/PredictiveModelBuild.tsx)",
       "Bash(cp src/components/FailureGroupCreation.tsx src/components/windows/FailureGroupCreation.tsx)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(cargo doc:*)",
+      "Bash(cargo build:*)",
+      "Bash(ls:*)"
     ]
   }
 }

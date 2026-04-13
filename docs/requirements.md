@@ -128,3 +128,215 @@ export type TauriCommands = {
 #### Out of Scope
 - This page is NOT a general-purpose data formatting tool (like Python pandas)
 - No data editing/transformation on this page — only validation and mapping
+
+---
+---
+
+# Requirements: Hybrid Calculation Engine (Add Sensor Window)
+
+## Feature: Flexible Sensor Calculation — Hybrid Mode
+
+### User Story
+As a **data engineer**, I want to create new calculated sensors using either a **simple dropdown** for common operations or an **advanced formula editor** for complex expressions — so that I can perform calculations **flexibly without code changes**.
+
+### Problem Statement
+
+ระบบ calculate ปัจจุบัน hardcode operation ทั้ง Frontend (TypeScript types, UI dropdowns) และ Backend (Rust `match` blocks) ทำให้การเพิ่ม operation ใหม่ต้องแก้ไข **อย่างน้อย 4 ไฟล์** (`types.ts`, `SensorTooling.tsx`, `lib.rs`, `commands.ts`) ทุกครั้ง
+
+### Solution: Hybrid Approach (Simple + Advanced Mode)
+
+UI จะมี 2 โหมดให้เลือก:
+
+```
+┌─────────────────────────────────┐
+│  [ Simple ▼ ]  [ Advanced ▼ ]  │
+├─────────────────────────────────┤
+│ Simple:   [Sum ▼] + sensors     │
+│ Advanced: = A + B * sqrt(C)     │
+└─────────────────────────────────┘
+```
+
+---
+
+### Part 1: Operation Registry (Single Source of Truth)
+
+สร้าง registry กลางที่ทั้ง Frontend และ Backend อ่านจากที่เดียว
+
+#### 1.1 Frontend Registry (`src/config/operations.ts`)
+- [ ] สร้างไฟล์ registry กลางเก็บ operation ทั้งหมด
+- [ ] แต่ละ operation ประกอบด้วย: `id`, `label`, `symbol`, `category`, `requiresValue`, `requiresBase`, `params[]`
+- [ ] UI ทุกส่วน (dropdown, preview, validation) อ่านจาก registry นี้เท่านั้น
+- [ ] เพิ่ม operation ใหม่ = เพิ่มแค่ entry ใน registry
+
+```typescript
+// ตัวอย่างโครงสร้าง
+export const OPERATIONS = {
+  single: [
+    { id: 'add', label: 'Add (+)', symbol: '+', category: 'arithmetic', requiresValue: true },
+    { id: 'abs', label: 'Absolute', symbol: 'abs', category: 'transform', requiresValue: false },
+    { id: 'log10', label: 'Log₁₀', symbol: 'log10', category: 'transform', requiresValue: false },
+    { id: 'sqrt', label: 'Square Root', symbol: '√', category: 'transform', requiresValue: false },
+    { id: 'round', label: 'Round', symbol: 'round', category: 'transform', requiresValue: true, params: [{ name: 'decimals', type: 'number', default: 2 }] },
+  ],
+  multi: [
+    { id: 'sum', label: 'Sum', category: 'aggregation', requiresBase: false },
+    { id: 'mean', label: 'Average', category: 'aggregation', requiresBase: false },
+    { id: 'moving_avg', label: 'Moving Average', category: 'time_series', requiresBase: false, params: [{ name: 'window_size', type: 'number', default: 10 }] },
+    { id: 'rate_of_change', label: 'Rate of Change', category: 'time_series', requiresBase: false },
+    { id: 'subtract', label: 'Subtract', category: 'arithmetic', requiresBase: true },
+  ],
+} as const;
+```
+
+#### 1.2 Backend Registry (Rust)
+- [ ] สร้าง operation registry ใน Rust ด้วย `HashMap<&str, OperationFn>`
+- [ ] แต่ละ operation เป็น function ที่ลงทะเบียนไว้
+- [ ] เพิ่ม operation ใหม่ = เพิ่มแค่ `register()` call
+
+```rust
+// ตัวอย่างโครงสร้าง
+fn build_single_ops() -> HashMap<&'static str, Box<dyn Fn(f64, f64) -> Option<f64>>> {
+    let mut ops = HashMap::new();
+    ops.insert("add",    Box::new(|a, b| Some(a + b)));
+    ops.insert("abs",    Box::new(|a, _| Some(a.abs())));
+    ops.insert("log10",  Box::new(|a, _| if a > 0.0 { Some(a.log10()) } else { None }));
+    ops.insert("sqrt",   Box::new(|a, _| if a >= 0.0 { Some(a.sqrt()) } else { None }));
+    ops
+}
+```
+
+---
+
+### Part 2: Simple Mode (Dropdown UI — Data-Driven)
+
+Refactor `SensorTooling.tsx` ให้ render dropdowns จาก registry อัตโนมัติ
+
+#### 2.1 UI Rendering
+- [ ] Dropdown options สร้างจาก registry โดยอัตโนมัติ (ไม่ hardcode `<option>`)
+- [ ] Group options ตาม `category` (arithmetic, transform, aggregation, time_series)
+- [ ] แสดง/ซ่อน input fields ตาม `requiresValue` / `params[]` ของ operation ที่เลือก
+- [ ] Preview formula อัตโนมัติจาก `symbol` ใน registry
+
+#### 2.2 Config Generation
+- [ ] สร้าง `SensorOperationConfig` จาก registry + user selection
+- [ ] ส่งไป backend เป็น `{ operationId: string, sensors: string[], params: Record<string, number> }`
+
+---
+
+### Part 3: Advanced Mode (Formula Editor)
+
+เพิ่ม tab ใหม่ใน `SensorTooling.tsx` สำหรับ power user
+
+#### 3.1 Formula Editor UI
+- [ ] Text input / textarea สำหรับพิมพ์สูตร
+- [ ] **Autocomplete** sensor names (trigger ด้วย `$` หรือ typing)
+- [ ] **Syntax highlighting** (sensor names, operators, functions)
+- [ ] **Live preview** แสดง parsed formula + ตัวอย่างผลลัพธ์
+- [ ] **Error feedback** แสดง syntax error แบบ real-time
+
+#### 3.2 Formula Syntax
+```
+// ตัวอย่างสูตรที่ support
+= $SensorA + $SensorB * 2
+= avg($SensorA, $SensorB, $SensorC)
+= abs($SensorA) / max($SensorB)
+= $SensorA - moving_avg($SensorB, 10)
+= sqrt(pow($SensorA, 2) + pow($SensorB, 2))
+= clamp($SensorA, 0, 100)
+```
+
+**Syntax rules:**
+- Sensor names อ้างอิงด้วย `$SensorName` หรือ `${Sensor Name With Spaces}`
+- Built-in functions: `abs`, `sqrt`, `pow`, `log`, `log10`, `exp`, `ceil`, `floor`, `round`, `clamp`, `min`, `max`
+- Aggregation functions: `sum`, `avg`, `median`, `std`
+- Time-series functions: `moving_avg(sensor, window)`, `rate_of_change(sensor)`, `lag(sensor, periods)`
+- Standard operators: `+`, `-`, `*`, `/`, `^`, `(`, `)`
+
+#### 3.3 Backend Expression Engine (Rust)
+- [ ] ใช้ crate เช่น `evalexpr` หรือ `fasteval` เป็น expression parser
+- [ ] Register custom functions (`moving_avg`, `rate_of_change`, etc.) เข้า parser
+- [ ] Validate formula ก่อน execute (return error ถ้า syntax ผิดหรือ sensor ไม่มี)
+- [ ] New Tauri command: `evaluate_formula`
+
+```rust
+#[tauri::command]
+fn evaluate_formula(
+    formula: String,
+    custom_name: Option<String>,
+    state: State<AppState>,
+) -> Result<String, String> {
+    // 1. Parse formula → AST
+    // 2. Resolve $SensorName → column indices
+    // 3. Evaluate row-by-row
+    // 4. Append new column to data
+    // 5. Return new sensor name
+}
+```
+
+---
+
+### Part 4: Shared Infrastructure
+
+#### 4.1 Updated Types (`src/types.ts`)
+- [ ] Replace hardcoded union types with flexible config:
+
+```typescript
+// แทนที่ของเดิม
+export interface SensorCalculationConfig {
+  mode: 'simple' | 'formula';
+  // Simple mode
+  simple?: {
+    operationId: string;
+    sensors: string[];
+    params: Record<string, number>;
+  };
+  // Formula mode
+  formula?: {
+    expression: string;
+  };
+  customName?: string;
+}
+```
+
+#### 4.2 Updated Backend Command
+- [ ] Refactor `calculate_new_sensor` → รับ unified config แล้ว dispatch ตาม mode
+- [ ] Simple mode → lookup operation จาก registry
+- [ ] Formula mode → parse + evaluate expression
+
+---
+
+### Acceptance Criteria
+- [ ] Simple Mode: เพิ่ม operation ใหม่โดยแก้แค่ registry file (FE + BE อย่างละ 1 ที่)
+- [ ] Simple Mode: Dropdown render จาก registry อัตโนมัติ — ไม่มี hardcoded `<option>`
+- [ ] Advanced Mode: User สามารถพิมพ์สูตรแบบ Excel-like ได้
+- [ ] Advanced Mode: Autocomplete sensor names ทำงานได้
+- [ ] Advanced Mode: Syntax error แสดง real-time
+- [ ] Advanced Mode: Formula evaluate ถูกต้องกับทุก row ของ data
+- [ ] ทั้ง 2 mode ใช้ `customName` ตั้งชื่อ sensor ใหม่ได้
+- [ ] Backward compatible — existing calculated sensors ยังทำงานได้
+
+### Priority: Medium
+### Scope: Fullstack
+
+### Technical Notes
+
+#### Files to Modify/Create
+
+| Action | File | Description |
+|--------|------|-------------|
+| NEW | `src/config/operations.ts` | Operation registry (single source of truth) |
+| MODIFY | `src/types.ts` | Replace `SensorOperationConfig` → `SensorCalculationConfig` |
+| MODIFY | `src/components/windows/SensorTooling.tsx` | Data-driven dropdowns + formula editor tab |
+| MODIFY | `src/components/windows/AddSensorWindow.tsx` | Updated config handling |
+| MODIFY | `src-tauri/src/lib.rs` | Operation registry + expression engine |
+| MODIFY | `src-tauri/Cargo.toml` | Add `evalexpr` or `fasteval` crate |
+
+#### Recommended Rust Crates
+- **`evalexpr`** — Simple expression evaluation with custom function support
+- **`fasteval`** — High-performance math expression evaluator
+- เลือกอันใดอันหนึ่ง ขึ้นกับว่าต้องการ custom function มากแค่ไหน
+
+#### Migration Path
+1. **Phase 1**: สร้าง Operation Registry + refactor Simple Mode → data-driven (ไม่กระทบ UX)
+2. **Phase 2**: เพิ่ม Advanced Mode (Formula Editor) เป็น tab ใหม่
+3. **Phase 3**: เพิ่ม time-series functions (moving_avg, rate_of_change, lag)

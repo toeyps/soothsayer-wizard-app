@@ -1,9 +1,12 @@
 pub mod csv_processor;
+pub mod operation_registry;
 use csv_processor::{
     load_metadata, CsvLoadReport, MappingData, MappingResult, ProcessedData,
     SensorMetadata,
 };
-use serde::Deserialize;
+use fasteval::Evaler;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
@@ -224,51 +227,23 @@ fn calculate_new_sensor(
             return Err("Single mode requires exactly one sensor".to_string());
         }
         let op = config.single_op.ok_or("Missing singleOp config")?;
-        let op_symbol = match op.op_type.as_str() {
-            "add" => "+",
-            "subtract" => "-",
-            "multiply" => "*",
-            "divide" => "/",
-            "power" => "^",
-            _ => return Err("Invalid single operation type".to_string()),
-        };
+        let op_symbol = operation_registry::single_op_symbol(&op.op_type)?;
         new_sensor_name = format!("{} {} {}", sensors[0], op_symbol, op.value);
 
         for row in &mut data.rows {
             let val = row.values[indices[0]];
             let new_val = match val {
-                Some(v) => match op.op_type.as_str() {
-                    "add" => Some(v + op.value),
-                    "subtract" => Some(v - op.value),
-                    "multiply" => Some(v * op.value),
-                    "divide" => {
-                        if op.value != 0.0 {
-                            Some(v / op.value)
-                        } else {
-                            None
-                        }
-                    }
-                    "power" => Some(v.powf(op.value)),
-                    _ => None,
-                },
+                Some(v) => operation_registry::execute_single_op(&op.op_type, v, op.value)
+                    .map_err(|e| e.to_string())?,
                 None => None,
             };
             row.values.push(new_val);
         }
     } else if config.mode == "multi" {
         let op = config.multi_op.ok_or("Missing multiOp config")?;
+        let op_name = operation_registry::multi_op_name(&op.op_type)?;
 
-        let op_name = match op.op_type.as_str() {
-            "sum" => "Sum",
-            "mean" => "Avg",
-            "median" => "Median",
-            "product" => "Product",
-            "subtract" => "Diff",
-            "divide" => "Ratio",
-            _ => return Err("Invalid multi operation type".to_string()),
-        };
-
-        if op.op_type == "subtract" || op.op_type == "divide" {
+        if operation_registry::is_base_op(&op.op_type) {
             let base = op
                 .base_sensor
                 .as_ref()
@@ -279,11 +254,9 @@ fn calculate_new_sensor(
         }
 
         for row in &mut data.rows {
-            let mut valid_values = Vec::new();
-            let mut base_val = None;
-
-            if op.op_type == "subtract" || op.op_type == "divide" {
+            if operation_registry::is_base_op(&op.op_type) {
                 let base_sensor = op.base_sensor.as_ref().ok_or("Missing base sensor")?;
+                let mut base_val = None;
                 let mut others_sum = 0.0;
 
                 for (i, sensor_name) in sensors.iter().enumerate() {
@@ -298,19 +271,12 @@ fn calculate_new_sensor(
                 }
 
                 let new_val = match base_val {
-                    Some(b) => {
-                        if op.op_type == "subtract" {
-                            Some(b - others_sum)
-                        } else if others_sum != 0.0 {
-                            Some(b / others_sum)
-                        } else {
-                            None
-                        }
-                    }
+                    Some(b) => operation_registry::execute_base_op(&op.op_type, b, others_sum)?,
                     None => None,
                 };
                 row.values.push(new_val);
             } else {
+                let mut valid_values = Vec::new();
                 for &idx in &indices {
                     if let Some(v) = row.values[idx] {
                         valid_values.push(v);
@@ -320,23 +286,7 @@ fn calculate_new_sensor(
                 let new_val = if valid_values.is_empty() {
                     None
                 } else {
-                    match op.op_type.as_str() {
-                        "sum" => Some(valid_values.iter().sum()),
-                        "mean" => {
-                            Some(valid_values.iter().sum::<f64>() / valid_values.len() as f64)
-                        }
-                        "product" => Some(valid_values.iter().product()),
-                        "median" => {
-                            valid_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                            let mid = valid_values.len() / 2;
-                            if valid_values.len() % 2 == 0 {
-                                Some((valid_values[mid - 1] + valid_values[mid]) / 2.0)
-                            } else {
-                                Some(valid_values[mid])
-                            }
-                        }
-                        _ => None,
-                    }
+                    operation_registry::execute_multi_op(&op.op_type, &valid_values)?
                 };
                 row.values.push(new_val);
             }
@@ -349,6 +299,284 @@ fn calculate_new_sensor(
         if !name.trim().is_empty() {
             new_sensor_name = name;
         }
+    }
+
+    data.headers.push(new_sensor_name.clone());
+
+    Ok(new_sensor_name)
+}
+
+// ---------------------------------------------------------------------------
+// Formula engine helpers
+// ---------------------------------------------------------------------------
+
+/// Extract sensor references from a formula string.
+/// Supports two patterns:
+///   - `$SensorName` (alphanumeric, underscores, dots)
+///   - `${Sensor Name With Spaces}` (anything inside braces)
+/// Returns a Vec of (full_match_token, sensor_name) pairs.
+fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
+    let mut refs = Vec::new();
+    let chars: Vec<char> = formula.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '$' {
+            if i + 1 < len && chars[i + 1] == '{' {
+                // ${Sensor Name} pattern
+                let start = i;
+                let name_start = i + 2;
+                let mut j = name_start;
+                while j < len && chars[j] != '}' {
+                    j += 1;
+                }
+                if j < len {
+                    let name: String = chars[name_start..j].iter().collect();
+                    let token: String = chars[start..=j].iter().collect();
+                    if !name.is_empty() {
+                        refs.push((token, name));
+                    }
+                    i = j + 1;
+                } else {
+                    i += 1;
+                }
+            } else if i + 1 < len
+                && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_')
+            {
+                // $SensorName pattern (alphanumeric, underscores, dots)
+                let start = i;
+                let name_start = i + 1;
+                let mut j = name_start;
+                while j < len
+                    && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == '.')
+                {
+                    j += 1;
+                }
+                let name: String = chars[name_start..j].iter().collect();
+                let token: String = chars[start..j].iter().collect();
+                if !name.is_empty() {
+                    refs.push((token, name));
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    refs
+}
+
+/// Replace `^` with `.pow(...)` for fasteval compatibility and convert
+/// sensor references to fasteval-safe variable names.
+/// Returns (transformed_expression, map_of_safe_name -> original_sensor_name).
+fn prepare_formula_for_eval(
+    formula: &str,
+    sensor_refs: &[(String, String)],
+) -> (String, Vec<(String, String)>) {
+    let mut expr = formula.to_string();
+    let mut safe_names: Vec<(String, String)> = Vec::new();
+
+    // Replace sensor references with safe variable names (fasteval needs
+    // simple alphanumeric identifiers).
+    for (i, (token, sensor_name)) in sensor_refs.iter().enumerate() {
+        let safe_name = format!("__sensor_{}", i);
+        expr = expr.replace(token, &safe_name);
+        safe_names.push((safe_name, sensor_name.clone()));
+    }
+
+    (expr, safe_names)
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaValidationResult {
+    valid: bool,
+    error: Option<String>,
+    referenced_sensors: Vec<String>,
+}
+
+#[tauri::command]
+fn validate_formula(
+    formula: String,
+    state: State<AppState>,
+) -> Result<FormulaValidationResult, String> {
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let data = &session.data;
+
+    // 1. Extract sensor references
+    let sensor_refs = extract_sensor_refs(&formula);
+    let referenced_sensors: Vec<String> = sensor_refs
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // 2. Check all referenced sensors exist in loaded data
+    for sensor_name in &referenced_sensors {
+        if !data.headers.contains(sensor_name) {
+            return Ok(FormulaValidationResult {
+                valid: false,
+                error: Some(format!("Sensor not found: {}", sensor_name)),
+                referenced_sensors,
+            });
+        }
+    }
+
+    // 3. Try to parse the expression (with dummy values)
+    let (expr, safe_names) = prepare_formula_for_eval(&formula, &sensor_refs);
+
+    let parser = fasteval::Parser::new();
+    let mut slab = fasteval::Slab::new();
+
+    match parser.parse(&expr, &mut slab.ps) {
+        Ok(expr_i) => {
+            // Try to evaluate with dummy values to catch runtime issues
+            let mut ns = |name: &str, _args: Vec<f64>| -> Option<f64> {
+                for (safe_name, _) in &safe_names {
+                    if name == safe_name {
+                        return Some(1.0); // dummy value
+                    }
+                }
+                None
+            };
+
+            let expr_ref = slab.ps.get_expr(expr_i);
+            match expr_ref.eval(&slab, &mut ns) {
+                Ok(_) => Ok(FormulaValidationResult {
+                    valid: true,
+                    error: None,
+                    referenced_sensors,
+                }),
+                Err(e) => Ok(FormulaValidationResult {
+                    valid: false,
+                    error: Some(format!("Evaluation error: {}", e)),
+                    referenced_sensors,
+                }),
+            }
+        }
+        Err(e) => Ok(FormulaValidationResult {
+            valid: false,
+            error: Some(format!("Parse error: {}", e)),
+            referenced_sensors,
+        }),
+    }
+}
+
+#[tauri::command]
+fn evaluate_formula(
+    formula: String,
+    custom_name: Option<String>,
+    state: State<AppState>,
+) -> Result<String, String> {
+    let mut state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_mut().ok_or("No data loaded")?;
+    let data = &mut session.data;
+
+    // 1. Extract sensor references from formula
+    let sensor_refs = extract_sensor_refs(&formula);
+    if sensor_refs.is_empty() {
+        return Err("Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.".to_string());
+    }
+
+    // 2. Resolve sensor names to column indices
+    let mut sensor_indices: Vec<(String, String, usize)> = Vec::new(); // (token, sensor_name, col_index)
+    let unique_sensors: std::collections::HashSet<String> =
+        sensor_refs.iter().map(|(_, name)| name.clone()).collect();
+
+    for sensor_name in &unique_sensors {
+        match data.headers.iter().position(|h| h == sensor_name) {
+            Some(idx) => {
+                // Find all tokens for this sensor
+                for (token, name) in &sensor_refs {
+                    if name == sensor_name {
+                        sensor_indices.push((token.clone(), name.clone(), idx));
+                    }
+                }
+            }
+            None => return Err(format!("Sensor not found: {}", sensor_name)),
+        }
+    }
+
+    // 3. Prepare the expression for fasteval
+    let (expr, safe_names) = prepare_formula_for_eval(&formula, &sensor_refs);
+
+    // Build a map from safe_name -> column index
+    let mut safe_name_to_idx: Vec<(String, usize)> = Vec::new();
+    for (safe_name, original_name) in &safe_names {
+        let idx = data
+            .headers
+            .iter()
+            .position(|h| h == original_name)
+            .ok_or(format!("Sensor not found: {}", original_name))?;
+        safe_name_to_idx.push((safe_name.clone(), idx));
+    }
+
+    // 4. Pre-compile the expression once
+    let parser = fasteval::Parser::new();
+    let mut slab = fasteval::Slab::new();
+    let expr_i = parser
+        .parse(&expr, &mut slab.ps)
+        .map_err(|e| format!("Formula parse error: {}", e))?;
+
+    // 5. Evaluate for each row
+    let mut new_values: Vec<Option<f64>> = Vec::with_capacity(data.rows.len());
+
+    for row in &data.rows {
+        // Check if any referenced sensor is None for this row
+        let mut has_none = false;
+        for (_, idx) in &safe_name_to_idx {
+            if *idx >= row.values.len() || row.values[*idx].is_none() {
+                has_none = true;
+                break;
+            }
+        }
+
+        if has_none {
+            new_values.push(None);
+            continue;
+        }
+
+        // Build the namespace with actual sensor values for this row
+        let row_values: BTreeMap<String, f64> = safe_name_to_idx
+            .iter()
+            .filter_map(|(safe_name, idx)| {
+                row.values.get(*idx).and_then(|v| v.map(|val| (safe_name.clone(), val)))
+            })
+            .collect();
+
+        let mut ns = |name: &str, _args: Vec<f64>| -> Option<f64> {
+            row_values.get(name).copied()
+        };
+
+        let expr_ref = slab.ps.get_expr(expr_i);
+        match expr_ref.eval(&slab, &mut ns) {
+            Ok(result) => {
+                if result.is_finite() {
+                    new_values.push(Some(result));
+                } else {
+                    new_values.push(None); // NaN or Infinity -> None
+                }
+            }
+            Err(_) => {
+                new_values.push(None);
+            }
+        }
+    }
+
+    // 6. Determine the new sensor name
+    let new_sensor_name = match custom_name {
+        Some(ref name) if !name.trim().is_empty() => name.clone(),
+        _ => format!("f({})", formula),
+    };
+
+    // 7. Append new column to each row
+    for (i, row) in data.rows.iter_mut().enumerate() {
+        row.values.push(new_values[i]);
     }
 
     data.headers.push(new_sensor_name.clone());
@@ -578,7 +806,9 @@ pub fn run() {
             calculate_new_sensor,
             load_mapping_csv,
             apply_sensor_mapping,
-            get_filtered_data
+            get_filtered_data,
+            evaluate_formula,
+            validate_formula
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

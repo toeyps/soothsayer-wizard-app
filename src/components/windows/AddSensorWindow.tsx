@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Split from 'split.js';
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
@@ -13,6 +13,11 @@ export default function AddSensorWindow() {
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [loading, setLoading] = useState(true);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(null);
+
+    // Formula mode state
+    const [formulaMode, setFormulaMode] = useState(false);
+    const [formulaExpression, setFormulaExpression] = useState('');
+    const [formulaCustomName, setFormulaCustomName] = useState('');
 
     // UI State
     const [searchTerm, setSearchTerm] = useState("");
@@ -89,36 +94,46 @@ export default function AddSensorWindow() {
     };
 
     const handleAdd = async () => {
-        if (operationConfig?.mode === 'single' && selectedSensors.length > 1) {
+        if (!formulaMode && operationConfig?.mode === 'single' && selectedSensors.length > 1) {
             alert("Only one sensor allowed for Single Calculation mode!");
             return;
         }
 
         setLoading(true);
         try {
-            // If operation config is set, perform calculation on backend
-            if (operationConfig) {
-                const newSensorName = await invoke<string>('calculate_new_sensor', {
-                    sensors: selectedSensors,
-                    config: operationConfig
+            if (formulaMode && formulaExpression.trim()) {
+                // Use evaluate_formula command for advanced formula mode
+                const newSensorName = await invoke<string>('evaluate_formula', {
+                    formula: formulaExpression,
+                    customName: formulaCustomName.trim() || null,
                 });
 
-                // After calculation, we want to select the NEW sensor AND the input sensors.
                 await emit('add-sensor-selection', {
                     sensors: [...selectedSensors, newSensorName],
-                    operation: null // Reset operation since it's now a "real" sensor
+                    operation: null,
+                });
+            } else if (operationConfig) {
+                // Use legacy calculate_new_sensor for backward compatibility
+                const newSensorName = await invoke<string>('calculate_new_sensor', {
+                    sensors: selectedSensors,
+                    config: operationConfig,
+                });
+
+                await emit('add-sensor-selection', {
+                    sensors: [...selectedSensors, newSensorName],
+                    operation: null,
                 });
             } else {
-                // No operation, just adding selected sensors
+                // No operation, just adding selected sensors directly
                 await emit('add-sensor-selection', {
                     sensors: selectedSensors,
-                    operation: null
+                    operation: null,
                 });
             }
             await handleClose();
         } catch (err) {
             console.error("Failed to update sensor:", err);
-            alert("Failed to update sensor: " + String(err));
+            alert("Failed: " + String(err));
             setLoading(false);
         }
     };
@@ -133,14 +148,16 @@ export default function AddSensorWindow() {
         });
     };
 
-    // Filter Logic for Explorer (passed down, or just pass filtered list?)
-    // SensorExplorer now handles grouping. We should pass the FILTERED list to it?
-    // Or pass all and let it filter?
-    // Current SensorExplorer implementation takes `sensors` and `sensorMetadata`.
-    // It groups what it receives. So we should filter BEFORE passing if we want search to work effectively
-    // across the whole tree (or let Explorer handle search internally? Explorer props has searchTerm).
-    // Let's pass the filtered list to Explorer so it only renders matching nodes.
-    // Let's pass the filtered list to Explorer so it only renders matching nodes.
+    const handleFormulaSubmit = useCallback((formula: string, customName?: string) => {
+        setFormulaMode(true);
+        setFormulaExpression(formula);
+        setFormulaCustomName(customName || '');
+    }, []);
+
+    const handleConfigChange = useCallback((config: SensorOperationConfig | null) => {
+        setFormulaMode(false);
+        setOperationConfig(config);
+    }, []);
 
     const filteredSensors = useMemo(() => {
         if (!searchTerm) return sensors;
@@ -165,10 +182,8 @@ export default function AddSensorWindow() {
 
             {/* Main Content (Split.js) */}
             <div className="flex-1 flex min-h-0 overflow-hidden">
-                {/* Left: Selected List + Explorer */}
-                {/* Left: Explorer Only */}
+                {/* Left: Explorer */}
                 <div id="split-0" className="flex flex-col h-full min-h-0 divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {/* Explorer */}
                     <div className="flex-1 min-h-0 overflow-hidden">
                         {loading ? (
                             <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-secondary)' }}>Loading...</div>
@@ -194,8 +209,10 @@ export default function AddSensorWindow() {
                         <SensorTooling
                             selectedSensors={selectedSensors}
                             sensorMetadata={sensorMetadata}
-                            onConfigChange={setOperationConfig}
+                            onConfigChange={handleConfigChange}
                             onRemoveSensor={handleSensorToggle}
+                            allSensors={sensors}
+                            onFormulaSubmit={handleFormulaSubmit}
                         />
                     </div>
                 </div>

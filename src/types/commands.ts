@@ -1,5 +1,6 @@
 import { SensorMetadata, SensorOperationConfig } from '../types';
 import { CsvLoadReport, MappingData, MappingResult } from './dataUpload';
+import type { FormulaValidationResult } from './calculationEngine';
 
 export type TauriCommands = {
   /** Updated: now returns CsvLoadReport instead of CsvMetadata */
@@ -61,5 +62,15 @@ export type TauriCommands = {
   run_python_analysis: {
     args: Record<string, never>;
     returns: string;
+  };
+  /** Evaluate a formula expression and create a new sensor column */
+  evaluate_formula: {
+    args: { formula: string; custom_name: string | null };
+    returns: string;
+  };
+  /** Validate a formula without executing it */
+  validate_formula: {
+    args: { formula: string };
+    returns: FormulaValidationResult;
   };
 };
