@@ -21,7 +21,27 @@
       "Bash(npx vite:*)",
       "Bash(cargo doc:*)",
       "Bash(cargo build:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "WebFetch(domain:api.anthropic.com)",
+      "Read(//private/tmp/design-extract/**)",
+      "Bash(mkdir -p extracted)",
+      "Bash(tar -xf design -C extracted)",
+      "Bash(grep -c \"^.*{$\" src/App.css)",
+      "Read(//private/tmp/**)",
+      "Bash(mkdir -p design-extract2)",
+      "Bash(cp \"/Users/tide/.claude/projects/-Users-tide-Desktop-w-tauri-sensor-viz/c0a0e51e-1143-45dd-9c80-4288fb42be4e/tool-results/webfetch-1776749926589-aq7j4z.bin\" design-extract2/d.gz)",
+      "Bash(gunzip design-extract2/d.gz)",
+      "Bash(mkdir -p design-extract2/out)",
+      "Bash(mkdir -p /tmp/design-extract3)",
+      "Read(//tmp/**)",
+      "Bash(curl -sL \"https://api.anthropic.com/v1/design/h/sSKAZvEsiyHTRGLupBSK-A?open_file=predictive-model.html\" -o bundle.tar.gz)",
+      "Bash(gunzip -f bundle.tar.gz)",
+      "Bash(tar -xf bundle.tar)",
+      "Bash(mkdir -p /tmp/design-fetch)",
+      "Bash(cp /Users/tide/.claude/projects/-Users-tide-Desktop-w-tauri-sensor-viz/c0a0e51e-1143-45dd-9c80-4288fb42be4e/tool-results/webfetch-1776852032403-l4batv.bin archive.gz)",
+      "Bash(gunzip -c archive.gz)",
+      "Bash(tar -tf archive.tar)",
+      "Bash(tar -xf archive.tar)"
     ]
   }
 }

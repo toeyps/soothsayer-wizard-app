@@ -4,33 +4,21 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
-import { CsvMetadata, SensorMetadata } from "../../types";
-import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, BarChart3 } from "lucide-react";
+import { CsvMetadata, SensorMetadata, DashboardSnapshot, FailureGroup, FailureSensorRow as SensorRow } from "../../types";
+import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, Minus, Square, GripVertical, Play, ArrowLeft } from "lucide-react";
+import { useIsMacOS } from "../../hooks/useIsMacOS";
+import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
+import { updateWorkspaceData, loadWorkspaceData, setLastWorkspaceId } from "../../workspaceManager";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface FailureGroupData {
+    workspaceId: string;
     sensorHeaders: string[];
     sensorMetadata: SensorMetadata[] | null;
     metadata: CsvMetadata;
-}
-
-interface FailureGroup {
-    no: number;
-    name: string;
-    isCollapsed: boolean;
-}
-
-interface SensorRow {
-    id: string;
-    groupNo: number;
-    conceptSensor: string;
-    mappedSensorTag: string;
-    mappedSensorName: string;
-    modelType: string;
-    modelNotes: string;
-    additionalNotes: string;
-    status: boolean;
+    dashboardSnapshot?: DashboardSnapshot;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -44,13 +32,20 @@ function getSensorName(tag: string, meta: SensorMetadata[] | null): string {
     return found ? found.description : tag;
 }
 
+const GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
+const getGroupColor = (no: number): string => no === 0 ? 'slate' : GROUP_PALETTE[(no - 1) % GROUP_PALETTE.length];
+
 // ── Component ──────────────────────────────────────────────────────────
 
 export default function FailureGroupCreation() {
+    const isMacOS = useIsMacOS();
+    const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+    const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const [allSensors, setAllSensors] = useState<string[]>([]);
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [metadata, setMetadata] = useState<CsvMetadata | null>(null);
     const [loading, setLoading] = useState(true);
+    const hydratedRef = useRef(false);
 
     const [groups, setGroups] = useState<FailureGroup[]>([
         { no: 0, name: "Not in Group", isCollapsed: false }
@@ -72,40 +67,42 @@ export default function FailureGroupCreation() {
     const [showModelPanel, setShowModelPanel] = useState(false);
     const [isBuildModelOpen, setIsBuildModelOpen] = useState(false);
 
-    // ── Persistence Keys ─────────────────────────────────────────
-    const STORAGE_KEY_GROUPS = 'fg-groups';
-    const STORAGE_KEY_ROWS = 'fg-rows';
-
     // ── Setup ────────────────────────────────────────────────────
 
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
 
-        // Restore persisted state
-        try {
-            const savedGroups = localStorage.getItem(STORAGE_KEY_GROUPS);
-            const savedRows = localStorage.getItem(STORAGE_KEY_ROWS);
-            if (savedGroups) setGroups(JSON.parse(savedGroups));
-            if (savedRows) {
-                const parsed = JSON.parse(savedRows) as SensorRow[];
-                setRows(parsed);
-                // Ensure _rowId counter stays ahead of restored rows
-                const maxId = parsed.reduce((max, r) => {
-                    const num = parseInt(r.id.replace('row-', ''), 10);
-                    return num > max ? num : max;
-                }, 0);
-                if (maxId >= _rowId) _rowId = maxId;
-            }
-        } catch { /* ignore corrupt data */ }
-
         let unlistenData: (() => void) | undefined;
         const setup = async () => {
-            unlistenData = await listen<FailureGroupData>('failure-group-data', (event) => {
+            unlistenData = await listen<FailureGroupData>('failure-group-data', async (event) => {
                 const d = event.payload;
                 setAllSensors(d.sensorHeaders);
                 setSensorMetadata(d.sensorMetadata);
                 setMetadata(d.metadata);
+                setWorkspaceId(d.workspaceId);
+                if (d.dashboardSnapshot) setDashboardSnapshot(d.dashboardSnapshot);
+
+                // Restore failure-group slice from workspace file (per-workspace, not global).
+                try {
+                    const ws = await loadWorkspaceData(d.workspaceId);
+                    if (ws?.failureGroupState) {
+                        setGroups(ws.failureGroupState.groups);
+                        setRows(ws.failureGroupState.rows);
+                        // Keep _rowId counter ahead of restored rows.
+                        const maxId = ws.failureGroupState.rows.reduce((max, r) => {
+                            const num = parseInt(r.id.replace('row-', ''), 10);
+                            return Number.isFinite(num) && num > max ? num : max;
+                        }, 0);
+                        if (maxId >= _rowId) _rowId = maxId;
+                    }
+                    if (ws?.dashboardSnapshot && !d.dashboardSnapshot) {
+                        setDashboardSnapshot(ws.dashboardSnapshot);
+                    }
+                } catch (e) {
+                    console.warn('Failed to hydrate failure-group state from workspace:', e);
+                }
+                hydratedRef.current = true;
                 setLoading(false);
             });
             await emit('request-failure-group-data');
@@ -128,14 +125,60 @@ export default function FailureGroupCreation() {
         if (showNewGroupDialog && newGroupInputRef.current) newGroupInputRef.current.focus();
     }, [showNewGroupDialog]);
 
-    // ── Persist state on change ──────────────────────────────────
+    // ── Persist groups/rows into the workspace on change (debounced, per-workspace). ──────────
+    // Intentionally does NOT touch lastRoute — that's managed by explicit transitions
+    // (Save & Continue → 'failure-group', Build Model → 'predictive-model', window close → 'failure-group').
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(groups));
-    }, [groups]);
+        if (!workspaceId || !hydratedRef.current) return;
+        const timer = setTimeout(() => {
+            updateWorkspaceData(workspaceId, (prev) => ({
+                ...prev,
+                failureGroupState: { groups, rows },
+            })).catch(e => console.error('Failed to persist failure-group state:', e));
+        }, 250);
+        return () => clearTimeout(timer);
+    }, [groups, rows, workspaceId]);
 
+    // Auto-reopen Step 3 (predictive-model) window on app resume if that's where the user left off.
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY_ROWS, JSON.stringify(rows));
-    }, [rows]);
+        if (!workspaceId || !hydratedRef.current || loading) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const ws = await loadWorkspaceData(workspaceId);
+                if (cancelled) return;
+                if (ws?.lastRoute === 'predictive-model' && ws.predictiveModelState?.targetSensor && metadata) {
+                    // Avoid re-spawning if the window already exists.
+                    const existing = await WebviewWindow.getByLabel('predictive-model');
+                    if (existing) return;
+                    pendingModelDataRef.current = {
+                        targetSensor: ws.predictiveModelState.targetSensor,
+                        predictorSensors: ws.predictiveModelState.predictorSensors,
+                    };
+                    const screenW = window.screen.width;
+                    const screenH = window.screen.height;
+                    const webview = new WebviewWindow('predictive-model', {
+                        url: '/?window=predictive-model',
+                        title: `Predictive Model — ${ws.predictiveModelState.targetSensor}`,
+                        width: Math.round(screenW * 0.75),
+                        height: Math.round(screenH * 0.85),
+                        center: true,
+                        decorations: isMacOS,
+                    });
+                    webview.once('tauri://created', () => setIsBuildModelOpen(true));
+                    webview.once('tauri://error', (e) => console.error('Failed to open predictive model window on resume:', e));
+                    const unlistenClose = await listen('predictive-model-closed', () => {
+                        setIsBuildModelOpen(false);
+                        updateWorkspaceData(workspaceId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => {});
+                        unlistenClose();
+                    });
+                }
+            } catch (e) {
+                console.warn('Failed to check for predictive-model resume:', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [workspaceId, loading, metadata, isMacOS]);
 
     // ── Build Model ──────────────────────────────────────────────
 
@@ -145,24 +188,50 @@ export default function FailureGroupCreation() {
         let unlistenReq: (() => void) | undefined;
         const setupModelListener = async () => {
             unlistenReq = await listen('request-predictive-data', async () => {
-                if (pendingModelDataRef.current && metadata) {
+                if (pendingModelDataRef.current && metadata && workspaceId) {
                     await emit('predictive-model-data', {
+                        workspaceId,
                         targetSensor: pendingModelDataRef.current.targetSensor,
                         predictorSensors: pendingModelDataRef.current.predictorSensors,
                         sensorHeaders: allSensors,
                         sensorMetadata,
                         metadata,
+                        dashboardSnapshot,
                     });
                 }
             });
         };
         setupModelListener();
         return () => { if (unlistenReq) unlistenReq(); };
-    }, [allSensors, sensorMetadata, metadata]);
+    }, [allSensors, sensorMetadata, metadata, workspaceId, dashboardSnapshot]);
 
     const handleBuildModel = async (row: SensorRow) => {
-        if (!row.mappedSensorTag) return;
+        if (!row.mappedSensorTag || !workspaceId) return;
         pendingModelDataRef.current = { targetSensor: row.mappedSensorTag, predictorSensors: [] };
+        // Flip lastRoute so auto-resume re-opens the predictive-model window.
+        await updateWorkspaceData(workspaceId, (prev) => ({
+            ...prev,
+            lastRoute: 'predictive-model',
+            predictiveModelState: {
+                ...(prev.predictiveModelState ?? {
+                    individualChecked: true,
+                    rcMode: null,
+                    scatterXSensor: "",
+                    relModelName: "",
+                    relStiffness: 1,
+                    clusterModelName: "",
+                    numClusters: 3,
+                    criteriaSensor: "",
+                    clusterRangeMin: 0,
+                    clusterRangeMax: 100,
+                    filterTimeStart: "",
+                    filterTimeEnd: "",
+                    filterSensorValue: "",
+                }),
+                targetSensor: row.mappedSensorTag,
+                predictorSensors: [],
+            },
+        }));
         try {
             const screenW = window.screen.width;
             const screenH = window.screen.height;
@@ -172,7 +241,7 @@ export default function FailureGroupCreation() {
                 width: Math.round(screenW * 0.75),
                 height: Math.round(screenH * 0.85),
                 center: true,
-                decorations: false,
+                decorations: isMacOS,
             });
             webview.once('tauri://created', () => {
                 setIsBuildModelOpen(true);
@@ -183,6 +252,12 @@ export default function FailureGroupCreation() {
             // Listen for custom close event from BuildModel window
             const unlistenClose = await listen('predictive-model-closed', () => {
                 setIsBuildModelOpen(false);
+                if (workspaceId) {
+                    updateWorkspaceData(workspaceId, (prev) => ({
+                        ...prev,
+                        lastRoute: 'failure-group',
+                    })).catch(() => { /* ignore */ });
+                }
                 unlistenClose();
             });
         } catch (err) {
@@ -292,8 +367,25 @@ export default function FailureGroupCreation() {
 
     const getRowsForGroup = (groupNo: number) => rows.filter(r => r.groupNo === groupNo);
     const selectedRow = rows.find(r => r.id === selectedRowId);
-    const filteredSensors = allSensors.filter(s => s.toLowerCase().includes(dropdownSearch.toLowerCase()));
+    const getSensorDescription = (tag: string): string => {
+        if (!sensorMetadata || !tag) return "";
+        const found = sensorMetadata.find(m => m.tag.toLowerCase() === tag.toLowerCase());
+        return found ? found.description : "";
+    };
+    const filteredSensors = allSensors.filter(s => {
+        const q = dropdownSearch.toLowerCase();
+        if (!q) return true;
+        if (s.toLowerCase().includes(q)) return true;
+        const desc = getSensorDescription(s).toLowerCase();
+        return desc.includes(q);
+    });
     const sortedGroups = [...groups].sort((a, b) => a.no - b.no);
+
+    // Stats for progress strip
+    const totalSensors = rows.length;
+    const readyCount = rows.filter(r => r.status).length;
+    const pendingCount = rows.filter(r => !r.status).length;
+    const completionPct = totalSensors > 0 ? Math.round((readyCount / totalSensors) * 100) : 0;
 
     // ── CSV Helpers ────────────────────────────────────────────────
 
@@ -420,6 +512,56 @@ export default function FailureGroupCreation() {
         URL.revokeObjectURL(link.href);
     };
 
+    // ── Back to Upload ────────────────────────────────────────────
+
+    const handleBackToUpload = async () => {
+        try {
+            const confirmed = await ask(
+                'Return to the Upload page? Your Failure Groups are already saved in this workspace — you can reopen it later.',
+                { title: 'Back to Upload', kind: 'warning' }
+            );
+            if (!confirmed) return;
+        } catch { /* fall through to confirm via window.confirm */ }
+
+        // Reset workspace anchor so the main window lands on the import page.
+        try { await setLastWorkspaceId(null); } catch { /* ignore */ }
+
+        try {
+            const existing = await WebviewWindow.getByLabel('main');
+            if (existing) {
+                await existing.show();
+                await existing.setFocus();
+            } else {
+                new WebviewWindow('main', {
+                    url: '/',
+                    title: 'Soothsayer-Wizard',
+                    width: 1200,
+                    height: 800,
+                    center: true,
+                    maximized: true,
+                });
+            }
+        } catch (e) {
+            console.warn('Failed to reopen main window:', e);
+        }
+
+        try { await getCurrentWindow().close(); } catch { /* ignore */ }
+    };
+
+    // ── Native Menu ───────────────────────────────────────────────
+
+    useSubWindowMenu({
+        workspaceId,
+        localSaveLabel: 'Export Groups as CSV',
+        onLocalSave: () => handleSave(),
+        onToggleTheme: () => {
+            const current = localStorage.getItem('theme') || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('theme', next);
+            document.documentElement.setAttribute('data-theme', next);
+        },
+    });
+
     // ── Render ────────────────────────────────────────────────────
 
     if (loading) {
@@ -432,44 +574,100 @@ export default function FailureGroupCreation() {
 
     return (
         <div className="predictive-container">
-            {/* Title Bar */}
-            <div data-tauri-drag-region className="predictive-titlebar">
-                <h2 className="predictive-title">Predictive Mode — Failure Group Creation</h2>
-                <button onClick={handleClose} className="predictive-close-btn">&times;</button>
+            {/* Title Bar — only render custom bar when the OS doesn't provide native decorations */}
+            {!isMacOS && (
+                <div data-tauri-drag-region className="predictive-titlebar">
+                    <h2 className="predictive-title">Predictive Mode — Failure Group Creation</h2>
+                    <div className="predictive-titlebar-actions">
+                        <button className="predictive-window-btn" onClick={() => getCurrentWindow().minimize()} title="Minimize">
+                            <Minus size={14} />
+                        </button>
+                        <button className="predictive-window-btn" onClick={() => getCurrentWindow().toggleMaximize()} title="Maximize">
+                            <Square size={12} />
+                        </button>
+                        <button onClick={handleClose} className="predictive-close-btn">&times;</button>
+                    </div>
+                </div>
+            )}
+
+            {/* Command bar — toolbar with breadcrumb + actions */}
+            <div className="fg-toolbar">
+                <div className="fg-toolbar-left">
+                    <button
+                        className="fg-back-btn"
+                        onClick={handleBackToUpload}
+                        title="Back to Upload"
+                    >
+                        <ArrowLeft size={14} />
+                        <span>Back to Upload</span>
+                    </button>
+                    <div className="fg-breadcrumb">
+                        <span className="fg-breadcrumb-label">Predictive Mode</span>
+                        <span className="fg-breadcrumb-sep">/</span>
+                        <span className="fg-breadcrumb-title">Failure Groups</span>
+                    </div>
+                    <span className="fg-step-pill">Step 2 of 3</span>
+                </div>
+                <div className="fg-toolbar-right">
+                    <button className="fg-upload-btn" onClick={handleUpload}>
+                        <Upload size={13} /> Upload Filled
+                    </button>
+                    <button className="fg-download-btn" onClick={handleDownloadTemplate}>
+                        <Download size={13} /> Template
+                    </button>
+                    <div className="fg-toolbar-divider" />
+                    <button className="fg-save-btn" onClick={handleSave}>
+                        <Save size={13} /> Save Groups
+                    </button>
+                </div>
+            </div>
+
+            {/* Progress strip */}
+            <div className="fg-progress-strip">
+                <div className="fg-stat-badge">
+                    <span className="fg-stat-label">Total sensors</span>
+                    <span className="fg-stat-value">{totalSensors}</span>
+                </div>
+                <div className="fg-strip-div" />
+                <div className="fg-stat-badge">
+                    <span className="fg-stat-label">Groups</span>
+                    <span className="fg-stat-value">{groups.length}</span>
+                </div>
+                <div className="fg-strip-div" />
+                <div className="fg-stat-badge">
+                    <span className="fg-stat-label">Models ready</span>
+                    <span className="fg-stat-value fg-stat-value--ok">{readyCount}</span>
+                </div>
+                <div className="fg-strip-div" />
+                <div className="fg-stat-badge">
+                    <span className="fg-stat-label">Pending</span>
+                    <span className="fg-stat-value fg-stat-value--warn">{pendingCount}</span>
+                </div>
+                <div className="fg-strip-spacer" />
+                <div className="fg-completion">
+                    <span className="fg-completion-label">Completion</span>
+                    <div className="fg-completion-bar">
+                        <div className="fg-completion-fill" style={{ width: `${completionPct}%` }} />
+                    </div>
+                    <span className="fg-completion-pct">{completionPct}%</span>
+                </div>
             </div>
 
             <div className="fg-body">
                 <div className={`fg-table-area ${showModelPanel ? 'fg-table-area--split' : ''}`}>
-                    {/* Toolbar */}
-                    <div className="fg-toolbar">
-                        <div className="fg-toolbar-left">
-                            <button className="fg-upload-btn" onClick={handleUpload}>
-                                <Upload size={14} /> Upload Filled Failure Group
-                            </button>
-                            <button className="fg-download-btn" onClick={handleDownloadTemplate}>
-                                <Download size={14} /> Download Template
-                            </button>
-                        </div>
-                        <div className="fg-toolbar-right">
-                            <button className="fg-save-btn" onClick={handleSave}>
-                                <Save size={14} /> Save
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Groups */}
                     <div className="fg-groups-container">
                         {sortedGroups.map(group => {
                             const groupRows = getRowsForGroup(group.no);
                             const isUngrouped = group.no === 0;
+                            const gColor = getGroupColor(group.no);
 
                             return (
-                                <div key={group.no} className={`fg-group-card ${isUngrouped ? 'fg-group-card--ungrouped' : ''}`}>
+                                <div key={group.no} className={`fg-group-card fg-group-color-${gColor} ${isUngrouped ? 'fg-group-card--ungrouped' : ''}`}>
                                     {/* Group Header */}
                                     <div className="fg-group-card-header" onClick={() => toggleGroupCollapse(group.no)}>
                                         <div className="fg-group-card-header-left">
                                             {group.isCollapsed ? <ChevronRight size={14} className="fg-group-chevron" /> : <ChevronDown size={14} className="fg-group-chevron" />}
-                                            <span className={`fg-group-badge ${isUngrouped ? 'fg-group-badge--muted' : ''}`}>{group.no}</span>
+                                            <span className="fg-group-dot" />
                                             {editingGroupNo === group.no ? (
                                                 <input className="fg-group-name-input" value={editingGroupName}
                                                     onChange={e => setEditingGroupName(e.target.value)}
@@ -480,7 +678,7 @@ export default function FailureGroupCreation() {
                                             ) : (
                                                 <span className="fg-group-name">{group.name}</span>
                                             )}
-                                            <span className="fg-group-count">{groupRows.length} sensor(s)</span>
+                                            <span className="fg-group-count">{groupRows.length} sensor{groupRows.length !== 1 ? 's' : ''}</span>
                                         </div>
                                         <div className="fg-group-card-header-actions" onClick={e => e.stopPropagation()}>
                                             {!isUngrouped && (
@@ -489,7 +687,7 @@ export default function FailureGroupCreation() {
                                                 </button>
                                             )}
                                             <button className="fg-icon-btn fg-icon-btn-add" onClick={() => addRowToGroup(group.no)} title="Add sensor">
-                                                <Plus size={12} />
+                                                <Plus size={13} />
                                             </button>
                                             {!isUngrouped && (
                                                 <button className="fg-icon-btn fg-icon-btn-danger" onClick={() => removeGroup(group.no)} title="Remove group">
@@ -499,113 +697,50 @@ export default function FailureGroupCreation() {
                                         </div>
                                     </div>
 
-                                    {/* Group Body — Sensor Cards */}
+                                    {/* Group Body — compact sensor chips */}
                                     {!group.isCollapsed && (
                                         <div className="fg-group-card-body">
                                             {groupRows.length === 0 ? (
-                                                <div className="fg-group-empty">
-                                                    <span>No sensor rows yet.</span>
-                                                    <button className="fg-group-empty-add" onClick={() => addRowToGroup(group.no)}>
-                                                        <Plus size={12} /> Add Sensor
-                                                    </button>
-                                                </div>
+                                                <div className="fg-group-empty">Drop sensors here</div>
                                             ) : (
                                                 <div className="fg-sensor-cards">
                                                     {groupRows.map(row => {
                                                         const isSelected = selectedRowId === row.id;
-                                                        const tagMissing = row.mappedSensorTag && !allSensors.some(s => s.toLowerCase() === row.mappedSensorTag.toLowerCase());
-
+                                                        const tagMissing = !!row.mappedSensorTag && !allSensors.some(s => s.toLowerCase() === row.mappedSensorTag.toLowerCase());
                                                         return (
                                                             <div
                                                                 key={row.id}
-                                                                className={`fg-sensor-card ${isSelected ? 'fg-sensor-card--selected' : ''}`}
+                                                                className={`fg-sensor-chip ${isSelected ? 'fg-sensor-chip--selected' : ''} ${!row.status ? 'fg-sensor-chip--disabled' : ''}`}
                                                                 onClick={() => handleRowClick(row.id)}
                                                             >
-                                                                {/* Card Header */}
-                                                                <div className="fg-sensor-card-top">
-                                                                    <div className="fg-sensor-card-tag-area" onClick={e => e.stopPropagation()}>
-                                                                        <div className="fg-sensor-tag-wrapper">
-                                                                            <button
-                                                                                className={`fg-sensor-tag-btn ${tagMissing ? 'fg-sensor-tag-btn--warning' : ''} ${row.mappedSensorTag ? 'fg-sensor-tag-btn--filled' : ''}`}
-                                                                                onClick={() => { dropdownRowId === row.id ? setDropdownRowId(null) : (setDropdownRowId(row.id), setDropdownSearch("")); }}
-                                                                            >
-                                                                                <span>{row.mappedSensorTag || 'Select sensor tag...'}</span>
-                                                                                {tagMissing && <AlertTriangle size={12} className="fg-warning-icon" />}
-                                                                                <ChevronDown size={12} />
-                                                                            </button>
-                                                                            {dropdownRowId === row.id && (
-                                                                                <div className="fg-sensor-dropdown" ref={dropdownRef}>
-                                                                                    <div className="fg-sensor-dropdown-search">
-                                                                                        <input type="text" placeholder="Search sensor..." value={dropdownSearch} onChange={e => setDropdownSearch(e.target.value)} autoFocus />
-                                                                                    </div>
-                                                                                    <div className="fg-sensor-dropdown-list">
-                                                                                        {filteredSensors.length === 0 ? (
-                                                                                            <div className="fg-sensor-dropdown-empty">No sensors found</div>
-                                                                                        ) : filteredSensors.map(s => (
-                                                                                            <button key={s} className={`fg-sensor-dropdown-item ${row.mappedSensorTag === s ? 'selected' : ''}`} onClick={() => selectSensorTag(row.id, s)}>
-                                                                                                {s}
-                                                                                            </button>
-                                                                                        ))}
-                                                                                    </div>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                    <div className="fg-sensor-card-actions" onClick={e => e.stopPropagation()}>
-                                                                        <label className="fg-status-label">
-                                                                            <input type="checkbox" className="fg-status-checkbox" checked={row.status} onChange={e => updateRow(row.id, 'status', e.target.checked)} />
-                                                                            <span className={`fg-status-dot ${row.status ? 'fg-status-dot--active' : ''}`}></span>
-                                                                        </label>
-                                                                        <button className="fg-icon-btn fg-icon-btn-danger" onClick={() => removeRow(row.id)} title="Remove sensor">
-                                                                            <X size={12} />
-                                                                        </button>
-                                                                    </div>
+                                                                <div className="fg-sensor-chip-top">
+                                                                    <GripVertical size={12} className="fg-sensor-grip" />
+                                                                    <span className={`fg-sensor-chip-tag ${tagMissing ? 'fg-sensor-chip-tag--warning' : ''}`}>
+                                                                        {row.mappedSensorTag || '— no tag —'}
+                                                                    </span>
+                                                                    {tagMissing && <AlertTriangle size={11} className="fg-warning-icon" />}
+                                                                    <div className="fg-chip-spacer" />
+                                                                    <label className="fg-toggle-label" onClick={e => e.stopPropagation()} title={row.status ? 'Ready' : 'Pending'}>
+                                                                        <input type="checkbox" className="fg-status-switch-input" checked={row.status} onChange={e => updateRow(row.id, 'status', e.target.checked)} />
+                                                                        <span className="fg-status-switch"><span className="fg-status-switch-thumb" /></span>
+                                                                    </label>
                                                                 </div>
-
-                                                                {/* Mapped sensor name auto-display */}
-                                                                {row.mappedSensorName && (
-                                                                    <div className="fg-sensor-card-mapped-name">{row.mappedSensorName}</div>
-                                                                )}
-
-                                                                {/* Card Fields Grid */}
-                                                                <div className="fg-sensor-card-fields" onClick={e => e.stopPropagation()}>
-                                                                    <div className="fg-field">
-                                                                        <label>Concept Sensor</label>
-                                                                        <input type="text" value={row.conceptSensor} placeholder="e.g. crankcase vibration" onChange={e => updateRow(row.id, 'conceptSensor', e.target.value)} />
-                                                                    </div>
-                                                                    <div className="fg-field">
-                                                                        <label>Model Type</label>
-                                                                        <input type="text" value={row.modelType} placeholder="e.g. I + R" onChange={e => updateRow(row.id, 'modelType', e.target.value)} />
-                                                                    </div>
-                                                                    <div className="fg-field">
-                                                                        <label>Model Notes</label>
-                                                                        <input type="text" value={row.modelNotes} placeholder="Notes..." onChange={e => updateRow(row.id, 'modelNotes', e.target.value)} />
-                                                                    </div>
-                                                                    <div className="fg-field">
-                                                                        <label>Additional Notes</label>
-                                                                        <input type="text" value={row.additionalNotes} placeholder="Additional..." onChange={e => updateRow(row.id, 'additionalNotes', e.target.value)} />
-                                                                    </div>
+                                                                <div className="fg-sensor-chip-name">
+                                                                    {row.mappedSensorName || row.conceptSensor || 'Unnamed sensor'}
                                                                 </div>
-
-                                                                {/* Build Model Button */}
-                                                                {row.mappedSensorTag && (
-                                                                    <button
-                                                                        className="fg-build-model-btn"
-                                                                        onClick={(e) => { e.stopPropagation(); handleBuildModel(row); }}
-                                                                    >
-                                                                        <BarChart3 size={12} /> Build Model
-                                                                    </button>
-                                                                )}
+                                                                <div className="fg-sensor-chip-meta">
+                                                                    <span className={`fg-status-pill fg-status-pill--${row.status ? 'ok' : 'neutral'}`}>
+                                                                        {row.status ? 'Ready' : 'Pending'}
+                                                                    </span>
+                                                                    {row.modelType && <span className="fg-sensor-chip-model">· {row.modelType}</span>}
+                                                                </div>
                                                             </div>
                                                         );
                                                     })}
+                                                    <button className="fg-chip-add-tile" onClick={() => addRowToGroup(group.no)}>
+                                                        <Plus size={12} /> Add sensor
+                                                    </button>
                                                 </div>
-                                            )}
-
-                                            {groupRows.length > 0 && (
-                                                <button className="fg-inline-add-row" onClick={() => addRowToGroup(group.no)}>
-                                                    <Plus size={12} /> Add sensor
-                                                </button>
                                             )}
                                         </div>
                                     )}
@@ -632,49 +767,197 @@ export default function FailureGroupCreation() {
                             </div>
                         ) : (
                             <button className="fg-add-group-btn" onClick={() => setShowNewGroupDialog(true)}>
-                                <FolderPlus size={16} /> <span>Add New Failure Group</span>
+                                <Plus size={14} /> <span>Add New Failure Group</span>
                             </button>
                         )}
                     </div>
                 </div>
 
-                {/* Right: Model Build Panel */}
-                {showModelPanel && selectedRow && (
-                    <div className="fg-model-panel">
-                        <div className="fg-model-panel-header">
-                            <span>Model Build — {selectedRow.mappedSensorTag || 'Select Sensor'}</span>
-                            <button className="predictive-close-btn" onClick={() => { setShowModelPanel(false); setSelectedRowId(null); }}>&times;</button>
-                        </div>
-                        <div className="fg-model-panel-body">
-                            <div className="fg-model-info-grid">
-                                <div className="fg-model-info-item">
-                                    <span className="fg-model-info-label">Group</span>
-                                    <span className="fg-model-info-value">{groups.find(g => g.no === selectedRow.groupNo)?.name || 'Unknown'} (No. {selectedRow.groupNo})</span>
+                {/* Right: Inspector panel */}
+                {showModelPanel && (
+                <div className="fg-model-panel">
+                    {selectedRow ? (
+                        <>
+                            <div className="fg-inspector-header">
+                                <div className="fg-inspector-eyebrow">Configure</div>
+                                <div className="fg-inspector-title-row">
+                                    <div className="fg-sensor-tag-wrapper" onClick={e => e.stopPropagation()}>
+                                        <button
+                                            className={`fg-inspector-tag-btn ${selectedRow.mappedSensorTag ? 'fg-inspector-tag-btn--filled' : ''}`}
+                                            onClick={() => { dropdownRowId === selectedRow.id ? setDropdownRowId(null) : (setDropdownRowId(selectedRow.id), setDropdownSearch("")); }}
+                                        >
+                                            <span>{selectedRow.mappedSensorTag || 'Select sensor tag…'}</span>
+                                            <ChevronDown size={12} />
+                                        </button>
+                                        {dropdownRowId === selectedRow.id && (
+                                            <div className="fg-sensor-dropdown" ref={dropdownRef}>
+                                                <div className="fg-sensor-dropdown-search">
+                                                    <input type="text" placeholder="Search sensor..." value={dropdownSearch} onChange={e => setDropdownSearch(e.target.value)} autoFocus />
+                                                </div>
+                                                <div className="fg-sensor-dropdown-list">
+                                                    {filteredSensors.length === 0 ? (
+                                                        <div className="fg-sensor-dropdown-empty">No sensors found</div>
+                                                    ) : filteredSensors.map(s => {
+                                                        const desc = getSensorDescription(s);
+                                                        return (
+                                                            <button key={s} className={`fg-sensor-dropdown-item ${selectedRow.mappedSensorTag === s ? 'selected' : ''}`} onClick={() => selectSensorTag(selectedRow.id, s)}>
+                                                                <span className="fg-sensor-dropdown-item-tag">{s}</span>
+                                                                {desc && <span className="fg-sensor-dropdown-item-desc">{desc}</span>}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <span className={`fg-status-pill fg-status-pill--${selectedRow.status ? 'ok' : 'neutral'}`}>
+                                        {selectedRow.status ? 'Ready' : 'Pending'}
+                                    </span>
                                 </div>
-                                <div className="fg-model-info-item">
-                                    <span className="fg-model-info-label">Concept Sensor</span>
-                                    <span className="fg-model-info-value">{selectedRow.conceptSensor || '—'}</span>
+                                <div className="fg-inspector-desc">{selectedRow.mappedSensorName || '—'}</div>
+                            </div>
+
+                            <div className="fg-inspector-body">
+                                {/* Assigned Group */}
+                                <div className="fg-inspector-field">
+                                    <div className="fg-inspector-field-label-row">
+                                        <label>Assigned Group</label>
+                                    </div>
+                                    <div className="fg-group-chip-grid">
+                                        {sortedGroups.map(g => {
+                                            const active = g.no === selectedRow.groupNo;
+                                            const c = getGroupColor(g.no);
+                                            const isEditing = editingGroupNo === g.no;
+                                            const isUngrouped = g.no === 0;
+                                            return (
+                                                <div
+                                                    key={g.no}
+                                                    className={`fg-group-chip fg-group-color-${c} ${active ? 'fg-group-chip--active' : ''}`}
+                                                >
+                                                    <span className="fg-group-chip-dot" />
+                                                    {isEditing ? (
+                                                        <input
+                                                            className="fg-group-chip-input"
+                                                            value={editingGroupName}
+                                                            onChange={e => setEditingGroupName(e.target.value)}
+                                                            onBlur={finishEditingGroupName}
+                                                            onKeyDown={e => {
+                                                                if (e.key === 'Enter') finishEditingGroupName();
+                                                                if (e.key === 'Escape') { setEditingGroupNo(null); setEditingGroupName(''); }
+                                                            }}
+                                                            autoFocus
+                                                        />
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            className="fg-group-chip-move"
+                                                            onClick={() => !active && updateRow(selectedRow.id, 'groupNo', g.no)}
+                                                            disabled={active}
+                                                            title={active ? 'Current group' : `Move to ${g.name}`}
+                                                        >
+                                                            <span className="fg-group-chip-name">{g.name}</span>
+                                                        </button>
+                                                    )}
+                                                    {!isUngrouped && !isEditing && (
+                                                        <div className="fg-group-chip-actions">
+                                                            <button
+                                                                type="button"
+                                                                className="fg-group-chip-action"
+                                                                onClick={() => startEditingGroupName(g.no)}
+                                                                title="Rename group"
+                                                            >
+                                                                <Edit3 size={10} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="fg-group-chip-action fg-group-chip-action--danger"
+                                                                onClick={() => {
+                                                                    if (confirm(`Delete group "${g.name}"? All sensors in this group will also be removed.`)) {
+                                                                        removeGroup(g.no);
+                                                                    }
+                                                                }}
+                                                                title="Delete group"
+                                                            >
+                                                                <Trash2 size={10} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                                <div className="fg-model-info-item">
-                                    <span className="fg-model-info-label">Mapped Sensor Tag</span>
-                                    <span className="fg-model-info-value">{selectedRow.mappedSensorTag || '—'}</span>
+
+                                {/* Concept + Model Type */}
+                                <div className="fg-inspector-grid">
+                                    <div className="fg-inspector-field">
+                                        <div className="fg-inspector-field-label-row">
+                                            <label>Concept Sensor</label>
+                                            <span className="fg-field-hint">What physical concept this measures</span>
+                                        </div>
+                                        <input type="text" className="fg-inspector-input" value={selectedRow.conceptSensor} placeholder="e.g. crankcase vibration" onChange={e => updateRow(selectedRow.id, 'conceptSensor', e.target.value)} />
+                                    </div>
+                                    <div className="fg-inspector-field">
+                                        <div className="fg-inspector-field-label-row">
+                                            <label>Model Type</label>
+                                            <span className="fg-field-hint">Forecasting model family</span>
+                                        </div>
+                                        <input type="text" className="fg-inspector-input" value={selectedRow.modelType} placeholder="e.g. I + R" onChange={e => updateRow(selectedRow.id, 'modelType', e.target.value)} />
+                                    </div>
                                 </div>
-                                <div className="fg-model-info-item">
-                                    <span className="fg-model-info-label">Mapped Sensor Name</span>
-                                    <span className="fg-model-info-value">{selectedRow.mappedSensorName || '—'}</span>
+
+                                <div className="fg-inspector-field">
+                                    <div className="fg-inspector-field-label-row">
+                                        <label>Model Notes</label>
+                                    </div>
+                                    <textarea className="fg-inspector-textarea" rows={3} value={selectedRow.modelNotes} placeholder="Notes about training, features, thresholds…" onChange={e => updateRow(selectedRow.id, 'modelNotes', e.target.value)} />
                                 </div>
-                                <div className="fg-model-info-item">
-                                    <span className="fg-model-info-label">Model Type</span>
-                                    <span className="fg-model-info-value">{selectedRow.modelType || '—'}</span>
+
+                                <div className="fg-inspector-field">
+                                    <div className="fg-inspector-field-label-row">
+                                        <label>Additional Notes</label>
+                                    </div>
+                                    <textarea className="fg-inspector-textarea" rows={2} value={selectedRow.additionalNotes} placeholder="Operator remarks, caveats…" onChange={e => updateRow(selectedRow.id, 'additionalNotes', e.target.value)} />
+                                </div>
+
+                                {/* Meta */}
+                                <div className="fg-meta-box">
+                                    <div className="fg-meta-row">
+                                        <span className="fg-meta-k">Group No.</span>
+                                        <span className="fg-meta-v">{selectedRow.groupNo}</span>
+                                    </div>
+                                    <div className="fg-meta-row">
+                                        <span className="fg-meta-k">Mapped Tag</span>
+                                        <span className="fg-meta-v">{selectedRow.mappedSensorTag || '—'}</span>
+                                    </div>
+                                    <div className="fg-meta-row">
+                                        <span className="fg-meta-k">Data points</span>
+                                        <span className="fg-meta-v">{metadata?.total_rows?.toLocaleString?.() ?? '—'}</span>
+                                    </div>
                                 </div>
                             </div>
-                            <div className="fg-model-placeholder">
-                                <div className="fg-model-placeholder-icon">📊</div>
-                                <p>Model Build tools will appear here</p>
-                                <p className="fg-model-placeholder-sub">Select a sensor row to configure its model</p>
+
+                            <div className="fg-inspector-footer">
+                                <button className="fg-icon-btn fg-icon-btn-danger" onClick={() => removeRow(selectedRow.id)} title="Remove sensor">
+                                    <X size={14} />
+                                </button>
+                                <div className="fg-inspector-footer-spacer" />
+                                <button className="fg-inspector-close-btn" onClick={() => { setShowModelPanel(false); setSelectedRowId(null); }}>
+                                    Close
+                                </button>
+                                <button
+                                    className="fg-build-model-btn"
+                                    onClick={() => handleBuildModel(selectedRow)}
+                                    disabled={!selectedRow.mappedSensorTag}
+                                >
+                                    <Play size={11} /> Build Model
+                                </button>
                             </div>
-                        </div>
-                    </div>
+                        </>
+                    ) : (
+                        <div className="fg-inspector-empty">Select a sensor to configure</div>
+                    )}
+                </div>
                 )}
             </div>
         </div>

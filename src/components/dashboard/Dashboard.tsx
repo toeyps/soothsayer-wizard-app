@@ -171,7 +171,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     useEffect(() => {
         let unlistenRequest: UnlistenFn | undefined;
         let unlistenAdd: UnlistenFn | undefined;
-        let unlistenPredictive: UnlistenFn | undefined;
 
         const setupListeners = async () => {
             console.log("Setting up Dashboard listeners");
@@ -221,16 +220,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     return changed ? newHeaders : prevHeaders;
                 });
             });
-            // Listen for request from failure group window
-            unlistenPredictive = await listen('request-failure-group-data', () => {
-                console.log("Dashboard received 'request-failure-group-data', emitting data...");
-                const { sensorHeaders, sensorMetadata, metadata } = stateRef.current;
-                emit('failure-group-data', {
-                    sensorHeaders,
-                    sensorMetadata,
-                    metadata
-                });
-            });
+            // NOTE: the Save & Continue button registers its own one-shot listener that
+            // includes workspaceId + dashboardSnapshot and then closes the dashboard. We do
+            // not register a duplicate listener here to avoid double-emitting stale data.
         };
 
         setupListeners();
@@ -238,7 +230,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => {
             if (unlistenRequest) unlistenRequest();
             if (unlistenAdd) unlistenAdd();
-            if (unlistenPredictive) unlistenPredictive();
         };
     }, []);
 
@@ -965,24 +956,39 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             className="save-continue-btn"
                             onClick={async () => {
                                 try {
+                                    if (!initialState) return;
+                                    // Persist the dashboard snapshot + flip lastRoute BEFORE spawning the window,
+                                    // so auto-resume and Step 2 can both read it from disk.
+                                    const snapshot = {
+                                        selectedSensors,
+                                        visibleSensors,
+                                        operationConfig,
+                                        filters,
+                                        samplingMethod,
+                                    };
+                                    await saveWorkspaceData(buildWorkspaceState({
+                                        lastRoute: 'failure-group',
+                                        dashboardSnapshot: snapshot,
+                                    }));
+
                                     const screenW = window.screen.width;
                                     const screenH = window.screen.height;
+                                    const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
                                     const webview = new WebviewWindow('failure-group', {
                                         url: '/?window=failure-group',
                                         title: 'Predictive Mode - Failure Group Creation',
-                                        width: Math.round(screenW * 0.25),
+                                        width: Math.round(screenW * 0.8),
                                         height: Math.round(screenH * 0.8),
-                                        x: 15,
-                                        y: Math.round(screenH * 0.1),
-                                        decorations: false,
+                                        center: true,
+                                        decorations: isMac,
                                     });
-                                    // Wait for the failure-group window to request data (after React mounts),
-                                    // then respond and close the dashboard
                                     const unlisten = await listen('request-failure-group-data', async () => {
                                         await emit('failure-group-data', {
+                                            workspaceId: initialState.id,
                                             sensorHeaders,
                                             sensorMetadata,
-                                            metadata
+                                            metadata,
+                                            dashboardSnapshot: snapshot,
                                         });
                                         unlisten();
                                         await getCurrentWindow().close();

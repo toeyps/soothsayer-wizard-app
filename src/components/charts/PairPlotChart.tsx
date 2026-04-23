@@ -1,6 +1,6 @@
 import { useMemo, memo } from 'react';
-import ReactECharts from 'echarts-for-react';
 import 'echarts-gl';
+import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 
 function PairPlotChart({ data, sensors, headers }: ChartProps) {
@@ -199,7 +199,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
     }, [data, sensors, headers]);
 
     return (
-        <ReactECharts option={option} style={{ height: '100%', width: '100%', minHeight: '300px' }} notMerge={true} theme="dark" />
+        <ResponsiveECharts option={option} style={{ minHeight: '300px' }} />
     );
 }
 

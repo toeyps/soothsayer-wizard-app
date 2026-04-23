@@ -1,13 +1,64 @@
-import { useMemo, memo } from 'react';
-import ReactECharts from 'echarts-for-react';
+import { useMemo, memo, useRef, useState, useEffect } from 'react';
+import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 
 const colors = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
 
 function LineChart({ data, sensors, headers }: ChartProps) {
+    // Track container height so the grid/slider/legend scale with it.
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const [containerH, setContainerH] = useState<number>(0);
+
+    useEffect(() => {
+        const el = wrapperRef.current;
+        if (!el) return;
+        const update = () => setContainerH(el.clientHeight);
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
     const option = useMemo(() => {
         const dataCount = data.length;
         const isLargeData = dataCount > 10000;
+
+        // ── Dynamic horizontal padding ────────────────────────────
+        const AXIS_OFFSET = 60;
+        const AXIS_BASE_PAD = 40;
+        const leftCount = Math.ceil(sensors.length / 2);
+        const rightCount = Math.floor(sensors.length / 2);
+        const gridLeft = AXIS_BASE_PAD + Math.max(0, leftCount - 1) * AXIS_OFFSET;
+        const gridRight = AXIS_BASE_PAD + Math.max(0, rightCount - 1) * AXIS_OFFSET;
+
+        // ── Dynamic vertical layout (pixel values, clamped to container) ──
+        // Ideal full-size reservations:
+        const LEGEND_H = 28;
+        const SLIDER_H = 20;
+        const X_AXIS_LABEL_H = 24;
+        const GAP_ABOVE_LEGEND = 6;
+        const GAP_ABOVE_SLIDER = 8;
+        const GAP_ABOVE_XAXIS = 6;
+        const idealBottom = LEGEND_H + GAP_ABOVE_LEGEND + SLIDER_H + GAP_ABOVE_SLIDER + X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
+
+        // Clamp bottom reservation to at most 45% of the container so the
+        // plotting area is never squeezed to zero (or negative) when the
+        // panel is small.
+        const h = containerH > 0 ? containerH : 400;
+        const maxBottom = Math.max(60, Math.floor(h * 0.45));
+        const scale = Math.min(1, maxBottom / idealBottom);
+
+        const legendH = Math.round(LEGEND_H * scale);
+        const sliderH = Math.max(12, Math.round(SLIDER_H * scale));
+        const gapLegend = Math.round(GAP_ABOVE_LEGEND * scale);
+        const gapSlider = Math.round(GAP_ABOVE_SLIDER * scale);
+        const gapXAxis = Math.round(GAP_ABOVE_XAXIS * scale);
+        const xAxisLabelH = Math.round(X_AXIS_LABEL_H * scale);
+
+        const legendBottom = 0;
+        const sliderBottom = legendBottom + legendH + gapLegend;
+        const gridBottom = sliderBottom + sliderH + gapSlider + xAxisLabelH + gapXAxis;
+        const gridTop = Math.max(20, Math.round(30 * scale));
 
         return {
             backgroundColor: 'transparent',
@@ -32,12 +83,18 @@ function LineChart({ data, sensors, headers }: ChartProps) {
                     return content;
                 }
             },
-            legend: { data: sensors, textStyle: { color: '#94a3b8' }, bottom: 0 },
-            grid: { left: '3%', right: '4%', bottom: '10%', top: '5%', containLabel: true },
+            legend: { data: sensors, textStyle: { color: '#94a3b8' }, bottom: legendBottom, height: legendH },
+            grid: {
+                left: gridLeft,
+                right: gridRight,
+                top: gridTop,
+                bottom: gridBottom,
+                containLabel: false,
+            },
             animation: !isLargeData,
             dataZoom: [
                 { type: 'inside', xAxisIndex: [0], filterMode: 'filter' },
-                { type: 'slider', xAxisIndex: [0], filterMode: 'filter', bottom: 10 }
+                { type: 'slider', xAxisIndex: [0], filterMode: 'filter', bottom: sliderBottom, height: sliderH }
             ],
             xAxis: {
                 type: 'category',
@@ -73,10 +130,12 @@ function LineChart({ data, sensors, headers }: ChartProps) {
                 };
             })
         };
-    }, [data, sensors, headers]);
+    }, [data, sensors, headers, containerH]);
 
     return (
-        <ReactECharts option={option} style={{ height: '100%', width: '100%', minHeight: '300px' }} notMerge={true} theme="dark" />
+        <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>
+            <ResponsiveECharts option={option} style={{ minHeight: '200px' }} />
+        </div>
     );
 }
 

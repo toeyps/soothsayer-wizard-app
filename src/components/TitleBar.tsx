@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X, Sun, Moon, Save } from "lucide-react";
-
-const isMacOS = navigator.userAgent.includes("Mac");
+import { useIsMacOS } from "../hooks/useIsMacOS";
 
 interface TitleBarProps {
   theme: "light" | "dark";
@@ -11,6 +10,8 @@ interface TitleBarProps {
   onSaveAs?: () => void;
   workspaceName?: string;
   onRename?: (newName: string) => void;
+  // Increments when the app menu's "Rename Workspace" is invoked; entering edit mode here.
+  renameTrigger?: number;
 }
 
 export default function TitleBar({
@@ -20,8 +21,10 @@ export default function TitleBar({
   onSaveAs,
   workspaceName,
   onRename,
+  renameTrigger,
 }: TitleBarProps) {
   const appWindow = getCurrentWindow();
+  const isMacOS = useIsMacOS();
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(workspaceName || "");
   const [showSaveMenu, setShowSaveMenu] = useState(false);
@@ -30,6 +33,10 @@ export default function TitleBar({
   useEffect(() => {
     setTempName(workspaceName || "");
   }, [workspaceName]);
+
+  useEffect(() => {
+    if (renameTrigger && workspaceName !== undefined) setIsEditing(true);
+  }, [renameTrigger, workspaceName]);
 
   // Close menu when clicking outside
   useEffect(() => {

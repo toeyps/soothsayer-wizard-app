@@ -57,10 +57,63 @@ export interface WorkspaceFilterState {
     sensorFilters: WorkspaceSensorFilter[];
 }
 
+// Snapshot of Dashboard's applied filtering/processing state captured on Save & Continue.
+// Used by Step 2/3 so filtering context carries forward.
+export interface DashboardSnapshot {
+    selectedSensors: string[];
+    visibleSensors: string[];
+    operationConfig: SensorOperationConfig | null;
+    filters: WorkspaceFilterState;
+    samplingMethod: 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';
+}
+
+export interface FailureGroup {
+    no: number;
+    name: string;
+    isCollapsed: boolean;
+}
+
+export interface FailureSensorRow {
+    id: string;
+    groupNo: number;
+    conceptSensor: string;
+    mappedSensorTag: string;
+    mappedSensorName: string;
+    modelType: string;
+    modelNotes: string;
+    additionalNotes: string;
+    status: boolean;
+}
+
+export interface FailureGroupStateSlice {
+    groups: FailureGroup[];
+    rows: FailureSensorRow[];
+}
+
+export interface PredictiveModelStateSlice {
+    targetSensor: string;
+    predictorSensors: string[];
+    individualChecked: boolean;
+    rcMode: 'relationship' | 'clustering' | null;
+    scatterXSensor: string;
+    relModelName: string;
+    relStiffness: number;
+    clusterModelName: string;
+    numClusters: number;
+    criteriaSensor: string;
+    clusterRangeMin: number;
+    clusterRangeMax: number;
+    filterTimeStart: string;
+    filterTimeEnd: string;
+    filterSensorValue: string;
+}
+
+export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group' | 'predictive-model';
+
 export interface WorkspaceState {
     id: string;
     name: string;
-    lastRoute: 'import' | 'dashboard';
+    lastRoute: WorkspaceRoute;
     dataFilePaths: string[];
     metadataFilePath: string | null;
     selectedSensors: string[];
@@ -72,4 +125,7 @@ export interface WorkspaceState {
     collapsedPanels?: string[];
     mappingFilePath?: string | null;
     mappingKeyColumn?: string | null;
+    dashboardSnapshot?: DashboardSnapshot;
+    failureGroupState?: FailureGroupStateSlice;
+    predictiveModelState?: PredictiveModelStateSlice;
 }

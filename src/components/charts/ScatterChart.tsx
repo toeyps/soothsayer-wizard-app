@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, memo } from 'react';
-import ReactECharts from 'echarts-for-react';
+import { useState, useEffect, useMemo, memo, useRef } from 'react';
 import 'echarts-gl';
+import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 
 function ScatterChart({ data, sensors, headers }: ChartProps) {
@@ -8,6 +8,19 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
 
     const [scatterX, setScatterX] = useState<string>('');
     const [scatterY, setScatterY] = useState<string>('');
+
+    // Track container height for dynamic grid/slider positions
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const [containerH, setContainerH] = useState<number>(0);
+    useEffect(() => {
+        const el = wrapperRef.current;
+        if (!el) return;
+        const update = () => setContainerH(el.clientHeight);
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
 
     useEffect(() => {
         if (sensors.length >= 2) {
@@ -26,6 +39,23 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
         const xIndex = headers.indexOf(scatterX);
         const yIndex = headers.indexOf(scatterY);
 
+        // Dynamic bottom reservation: x-slider + x-labels + axis name + gap.
+        const h = containerH > 0 ? containerH : 400;
+        const X_LABEL_H = 20;
+        const AXIS_NAME_H = 20;
+        const SLIDER_H_IDEAL = 20;
+        const GAP = 10;
+        const idealBottom = SLIDER_H_IDEAL + GAP + X_LABEL_H + GAP + AXIS_NAME_H + GAP;
+        const maxBottom = Math.max(50, Math.floor(h * 0.35));
+        const scale = Math.min(1, maxBottom / idealBottom);
+        const sliderH = Math.max(12, Math.round(SLIDER_H_IDEAL * scale));
+        const gap = Math.round(GAP * scale);
+        const xLabel = Math.round(X_LABEL_H * scale);
+        const axisName = Math.round(AXIS_NAME_H * scale);
+        const sliderBottom = gap;
+        const gridBottom = sliderBottom + sliderH + gap + xLabel + gap + axisName + gap;
+        const gridTop = Math.max(30, Math.round(50 * scale));
+
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
@@ -41,11 +71,17 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                 iconStyle: { borderColor: '#94a3b8' },
                 emphasis: { iconStyle: { borderColor: '#6366f1' } }
             },
-            grid: { left: '3%', right: '4%', bottom: '5%', top: '5%', containLabel: true },
+            grid: {
+                left: 60,
+                right: 60,
+                top: gridTop,
+                bottom: gridBottom,
+                containLabel: false,
+            },
             dataZoom: [
                 { type: 'inside', xAxisIndex: [0], filterMode: 'filter' },
                 { type: 'inside', yAxisIndex: [0], filterMode: 'filter' },
-                { type: 'slider', xAxisIndex: [0], filterMode: 'filter', bottom: 10, height: 20, handleSize: '100%' },
+                { type: 'slider', xAxisIndex: [0], filterMode: 'filter', bottom: sliderBottom, height: sliderH, handleSize: '100%' },
                 { type: 'slider', yAxisIndex: [0], filterMode: 'filter', right: 10, width: 20, handleSize: '100%' }
             ],
             tooltip: {
@@ -99,14 +135,14 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                 }).filter(Boolean)
             }]
         };
-    }, [data, sensors, headers, scatterX, scatterY]);
+    }, [data, sensors, headers, scatterX, scatterY, containerH]);
 
     if ((sensors.length < 2)) {
         return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
 
     return (
-        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <div ref={wrapperRef} style={{ position: 'relative', width: '100%', height: '100%', minHeight: 0 }}>
             <div style={{ position: 'absolute', top: '10px', left: '50px', zIndex: 10, display: 'flex', gap: '10px', background: 'rgba(30, 41, 59, 0.8)', padding: '5px', borderRadius: '4px' }}>
                 <select value={scatterX} onChange={e => setScatterX(e.target.value)} style={{ backgroundColor: '#1e293b', color: 'white', border: 'none' }}>
                     {sensors.map(s => <option key={s} value={s}>{s} (X)</option>)}
@@ -116,7 +152,7 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                     {sensors.map(s => <option key={s} value={s}>{s} (Y)</option>)}
                 </select>
             </div>
-            <ReactECharts option={option} style={{ height: '100%', width: '100%', minHeight: '300px' }} notMerge={true} theme="dark" />
+            <ResponsiveECharts option={option} style={{ minHeight: '200px' }} />
         </div>
     );
 }

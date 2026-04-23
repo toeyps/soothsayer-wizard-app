@@ -126,6 +126,19 @@ export async function saveWorkspaceData(state: WorkspaceState) {
     }
 }
 
+// Read-modify-write: load workspace, apply a patch function, save. Use this from step 2/3 windows
+// to avoid clobbering fields owned by other windows.
+export async function updateWorkspaceData(
+    id: string,
+    patch: (state: WorkspaceState) => WorkspaceState
+): Promise<WorkspaceState | null> {
+    const current = await loadWorkspaceData(id);
+    if (!current) return null;
+    const next = patch(current);
+    await saveWorkspaceData(next);
+    return next;
+}
+
 export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
     console.log("Loading Workspace Data for ID:", id);
     try {

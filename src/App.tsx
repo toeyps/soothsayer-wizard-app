@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Window } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { DataUploadPage } from "./components/upload";
 import { Dashboard, DashboardRef } from "./components/dashboard";
 import { CsvMetadata, SensorMetadata, WorkspaceState } from "./types";
@@ -7,8 +8,10 @@ import { buildSensorMetadataFromMapping } from "./hooks/useMappingData";
 import type { MappingData, MappingResult } from "./types/dataUpload";
 import { getLastWorkspaceId, loadWorkspaceData, setLastWorkspaceId } from "./workspaceManager";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
+import { message } from "@tauri-apps/plugin-dialog";
 import TitleBar from "./components/TitleBar";
+import { useAppMenu } from "./hooks/useAppMenu";
 
 function App() {
   const [metadata, setMetadata] = useState<CsvMetadata | null>(null);
@@ -16,6 +19,7 @@ function App() {
   const [initialWorkspaceState, setInitialWorkspaceState] = useState<WorkspaceState | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [isInitializing, setIsInitializing] = useState(true);
+  const [renameTrigger, setRenameTrigger] = useState(0);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
   });
@@ -46,6 +50,59 @@ function App() {
         if (lastId) {
           const state = await loadWorkspaceData(lastId);
           console.log("Loaded Workspace State:", state);
+          const resumingToStep2Or3 = state && (state.lastRoute === 'failure-group' || state.lastRoute === 'predictive-model') && state.dataFilePaths.length > 0;
+          if (resumingToStep2Or3 && state) {
+            // Load CSV + sensor metadata, spawn step-2 window, close main. FailureGroupCreation itself
+            // re-spawns the predictive-model window if lastRoute points there.
+            const dataMetadata = await invoke<CsvMetadata>("load_csv", { paths: state.dataFilePaths });
+            let sm: SensorMetadata[] | null = null;
+            if (state.mappingFilePath && state.mappingKeyColumn) {
+                try {
+                    const mappingData = await invoke<MappingData>("load_mapping_csv", { path: state.mappingFilePath });
+                    const mappingResult = await invoke<MappingResult>("apply_sensor_mapping", {
+                        keyColumn: state.mappingKeyColumn,
+                        mappingData,
+                        datasetHeaders: dataMetadata.headers,
+                    });
+                    sm = buildSensorMetadataFromMapping(mappingData, mappingResult, state.mappingKeyColumn);
+                } catch (mappingErr) { console.warn("Failed to reload mapping on resume:", mappingErr); }
+            }
+            if (!sm && state.metadataFilePath) {
+                try { sm = await invoke<SensorMetadata[]>("load_metadata_command", { path: state.metadataFilePath }); } catch { /* ignore */ }
+            }
+            const sensorHeaders = dataMetadata.headers.filter(h => {
+                const lower = h.trim().toLowerCase();
+                return lower !== 'timestamp' && lower !== 'time';
+            });
+            const screenW = window.screen.width;
+            const screenH = window.screen.height;
+            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
+            const fgWindow = new WebviewWindow('failure-group', {
+                url: '/?window=failure-group',
+                title: 'Predictive Mode - Failure Group Creation',
+                width: Math.round(screenW * 0.8),
+                height: Math.round(screenH * 0.8),
+                center: true,
+                decorations: isMac,
+            });
+            const unlisten = await listen('request-failure-group-data', async () => {
+                await emit('failure-group-data', {
+                    workspaceId: state.id,
+                    sensorHeaders,
+                    sensorMetadata: sm,
+                    metadata: dataMetadata,
+                    dashboardSnapshot: state.dashboardSnapshot,
+                });
+                unlisten();
+                try {
+                    const splash = await Window.getByLabel("splashscreen");
+                    if (splash) await splash.close();
+                } catch { /* ignore */ }
+                try { await Window.getCurrent().close(); } catch { /* ignore */ }
+            });
+            fgWindow.once('tauri://error', (e) => console.error('Failed to create failure group window on resume:', e));
+            return; // skip the normal dashboard render path
+          }
           if (state && state.lastRoute === 'dashboard' && state.dataFilePaths.length > 0) {
             console.log("Resuming to dashboard with files:", state.dataFilePaths);
             // Re-invoke backend to load data since backend state is cleared on app restart
@@ -145,19 +202,40 @@ function App() {
     }
   };
 
+  useAppMenu({
+    hasWorkspace: !!metadata,
+    onNew: handleBackToImport,
+    onSave: handleManualSave,
+    onSaveAs: handleManualSaveAs,
+    onCloseWorkspace: handleBackToImport,
+    onRename: () => setRenameTrigger(t => t + 1),
+    onToggleTheme: toggleTheme,
+    onAbout: async () => {
+        try {
+            await message(
+                'Soothsayer-Wizard\nVersion 0.1.0\n\nA desktop tool for CSV sensor data exploration and predictive modeling.',
+                { title: 'About', kind: 'info' }
+            );
+        } catch {
+            alert('Soothsayer-Wizard v0.1.0');
+        }
+    },
+  });
+
   if (isInitializing) {
     return <div style={{ background: 'var(--bg-primary)', width: '100vw', height: '100vh' }} />;
   }
 
   return (
     <>
-      <TitleBar 
-        theme={theme} 
-        toggleTheme={toggleTheme} 
+      <TitleBar
+        theme={theme}
+        toggleTheme={toggleTheme}
         onSave={metadata ? handleManualSave : undefined}
         onSaveAs={metadata ? handleManualSaveAs : undefined}
         workspaceName={metadata ? workspaceName : undefined}
         onRename={handleRename}
+        renameTrigger={renameTrigger}
       />
       <main className="app-container">
         {!metadata ? (

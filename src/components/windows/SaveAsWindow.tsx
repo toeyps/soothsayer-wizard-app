@@ -7,6 +7,11 @@ export default function SaveAsWindow() {
     const [newName, setNewName] = useState("");
     const [loading, setLoading] = useState(true);
 
+    // Read mode from URL; 'rename' repurposes this same dialog for renaming the current workspace
+    // (different default name prefill, different title/button/submit-event).
+    const mode = new URLSearchParams(window.location.search).get('mode') === 'rename' ? 'rename' : 'save-as';
+    const isRename = mode === 'rename';
+
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
@@ -15,7 +20,7 @@ export default function SaveAsWindow() {
 
         const setup = async () => {
             unlisten = await listen<{ currentName: string }>('request-save-as-data-response', (event) => {
-                setNewName(`${event.payload.currentName} (Copy)`);
+                setNewName(isRename ? event.payload.currentName : `${event.payload.currentName} (Copy)`);
                 setLoading(false);
             });
 
@@ -28,11 +33,11 @@ export default function SaveAsWindow() {
         return () => {
             if (unlisten) unlisten();
         };
-    }, []);
+    }, [isRename]);
 
     const handleSave = async () => {
         if (newName.trim() === "") return;
-        await emit('save-as-submit', { newName });
+        await emit(isRename ? 'rename-submit' : 'save-as-submit', { newName });
         await getCurrentWindow().close();
     };
 
@@ -68,7 +73,7 @@ export default function SaveAsWindow() {
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <Save size={18} color="var(--accent-color)" />
-                    <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Save Workspace As</h2>
+                    <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>{isRename ? 'Rename Workspace' : 'Save Workspace As'}</h2>
                 </div>
                 <button onClick={handleCancel} style={{
                     background: 'transparent',
@@ -107,7 +112,9 @@ export default function SaveAsWindow() {
                 </div>
                 
                 <p style={{ fontSize: '0.8rem', opacity: 0.5, margin: 0, lineHeight: 1.5 }}>
-                    This will create a duplicate of your current workspace settings, including all selected sensors and configurations.
+                    {isRename
+                        ? 'This will rename the current workspace. No new copy will be created.'
+                        : 'This will create a duplicate of your current workspace settings, including all selected sensors and configurations.'}
                 </p>
             </div>
 
@@ -151,7 +158,7 @@ export default function SaveAsWindow() {
                         boxShadow: '0 4px 12px rgba(56, 189, 248, 0.2)'
                     }}
                 >
-                    Save Copy
+                    {isRename ? 'Rename' : 'Save Copy'}
                 </button>
             </div>
         </div>
