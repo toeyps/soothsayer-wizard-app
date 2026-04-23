@@ -4,7 +4,7 @@ import { ChartProps } from './ChartTypes';
 
 const colors = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
 
-function LineChart({ data, sensors, headers }: ChartProps) {
+function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
@@ -18,6 +18,26 @@ function LineChart({ data, sensors, headers }: ChartProps) {
         ro.observe(el);
         return () => ro.disconnect();
     }, []);
+
+    // Track current theme (data-theme attribute on <html>) so text colors adapt.
+    const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+        (document.documentElement.getAttribute('data-theme') as 'dark' | 'light') || 'dark'
+    );
+    useEffect(() => {
+        const obs = new MutationObserver(() => {
+            const t = document.documentElement.getAttribute('data-theme');
+            setTheme(t === 'light' ? 'light' : 'dark');
+        });
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+        return () => obs.disconnect();
+    }, []);
+    const isLight = theme === 'light';
+    const txtPrimary  = isLight ? '#0f172a' : '#f1f5f9';
+    const txtSecondary = isLight ? '#475569' : '#94a3b8';
+    const gridLine    = isLight ? '#cbd5e1' : '#334155';
+    const markLabelBg = isLight ? 'rgba(248,250,252,0.9)' : 'rgba(15,23,42,0.82)';
+    const tooltipBg   = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.9)';
+    const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
 
     const option = useMemo(() => {
         const dataCount = data.length;
@@ -65,9 +85,9 @@ function LineChart({ data, sensors, headers }: ChartProps) {
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
             tooltip: {
                 trigger: 'axis',
-                backgroundColor: 'rgba(30, 41, 59, 0.9)',
-                borderColor: '#334155',
-                textStyle: { color: '#f8fafc' },
+                backgroundColor: tooltipBg,
+                borderColor: tooltipBorder,
+                textStyle: { color: txtPrimary },
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
                     const pList = Array.isArray(params) ? params : [params];
@@ -83,7 +103,7 @@ function LineChart({ data, sensors, headers }: ChartProps) {
                     return content;
                 }
             },
-            legend: { data: sensors, textStyle: { color: '#94a3b8' }, bottom: legendBottom, height: legendH },
+            legend: { data: sensors, textStyle: { color: txtSecondary }, bottom: legendBottom, height: legendH },
             grid: {
                 left: gridLeft,
                 right: gridRight,
@@ -100,8 +120,8 @@ function LineChart({ data, sensors, headers }: ChartProps) {
                 type: 'category',
                 boundaryGap: false,
                 data: data.map(d => d.timestamp),
-                axisLabel: { formatter: (val: string) => new Date(val).toLocaleTimeString(), color: '#94a3b8' },
-                axisLine: { lineStyle: { color: '#334155' } }
+                axisLabel: { formatter: (val: string) => new Date(val).toLocaleTimeString(), color: txtSecondary },
+                axisLine: { lineStyle: { color: gridLine } }
             },
             yAxis: sensors.map((sensor, index) => {
                 const color = colors[index % colors.length];
@@ -112,12 +132,41 @@ function LineChart({ data, sensors, headers }: ChartProps) {
                     offset: Math.floor(index / 2) * 60,
                     axisLine: { show: true, lineStyle: { color: color } },
                     axisLabel: { color: color },
-                    splitLine: { show: index === 0, lineStyle: { color: '#334155', type: 'dashed', opacity: 0.3 } }
+                    splitLine: { show: !hideYSplitLine && index === 0, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } }
                 };
             }),
             series: sensors.map((sensor, index) => {
                 const sensorIdx = headers.indexOf(sensor);
                 const color = colors[index % colors.length];
+                const sensorMarks = (markLines ?? []).filter(m => m.sensor === sensor);
+                const markLine = sensorMarks.length > 0
+                    ? {
+                        symbol: 'none',
+                        silent: false,
+                        animation: false,
+                        label: {
+                            show: true,
+                            formatter: (p: any) => p.data?.name ?? '',
+                            position: 'insideEndTop' as const,
+                            color: txtPrimary,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            fontFamily: 'JetBrains Mono, monospace',
+                            backgroundColor: markLabelBg,
+                            padding: [2, 5],
+                            borderRadius: 3,
+                        },
+                        data: sensorMarks.map(m => ({
+                            name: m.label,
+                            yAxis: m.y,
+                            lineStyle: {
+                                color: m.color ?? color,
+                                type: m.lineStyle ?? 'solid',
+                                width: m.width ?? 1,
+                            },
+                        })),
+                    }
+                    : undefined;
                 return {
                     name: sensor,
                     type: 'line',
@@ -126,11 +175,12 @@ function LineChart({ data, sensors, headers }: ChartProps) {
                     smooth: !isLargeData,
                     showSymbol: false,
                     itemStyle: { color: color },
-                    lineStyle: { width: isLargeData ? 1 : 2 }
+                    lineStyle: { width: isLargeData ? 1 : 2 },
+                    ...(markLine ? { markLine } : {}),
                 };
             })
         };
-    }, [data, sensors, headers, containerH]);
+    }, [data, sensors, headers, containerH, markLines, hideYSplitLine, theme]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>

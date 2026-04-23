@@ -1,11 +1,26 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { CsvMetadata, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice } from "../../types";
-import { Check, Activity, GitBranch, Layers, Minus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice } from "../../types";
+import { Check, Activity, GitBranch, Layers, Minus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer, Loader2 } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
+import LineChart from "../charts/LineChart";
+import { ChartMarkLine } from "../charts/ChartTypes";
+
+interface SensorStats {
+    mean: number;
+    sd: number;
+    min: number;
+    max: number;
+    count: number;
+    lower1: number;
+    upper1: number;
+    lower3: number;
+    upper3: number;
+}
 
 // ── Reusable Sensor Autocomplete ─────────────────────────────────────
 interface SensorAutocompleteProps {
@@ -166,13 +181,16 @@ export default function PredictiveModelBuild() {
     const [filterTimeEnd, setFilterTimeEnd] = useState("");
     const [filterSensorValue, setFilterSensorValue] = useState("");
 
-    // Model Stats (placeholder)
-    const [modelStats, setModelStats] = useState<{
-        mean: number | null;
-        sd: number | null;
-        r2?: number | null;
-        rmse?: number | null;
-    }>({ mean: null, sd: null });
+    // Model Stats — computed on Rust side over ALL rows of the target sensor.
+    const [targetStats, setTargetStats] = useState<SensorStats | null>(null);
+    const [statsError, setStatsError] = useState<string | null>(null);
+    // Extra regression stats (populated after Apply — TODO).
+    const [modelStats] = useState<{ r2: number | null; rmse: number | null }>({ r2: null, rmse: null });
+
+    // ── Target sensor time-series (for Individual plot) ────────────────
+    const [targetChartData, setTargetChartData] = useState<{ headers: string[]; rows: CsvRecord[] }>({ headers: [], rows: [] });
+    const [targetChartLoading, setTargetChartLoading] = useState(false);
+    const targetFetchIdRef = useRef(0);
 
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
@@ -221,7 +239,6 @@ export default function PredictiveModelBuild() {
                     setScatterXSensor(effectivePredictors[0]);
                 }
 
-                setModelStats({ mean: 42.5, sd: 12.3 });
                 hydratedRef.current = true;
                 setLoading(false);
             });
@@ -270,6 +287,116 @@ export default function PredictiveModelBuild() {
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
         clusterRangeMin, clusterRangeMax, filterTimeStart, filterTimeEnd, filterSensorValue,
     ]);
+
+    // Fetch target-sensor time-series whenever targetSensor changes.
+    // Uses the same invoke/event-stream pattern as Dashboard.
+    useEffect(() => {
+        if (!targetSensor) {
+            setTargetChartData({ headers: [], rows: [] });
+            setTargetChartLoading(false);
+            return;
+        }
+
+        const myFetchId = ++targetFetchIdRef.current;
+        let unlistenChunk: (() => void) | undefined;
+        let unlistenEnd: (() => void) | undefined;
+        let cancelled = false;
+
+        const run = async () => {
+            setTargetChartLoading(true);
+            const accumRows: CsvRecord[] = [];
+            let headers: string[] = [];
+
+            try {
+                let resolveDone: () => void;
+                const streamDone = new Promise<void>((r) => { resolveDone = r; });
+
+                unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
+                    if (targetFetchIdRef.current !== myFetchId) return;
+                    const chunk = event.payload;
+                    if (headers.length === 0) headers = chunk.headers;
+                    accumRows.push(...chunk.rows);
+                });
+
+                unlistenEnd = await listen('data-stream-end', () => {
+                    if (targetFetchIdRef.current === myFetchId) resolveDone();
+                });
+
+                await invoke("get_data", { sensors: [targetSensor] });
+                await streamDone;
+
+                if (cancelled || targetFetchIdRef.current !== myFetchId) return;
+                setTargetChartData({
+                    headers: headers.length > 0 ? headers : [targetSensor],
+                    rows: accumRows,
+                });
+            } catch (err) {
+                if (targetFetchIdRef.current === myFetchId) {
+                    console.error("Failed to fetch target sensor data:", err);
+                }
+            } finally {
+                if (targetFetchIdRef.current === myFetchId) {
+                    setTargetChartLoading(false);
+                }
+            }
+        };
+
+        run();
+
+        return () => {
+            cancelled = true;
+            if (unlistenChunk) unlistenChunk();
+            if (unlistenEnd) unlistenEnd();
+        };
+    }, [targetSensor]);
+
+    // Compute mean / sd / 1σ / 3σ of the target sensor on the Rust side.
+    useEffect(() => {
+        if (!targetSensor) {
+            setTargetStats(null);
+            setStatsError(null);
+            return;
+        }
+        let cancelled = false;
+        invoke<SensorStats>("compute_sensor_stats", { sensor: targetSensor })
+            .then(s => {
+                if (!cancelled) {
+                    setTargetStats(s);
+                    setStatsError(null);
+                }
+            })
+            .catch(err => {
+                if (!cancelled) {
+                    console.error("compute_sensor_stats failed:", err);
+                    setTargetStats(null);
+                    setStatsError(String(err));
+                }
+            });
+        return () => { cancelled = true; };
+    }, [targetSensor]);
+
+    // Track theme so the Mean markLine stays visible in both dark & light modes.
+    const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
+        (document.documentElement.getAttribute('data-theme') as 'dark' | 'light') || 'dark'
+    );
+    useEffect(() => {
+        const obs = new MutationObserver(() => {
+            const t = document.documentElement.getAttribute('data-theme');
+            setThemeMode(t === 'light' ? 'light' : 'dark');
+        });
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+        return () => obs.disconnect();
+    }, []);
+    const meanColor = themeMode === 'light' ? '#0f172a' : '#f1f5f9';
+
+    // Build markLines for mean / ±1σ / ±3σ to overlay on the LineChart.
+    const targetMarkLines: ChartMarkLine[] = targetSensor && targetStats ? [
+        { sensor: targetSensor, y: targetStats.mean,   label: 'Mean', color: meanColor,                 lineStyle: 'solid'  },
+        { sensor: targetSensor, y: targetStats.upper1, label: '+1σ',  color: '#f59e0b',                 lineStyle: 'solid'  },
+        { sensor: targetSensor, y: targetStats.lower1, label: '−1σ',  color: '#f59e0b',                 lineStyle: 'solid'  },
+        { sensor: targetSensor, y: targetStats.upper3, label: '+3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
+        { sensor: targetSensor, y: targetStats.lower3, label: '−3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
+    ] : [];
 
     // Shake animation when FailureGroup tries to close
     const containerRef = useRef<HTMLDivElement>(null);
@@ -529,11 +656,31 @@ export default function PredictiveModelBuild() {
                                     </div>
                                 </div>
                                 <div className="pm-chart-body">
-                                    <div className="plot-placeholder pm-chart-placeholder">
-                                        <Activity size={48} style={{ opacity: 0.2 }} />
-                                        <p>Time Series Plot</p>
-                                        <p className="plot-placeholder-sub">1SD + 3SD boundary drawn automatically</p>
-                                    </div>
+                                    {!targetSensor ? (
+                                        <div className="plot-placeholder pm-chart-placeholder">
+                                            <Activity size={48} style={{ opacity: 0.2 }} />
+                                            <p>No target sensor selected</p>
+                                            <p className="plot-placeholder-sub">Pick a target sensor on the previous page</p>
+                                        </div>
+                                    ) : targetChartLoading && targetChartData.rows.length === 0 ? (
+                                        <div className="plot-placeholder pm-chart-placeholder">
+                                            <Loader2 size={36} style={{ opacity: 0.45 }} className="pm-spin" />
+                                            <p>Loading {targetSensor}…</p>
+                                        </div>
+                                    ) : targetChartData.rows.length === 0 ? (
+                                        <div className="plot-placeholder pm-chart-placeholder">
+                                            <Activity size={48} style={{ opacity: 0.2 }} />
+                                            <p>No data available for {targetSensor}</p>
+                                        </div>
+                                    ) : (
+                                        <LineChart
+                                            data={targetChartData.rows}
+                                            sensors={[targetSensor]}
+                                            headers={targetChartData.headers}
+                                            markLines={targetMarkLines}
+                                            hideYSplitLine
+                                        />
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -578,33 +725,50 @@ export default function PredictiveModelBuild() {
                         )}
                     </div>
 
-                    {/* Stats strip */}
+                    {/* Stats strip — computed on the Rust side over all rows */}
                     <div className="pm-stats-strip">
-                        <span className="pm-stats-eyebrow">Model stats</span>
-                        <div className="pm-stats-item">
-                            <span className="pm-stats-label">Mean</span>
-                            <span className="pm-stats-value">{modelStats.mean?.toFixed(2) ?? '—'}</span>
-                        </div>
-                        <div className="pm-stats-item">
-                            <span className="pm-stats-label">SD</span>
-                            <span className="pm-stats-value">{modelStats.sd?.toFixed(2) ?? '—'}</span>
-                        </div>
-                        <div className="pm-stats-item">
-                            <span className="pm-stats-label">±1σ</span>
-                            <span className="pm-stats-value">
-                                {modelStats.mean !== null && modelStats.sd !== null
-                                    ? `${(modelStats.mean - modelStats.sd).toFixed(2)} – ${(modelStats.mean + modelStats.sd).toFixed(2)}`
-                                    : '—'}
-                            </span>
-                        </div>
-                        <div className="pm-stats-item">
-                            <span className="pm-stats-label">±3σ</span>
-                            <span className="pm-stats-value pm-stats-warn">
-                                {modelStats.mean !== null && modelStats.sd !== null
-                                    ? `${(modelStats.mean - 3 * modelStats.sd).toFixed(2)} – ${(modelStats.mean + 3 * modelStats.sd).toFixed(2)}`
-                                    : '—'}
-                            </span>
-                        </div>
+                        <span className="pm-stats-eyebrow">Target stats</span>
+                        {statsError ? (
+                            <div className="pm-stats-item">
+                                <span className="pm-stats-label" style={{ color: '#f43f5e' }}>Error</span>
+                                <span className="pm-stats-value" style={{ color: '#f43f5e' }}>{statsError}</span>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">N</span>
+                                    <span className="pm-stats-value">{targetStats ? targetStats.count.toLocaleString() : '—'}</span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">Mean</span>
+                                    <span className="pm-stats-value">{targetStats ? targetStats.mean.toFixed(3) : '—'}</span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">SD</span>
+                                    <span className="pm-stats-value">{targetStats ? targetStats.sd.toFixed(3) : '—'}</span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">Min</span>
+                                    <span className="pm-stats-value">{targetStats ? targetStats.min.toFixed(3) : '—'}</span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">Max</span>
+                                    <span className="pm-stats-value">{targetStats ? targetStats.max.toFixed(3) : '—'}</span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">±1σ</span>
+                                    <span className="pm-stats-value">
+                                        {targetStats ? `${targetStats.lower1.toFixed(3)} – ${targetStats.upper1.toFixed(3)}` : '—'}
+                                    </span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">±3σ</span>
+                                    <span className="pm-stats-value pm-stats-warn">
+                                        {targetStats ? `${targetStats.lower3.toFixed(3)} – ${targetStats.upper3.toFixed(3)}` : '—'}
+                                    </span>
+                                </div>
+                            </>
+                        )}
                         {rcMode === 'relationship' && (
                             <>
                                 <div className="pm-stats-item">

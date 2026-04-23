@@ -110,6 +110,96 @@ fn load_metadata_command(path: String) -> Result<Vec<SensorMetadata>, String> {
     load_metadata(&path)
 }
 
+#[derive(Debug, Serialize)]
+struct SensorStats {
+    mean: f64,
+    sd: f64,
+    min: f64,
+    max: f64,
+    count: usize,
+    // 1σ bounds
+    lower1: f64,
+    upper1: f64,
+    // 3σ bounds
+    lower3: f64,
+    upper3: f64,
+}
+
+/// Compute mean / standard deviation (population) plus 1σ & 3σ bounds
+/// across all non-null values of a given sensor in the currently loaded dataset.
+#[tauri::command]
+fn compute_sensor_stats(
+    sensor: String,
+    state: State<AppState>,
+) -> Result<SensorStats, String> {
+    use rayon::prelude::*;
+
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let data = &session.data;
+
+    let idx = data
+        .headers
+        .iter()
+        .position(|h| h == &sensor)
+        .ok_or_else(|| format!("Sensor not found: {}", sensor))?;
+
+    // Parallel collect of all non-null, finite values for the target column.
+    let values: Vec<f64> = data
+        .rows
+        .par_iter()
+        .filter_map(|row| {
+            row.values
+                .get(idx)
+                .and_then(|v| *v)
+                .filter(|v| v.is_finite())
+        })
+        .collect();
+
+    let count = values.len();
+    if count == 0 {
+        return Err(format!("No valid numeric values for sensor '{}'", sensor));
+    }
+
+    // Sum + min/max in parallel.
+    let (sum, min, max) = values
+        .par_iter()
+        .copied()
+        .fold(
+            || (0.0_f64, f64::INFINITY, f64::NEG_INFINITY),
+            |(s, mn, mx), v| (s + v, mn.min(v), mx.max(v)),
+        )
+        .reduce(
+            || (0.0_f64, f64::INFINITY, f64::NEG_INFINITY),
+            |(s1, mn1, mx1), (s2, mn2, mx2)| (s1 + s2, mn1.min(mn2), mx1.max(mx2)),
+        );
+
+    let mean = sum / count as f64;
+
+    // Population variance (divide by N) — consistent with ±3σ outlier detection.
+    let variance = values
+        .par_iter()
+        .map(|v| {
+            let d = *v - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / count as f64;
+    let sd = variance.sqrt();
+
+    Ok(SensorStats {
+        mean,
+        sd,
+        min,
+        max,
+        count,
+        lower1: mean - sd,
+        upper1: mean + sd,
+        lower3: mean - 3.0 * sd,
+        upper3: mean + 3.0 * sd,
+    })
+}
+
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -813,6 +903,7 @@ pub fn run() {
             get_data,
             get_all_sensors,
             load_metadata_command,
+            compute_sensor_stats,
             run_python_analysis,
             get_loaded_paths,
             calculate_new_sensor,
