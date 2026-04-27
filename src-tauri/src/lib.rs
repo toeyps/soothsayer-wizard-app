@@ -262,6 +262,134 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
     Ok(output)
 }
 
+/// Preview the Relationship (LinearGAM) model on the currently loaded
+/// dataset by delegating to the Python sidecar.
+///
+/// The Rust side projects only the predictor + target columns, drops rows
+/// with any null/non-finite value, and ships the resulting matrix to the
+/// sidecar (much smaller than the full dataset).  The sidecar runs the
+/// `Wizard.PreviewModel.relationship` routine and streams back JSON, which
+/// we forward to the frontend untouched as `serde_json::Value`.
+#[tauri::command]
+async fn preview_relationship_model(
+    predictors: Vec<String>,
+    target: String,
+    lambda: f64,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    if predictors.is_empty() {
+        return Err("At least one predictor is required.".into());
+    }
+    if target.is_empty() {
+        return Err("Target sensor is required.".into());
+    }
+
+    // ── Build the projected, NaN-dropped (X, y) off the locked AppState. ──
+    // Phase 1 contract: the sidecar receives pre-cleaned arrays. Rust owns
+    // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
+    // `y` is n_rows.  We collect into owned data and drop the lock before any await.
+    let (x_matrix, y_vector) = {
+        let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        let data = &session.data;
+
+        // Resolve predictor indices first, then the target.
+        let mut predictor_indices: Vec<usize> = Vec::with_capacity(predictors.len());
+        for p in &predictors {
+            let idx = data
+                .headers
+                .iter()
+                .position(|h| h == p)
+                .ok_or_else(|| format!("Predictor not found: {}", p))?;
+            predictor_indices.push(idx);
+        }
+        let target_idx = data
+            .headers
+            .iter()
+            .position(|h| h == &target)
+            .ok_or_else(|| format!("Target not found: {}", target))?;
+
+        // Drop rows with any null/non-finite across the (predictors + target) set.
+        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
+        let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
+        for row in &data.rows {
+            let mut x_row: Vec<f64> = Vec::with_capacity(predictor_indices.len());
+            let mut ok = true;
+            for &i in &predictor_indices {
+                match row.values.get(i).and_then(|v| *v) {
+                    Some(v) if v.is_finite() => x_row.push(v),
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let y_val = match row.values.get(target_idx).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            x_matrix.push(x_row);
+            y_vector.push(y_val);
+        }
+
+        if x_matrix.is_empty() {
+            return Err("No rows remain after dropping nulls.".into());
+        }
+
+        (x_matrix, y_vector)
+    };
+
+    let payload = serde_json::json!({
+        "action": "preview_relationship",
+        "payload": {
+            "predictors": predictors,
+            "target": target,
+            "X": x_matrix,
+            "y": y_vector,
+            "linearGAM_lambda": lambda,
+        }
+    });
+
+    let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+    payload_line.push('\n');
+
+    // ── Spawn sidecar and pipe payload over stdin. ──
+    let sidecar = app.shell().sidecar("backend").map_err(|e| e.to_string())?;
+    let (mut rx, mut child) = sidecar.spawn().map_err(|e| e.to_string())?;
+    child
+        .write(payload_line.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    let mut stdout_buf = String::new();
+    let mut stderr_buf = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                stdout_buf.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Stderr(line) => {
+                stderr_buf.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+
+    if stdout_buf.trim().is_empty() {
+        return Err(format!(
+            "Sidecar returned no output. Stderr: {}",
+            stderr_buf.trim()
+        ));
+    }
+
+    serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
+        .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))
+}
+
 #[derive(Debug, Deserialize)]
 struct SingleOperation {
     #[serde(rename = "type")]
@@ -905,6 +1033,7 @@ pub fn run() {
             load_metadata_command,
             compute_sensor_stats,
             run_python_analysis,
+            preview_relationship_model,
             get_loaded_paths,
             calculate_new_sensor,
             load_mapping_csv,

@@ -2,6 +2,25 @@ import { SensorMetadata, SensorOperationConfig } from '../types';
 import { CsvLoadReport, MappingData, MappingResult } from './dataUpload';
 import type { FormulaValidationResult } from './calculationEngine';
 
+/**
+ * Response shape from the Python sidecar's `preview_relationship` action.
+ * Mirrors `wizard.Wizard.PreviewModel.relationship`'s return value with
+ * the DataFrame serialised as `{columns, rows}` (rows aligned with columns).
+ *
+ * `r2_dict` and `rmse2_dict` are keyed by the cumulative-feature column
+ * name, e.g. `"PREDICTED_['P1' 'P2']"`. The rmse2 value is `2 * RMSE`
+ * (matching the Wizard convention) — divide by 2 for plain RMSE.
+ */
+export interface RelationshipPreviewResult {
+  request: string;
+  output: { columns: string[]; rows: (number | null)[][] };
+  r2_dict: Record<string, number>;
+  rmse2_dict: Record<string, number>;
+  /** Present only on failure. */
+  error?: string;
+  trace?: string;
+}
+
 export type TauriCommands = {
   /** Updated: now returns CsvLoadReport instead of CsvMetadata */
   load_csv: {
@@ -62,6 +81,14 @@ export type TauriCommands = {
   run_python_analysis: {
     args: Record<string, never>;
     returns: string;
+  };
+  /**
+   * Run a Relationship-model preview (LinearGAM) via the Python sidecar.
+   * Returns the raw JSON payload from the sidecar — see `RelationshipPreviewResult`.
+   */
+  preview_relationship_model: {
+    args: { predictors: string[]; target: string; lambda: number };
+    returns: RelationshipPreviewResult;
   };
   /** Evaluate a formula expression and create a new sensor column */
   evaluate_formula: {

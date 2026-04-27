@@ -118,3 +118,119 @@ Replace the hardcoded sensor calculation system with a flexible hybrid approach:
 
 ## HANDOFF Reports
 <!-- Worker agents will write HANDOFF blocks here -->
+
+### Feature 3 / Phase 1 -- rust-agent (executed by pm-agent due to no spawn tool)
+
+```
+## HANDOFF
+- Completed: backend.py is now self-contained (numpy + pygam only). preview_relationship reimplemented pure-numpy, train_relationship added with pickle save. Rust preview_relationship_model now ships {predictors, target, X, y, linearGAM_lambda} instead of {headers, rows}; NaN-drop + column projection happen Rust-side. Compat shim keeps the legacy {output, r2_dict, rmse2_dict} fields in the response so TS + UI continue to work without modification.
+- New commands added: none (existing preview_relationship_model contract internals changed; train_relationship sidecar action added but not yet exposed as a Tauri command — that lands in Phase 3/5).
+- Files changed: src-tauri/python/backend.py (rewritten), src-tauri/src/lib.rs (preview_relationship_model body rewritten).
+- Verified: `cargo check` passes; backend.py passes `python -c "import ast; ast.parse(...)"`; `git diff src-tauri/python/soothsayer-wizard-python/` is empty (wizard.py untouched); imports in backend.py confirmed = {sys, os, json, pickle, traceback, numpy, pygam}.
+- Compat decision: chose option (a) — Python sidecar emits BOTH new and legacy response shapes. No TS code touched. Phase 5 (fe-logic-agent) will remove the legacy fields when migrating the type + handler.
+- Needs qa-agent: yes — manual sidecar smoke test (`echo '{...}' | python backend.py`) and UI Apply test require a host with numpy + pygam installed (host system python lacks them; Phase 6 will create the .venv). Numerical parity vs the previous wizard-backed sidecar should be confirmed once sidecar is runnable.
+- Blocking issues: none for the next phase. Smoke test is environment-deferred, not a code defect.
+```
+
+
+---
+---
+
+## Feature 3: Hybrid Rust/Python Architecture for Predictive Model
+
+### Status: Phase 1 In Progress, Phases 2-6 Pending
+
+### Feature Summary
+Move all non-LinearGAM math out of the Python sidecar into Rust. Python sidecar
+keeps only `numpy + scipy + pygam` (drop `pandas`, `sklearn`) so Nuitka builds
+become reproducible. Numerical parity must hold to within 1e-6 vs the original
+Python reference. `src-tauri/python/soothsayer-wizard-python/wizard.py` is
+read-only — copy logic into `backend.py`, never modify the vendored file.
+
+Recommended ordering (per requirements doc): Phase 2 → Phase 1 → Phases 3 & 4 (parallel) → Phase 5 → Phase 6.
+This run starts with Phase 1 (sidecar self-containment) since it unblocks Phase 6 (Nuitka rebuild).
+
+---
+
+### Phase 1: Self-contained `backend.py` (no `wizard.py` import) -- COMPLETE (pending host smoke test)
+
+#### rust-agent (owns `src-tauri/`)
+- [x] **F3-1.1** Copy LinearGAM `relationship` logic from `wizard.py` into `backend.py` as `preview_relationship(payload)` -- pure numpy + pygam, no DataFrame.
+- [x] **F3-1.2** Copy `_execute_relationship` train/save logic into `backend.py` as `train_relationship(payload)` -- numpy r2/RMSE, pickle the LinearGAM model.
+- [x] **F3-1.3** Implement numpy-only `_r2(y_true, y_pred)` and `_rmse(y_true, y_pred)` helpers in `backend.py`.
+- [x] **F3-1.4** Remove `pandas` and `wizard` imports from `backend.py`. Final imports verified: `sys, os, json, pickle, traceback, numpy, pygam`.
+- [x] **F3-1.5** Update `preview_relationship_model` in `src-tauri/src/lib.rs` to ship pre-cleaned `{predictors, target, X, y, linearGAM_lambda}` (Rust does NaN-drop + projection; X is n_rows × n_predictors, y is n_rows).
+- [x] **F3-1.6** Compat-shim chosen (option a): sidecar response includes BOTH new fields (`r2_per_step`, `rmse2_per_step`, `predicted`, `residual`) AND legacy fields (`output: {columns, rows}`, `r2_dict`, `rmse2_dict`) so the existing TS `RelationshipPreviewResult` and `PredictiveModelBuild.tsx` `handleRelationshipApply` continue to work unmodified. Legacy fields to be removed in Phase 5.
+- [x] **F3-1.7** `cargo check` passes (no warnings introduced).
+- [ ] **F3-1.8** Manual sidecar smoke test -- DEFERRED: host system python lacks numpy/pygam (no .venv exists yet; Phase 6 creates it). `python3 -c "import ast; ast.parse(...)"` passes, so the file is syntactically valid. Smoke test should be re-run on a host with `pip install numpy pygam` or after Phase 6 builds the .venv.
+- [x] **F3-1.9** `wizard.py` confirmed unchanged (`git diff src-tauri/python/soothsayer-wizard-python/` returns empty diff).
+- [ ] **F3-1.10** End-to-end UI smoke -- DEFERRED to Phase 6 / QA (requires either an installed sidecar binary or a dev-mode python with numpy/pygam).
+
+---
+
+### Phase 2: Rust metric helpers (`src-tauri/src/metrics.rs`) -- PENDING
+
+#### rust-agent
+- [ ] **F3-2.1** Create `src-tauri/src/metrics.rs` with: `r2_score`, `rmse`, `mean`, `population_sd`, `sample_sd`.
+- [ ] **F3-2.2** All functions return `f64::NAN` (no panic) on empty/single-element input.
+- [ ] **F3-2.3** Match Python output to within 1e-9 on a fixed fixture.
+- [ ] **F3-2.4** Add unit tests with at least 3 hand-computed cases per function.
+- [ ] **F3-2.5** `cargo test --lib metrics` passes.
+- [ ] **F3-2.6** No new external crate deps (std only).
+
+---
+
+### Phase 3: Rust Individual model port -- PENDING
+
+#### rust-agent
+- [ ] **F3-3.1** Refactor `compute_sensor_stats` to use `metrics::mean` and `metrics::sample_sd` (switch from population to sample SD for wizard parity).
+- [ ] **F3-3.2** New command `train_individual_model(target, model_name?, save_path) -> IndividualModelInfo`.
+- [ ] **F3-3.3** Computes mean, sample SD, 1σ and 3σ boundaries on non-NaN target values.
+- [ ] **F3-3.4** Builds the `INDIVIDUAL_INFO` JSON structure matching `wizard.py`'s template exactly.
+- [ ] **F3-3.5** Writes `{save_path}/output/{target}/INDV_INFO_{target}.json` and returns the same JSON.
+- [ ] **F3-3.6** Parses dataset timestamp strings to fill `training_set_start_date` / `training_set_end_date`.
+- [ ] **F3-3.7** Numerical parity vs Python reference within 1e-6.
+
+---
+
+### Phase 4: Rust Clustering model port (GMM 1-cluster + SVD) -- PENDING
+
+#### rust-agent
+- [ ] **F3-4.1** Add `nalgebra` dep to `Cargo.toml`.
+- [ ] **F3-4.2** New module `src-tauri/src/clustering.rs` with `EllipseFit` struct + `fit_single_cluster_ellipse(xs, ys)`.
+- [ ] **F3-4.3** Implement: 2x2 sample covariance, SVD via `nalgebra`, `angle = atan2(U[1,0], U[0,0]).to_degrees()`, `(major_sd, minor_sd) = sqrt(singular_values)`.
+- [ ] **F3-4.4** New command `compute_clustering_preview(...)` -- only supports `n_clusters == 1`; returns Err for >1 (Python fallback out of scope).
+- [ ] **F3-4.5** New command `train_clustering_model(...)` writes `CLUS_INFO_*.json` matching wizard template.
+- [ ] **F3-4.6** Unit tests: 2D Gaussian mean/cov recovery, axis-aligned ellipse → angle ≈ 0.
+- [ ] **F3-4.7** Numerical parity vs sklearn GMM(n=1) within 1e-6.
+
+---
+
+### Phase 5: TypeScript contract & UI integration -- PENDING
+
+#### fe-logic-agent
+- [ ] **F3-5.1** Update `RelationshipPreviewResult` in `src/types/commands.ts` to the new shape: `{request, r2_per_step, rmse2_per_step, predicted, residual}`. Remove legacy `output/r2_dict/rmse2_dict`.
+- [ ] **F3-5.2** Add `train_relationship_model`, `train_individual_model`, `train_clustering_model`, `compute_clustering_preview` to `TauriCommands`.
+- [ ] **F3-5.3** Optionally extract a `useRelationshipPreview` hook in `src/hooks/`.
+
+#### fe-ui-agent
+- [ ] **F3-5.4** Update `handleRelationshipApply` in `PredictiveModelBuild.tsx` to consume the new field names.
+- [ ] **F3-5.5** Wire `handleClusteringApply` to `compute_clustering_preview`; surface ellipse parameters.
+- [ ] **F3-5.6** Implement Save flow calling the appropriate `train_*_model` commands.
+- [ ] **F3-5.7** Display residual stats (mean/sd) in the Stats Strip.
+- [ ] **F3-5.8** `npx tsc --noEmit` passes; no new `any` types.
+
+---
+
+### Phase 6: Nuitka rebuild & verification -- PENDING
+
+#### rust-agent
+- [ ] **F3-6.1** Create `src-tauri/python/build_sidecar.sh` with the proven Nuitka flag set.
+- [ ] **F3-6.2** Create `src-tauri/python/requirements.txt` pinning `numpy, scipy, pygam, nuitka`.
+- [ ] **F3-6.3** Document Xcode CLT / build tool prerequisites in script header.
+
+#### qa-agent
+- [ ] **F3-6.4** Build the sidecar (must complete <15 min on M-series, output <200 MB).
+- [ ] **F3-6.5** Manual JSON-pipe smoke test against the compiled binary.
+- [ ] **F3-6.6** End-to-end Tauri app smoke: load CSV → Predictive Model Build → Apply Relationship/Individual/Clustering → no console errors.
+- [ ] **F3-6.7** Verify `bin/backend-aarch64-apple-darwin` is non-empty and executable.

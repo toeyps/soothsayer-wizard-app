@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice } from "../../types";
+import type { RelationshipPreviewResult } from "../../types/commands";
 import { Check, Activity, GitBranch, Layers, Minus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer, Loader2 } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
@@ -184,8 +185,13 @@ export default function PredictiveModelBuild() {
     // Model Stats — computed on Rust side over ALL rows of the target sensor.
     const [targetStats, setTargetStats] = useState<SensorStats | null>(null);
     const [statsError, setStatsError] = useState<string | null>(null);
-    // Extra regression stats (populated after Apply — TODO).
-    const [modelStats] = useState<{ r2: number | null; rmse: number | null }>({ r2: null, rmse: null });
+    // Extra regression stats (populated after Apply on Relationship mode).
+    const [modelStats, setModelStats] = useState<{ r2: number | null; rmse: number | null }>({ r2: null, rmse: null });
+
+    // Relationship preview result + status.
+    const [relPreview, setRelPreview] = useState<RelationshipPreviewResult | null>(null);
+    const [relLoading, setRelLoading] = useState(false);
+    const [relError, setRelError] = useState<string | null>(null);
 
     // ── Target sensor time-series (for Individual plot) ────────────────
     const [targetChartData, setTargetChartData] = useState<{ headers: string[]; rows: CsvRecord[] }>({ headers: [], rows: [] });
@@ -430,9 +436,57 @@ export default function PredictiveModelBuild() {
         });
     };
 
-    const handleRelationshipApply = () => {
-        console.log("Applying Relationship Model:", { relModelName, relStiffness });
-        // TODO: Call backend
+    const handleRelationshipApply = async () => {
+        if (!targetSensor) {
+            setRelError("Target sensor is required.");
+            return;
+        }
+        if (predictorSensors.length === 0) {
+            setRelError("Select at least one predictor.");
+            return;
+        }
+
+        setRelLoading(true);
+        setRelError(null);
+        try {
+            const result = await invoke<RelationshipPreviewResult>("preview_relationship_model", {
+                predictors: predictorSensors,
+                target: targetSensor,
+                lambda: relStiffness,
+            });
+
+            // Sidecar surfaces errors as {error, trace} in the JSON body.
+            if (result.error) {
+                throw new Error(result.error);
+            }
+
+            setRelPreview(result);
+
+            // The full-model row is the LAST cumulative key. r2_dict / rmse2_dict
+            // share the same key order (Python dict preserves insertion order).
+            const keys = Object.keys(result.r2_dict);
+            const lastKey = keys[keys.length - 1];
+            if (lastKey !== undefined) {
+                setModelStats({
+                    r2: result.r2_dict[lastKey],
+                    rmse: result.rmse2_dict[lastKey] / 2, // wizard returns 2*RMSE
+                });
+            }
+            console.log("Relationship preview:", {
+                rowsReturned: result.output.rows.length,
+                columns: result.output.columns,
+                r2: result.r2_dict,
+                rmse2: result.rmse2_dict,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setRelError(msg);
+            setRelPreview(null);
+            setModelStats({ r2: null, rmse: null });
+            console.error("preview_relationship_model failed:", e);
+        } finally {
+            setRelLoading(false);
+        }
     };
 
     const handleClusteringApply = () => {
@@ -824,9 +878,14 @@ export default function PredictiveModelBuild() {
                             <button
                                 className="pm-btn pm-btn-primary pm-btn-sm"
                                 onClick={handleRelationshipApply}
-                                disabled={rcMode !== 'relationship'}
+                                disabled={rcMode !== 'relationship' || relLoading}
                             >
-                                Apply
+                                {relLoading ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                        <Loader2 size={12} className="animate-spin" />
+                                        Running…
+                                    </span>
+                                ) : 'Apply'}
                             </button>
                         </div>
                         <div className="pm-fields">
@@ -853,6 +912,16 @@ export default function PredictiveModelBuild() {
                                     disabled={rcMode !== 'relationship'}
                                 />
                             </div>
+                            {relError && (
+                                <div className="filter-row" style={{ color: '#f43f5e', fontSize: 12 }}>
+                                    {relError}
+                                </div>
+                            )}
+                            {relPreview && !relError && (
+                                <div className="filter-row" style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                                    Trained on {relPreview.output.rows.length.toLocaleString()} rows
+                                </div>
+                            )}
                         </div>
                     </div>
 
