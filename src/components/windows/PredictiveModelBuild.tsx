@@ -2,8 +2,15 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { appDataDir, join as pathJoin } from "@tauri-apps/api/path";
 import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice } from "../../types";
-import type { RelationshipPreviewResult } from "../../types/commands";
+import type {
+    RelationshipPreviewResult,
+    ClusteringPreview,
+    IndividualModelInfo,
+    ClusteringModelInfo,
+    RelationshipTrainResult,
+} from "../../types/commands";
 import { Check, Activity, GitBranch, Layers, Minus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer, Loader2 } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
@@ -192,6 +199,16 @@ export default function PredictiveModelBuild() {
     const [relPreview, setRelPreview] = useState<RelationshipPreviewResult | null>(null);
     const [relLoading, setRelLoading] = useState(false);
     const [relError, setRelError] = useState<string | null>(null);
+    // Residual stats derived from the preview.
+    const [residualStats, setResidualStats] = useState<{ mean: number; sd: number } | null>(null);
+
+    // Clustering preview result + status.
+    const [clusteringPreview, setClusteringPreview] = useState<ClusteringPreview | null>(null);
+    const [clusteringLoading, setClusteringLoading] = useState(false);
+    const [clusteringError, setClusteringError] = useState<string | null>(null);
+
+    // Save flow status.
+    const [saveStatus, setSaveStatus] = useState<{ kind: 'idle' | 'saving' | 'success' | 'error'; message?: string }>({ kind: 'idle' });
 
     // ── Target sensor time-series (for Individual plot) ────────────────
     const [targetChartData, setTargetChartData] = useState<{ headers: string[]; rows: CsvRecord[] }>({ headers: [], rows: [] });
@@ -462,41 +479,148 @@ export default function PredictiveModelBuild() {
 
             setRelPreview(result);
 
-            // The full-model row is the LAST cumulative key. r2_dict / rmse2_dict
-            // share the same key order (Python dict preserves insertion order).
-            const keys = Object.keys(result.r2_dict);
-            const lastKey = keys[keys.length - 1];
-            if (lastKey !== undefined) {
+            // Full-model row is the LAST entry of the cumulative arrays.
+            const lastIdx = result.r2_per_step.length - 1;
+            if (lastIdx >= 0) {
                 setModelStats({
-                    r2: result.r2_dict[lastKey],
-                    rmse: result.rmse2_dict[lastKey] / 2, // wizard returns 2*RMSE
+                    r2: result.r2_per_step[lastIdx],
+                    rmse: result.rmse2_per_step[lastIdx] / 2, // sidecar returns 2*RMSE
                 });
             }
+
+            // Residual mean / sd over the non-null residual values.
+            const finiteResid = result.residual.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+            if (finiteResid.length > 1) {
+                const m = finiteResid.reduce((a, b) => a + b, 0) / finiteResid.length;
+                const variance = finiteResid.reduce((a, b) => a + (b - m) ** 2, 0) / (finiteResid.length - 1);
+                setResidualStats({ mean: m, sd: Math.sqrt(variance) });
+            } else {
+                setResidualStats(null);
+            }
+
             console.log("Relationship preview:", {
-                rowsReturned: result.output.rows.length,
-                columns: result.output.columns,
-                r2: result.r2_dict,
-                rmse2: result.rmse2_dict,
+                r2_per_step: result.r2_per_step,
+                rmse2_per_step: result.rmse2_per_step,
+                n_predicted: result.predicted.length,
             });
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setRelError(msg);
             setRelPreview(null);
             setModelStats({ r2: null, rmse: null });
+            setResidualStats(null);
             console.error("preview_relationship_model failed:", e);
         } finally {
             setRelLoading(false);
         }
     };
 
-    const handleClusteringApply = () => {
-        console.log("Applying Clustering Model:", { clusterModelName, numClusters, criteriaSensor, clusterRangeMin, clusterRangeMax });
-        // TODO: Call backend
+    const handleClusteringApply = async () => {
+        if (!targetSensor) {
+            setClusteringError("Target sensor is required.");
+            return;
+        }
+        // The "first sensor" is the X-axis predictor; "second sensor" is the target (Y-axis).
+        const firstSensor = scatterXSensor || predictorSensors[0] || "";
+        if (!firstSensor) {
+            setClusteringError("Select a predictor sensor for the X-axis.");
+            return;
+        }
+        // Phase 4 supports n_clusters == 1 only.
+        const effectiveClusters = criteriaSensor ? numClusters : 1;
+        if (effectiveClusters !== 1) {
+            setClusteringError("Multi-cluster not yet supported in Rust port. Clear the criteria sensor or set Number of Clusters to 1.");
+            return;
+        }
+
+        setClusteringLoading(true);
+        setClusteringError(null);
+        try {
+            const result = await invoke<ClusteringPreview>("compute_clustering_preview", {
+                first_sensor: firstSensor,
+                second_sensor: targetSensor,
+                n_clusters: 1,
+            });
+            setClusteringPreview(result);
+            console.log("Clustering preview:", result);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setClusteringError(msg);
+            setClusteringPreview(null);
+            console.error("compute_clustering_preview failed:", e);
+        } finally {
+            setClusteringLoading(false);
+        }
     };
 
-    const handleSaveModel = () => {
-        console.log("Save This Sensor Model(s) clicked");
-        // TODO: Implement save logic
+    /** Build the on-disk save_path for the current workspace. */
+    const resolveSavePath = async (): Promise<string> => {
+        if (!workspaceId) throw new Error("No workspace loaded.");
+        const root = await appDataDir();
+        return await pathJoin(root, "workspaces", workspaceId);
+    };
+
+    const handleSaveModel = async () => {
+        if (!targetSensor) {
+            setSaveStatus({ kind: 'error', message: 'Select a target sensor first.' });
+            return;
+        }
+        setSaveStatus({ kind: 'saving' });
+        try {
+            const savePath = await resolveSavePath();
+            const written: string[] = [];
+
+            if (individualChecked) {
+                const info = await invoke<IndividualModelInfo>("train_individual_model", {
+                    target: targetSensor,
+                    model_name: null,
+                    save_path: savePath,
+                });
+                written.push(`Individual → ${info.saved_path}`);
+            }
+
+            if (rcMode === 'relationship') {
+                if (predictorSensors.length === 0) {
+                    throw new Error("Relationship mode requires at least one predictor.");
+                }
+                const trained = await invoke<RelationshipTrainResult>("train_relationship_model", {
+                    predictors: predictorSensors,
+                    target: targetSensor,
+                    lambda: relStiffness,
+                    save_path: savePath,
+                    model_name: relModelName.trim() || null,
+                });
+                written.push(`Relationship → ${trained.info_path}`);
+            }
+
+            if (rcMode === 'clustering') {
+                const firstSensor = scatterXSensor || predictorSensors[0] || "";
+                if (!firstSensor) throw new Error("Clustering mode requires a predictor on the X-axis.");
+                const effectiveClusters = criteriaSensor ? numClusters : 1;
+                if (effectiveClusters !== 1) {
+                    throw new Error("Clustering mode only supports n_clusters=1 for now.");
+                }
+                const trained = await invoke<ClusteringModelInfo>("train_clustering_model", {
+                    first_sensor: firstSensor,
+                    second_sensor: targetSensor,
+                    n_clusters: 1,
+                    model_name: clusterModelName.trim() || null,
+                    save_path: savePath,
+                });
+                written.push(`Clustering → ${trained.saved_path}`);
+            }
+
+            if (written.length === 0) {
+                setSaveStatus({ kind: 'error', message: 'Nothing to save — toggle Individual / Relationship / Clustering first.' });
+                return;
+            }
+            setSaveStatus({ kind: 'success', message: written.join('\n') });
+            console.log("Save model success:", written);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setSaveStatus({ kind: 'error', message: msg });
+            console.error("Save model failed:", e);
+        }
     };
 
     useSubWindowMenu({
@@ -833,6 +957,14 @@ export default function PredictiveModelBuild() {
                                     <span className="pm-stats-label">RMSE</span>
                                     <span className="pm-stats-value">{modelStats.rmse?.toFixed(4) ?? '—'}</span>
                                 </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">Resid Mean</span>
+                                    <span className="pm-stats-value">{residualStats?.mean.toFixed(4) ?? '—'}</span>
+                                </div>
+                                <div className="pm-stats-item">
+                                    <span className="pm-stats-label">Resid SD</span>
+                                    <span className="pm-stats-value">{residualStats?.sd.toFixed(4) ?? '—'}</span>
+                                </div>
                             </>
                         )}
                     </div>
@@ -919,7 +1051,7 @@ export default function PredictiveModelBuild() {
                             )}
                             {relPreview && !relError && (
                                 <div className="filter-row" style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                                    Trained on {relPreview.output.rows.length.toLocaleString()} rows
+                                    Trained on {relPreview.predicted.length.toLocaleString()} rows
                                 </div>
                             )}
                         </div>
@@ -933,9 +1065,14 @@ export default function PredictiveModelBuild() {
                             <button
                                 className="pm-btn pm-btn-primary pm-btn-sm"
                                 onClick={handleClusteringApply}
-                                disabled={rcMode !== 'clustering'}
+                                disabled={rcMode !== 'clustering' || clusteringLoading}
                             >
-                                Apply
+                                {clusteringLoading ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                        <Loader2 size={12} className="animate-spin" />
+                                        Running…
+                                    </span>
+                                ) : 'Apply'}
                             </button>
                         </div>
                         <div className="pm-fields">
@@ -995,8 +1132,44 @@ export default function PredictiveModelBuild() {
                                     />
                                 </div>
                             </div>
+                            {clusteringError && (
+                                <div className="filter-row" style={{ color: '#f43f5e', fontSize: 12 }}>
+                                    {clusteringError}
+                                </div>
+                            )}
+                            {clusteringPreview && !clusteringError && (
+                                <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch', color: 'var(--text-secondary)', fontSize: 12, gap: 2 }}>
+                                    <div>Fit on {clusteringPreview.n_rows.toLocaleString()} rows</div>
+                                    <div>center: ({clusteringPreview.ellipse.x_center.toFixed(3)}, {clusteringPreview.ellipse.y_center.toFixed(3)})</div>
+                                    <div>σ: {clusteringPreview.ellipse.x_sd.toFixed(3)} × {clusteringPreview.ellipse.y_sd.toFixed(3)}</div>
+                                    <div>angle: {clusteringPreview.ellipse.angle_deg.toFixed(2)}°</div>
+                                </div>
+                            )}
                         </div>
                     </div>
+
+                    {/* Save status */}
+                    {saveStatus.kind !== 'idle' && (
+                        <div className="pm-section">
+                            <div className="pm-section-header">
+                                <span className="pm-eyebrow">Save</span>
+                                <span className="pm-section-title">Status</span>
+                            </div>
+                            <div
+                                className="pm-fields"
+                                style={{
+                                    fontSize: 12,
+                                    color: saveStatus.kind === 'error' ? '#f43f5e'
+                                        : saveStatus.kind === 'success' ? '#10b981'
+                                        : 'var(--text-secondary)',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-all',
+                                }}
+                            >
+                                {saveStatus.kind === 'saving' ? 'Saving…' : (saveStatus.message ?? '')}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

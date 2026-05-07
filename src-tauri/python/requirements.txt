@@ -1,0 +1,30 @@
+# Soothsayer-Wizard Python sidecar — pinned dependencies for Nuitka builds.
+#
+# These are the ONLY packages the sidecar (backend.py) needs at runtime.
+# `pandas` and `scikit-learn` were dropped in the Hybrid Rust/Python migration
+# (Feature 3). All non-LinearGAM math now lives in Rust; Python only handles
+# the pygam.LinearGAM fit/predict path.
+#
+# Versions chosen to be Nuitka-friendly on Apple Silicon (M-series Macs)
+# and recent Linux/Windows. Bump cautiously — older numpy<1.26 may break
+# pygam, newer scipy may break Nuitka anti-bloat plugin.
+#
+# macOS prerequisites (REQUIRED before `python -m nuitka`):
+#   1. Xcode Command Line Tools:  xcode-select --install
+#   2. (Optional, for arm64)   brew install ccache
+#
+# Linux prerequisites: gcc, patchelf
+# Windows prerequisites: MSVC 2022 Build Tools
+
+# --- Recommended (Python 3.11): pinned, Nuitka-tested set ---
+# numpy==1.26.4
+# scipy==1.13.1
+# pygam==0.9.1
+# nuitka==2.4.8
+
+# --- Python 3.13 fallback set (uncomment if you can't install py3.11) ---
+# Note: pygam 0.9.1 was pinned to numpy<2, so use the dev branch / loosen.
+numpy>=2.1.0
+scipy>=1.14.1
+pygam>=0.9.1
+nuitka>=2.5.0

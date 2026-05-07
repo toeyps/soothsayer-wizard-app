@@ -1,4 +1,6 @@
+pub mod clustering;
 pub mod csv_processor;
+pub mod metrics;
 pub mod operation_registry;
 use csv_processor::{
     load_metadata, CsvLoadReport, MappingData, MappingResult, ProcessedData,
@@ -125,8 +127,14 @@ struct SensorStats {
     upper3: f64,
 }
 
-/// Compute mean / standard deviation (population) plus 1σ & 3σ bounds
-/// across all non-null values of a given sensor in the currently loaded dataset.
+/// Compute mean / sample standard deviation (ddof=1, pandas-style) plus 1σ
+/// & 3σ bounds across all non-null values of a given sensor in the currently
+/// loaded dataset.
+///
+/// Phase 3 change: switched from population SD (ddof=0) to sample SD (ddof=1)
+/// for parity with `wizard.py` which uses pandas `.std()`. The numerical
+/// difference is `sqrt(N/(N-1))` per σ — invisible at large N, slightly wider
+/// boundaries at small N.
 #[tauri::command]
 fn compute_sensor_stats(
     sensor: String,
@@ -161,31 +169,24 @@ fn compute_sensor_stats(
         return Err(format!("No valid numeric values for sensor '{}'", sensor));
     }
 
-    // Sum + min/max in parallel.
-    let (sum, min, max) = values
+    // Min/max in parallel (mean now comes from `metrics::mean`).
+    let (min, max) = values
         .par_iter()
         .copied()
         .fold(
-            || (0.0_f64, f64::INFINITY, f64::NEG_INFINITY),
-            |(s, mn, mx), v| (s + v, mn.min(v), mx.max(v)),
+            || (f64::INFINITY, f64::NEG_INFINITY),
+            |(mn, mx), v| (mn.min(v), mx.max(v)),
         )
         .reduce(
-            || (0.0_f64, f64::INFINITY, f64::NEG_INFINITY),
-            |(s1, mn1, mx1), (s2, mn2, mx2)| (s1 + s2, mn1.min(mn2), mx1.max(mx2)),
+            || (f64::INFINITY, f64::NEG_INFINITY),
+            |(mn1, mx1), (mn2, mx2)| (mn1.min(mn2), mx1.max(mx2)),
         );
 
-    let mean = sum / count as f64;
-
-    // Population variance (divide by N) — consistent with ±3σ outlier detection.
-    let variance = values
-        .par_iter()
-        .map(|v| {
-            let d = *v - mean;
-            d * d
-        })
-        .sum::<f64>()
-        / count as f64;
-    let sd = variance.sqrt();
+    let mean = metrics::mean(&values);
+    // Sample SD (ddof=1) — matches pandas `.std()`. For N=1 sample_sd is NaN;
+    // fall back to 0.0 so the ±σ band is degenerate but well-defined.
+    let sd_raw = metrics::sample_sd(&values, mean);
+    let sd = if sd_raw.is_nan() { 0.0 } else { sd_raw };
 
     Ok(SensorStats {
         mean,
@@ -388,6 +389,655 @@ async fn preview_relationship_model(
 
     serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
         .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))
+}
+
+// ── Phase 3 / 4: Predictive-model save commands (Individual + Clustering) ──
+
+/// Try a few common timestamp formats and return the parsed `NaiveDateTime`,
+/// or `None` if no format matches. Same set as `get_filtered_data`.
+fn parse_timestamp(s: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M"))
+        .or_else(|_| {
+            chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z").map(|dt| dt.naive_local())
+        })
+        .or_else(|_| {
+            chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%:z").map(|dt| dt.naive_local())
+        })
+        .or_else(|_| {
+            chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%:z")
+                .map(|dt| dt.naive_local())
+        })
+        .or_else(|_| {
+            chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%:z")
+                .map(|dt| dt.naive_local())
+        })
+        .ok()
+}
+
+/// Scan a column's rows; return (min_iso, max_iso, count_with_value) where
+/// the timestamp strings are taken in their original ISO form for any row
+/// whose value at `value_idx` is finite. Falls back to empty strings if no
+/// timestamps parse.
+fn dataset_time_bounds(
+    data: &csv_processor::ProcessedData,
+    value_idx: usize,
+) -> (String, String) {
+    let mut min_dt: Option<(chrono::NaiveDateTime, String)> = None;
+    let mut max_dt: Option<(chrono::NaiveDateTime, String)> = None;
+    for row in &data.rows {
+        let val_ok = row
+            .values
+            .get(value_idx)
+            .and_then(|v| *v)
+            .map(|v| v.is_finite())
+            .unwrap_or(false);
+        if !val_ok {
+            continue;
+        }
+        let ts_str = match &row.timestamp {
+            Some(t) => t,
+            None => continue,
+        };
+        let parsed = match parse_timestamp(ts_str) {
+            Some(p) => p,
+            None => continue,
+        };
+        match &min_dt {
+            None => min_dt = Some((parsed, ts_str.clone())),
+            Some((m, _)) if parsed < *m => min_dt = Some((parsed, ts_str.clone())),
+            _ => {}
+        }
+        match &max_dt {
+            None => max_dt = Some((parsed, ts_str.clone())),
+            Some((m, _)) if parsed > *m => max_dt = Some((parsed, ts_str.clone())),
+            _ => {}
+        }
+    }
+    match (min_dt, max_dt) {
+        (Some((mn, _)), Some((mx, _))) => (
+            mn.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            mx.format("%Y-%m-%dT%H:%M:%S").to_string(),
+        ),
+        _ => (String::new(), String::new()),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct IndividualModelInfo {
+    pub model_name: String,
+    pub publish_id: i64,
+    pub training_set_start_date: String,
+    pub training_set_end_date: String,
+    pub mean: f64,
+    pub sd: f64,
+    pub boundary_1sd: [f64; 2],
+    pub boundary_3sd: [f64; 2],
+    pub saved_path: String,
+}
+
+/// Build the `INDIVIDUAL_INFO` JSON payload (matching wizard.py exactly) and
+/// write it to `{save_path}/output/{target}/INDV_INFO_{target}.json`.
+///
+/// Numeric values are rounded to 3 decimals to match wizard.py's
+/// `round(..., 3)` calls in `_execute_individual`.
+#[tauri::command]
+fn train_individual_model(
+    target: String,
+    model_name: Option<String>,
+    save_path: String,
+    state: State<AppState>,
+) -> Result<IndividualModelInfo, String> {
+    use rayon::prelude::*;
+
+    if target.is_empty() {
+        return Err("Target sensor is required.".into());
+    }
+    if save_path.is_empty() {
+        return Err("save_path is required.".into());
+    }
+
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let data = &session.data;
+
+    let idx = data
+        .headers
+        .iter()
+        .position(|h| h == &target)
+        .ok_or_else(|| format!("Sensor not found: {}", target))?;
+
+    // Non-NaN finite values for the target column.
+    let values: Vec<f64> = data
+        .rows
+        .par_iter()
+        .filter_map(|row| {
+            row.values
+                .get(idx)
+                .and_then(|v| *v)
+                .filter(|v| v.is_finite())
+        })
+        .collect();
+
+    if values.is_empty() {
+        return Err(format!("No valid numeric values for sensor '{}'", target));
+    }
+
+    let mean = metrics::mean(&values);
+    let sd_raw = metrics::sample_sd(&values, mean);
+    let sd = if sd_raw.is_nan() { 0.0 } else { sd_raw };
+
+    // Round to 3 decimals to match wizard.py.
+    let r3 = |x: f64| (x * 1000.0).round() / 1000.0;
+    let mean_r = r3(mean);
+    let sd_r = r3(sd);
+    let b1 = [r3(mean_r - sd_r), r3(mean_r + sd_r)];
+    let b3 = [r3(mean_r - 3.0 * sd_r), r3(mean_r + 3.0 * sd_r)];
+
+    let (start_date, end_date) = dataset_time_bounds(data, idx);
+
+    // Default model_name follows wizard.py: f"{descr} ({tag})". We don't have
+    // the sensor mapper Rust-side, so just use the tag.
+    let resolved_name = model_name
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("({})", target));
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Build the JSON payload matching wizard.PredictiveImplementationTemplate.INDIVIDUAL_INFO
+    let json_payload = serde_json::json!({
+        "model_name": resolved_name,
+        "model_composition": {},
+        "model_training_set_info": {
+            "publish_id": 0,
+            "training_set_start_date": start_date,
+            "training_set_end_date": end_date,
+            "training_set_comments": ""
+        },
+        "model_metrics": {
+            "mean": mean_r,
+            "sd": sd_r,
+            "1sd_boundary": [b1[0], b1[1]],
+            "3sd_boundary": [b3[0], b3[1]],
+            "setpoint_health_score": [serde_json::Value::Null, serde_json::Value::Null]
+        },
+        "historical_sd_band_and_set_point": {},
+        "model_update_record": [
+            {
+                "publish_id": 0,
+                "updated_timestamp": now,
+                "updated_by": "Wizard",
+                "activity": "Wizard",
+                "comments": ""
+            }
+        ]
+    });
+
+    // Write to disk: {save_path}/output/{target}/INDV_INFO_{target}.json
+    let out_dir = std::path::Path::new(&save_path)
+        .join("output")
+        .join(&target);
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    let out_file = out_dir.join(format!("INDV_INFO_{}.json", target));
+    let json_text = serde_json::to_string_pretty(&json_payload)
+        .map_err(|e| format!("JSON serialize failed: {}", e))?;
+    std::fs::write(&out_file, json_text)
+        .map_err(|e| format!("Failed to write {}: {}", out_file.display(), e))?;
+
+    Ok(IndividualModelInfo {
+        model_name: resolved_name,
+        publish_id: 0,
+        training_set_start_date: start_date,
+        training_set_end_date: end_date,
+        mean: mean_r,
+        sd: sd_r,
+        boundary_1sd: b1,
+        boundary_3sd: b3,
+        saved_path: out_file.to_string_lossy().into_owned(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClusteringPreview {
+    pub first_sensor: String,
+    pub second_sensor: String,
+    pub cluster_count: u32,
+    pub n_rows: usize,
+    pub ellipse: clustering::EllipseFit,
+}
+
+/// Compute a single-cluster ellipse fit over (first_sensor, second_sensor).
+/// Multi-cluster (n_clusters > 1) is not yet supported in the Rust port.
+#[tauri::command]
+fn compute_clustering_preview(
+    first_sensor: String,
+    second_sensor: String,
+    n_clusters: u32,
+    state: State<AppState>,
+) -> Result<ClusteringPreview, String> {
+    if n_clusters != 1 {
+        return Err("Multi-cluster not yet supported in Rust port".into());
+    }
+    if first_sensor.is_empty() || second_sensor.is_empty() {
+        return Err("Both sensors are required.".into());
+    }
+
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let data = &session.data;
+
+    let i1 = data
+        .headers
+        .iter()
+        .position(|h| h == &first_sensor)
+        .ok_or_else(|| format!("Sensor not found: {}", first_sensor))?;
+    let i2 = data
+        .headers
+        .iter()
+        .position(|h| h == &second_sensor)
+        .ok_or_else(|| format!("Sensor not found: {}", second_sensor))?;
+
+    let mut xs: Vec<f64> = Vec::with_capacity(data.rows.len());
+    let mut ys: Vec<f64> = Vec::with_capacity(data.rows.len());
+    for row in &data.rows {
+        let x = match row.values.get(i1).and_then(|v| *v) {
+            Some(v) if v.is_finite() => v,
+            _ => continue,
+        };
+        let y = match row.values.get(i2).and_then(|v| *v) {
+            Some(v) if v.is_finite() => v,
+            _ => continue,
+        };
+        xs.push(x);
+        ys.push(y);
+    }
+
+    if xs.is_empty() {
+        return Err("No rows remain after dropping nulls.".into());
+    }
+
+    let ellipse = clustering::fit_single_cluster_ellipse(&xs, &ys)?;
+    Ok(ClusteringPreview {
+        first_sensor,
+        second_sensor,
+        cluster_count: 1,
+        n_rows: xs.len(),
+        ellipse,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClusteringModelInfo {
+    pub model_name: String,
+    pub first_sensor: String,
+    pub second_sensor: String,
+    pub cluster_count: u32,
+    pub ellipse: clustering::EllipseFit,
+    pub saved_path: String,
+}
+
+/// Persist a single-cluster GMM ellipse fit to
+/// `{save_path}/output/{second_sensor}/CLUS_INFO_{first_sensor}_{second_sensor}.json`
+/// matching wizard.py's `CLUSTERING_INFO` template.
+#[tauri::command]
+fn train_clustering_model(
+    first_sensor: String,
+    second_sensor: String,
+    n_clusters: u32,
+    model_name: Option<String>,
+    save_path: String,
+    state: State<AppState>,
+) -> Result<ClusteringModelInfo, String> {
+    if n_clusters != 1 {
+        return Err("Multi-cluster not yet supported in Rust port".into());
+    }
+    if save_path.is_empty() {
+        return Err("save_path is required.".into());
+    }
+
+    // Reuse the preview path for ellipse + n_rows.
+    let preview = compute_clustering_preview(
+        first_sensor.clone(),
+        second_sensor.clone(),
+        n_clusters,
+        state.clone(),
+    )?;
+
+    // Need start/end dates over the joined-non-null subset.
+    let (start_date, end_date) = {
+        let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        let data = &session.data;
+        let i1 = data.headers.iter().position(|h| h == &first_sensor).unwrap();
+        let i2 = data.headers.iter().position(|h| h == &second_sensor).unwrap();
+
+        let mut min_dt: Option<chrono::NaiveDateTime> = None;
+        let mut max_dt: Option<chrono::NaiveDateTime> = None;
+        for row in &data.rows {
+            let ok1 = row.values.get(i1).and_then(|v| *v).map(|v| v.is_finite()).unwrap_or(false);
+            let ok2 = row.values.get(i2).and_then(|v| *v).map(|v| v.is_finite()).unwrap_or(false);
+            if !(ok1 && ok2) { continue; }
+            if let Some(ts) = row.timestamp.as_deref().and_then(parse_timestamp) {
+                min_dt = Some(min_dt.map_or(ts, |m| m.min(ts)));
+                max_dt = Some(max_dt.map_or(ts, |m| m.max(ts)));
+            }
+        }
+        match (min_dt, max_dt) {
+            (Some(a), Some(b)) => (
+                a.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                b.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            ),
+            _ => (String::new(), String::new()),
+        }
+    };
+
+    let r3 = |x: f64| (x * 1000.0).round() / 1000.0;
+
+    let resolved_name = model_name
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("({}) VS ({})", first_sensor, second_sensor));
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Single cluster keyed "1" for parity with wizard.py.
+    let cluster_info = serde_json::json!({
+        "1": {
+            "x_cluster_center": r3(preview.ellipse.x_center),
+            "y_cluster_center": r3(preview.ellipse.y_center),
+            "x_sd": r3(preview.ellipse.x_sd),
+            "y_sd": r3(preview.ellipse.y_sd),
+            "angle_deg": r3(preview.ellipse.angle_deg),
+            "boundary_sd_health_score": serde_json::Value::Null,
+        }
+    });
+
+    let json_payload = serde_json::json!({
+        "model_name": resolved_name,
+        "model_composition": {
+            "first_sensor": first_sensor,
+            "second_sensor": second_sensor,
+            "criteria_sensor": "",
+            "cluster_count": 1
+        },
+        "model_training_set_info": {
+            "publish_id": 0,
+            "training_set_start_date": start_date,
+            "training_set_end_date": end_date,
+            "training_set_comments": ""
+        },
+        "cluster_info": cluster_info,
+        "model_update_record": [
+            {
+                "publish_id": 0,
+                "updated_timestamp": now,
+                "updated_by": "Wizard",
+                "activity": "Wizard",
+                "comments": ""
+            }
+        ]
+    });
+
+    let out_dir = std::path::Path::new(&save_path)
+        .join("output")
+        .join(&second_sensor);
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    let out_file = out_dir.join(format!(
+        "CLUS_INFO_{}_{}.json",
+        first_sensor, second_sensor
+    ));
+    let json_text = serde_json::to_string_pretty(&json_payload)
+        .map_err(|e| format!("JSON serialize failed: {}", e))?;
+    std::fs::write(&out_file, json_text)
+        .map_err(|e| format!("Failed to write {}: {}", out_file.display(), e))?;
+
+    Ok(ClusteringModelInfo {
+        model_name: resolved_name,
+        first_sensor,
+        second_sensor,
+        cluster_count: 1,
+        ellipse: preview.ellipse,
+        saved_path: out_file.to_string_lossy().into_owned(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelationshipTrainResult {
+    pub model_path: String,
+    pub r2: f64,
+    pub rmse2: f64,
+    pub n_rows: usize,
+    pub info_path: String,
+}
+
+/// Train a Relationship (LinearGAM) model via the sidecar and persist:
+///   - The pickled model under `{save_path}/output/{target}/REL_MODEL_*.pkl`
+///   - A `REL_INFO_*.json` written by Rust (Python only saves the .pkl).
+#[tauri::command]
+async fn train_relationship_model(
+    predictors: Vec<String>,
+    target: String,
+    lambda: f64,
+    save_path: String,
+    model_name: Option<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RelationshipTrainResult, String> {
+    if predictors.is_empty() {
+        return Err("At least one predictor is required.".into());
+    }
+    if target.is_empty() {
+        return Err("Target sensor is required.".into());
+    }
+    if save_path.is_empty() {
+        return Err("save_path is required.".into());
+    }
+
+    // Build (X, y) the same way preview does.
+    let (x_matrix, y_vector, time_bounds) = {
+        let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+        let session = state_lock.as_ref().ok_or("No data loaded")?;
+        let data = &session.data;
+
+        let mut predictor_indices: Vec<usize> = Vec::with_capacity(predictors.len());
+        for p in &predictors {
+            let idx = data
+                .headers
+                .iter()
+                .position(|h| h == p)
+                .ok_or_else(|| format!("Predictor not found: {}", p))?;
+            predictor_indices.push(idx);
+        }
+        let target_idx = data
+            .headers
+            .iter()
+            .position(|h| h == &target)
+            .ok_or_else(|| format!("Target not found: {}", target))?;
+
+        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
+        let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
+        let mut min_dt: Option<chrono::NaiveDateTime> = None;
+        let mut max_dt: Option<chrono::NaiveDateTime> = None;
+        for row in &data.rows {
+            let mut x_row: Vec<f64> = Vec::with_capacity(predictor_indices.len());
+            let mut ok = true;
+            for &i in &predictor_indices {
+                match row.values.get(i).and_then(|v| *v) {
+                    Some(v) if v.is_finite() => x_row.push(v),
+                    _ => { ok = false; break; }
+                }
+            }
+            if !ok { continue; }
+            let y_val = match row.values.get(target_idx).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            x_matrix.push(x_row);
+            y_vector.push(y_val);
+            if let Some(ts) = row.timestamp.as_deref().and_then(parse_timestamp) {
+                min_dt = Some(min_dt.map_or(ts, |m| m.min(ts)));
+                max_dt = Some(max_dt.map_or(ts, |m| m.max(ts)));
+            }
+        }
+        if x_matrix.is_empty() {
+            return Err("No rows remain after dropping nulls.".into());
+        }
+        let bounds = match (min_dt, max_dt) {
+            (Some(a), Some(b)) => (
+                a.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                b.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            ),
+            _ => (String::new(), String::new()),
+        };
+        (x_matrix, y_vector, bounds)
+    };
+
+    let n_rows = x_matrix.len();
+
+    let payload = serde_json::json!({
+        "action": "train_relationship",
+        "payload": {
+            "predictors": predictors,
+            "target": target,
+            "X": x_matrix,
+            "y": y_vector,
+            "linearGAM_lambda": lambda,
+            "saved_path": save_path,
+        }
+    });
+
+    let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+    payload_line.push('\n');
+
+    let sidecar = app.shell().sidecar("backend").map_err(|e| e.to_string())?;
+    let (mut rx, mut child) = sidecar.spawn().map_err(|e| e.to_string())?;
+    child
+        .write(payload_line.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    let mut stdout_buf = String::new();
+    let mut stderr_buf = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                stdout_buf.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Stderr(line) => {
+                stderr_buf.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+
+    if stdout_buf.trim().is_empty() {
+        return Err(format!(
+            "Sidecar returned no output. Stderr: {}",
+            stderr_buf.trim()
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct SidecarTrainResponse {
+        r2: Option<f64>,
+        rmse2: Option<f64>,
+        model_path: Option<String>,
+        error: Option<String>,
+        #[allow(dead_code)]
+        trace: Option<String>,
+    }
+
+    let resp: SidecarTrainResponse = serde_json::from_str(stdout_buf.trim())
+        .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))?;
+    if let Some(err) = resp.error {
+        return Err(format!("Sidecar error: {}", err));
+    }
+    let r2 = resp.r2.ok_or("Sidecar response missing r2")?;
+    let rmse2 = resp.rmse2.ok_or("Sidecar response missing rmse2")?;
+    let model_path = resp.model_path.ok_or("Sidecar response missing model_path")?;
+
+    // Write the REL_INFO_*.json on the Rust side (parity with wizard.py).
+    let resolved_name = model_name
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let pred_str = predictors
+                .iter()
+                .map(|p| format!("({})", p))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            format!("{} -> ({})", pred_str, target)
+        });
+
+    let predictors_obj: serde_json::Map<String, serde_json::Value> = predictors
+        .iter()
+        .map(|p| (p.clone(), serde_json::Value::String(p.clone())))
+        .collect();
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let feat_token = predictors.join("+");
+    let info_payload = serde_json::json!({
+        "model_name": resolved_name,
+        "model_composition": {
+            "predictors": predictors_obj,
+            "target": { target.clone(): target.clone() },
+            "linearGAM_lambda": lambda
+        },
+        "model_training_set_info": {
+            "publish_id": 0,
+            "training_set_file_name": format!("{}/REL_DATASET_{}_{}.csv", target, feat_token, target),
+            "training_set_start_date": time_bounds.0,
+            "training_set_end_date": time_bounds.1,
+            "training_set_comments": ""
+        },
+        "model_metrics": {
+            "r2_score": r2,
+            "2rmse": rmse2
+        },
+        "model_location": format!("{}/REL_MODEL_{}_{}.pkl", target, feat_token, target),
+        "setpoint_health_score": {
+            "residual_at_health_80_lower": serde_json::Value::Null,
+            "residual_at_health_80_upper": serde_json::Value::Null,
+            "residual_at_health_0_lower": serde_json::Value::Null,
+            "residual_at_health_0_upper": serde_json::Value::Null
+        },
+        "model_update_record": [
+            {
+                "publish_id": 0,
+                "updated_timestamp": now,
+                "updated_by": "Wizard",
+                "activity": "Wizard",
+                "comments": ""
+            }
+        ]
+    });
+
+    let info_dir = std::path::Path::new(&save_path).join("output").join(&target);
+    std::fs::create_dir_all(&info_dir)
+        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    let info_path = info_dir.join(format!("REL_INFO_{}_{}.json", feat_token, target));
+    let info_text = serde_json::to_string_pretty(&info_payload)
+        .map_err(|e| format!("JSON serialize failed: {}", e))?;
+    std::fs::write(&info_path, info_text)
+        .map_err(|e| format!("Failed to write {}: {}", info_path.display(), e))?;
+
+    Ok(RelationshipTrainResult {
+        model_path,
+        r2,
+        rmse2,
+        n_rows,
+        info_path: info_path.to_string_lossy().into_owned(),
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1040,7 +1690,11 @@ pub fn run() {
             apply_sensor_mapping,
             get_filtered_data,
             evaluate_formula,
-            validate_formula
+            validate_formula,
+            train_individual_model,
+            compute_clustering_preview,
+            train_clustering_model,
+            train_relationship_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

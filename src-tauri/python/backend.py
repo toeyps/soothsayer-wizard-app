@@ -14,13 +14,10 @@ Phase 1 (Hybrid Rust/Python architecture) goals satisfied by this file:
     - Accepts pre-cleaned `X` matrix and `y` vector — Rust handles
       column projection and NaN-drop before invoking the sidecar.
 
-Compat shim: the response includes BOTH the new shape
-(`r2_per_step`, `rmse2_per_step`, `predicted`, `residual`) AND the
-legacy shape (`output: {columns, rows}`, `r2_dict`, `rmse2_dict`)
-so the existing TypeScript `RelationshipPreviewResult` and the
-PredictiveModelBuild UI continue to work without modification.
-The legacy fields will be removed in Phase 5 once the frontend has
-been migrated to the new shape.
+Phase 5: the legacy compat shim has been removed. The response now contains
+only the new shape: `request, r2_per_step, rmse2_per_step, predicted,
+residual`. The TypeScript types and PredictiveModelBuild UI consume this
+shape directly.
 """
 
 import sys
@@ -63,14 +60,10 @@ def preview_relationship(payload):
         y                 : list[float] n_rows, no NaN
         linearGAM_lambda  : float       optional, default 10000
 
-    Returns the new contract:
+    Returns:
         request, r2_per_step, rmse2_per_step, predicted, residual
-    PLUS the legacy compat-shim fields used by the existing UI:
-        output {columns, rows}, r2_dict, rmse2_dict
-    The legacy fields will be removed in Phase 5.
     """
     features = payload["predictors"]
-    target = payload["target"]
     lamb = payload.get("linearGAM_lambda", 10000)
 
     X = np.asarray(payload["X"], dtype=float)
@@ -89,11 +82,6 @@ def preview_relationship(payload):
     n_rows = X.shape[0]
     r2_per_step = []
     rmse2_per_step = []
-    # Legacy: per-cumulative-step PREDICTED columns + dict keys.
-    legacy_columns = list(features) + [target]
-    legacy_predicted_cols = []   # (col_name, [values])
-    legacy_r2_dict = {}
-    legacy_rmse2_dict = {}
 
     last_predicted = None
     for i in range(len(features)):
@@ -106,46 +94,18 @@ def preview_relationship(payload):
         r2_per_step.append(r2)
         rmse2_per_step.append(rmse2)
 
-        # Legacy key replicates wizard.py's
-        # f"PREDICTED_{features[:i+1]}" — note that this uses the
-        # numpy/list str repr to match the original exactly.
-        legacy_key = f"PREDICTED_{features[: i + 1]}"
-        legacy_r2_dict[legacy_key] = r2
-        legacy_rmse2_dict[legacy_key] = rmse2
-        legacy_predicted_cols.append((legacy_key, pred.tolist()))
-
         last_predicted = pred
 
     # Full-model predicted/residual = the LAST cumulative step (uses all features).
     predicted_full = last_predicted if last_predicted is not None else np.zeros(n_rows)
     residual_full = y - predicted_full
 
-    # Build legacy {columns, rows}: original feature columns + target + every
-    # cumulative PREDICTED column, in that order.
-    legacy_columns_full = list(features) + [target] + [k for k, _ in legacy_predicted_cols]
-    legacy_rows = []
-    for r in range(n_rows):
-        row = []
-        for c in range(len(features)):
-            row.append(_finite_or_none(X[r, c]))
-        row.append(_finite_or_none(y[r]))
-        for _, vals in legacy_predicted_cols:
-            row.append(_finite_or_none(vals[r]))
-        legacy_rows.append(row)
-    # Keep `legacy_columns` referenced (silence linters in some setups).
-    _ = legacy_columns
-
     return {
         "request": "PreviewModel/relationship",
-        # ── New contract ──
         "r2_per_step": r2_per_step,
         "rmse2_per_step": rmse2_per_step,
         "predicted": [_finite_or_none(v) for v in predicted_full.tolist()],
         "residual": [_finite_or_none(v) for v in residual_full.tolist()],
-        # ── Legacy compat shim (remove in Phase 5) ──
-        "output": {"columns": legacy_columns_full, "rows": legacy_rows},
-        "r2_dict": legacy_r2_dict,
-        "rmse2_dict": legacy_rmse2_dict,
     }
 
 
