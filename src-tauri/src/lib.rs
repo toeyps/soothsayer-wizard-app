@@ -263,6 +263,28 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
     Ok(output)
 }
 
+/// Optional value-filter passed alongside `preview_relationship_model`.
+/// Mirrors the JSON shape produced by the dashboard's FilterPanel, so the
+/// preview scatter can be built off the same filtered slice the user is
+/// looking at on the previous page.
+#[derive(Debug, Deserialize)]
+struct PreviewValueFilter {
+    sensor: String,
+    operation: String, // "greater_than" | "less_than" | "between" | "equals"
+    value1: Option<f64>,
+    value2: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PreviewFilter {
+    #[serde(default)]
+    timestamp_start: Option<String>,
+    #[serde(default)]
+    timestamp_end: Option<String>,
+    #[serde(default)]
+    value_filters: Vec<PreviewValueFilter>,
+}
+
 /// Preview the Relationship (LinearGAM) model on the currently loaded
 /// dataset by delegating to the Python sidecar.
 ///
@@ -271,11 +293,16 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
 /// sidecar (much smaller than the full dataset).  The sidecar runs the
 /// `Wizard.PreviewModel.relationship` routine and streams back JSON, which
 /// we forward to the frontend untouched as `serde_json::Value`.
+///
+/// When `filter` is provided, rows are first restricted to those matching
+/// the dashboard's timestamp range + value filters before NaN-dropping.
+/// `None` keeps the legacy "use all rows" behavior.
 #[tauri::command]
 async fn preview_relationship_model(
     predictors: Vec<String>,
     target: String,
     lambda: f64,
+    filter: Option<PreviewFilter>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
@@ -311,10 +338,99 @@ async fn preview_relationship_model(
             .position(|h| h == &target)
             .ok_or_else(|| format!("Target not found: {}", target))?;
 
-        // Drop rows with any null/non-finite across the (predictors + target) set.
+        // Resolve dashboard filter (timestamp + value filters), if any.
+        // Same accept-multiple-formats parsing used by `get_filtered_data`,
+        // routed through `parse_timestamp` so any format the dashboard sends
+        // (datetime-local, ISO, +offset, etc.) is honored consistently.
+        struct ResolvedValueFilter {
+            sensor_idx: usize,
+            operation: String,
+            value1: Option<f64>,
+            value2: Option<f64>,
+        }
+        let (ts_start, ts_end, resolved_value_filters): (
+            Option<chrono::NaiveDateTime>,
+            Option<chrono::NaiveDateTime>,
+            Vec<ResolvedValueFilter>,
+        ) = match &filter {
+            Some(f) => {
+                let s = f.timestamp_start.as_deref().and_then(parse_timestamp);
+                let e = f.timestamp_end.as_deref().and_then(parse_timestamp);
+                let v = f
+                    .value_filters
+                    .iter()
+                    .filter_map(|vf| {
+                        data.headers.iter().position(|h| h == &vf.sensor).map(|idx| {
+                            ResolvedValueFilter {
+                                sensor_idx: idx,
+                                operation: vf.operation.clone(),
+                                value1: vf.value1,
+                                value2: vf.value2,
+                            }
+                        })
+                    })
+                    .collect();
+                (s, e, v)
+            }
+            None => (None, None, Vec::new()),
+        };
+        let has_ts_filter = ts_start.is_some() || ts_end.is_some();
+        let has_value_filter = !resolved_value_filters.is_empty();
+
+        // Drop rows with any null/non-finite across the (predictors + target) set,
+        // and rows that fall outside the dashboard filter (when present).
         let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
         let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
         for row in &data.rows {
+            // Timestamp filter
+            if has_ts_filter {
+                let parsed = row.timestamp.as_deref().and_then(parse_timestamp);
+                let ts = match parsed {
+                    Some(t) => t,
+                    None => continue, // unparseable timestamps drop out under filter
+                };
+                if let Some(start) = ts_start {
+                    if ts < start {
+                        continue;
+                    }
+                }
+                if let Some(end) = ts_end {
+                    if ts > end {
+                        continue;
+                    }
+                }
+            }
+
+            // Value filters (AND across all)
+            if has_value_filter {
+                let mut pass = true;
+                for rf in &resolved_value_filters {
+                    let val = row.values.get(rf.sensor_idx).and_then(|v| *v);
+                    let ok = match val {
+                        None => false,
+                        Some(v) => match rf.operation.as_str() {
+                            "greater_than" => rf.value1.map_or(true, |v1| v > v1),
+                            "less_than" => rf.value1.map_or(true, |v1| v < v1),
+                            "equals" => {
+                                rf.value1.map_or(true, |v1| (v - v1).abs() < f64::EPSILON)
+                            }
+                            "between" => match (rf.value1, rf.value2) {
+                                (Some(v1), Some(v2)) => v >= v1 && v <= v2,
+                                _ => true,
+                            },
+                            _ => true,
+                        },
+                    };
+                    if !ok {
+                        pass = false;
+                        break;
+                    }
+                }
+                if !pass {
+                    continue;
+                }
+            }
+
             let mut x_row: Vec<f64> = Vec::with_capacity(predictor_indices.len());
             let mut ok = true;
             for &i in &predictor_indices {
@@ -387,8 +503,25 @@ async fn preview_relationship_model(
         ));
     }
 
-    serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
-        .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))
+    let mut parsed = serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
+        .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))?;
+
+    // Re-extract X / y from the request payload we shipped to the sidecar — these
+    // were already cleaned (NaN-dropped, projected) by Rust above.  Attaching them
+    // to the response lets the frontend draw scatter (predictor_raw vs target_raw)
+    // without re-querying the dataset.
+    if let Some(obj) = parsed.as_object_mut() {
+        if let Some(req_payload) = payload.get("payload") {
+            if let Some(x_val) = req_payload.get("X") {
+                obj.insert("predictor_raw".to_string(), x_val.clone());
+            }
+            if let Some(y_val) = req_payload.get("y") {
+                obj.insert("target_raw".to_string(), y_val.clone());
+            }
+        }
+    }
+
+    Ok(parsed)
 }
 
 // ── Phase 3 / 4: Predictive-model save commands (Individual + Clustering) ──
@@ -1696,6 +1829,27 @@ pub fn run() {
             train_clustering_model,
             train_relationship_model
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // Exit the app when its last webview window is destroyed. This overrides
+        // Tauri's default "stay alive on macOS after all windows close" behavior
+        // — without this, closing every window leaves the process running with
+        // no UI, which the user has no way to recover from short of Cmd+Q.
+        //
+        // Handled at the `RunEvent::WindowEvent` level (not `.on_window_event`)
+        // because by the time this fires, the destroyed window has already been
+        // removed from the webview manager map — `webview_windows()` reflects
+        // the post-destruction state, so we don't need a deferred re-check.
+        .run(|app_handle, event| {
+            use tauri::Manager;
+            if let tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                if app_handle.webview_windows().is_empty() {
+                    app_handle.exit(0);
+                }
+            }
+        });
 }

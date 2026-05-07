@@ -971,6 +971,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                         dashboardSnapshot: snapshot,
                                     }));
 
+                                    // Idempotency: if FG already exists (e.g. user double-clicked Save & Continue),
+                                    // just focus it and exit — don't spawn a duplicate.
+                                    const existingFG = await WebviewWindow.getByLabel('failure-group');
+                                    if (existingFG) {
+                                        try { await existingFG.setFocus(); } catch { /* ignore */ }
+                                        try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
+                                        return;
+                                    }
                                     const screenW = window.screen.width;
                                     const screenH = window.screen.height;
                                     const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
@@ -991,7 +999,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             dashboardSnapshot: snapshot,
                                         });
                                         unlisten();
-                                        await getCurrentWindow().close();
+                                        try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
                                     });
                                     webview.once('tauri://error', (e) => {
                                         console.error('Failed to create failure group window:', e);

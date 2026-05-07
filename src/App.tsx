@@ -26,6 +26,13 @@ function App() {
 
   const dashboardRef = useRef<DashboardRef>(null);
 
+  // Set to `true` as soon as auto-resume decides we're booting straight into a
+  // sub-window (failure-group / predictive-model). The splash effect reads this
+  // ref so it does NOT call `main.show()` after the 2-second timer — otherwise
+  // the user briefly sees the main window flash before it closes itself when
+  // the sub-window's data handshake completes (race against `load_csv`, etc.).
+  const resumingToSubWindowRef = useRef(false);
+
   useEffect(() => {
     const unlisten = listen<{ newName: string }>('workspace-renamed-internal', (event) => {
         setWorkspaceName(event.payload.newName);
@@ -52,6 +59,34 @@ function App() {
           console.log("Loaded Workspace State:", state);
           const resumingToStep2Or3 = state && (state.lastRoute === 'failure-group' || state.lastRoute === 'predictive-model') && state.dataFilePaths.length > 0;
           if (resumingToStep2Or3 && state) {
+            // Mark BEFORE the slow load_csv so the splash effect (which fires when
+            // `isInitializing` flips false) skips `main.show()` and we don't get a
+            // visible flash of the import page on top of the sub-window resume.
+            resumingToSubWindowRef.current = true;
+
+            // ── Idempotency guard ────────────────────────────────────────
+            // If FG (or PM) already exists — e.g. because this is a re-mount
+            // after Vite HMR reconnect, macOS WebView resume, or a duplicate
+            // autoResume run — skip the entire spawn flow and just shut down
+            // main + splash. Spawning a new sub-window with the same label
+            // would either error out or stack a second instance, which is
+            // exactly the "เด้งออก แล้วเปิดขึ้นมาใหม่" symptom.
+            const existingFG = await WebviewWindow.getByLabel('failure-group');
+            const existingPM = await WebviewWindow.getByLabel('predictive-model');
+            if (existingFG || existingPM) {
+                console.log("Sub-window already exists; skipping spawn.", {
+                    existingFG: !!existingFG, existingPM: !!existingPM,
+                });
+                try {
+                    const splash = await Window.getByLabel("splashscreen");
+                    if (splash) await splash.close();
+                } catch { /* ignore */ }
+                // `destroy()` skips close-requested handlers — guarantees main
+                // is gone even if some race re-armed a handler.
+                try { await Window.getCurrent().destroy(); } catch { /* ignore */ }
+                return;
+            }
+
             // Load CSV + sensor metadata, spawn step-2 window, close main. FailureGroupCreation itself
             // re-spawns the predictive-model window if lastRoute points there.
             const dataMetadata = await invoke<CsvMetadata>("load_csv", { paths: state.dataFilePaths });
@@ -98,7 +133,10 @@ function App() {
                     const splash = await Window.getByLabel("splashscreen");
                     if (splash) await splash.close();
                 } catch { /* ignore */ }
-                try { await Window.getCurrent().close(); } catch { /* ignore */ }
+                // `destroy()` (not `close()`) so main can NEVER be unhidden
+                // by a later macOS reactivation event — there's no window to
+                // unhide.
+                try { await Window.getCurrent().destroy(); } catch { /* ignore */ }
             });
             fgWindow.once('tauri://error', (e) => console.error('Failed to create failure group window on resume:', e));
             return; // skip the normal dashboard render path
@@ -154,6 +192,14 @@ function App() {
         const splash = await Window.getByLabel("splashscreen");
         if (splash) {
           await splash.close();
+        }
+
+        // When auto-resume is taking us straight into a sub-window (FG / PM),
+        // do NOT show or focus the main window — `autoResume` will close it
+        // itself once the sub-window's data handshake completes. Showing main
+        // here causes a visible "flash → disappear" when CSV load is slow.
+        if (resumingToSubWindowRef.current) {
+          return;
         }
 
         const main = await Window.getByLabel("main");

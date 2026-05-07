@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -16,6 +16,7 @@ import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
+import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
 
 interface SensorStats {
@@ -147,7 +148,7 @@ interface PredictiveModelData {
 export default function PredictiveModelBuild() {
     const isMacOS = useIsMacOS();
     const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-    const [, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
+    const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
     // Data from previous page
     const [targetSensor, setTargetSensor] = useState<string>("");
@@ -192,15 +193,35 @@ export default function PredictiveModelBuild() {
     // Model Stats — computed on Rust side over ALL rows of the target sensor.
     const [targetStats, setTargetStats] = useState<SensorStats | null>(null);
     const [statsError, setStatsError] = useState<string | null>(null);
-    // Extra regression stats (populated after Apply on Relationship mode).
-    const [modelStats, setModelStats] = useState<{ r2: number | null; rmse: number | null }>({ r2: null, rmse: null });
 
-    // Relationship preview result + status.
-    const [relPreview, setRelPreview] = useState<RelationshipPreviewResult | null>(null);
+    // Single multivariate relationship-model cache.
+    //
+    // One Apply click fits ONE LinearGAM over all currently selected
+    // predictors: target = f(p_1, …, p_k). The result holds the (n × k) raw
+    // predictor matrix, the raw target vector, and the model's predicted
+    // target — and we lock the predictor list at fit time so switching the
+    // X-axis only swaps which column of the matrix is plotted, while both Y
+    // series (raw and predicted) stay byte-for-byte identical.
+    //
+    // Adding a predictor after Apply does NOT auto-refit; the user must hit
+    // Apply again to include it in the model. The cache is invalidated when
+    // target / lambda / dashboard filter changes, since that's a different
+    // model entirely.
+    interface RelPreviewBundle {
+        result: RelationshipPreviewResult;
+        // Snapshot of `predictorSensors` at the moment Apply ran. This freezes
+        // the column order of `result.predictor_raw` so the X-axis selector
+        // can map a predictor name back to its column index.
+        predictorsAtApply: string[];
+    }
+    const [relPreview, setRelPreview] = useState<RelPreviewBundle | null>(null);
     const [relLoading, setRelLoading] = useState(false);
     const [relError, setRelError] = useState<string | null>(null);
-    // Residual stats derived from the preview.
-    const [residualStats, setResidualStats] = useState<{ mean: number; sd: number } | null>(null);
+
+    // Indeterminate progress flag for the inline bar shown over the chart
+    // while a fit is in flight. With a single multivariate fit we don't have
+    // countable steps, so the bar always uses the sliding animation.
+    const [relFitProgress, setRelFitProgress] = useState<{ current: number; total: number } | null>(null);
 
     // Clustering preview result + status.
     const [clusteringPreview, setClusteringPreview] = useState<ClusteringPreview | null>(null);
@@ -421,6 +442,241 @@ export default function PredictiveModelBuild() {
         { sensor: targetSensor, y: targetStats.lower3, label: '−3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
     ] : [];
 
+    // X-axis predictor for the scatter. Prefer whatever the user explicitly
+    // picked, but only honor it when that predictor is in the cached fit —
+    // otherwise we'd ask the chart to plot a column the matrix doesn't have.
+    // Falls back to the first fitted predictor when the saved selection is
+    // stale (predictor was removed before re-Apply, etc.).
+    const effectiveScatterX = useMemo(() => {
+        const fitted = relPreview?.predictorsAtApply ?? [];
+        if (fitted.length === 0) {
+            // No fit yet — use predictor selection as a hint for the dropdown
+            // default so the selector isn't empty when the user opens the page.
+            if (predictorSensors.length === 0) return '';
+            if (scatterXSensor && predictorSensors.includes(scatterXSensor)) return scatterXSensor;
+            return predictorSensors[0];
+        }
+        if (scatterXSensor && fitted.includes(scatterXSensor)) return scatterXSensor;
+        return fitted[0];
+    }, [scatterXSensor, predictorSensors, relPreview]);
+
+    // Regression stats (R², RMSE) of the multivariate fit. Same value
+    // regardless of which X-axis predictor is shown.
+    const modelStats = useMemo<{ r2: number | null; rmse: number | null }>(() => {
+        if (!relPreview) return { r2: null, rmse: null };
+        const r = relPreview.result;
+        const lastIdx = r.r2_per_step.length - 1;
+        if (lastIdx < 0) return { r2: null, rmse: null };
+        return {
+            r2: r.r2_per_step[lastIdx],
+            rmse: r.rmse2_per_step[lastIdx] / 2, // sidecar returns 2*RMSE
+        };
+    }, [relPreview]);
+
+    // Residual mean / sd over the non-null residuals from the multivariate fit.
+    const residualStats = useMemo<{ mean: number; sd: number } | null>(() => {
+        if (!relPreview) return null;
+        const finiteResid = relPreview.result.residual.filter(
+            (v): v is number => typeof v === 'number' && Number.isFinite(v),
+        );
+        if (finiteResid.length <= 1) return null;
+        const m = finiteResid.reduce((a, b) => a + b, 0) / finiteResid.length;
+        const variance = finiteResid.reduce((a, b) => a + (b - m) ** 2, 0) / (finiteResid.length - 1);
+        return { mean: m, sd: Math.sqrt(variance) };
+    }, [relPreview]);
+
+    // True when the user has changed the predictor selection since the last
+    // Apply — used to surface "click Apply to refit" hints in the UI.
+    const fitIsStale = useMemo(() => {
+        if (!relPreview) return false;
+        const a = relPreview.predictorsAtApply;
+        const b = predictorSensors;
+        if (a.length !== b.length) return true;
+        for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
+        return false;
+    }, [relPreview, predictorSensors]);
+
+    // Build the dashboard-filter payload sent to `preview_relationship_model`.
+    // The relationship preview must be computed off the same filtered slice
+    // the user saw on the dashboard, so any timestamp / value filter set
+    // there flows through to the (X, y) construction on the Rust side.
+    // Returns `null` when no filter is active — Rust then falls back to
+    // "use every row" (legacy behavior).
+    const dashboardFilterPayload = useMemo(() => {
+        const f = dashboardSnapshot?.filters;
+        if (!f) return null;
+        const valueFilters = (f.sensorFilters ?? [])
+            .filter(sf => sf.value1 !== '')
+            .map(sf => ({
+                sensor: sf.sensor,
+                operation: sf.operation,
+                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+            }));
+        const tsStart = f.timestampStart || null;
+        const tsEnd = f.timestampEnd || null;
+        if (!tsStart && !tsEnd && valueFilters.length === 0) return null;
+        return {
+            timestamp_start: tsStart,
+            timestamp_end: tsEnd,
+            value_filters: valueFilters,
+        };
+    }, [dashboardSnapshot]);
+
+    // Stable string key used to detect filter changes for cache invalidation
+    // without re-running effects on identical-but-new object references.
+    const dashboardFilterKey = useMemo(
+        () => JSON.stringify(dashboardFilterPayload),
+        [dashboardFilterPayload],
+    );
+
+    // Invalidate the cached fit whenever the regression target, the smoothness
+    // parameter, or the dashboard filter changes — any of those produce a
+    // different (target, lambda, sample) triple, so the prior fit is no
+    // longer comparable. Adding/removing a predictor does NOT invalidate;
+    // the old fit stays plotted until the user hits Apply.
+    useEffect(() => {
+        setRelPreview(null);
+        setRelError(null);
+    }, [targetSensor, relStiffness, dashboardFilterKey]);
+
+    // Scatter chart option for the Relationship mode preview:
+    //   • Blue series: (predictor_raw, target_raw)        — actual measurements
+    //   • Red  series: (predictor_raw, target_predicted)  — LinearGAM output
+    // Y values are the same for every choice of X — switching the X-axis
+    // just swaps which column of `predictor_raw` is read for the X coord.
+    const relScatterOption = useMemo(() => {
+        if (!relPreview) return null;
+        const { result, predictorsAtApply } = relPreview;
+        const xRaw = result.predictor_raw;
+        const yRaw = result.target_raw;
+        const yPred = result.predicted;
+        if (!xRaw || !yRaw || !yPred) return null;
+        if (xRaw.length === 0) return null;
+
+        // Map the picked predictor name back to its column in the matrix.
+        // Bail out cleanly if it isn't in the cached fit (e.g., user added
+        // a predictor after Apply and switched X to it before re-Applying).
+        const xIdx = predictorsAtApply.indexOf(effectiveScatterX);
+        if (xIdx < 0) return null;
+
+        const isLight = themeMode === 'light';
+        const txtPrimary    = isLight ? '#0f172a' : '#f1f5f9';
+        const txtSecondary  = isLight ? '#475569' : '#94a3b8';
+        const gridLine      = isLight ? '#cbd5e1' : '#334155';
+        const tooltipBg     = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.95)';
+        const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+
+        const rawPoints: [number, number][] = [];
+        const modelPoints: [number, number][] = [];
+        const n = Math.min(xRaw.length, yRaw.length, yPred.length);
+        for (let i = 0; i < n; i++) {
+            const xv = xRaw[i]?.[xIdx];
+            if (typeof xv !== 'number' || !Number.isFinite(xv)) continue;
+            const yr = yRaw[i];
+            if (typeof yr === 'number' && Number.isFinite(yr)) rawPoints.push([xv, yr]);
+            const yp = yPred[i];
+            if (typeof yp === 'number' && Number.isFinite(yp)) modelPoints.push([xv, yp]);
+        }
+
+        // Auto-tune symbol size + opacity by point count so a few-thousand-row
+        // sensor doesn't render as one indistinguishable blob. ECharts' `large`
+        // path swaps in a fast batch renderer above the threshold, and
+        // `progressive` streams the points in chunks instead of stalling on
+        // the first frame. Tuning bands roughly:
+        //   <2k       big crisp dots, animated
+        //   2k–20k    medium dots, lower opacity
+        //   >20k      tiny dots, low opacity, hover disabled, no animation
+        const totalPoints = rawPoints.length + modelPoints.length;
+        const isLargeData = totalPoints > 2000;
+        const isHugeData = totalPoints > 20000;
+        const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
+        const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
+
+        const seriesCommon = {
+            type: 'scatter' as const,
+            symbolSize,
+            large: isLargeData,
+            largeThreshold: 2000,
+            progressive: 5000,
+            progressiveThreshold: 10000,
+            // Disable hover-scale jitter on huge datasets; with thousands of
+            // dots a 1px hover ring is just noise.
+            emphasis: { scale: !isHugeData, disabled: isHugeData },
+            // Drop the per-point selectability when we're in large mode —
+            // tooltip still works via the lasso path but per-point hover is
+            // expensive without adding value.
+            silent: isHugeData,
+        };
+
+        return {
+            backgroundColor: 'transparent',
+            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+            animation: !isLargeData,
+            tooltip: {
+                trigger: 'item',
+                backgroundColor: tooltipBg,
+                borderColor: tooltipBorder,
+                textStyle: { color: txtPrimary },
+                formatter: (p: any) => {
+                    const v = p.value as [number, number];
+                    return `<div style="font-weight:bold;margin-bottom:4px;color:${p.color}">${p.seriesName}</div>`
+                        + `<div>${effectiveScatterX}: ${typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—'}</div>`
+                        + `<div>${targetSensor}: ${typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—'}</div>`;
+                },
+            },
+            legend: {
+                data: ['Raw', 'Model'],
+                textStyle: { color: txtSecondary },
+                top: 4,
+                right: 10,
+                itemWidth: 12,
+                itemHeight: 12,
+            },
+            grid: { left: 64, right: 30, top: 36, bottom: 56, containLabel: false },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: 0, filterMode: 'filter' },
+                { type: 'inside', yAxisIndex: 0, filterMode: 'filter' },
+            ],
+            xAxis: {
+                type: 'value',
+                name: effectiveScatterX,
+                nameLocation: 'middle',
+                nameGap: 28,
+                nameTextStyle: { color: txtSecondary },
+                scale: true,
+                axisLabel: { color: txtSecondary },
+                axisLine: { lineStyle: { color: gridLine } },
+                splitLine: { show: false },
+            },
+            yAxis: {
+                type: 'value',
+                name: targetSensor,
+                nameLocation: 'middle',
+                nameGap: 46,
+                nameTextStyle: { color: txtSecondary },
+                scale: true,
+                axisLabel: { color: txtSecondary },
+                axisLine: { lineStyle: { color: gridLine } },
+                splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } },
+            },
+            series: [
+                {
+                    ...seriesCommon,
+                    name: 'Raw',
+                    data: rawPoints,
+                    itemStyle: { color: '#3b82f6', opacity: pointOpacity },
+                },
+                {
+                    ...seriesCommon,
+                    name: 'Model',
+                    data: modelPoints,
+                    itemStyle: { color: '#f43f5e', opacity: pointOpacity },
+                },
+            ],
+        };
+    }, [relPreview, effectiveScatterX, targetSensor, themeMode]);
+
     // Shake animation when FailureGroup tries to close
     const containerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -439,9 +695,16 @@ export default function PredictiveModelBuild() {
         return () => { if (unlistenShake) unlistenShake(); };
     }, []);
 
+    // No `onCloseRequested` handler — let close proceed unconditionally.
+    // FG already listens for `tauri://destroyed` on the WebviewWindow handle
+    // it created when spawning PM, so destruction is signaled regardless of
+    // close path (custom button, native red-close, force-quit, crash).
+
     const handleClose = async () => {
-        await emit('predictive-model-closed');
-        await getCurrentWindow().close();
+        // The custom-titlebar path (Windows / Linux). Fire-and-forget the emit
+        // so a slow/hung IPC channel can't block the actual close call.
+        emit('predictive-model-closed').catch(() => { /* ignore */ });
+        try { await getCurrentWindow().close(); } catch { /* ignore */ }
     };
 
     const handlePredictorToggle = (sensor: string) => {
@@ -453,7 +716,44 @@ export default function PredictiveModelBuild() {
         });
     };
 
-    const handleRelationshipApply = async () => {
+    // Core fit routine. Single multivariate LinearGAM over ALL currently
+    // selected predictors → one `predicted` vector keyed against the same
+    // target. Snapshots the predictor list at fit time so the X-axis switch
+    // is a pure column lookup against the matrix the model was trained on.
+    const runRelationshipFit = useCallback(async () => {
+        if (!targetSensor || predictorSensors.length === 0) return;
+
+        const predictorsForFit = [...predictorSensors];
+        setRelLoading(true);
+        setRelFitProgress({ current: 0, total: 1 });
+        try {
+            const r = await invoke<RelationshipPreviewResult>("preview_relationship_model", {
+                predictors: predictorsForFit,
+                target: targetSensor,
+                lambda: relStiffness,
+                filter: dashboardFilterPayload,
+            });
+            // Sidecar surfaces errors as {error, trace} in the JSON body —
+            // surface them as a thrown error so they hit the catch arm and
+            // get rendered in the inline error slot.
+            if (r.error) throw new Error(r.error);
+            setRelPreview({ result: r, predictorsAtApply: predictorsForFit });
+            setRelError(null);
+            console.log("Multivariate relationship preview updated:", {
+                predictors: predictorsForFit,
+                rows: r.predicted?.length ?? 0,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setRelError(msg);
+            console.error("preview_relationship_model failed:", e);
+        } finally {
+            setRelLoading(false);
+            setRelFitProgress(null);
+        }
+    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload]);
+
+    const handleRelationshipApply = () => {
         if (!targetSensor) {
             setRelError("Target sensor is required.");
             return;
@@ -462,57 +762,8 @@ export default function PredictiveModelBuild() {
             setRelError("Select at least one predictor.");
             return;
         }
-
-        setRelLoading(true);
         setRelError(null);
-        try {
-            const result = await invoke<RelationshipPreviewResult>("preview_relationship_model", {
-                predictors: predictorSensors,
-                target: targetSensor,
-                lambda: relStiffness,
-            });
-
-            // Sidecar surfaces errors as {error, trace} in the JSON body.
-            if (result.error) {
-                throw new Error(result.error);
-            }
-
-            setRelPreview(result);
-
-            // Full-model row is the LAST entry of the cumulative arrays.
-            const lastIdx = result.r2_per_step.length - 1;
-            if (lastIdx >= 0) {
-                setModelStats({
-                    r2: result.r2_per_step[lastIdx],
-                    rmse: result.rmse2_per_step[lastIdx] / 2, // sidecar returns 2*RMSE
-                });
-            }
-
-            // Residual mean / sd over the non-null residual values.
-            const finiteResid = result.residual.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
-            if (finiteResid.length > 1) {
-                const m = finiteResid.reduce((a, b) => a + b, 0) / finiteResid.length;
-                const variance = finiteResid.reduce((a, b) => a + (b - m) ** 2, 0) / (finiteResid.length - 1);
-                setResidualStats({ mean: m, sd: Math.sqrt(variance) });
-            } else {
-                setResidualStats(null);
-            }
-
-            console.log("Relationship preview:", {
-                r2_per_step: result.r2_per_step,
-                rmse2_per_step: result.rmse2_per_step,
-                n_predicted: result.predicted.length,
-            });
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setRelError(msg);
-            setRelPreview(null);
-            setModelStats({ r2: null, rmse: null });
-            setResidualStats(null);
-            console.error("preview_relationship_model failed:", e);
-        } finally {
-            setRelLoading(false);
-        }
+        runRelationshipFit();
     };
 
     const handleClusteringApply = async () => {
@@ -868,19 +1119,21 @@ export default function PredictiveModelBuild() {
                                 <div className="pm-chart-header">
                                     <div className="pm-chart-title-block">
                                         <div className="pm-chart-title">
-                                            {rcMode === 'relationship' ? 'Target vs. Predictors' : 'Cluster Assignment'}
+                                            {rcMode === 'relationship' ? 'Predictor vs. Target' : 'Cluster Assignment'}
                                         </div>
                                         <div className="pm-chart-subtitle">
-                                            {rcMode === 'relationship' ? 'Scatter against each enabled predictor' : 'K-means clustering'}
+                                            {rcMode === 'relationship'
+                                                ? `Raw (blue) vs. LinearGAM model output (red) — pick a predictor for the X-axis${dashboardFilterPayload ? ' · using Dashboard filter' : ''}`
+                                                : 'K-means clustering'}
                                         </div>
                                     </div>
-                                    {predictorSensors.length > 0 && (
+                                    {rcMode && predictorSensors.length > 0 && (
                                         <div className="pm-scatter-x-selector">
                                             <label>X-axis:</label>
                                             <SensorAutocomplete
                                                 sensors={predictorSensors}
                                                 getDesc={getDesc}
-                                                value={scatterXSensor}
+                                                value={effectiveScatterX}
                                                 onSelect={setScatterXSensor}
                                                 placeholder="Select X-axis sensor..."
                                                 style={{ minWidth: '180px' }}
@@ -888,16 +1141,48 @@ export default function PredictiveModelBuild() {
                                         </div>
                                     )}
                                 </div>
-                                <div className="pm-chart-body">
-                                    <div className="plot-placeholder pm-chart-placeholder">
-                                        {rcMode === 'relationship' ? <GitBranch size={48} style={{ opacity: 0.2 }} /> : <Layers size={48} style={{ opacity: 0.2 }} />}
-                                        <p>
-                                            {rcMode === 'relationship' ? 'Scatterplot — Relationship Mode' : 'Cluster Plot'}
-                                        </p>
-                                        <p className="plot-placeholder-sub">
-                                            {rcMode === 'relationship' ? 'Click Apply to compute predicted values' : 'Click Apply to draw cluster ellipses'}
-                                        </p>
+                                {/* Inline progress bar — shown only while a relationship fit
+                                    is in flight. Indeterminate (sliding) when the batch is a
+                                    single predictor, determinate (current/total) otherwise. */}
+                                {rcMode === 'relationship' && relLoading && (
+                                    <div className="pm-progress">
+                                        <div className="pm-progress-track">
+                                            {relFitProgress && relFitProgress.total > 1 ? (
+                                                <div
+                                                    className="pm-progress-bar"
+                                                    style={{ width: `${Math.min(100, (relFitProgress.current / relFitProgress.total) * 100)}%` }}
+                                                />
+                                            ) : (
+                                                <div className="pm-progress-bar pm-progress-bar--indeterminate" />
+                                            )}
+                                        </div>
+                                        <div className="pm-progress-label">
+                                            <Loader2 size={11} className="pm-spin" />
+                                            {relFitProgress && relFitProgress.total > 1
+                                                ? `Fitting predictor ${Math.min(relFitProgress.current + 1, relFitProgress.total)} of ${relFitProgress.total}…`
+                                                : 'Running LinearGAM…'}
+                                        </div>
                                     </div>
+                                )}
+                                <div className="pm-chart-body" style={{ position: 'relative' }}>
+                                    {rcMode === 'relationship' && relScatterOption ? (
+                                        <ResponsiveECharts option={relScatterOption} style={{ minHeight: '200px' }} />
+                                    ) : rcMode === 'relationship' && relLoading ? (
+                                        <div className="plot-placeholder pm-chart-placeholder">
+                                            <Loader2 size={36} style={{ opacity: 0.45 }} className="pm-spin" />
+                                            <p>Running LinearGAM…</p>
+                                        </div>
+                                    ) : (
+                                        <div className="plot-placeholder pm-chart-placeholder">
+                                            {rcMode === 'relationship' ? <GitBranch size={48} style={{ opacity: 0.2 }} /> : <Layers size={48} style={{ opacity: 0.2 }} />}
+                                            <p>
+                                                {rcMode === 'relationship' ? 'No prediction yet' : 'Cluster Plot'}
+                                            </p>
+                                            <p className="plot-placeholder-sub">
+                                                {rcMode === 'relationship' ? 'Pick predictors then click Apply to compute predicted values' : 'Click Apply to draw cluster ellipses'}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -1050,8 +1335,15 @@ export default function PredictiveModelBuild() {
                                 </div>
                             )}
                             {relPreview && !relError && (
-                                <div className="filter-row" style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                                    Trained on {relPreview.predicted.length.toLocaleString()} rows
+                                <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch', color: 'var(--text-secondary)', fontSize: 12, gap: 2 }}>
+                                    <div>
+                                        Fit on {relPreview.predictorsAtApply.length} predictor{relPreview.predictorsAtApply.length !== 1 ? 's' : ''} · {relPreview.result.predicted.length.toLocaleString()} rows
+                                    </div>
+                                    {fitIsStale && (
+                                        <div style={{ color: '#f59e0b' }}>
+                                            Predictor selection changed — click Apply to refit.
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

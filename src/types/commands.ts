@@ -19,6 +19,18 @@ export interface RelationshipPreviewResult {
   rmse2_per_step: number[];
   predicted: (number | null)[];
   residual: (number | null)[];
+  /**
+   * Raw target values (`y` vector) — same length / order as `predicted`.
+   * Attached by the Rust command (NOT the sidecar) so the UI can build
+   * (predictor, target) scatter pairs without re-fetching the dataset.
+   */
+  target_raw?: number[];
+  /**
+   * Raw predictor matrix — `predictor_raw[row][predictorIndex]`.
+   * Outer length matches `predicted`. Inner length matches the
+   * `predictors` array order passed to `preview_relationship_model`.
+   */
+  predictor_raw?: number[][];
   /** Present only on failure. */
   error?: string;
   trace?: string;
@@ -138,9 +150,28 @@ export type TauriCommands = {
   /**
    * Run a Relationship-model preview (LinearGAM) via the Python sidecar.
    * Returns the raw JSON payload from the sidecar — see `RelationshipPreviewResult`.
+   *
+   * `filter` is optional and mirrors the dashboard's filter shape; when
+   * supplied the preview is built off the filtered slice (same rows the
+   * user is looking at on the previous page). Pass `null`/omit to use
+   * every row.
    */
   preview_relationship_model: {
-    args: { predictors: string[]; target: string; lambda: number };
+    args: {
+      predictors: string[];
+      target: string;
+      lambda: number;
+      filter?: {
+        timestamp_start: string | null;
+        timestamp_end: string | null;
+        value_filters: {
+          sensor: string;
+          operation: string;
+          value1: number | null;
+          value2: number | null;
+        }[];
+      } | null;
+    };
     returns: RelationshipPreviewResult;
   };
   /** Evaluate a formula expression and create a new sensor column */

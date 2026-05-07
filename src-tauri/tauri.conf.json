@@ -30,9 +30,7 @@
         "height": 400,
         "center": true,
         "resizable": false,
-        "alwaysOnTop": true,
-        "transparent": true,
-        "shadow": false
+        "alwaysOnTop": true
       }
     ],
     "security": {

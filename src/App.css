@@ -7186,6 +7186,49 @@ body {
     gap: 10px;
     min-height: 0;
 }
+
+/* Inline progress bar shown at the top of the chart card while a relationship
+   fit is in flight. Determinate variant fills based on (current/total)
+   predictors; indeterminate variant slides a hot region across the track when
+   we don't have countable steps (single-predictor fit). */
+.pm-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 12px 0;
+}
+.pm-progress-track {
+    position: relative;
+    height: 4px;
+    width: 100%;
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.15));
+    border-radius: 999px;
+    overflow: hidden;
+}
+.pm-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #6366f1);
+    border-radius: 999px;
+    transition: width 0.25s ease;
+}
+.pm-progress-bar--indeterminate {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 30%;
+    animation: pm-progress-indeterminate 1.2s ease-in-out infinite;
+}
+.pm-progress-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+@keyframes pm-progress-indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(450%); }
+}
 .pm-chart-placeholder {
     flex: 1;
     min-height: 280px;

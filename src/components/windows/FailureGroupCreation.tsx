@@ -66,6 +66,15 @@ export default function FailureGroupCreation() {
 
     const [showModelPanel, setShowModelPanel] = useState(false);
     const [isBuildModelOpen, setIsBuildModelOpen] = useState(false);
+    // Latest value of `isBuildModelOpen` accessible from inside event/window handlers
+    // (React state closures are stale otherwise — needed by `onCloseRequested`).
+    const isBuildModelOpenRef = useRef(false);
+    useEffect(() => { isBuildModelOpenRef.current = isBuildModelOpen; }, [isBuildModelOpen]);
+    // Guard: only attempt the "auto-reopen predictive-model on resume" once per
+    // workspaceId. Without this, the effect can re-fire when `isMacOS` resolves
+    // late (it starts `false` then flips to `true`) and double-spawn the PM
+    // window when the user has already closed it in between.
+    const reopenedForWorkspaceRef = useRef<string | null>(null);
 
     // ── Setup ────────────────────────────────────────────────────
 
@@ -140,14 +149,29 @@ export default function FailureGroupCreation() {
     }, [groups, rows, workspaceId]);
 
     // Auto-reopen Step 3 (predictive-model) window on app resume if that's where the user left off.
+    //
+    // Notes:
+    //   • `isMacOS` is intentionally NOT in the deps array — it resolves async
+    //     after mount and would re-fire this effect, racing the user closing the
+    //     PM window and causing a duplicate spawn ("PM closes then a new PM
+    //     appears"). We read the platform synchronously inline instead.
+    //   • `reopenedForWorkspaceRef` ensures we only attempt the resume once per
+    //     workspace, even if hydration deps change again later.
     useEffect(() => {
         if (!workspaceId || !hydratedRef.current || loading) return;
+        if (reopenedForWorkspaceRef.current === workspaceId) return;
         let cancelled = false;
         (async () => {
             try {
                 const ws = await loadWorkspaceData(workspaceId);
                 if (cancelled) return;
                 if (ws?.lastRoute === 'predictive-model' && ws.predictiveModelState?.targetSensor && metadata) {
+                    // Sync claim — re-check + set the ref atomically AFTER the
+                    // await. Multiple effect runs could have entered the IIFE
+                    // while `loadWorkspaceData` was pending; whichever resumes
+                    // first wins, the rest see the claim and bail before spawn.
+                    if (reopenedForWorkspaceRef.current === workspaceId) return;
+                    reopenedForWorkspaceRef.current = workspaceId;
                     // Avoid re-spawning if the window already exists.
                     const existing = await WebviewWindow.getByLabel('predictive-model');
                     if (existing) return;
@@ -157,18 +181,36 @@ export default function FailureGroupCreation() {
                     };
                     const screenW = window.screen.width;
                     const screenH = window.screen.height;
+                    // Synchronous platform sniff so window decorations are correct
+                    // even before the async `useIsMacOS` hook resolves.
+                    const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
                     const webview = new WebviewWindow('predictive-model', {
                         url: '/?window=predictive-model',
                         title: `Predictive Model — ${ws.predictiveModelState.targetSensor}`,
+                        // width/height are kept as the un-maximized restore size
+                        // so dragging the window out of maximized state yields a
+                        // sensible default. `maximized: true` opens it fullscreen.
                         width: Math.round(screenW * 0.75),
                         height: Math.round(screenH * 0.85),
                         center: true,
-                        decorations: isMacOS,
+                        maximized: true,
+                        decorations: isMac,
                     });
                     webview.once('tauri://created', () => setIsBuildModelOpen(true));
                     webview.once('tauri://error', (e) => console.error('Failed to open predictive model window on resume:', e));
+                    // PRIMARY signal: `tauri://destroyed` fires for ALL close paths
+                    // (custom button, native red-close, force-quit, crash). Without
+                    // this, our `isBuildModelOpen` flag can go stale and the FG
+                    // close handler will preventDefault forever.
+                    webview.once('tauri://destroyed', () => {
+                        setIsBuildModelOpen(false);
+                        isBuildModelOpenRef.current = false;
+                        updateWorkspaceData(workspaceId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => {});
+                    });
+                    // Secondary (legacy) signal — keep for explicit flow ordering.
                     const unlistenClose = await listen('predictive-model-closed', () => {
                         setIsBuildModelOpen(false);
+                        isBuildModelOpenRef.current = false;
                         updateWorkspaceData(workspaceId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => {});
                         unlistenClose();
                     });
@@ -178,7 +220,16 @@ export default function FailureGroupCreation() {
             }
         })();
         return () => { cancelled = true; };
-    }, [workspaceId, loading, metadata, isMacOS]);
+    }, [workspaceId, loading, metadata]);
+
+    // No `onCloseRequested` handler — let close proceed unconditionally.
+    // We previously prevented close on macOS native red-close while PM was
+    // open, but that handler also turned out to silently block close in some
+    // edge cases (async handler awaited indefinitely by Tauri 2). Trade-off:
+    // on macOS, native red-close on FG while PM is still open will close FG
+    // and leave PM as an orphan window. The user can still close PM directly.
+    // The Windows/Linux custom-titlebar `handleClose` below keeps the
+    // shake-while-PM-open behavior for those platforms.
 
     // ── Build Model ──────────────────────────────────────────────
 
@@ -207,7 +258,17 @@ export default function FailureGroupCreation() {
 
     const handleBuildModel = async (row: SensorRow) => {
         if (!row.mappedSensorTag || !workspaceId) return;
-        pendingModelDataRef.current = { targetSensor: row.mappedSensorTag, predictorSensors: [] };
+        // Preserve previously chosen predictors when reopening Build Model on
+        // the same target — wiping them every click was the "predictors don't
+        // save with the workspace" bug. Only reset when the target changes
+        // (different model entirely, so the old predictor list is stale).
+        const prevState = (await loadWorkspaceData(workspaceId))?.predictiveModelState;
+        const sameTarget = prevState?.targetSensor === row.mappedSensorTag;
+        const carriedPredictors = sameTarget ? (prevState?.predictorSensors ?? []) : [];
+        pendingModelDataRef.current = {
+            targetSensor: row.mappedSensorTag,
+            predictorSensors: carriedPredictors,
+        };
         // Flip lastRoute so auto-resume re-opens the predictive-model window.
         await updateWorkspaceData(workspaceId, (prev) => ({
             ...prev,
@@ -229,18 +290,31 @@ export default function FailureGroupCreation() {
                     filterSensorValue: "",
                 }),
                 targetSensor: row.mappedSensorTag,
-                predictorSensors: [],
+                predictorSensors: carriedPredictors,
             },
         }));
         try {
+            // Idempotency: if PM already exists, just focus it. Spawning a
+            // duplicate with the same label is what produces the "เด้งออก
+            // แล้วเปิดขึ้นมาใหม่" symptom on re-mount races.
+            const existingPM = await WebviewWindow.getByLabel('predictive-model');
+            if (existingPM) {
+                try { await existingPM.setFocus(); } catch { /* ignore */ }
+                setIsBuildModelOpen(true);
+                isBuildModelOpenRef.current = true;
+                return;
+            }
             const screenW = window.screen.width;
             const screenH = window.screen.height;
             const webview = new WebviewWindow('predictive-model', {
                 url: '/?window=predictive-model',
                 title: `Predictive Model — ${row.mappedSensorTag}`,
+                // width/height keep a sensible un-maximized restore size;
+                // `maximized: true` opens fullscreen on launch.
                 width: Math.round(screenW * 0.75),
                 height: Math.round(screenH * 0.85),
                 center: true,
+                maximized: true,
                 decorations: isMacOS,
             });
             webview.once('tauri://created', () => {
@@ -249,9 +323,21 @@ export default function FailureGroupCreation() {
             webview.once('tauri://error', (e) => {
                 console.error('Failed to open predictive model window:', e);
             });
-            // Listen for custom close event from BuildModel window
+            // PRIMARY signal — fires for any close path (button / native / crash).
+            webview.once('tauri://destroyed', () => {
+                setIsBuildModelOpen(false);
+                isBuildModelOpenRef.current = false;
+                if (workspaceId) {
+                    updateWorkspaceData(workspaceId, (prev) => ({
+                        ...prev,
+                        lastRoute: 'failure-group',
+                    })).catch(() => { /* ignore */ });
+                }
+            });
+            // Secondary signal — explicit ordering for state syncing.
             const unlistenClose = await listen('predictive-model-closed', () => {
                 setIsBuildModelOpen(false);
+                isBuildModelOpenRef.current = false;
                 if (workspaceId) {
                     updateWorkspaceData(workspaceId, (prev) => ({
                         ...prev,
@@ -269,15 +355,15 @@ export default function FailureGroupCreation() {
 
     const handleClose = async () => {
         if (isBuildModelOpen) {
-            // Focus the BuildModel window and trigger a shake animation
-            try {
-                const bmWindow = await WebviewWindow.getByLabel('predictive-model');
-                if (bmWindow) await bmWindow.setFocus();
-            } catch (_) { /* ignore */ }
-            await emit('predictive-model-shake');
+            // Focus the BuildModel window and trigger a shake animation.
+            // Fire-and-forget so a slow IPC channel can't hang the click.
+            WebviewWindow.getByLabel('predictive-model')
+                .then(bm => bm?.setFocus())
+                .catch(() => { /* ignore */ });
+            emit('predictive-model-shake').catch(() => { /* ignore */ });
             return;
         }
-        await getCurrentWindow().close();
+        try { await getCurrentWindow().close(); } catch { /* ignore */ }
     };
 
     const createGroup = () => {

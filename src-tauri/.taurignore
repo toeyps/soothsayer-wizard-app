@@ -1,0 +1,27 @@
+# Patterns the Tauri `dev` watcher should ignore (similar syntax to .gitignore).
+#
+# Without this, the watcher kicks off a full app rebuild whenever any file under
+# these directories changes — most painfully when the nested
+# `python/soothsayer-wizard-python/.git/index.lock` file is touched by external
+# git activity (IDE, terminal, gitui). The user-visible symptom is windows
+# closing and re-spawning whenever they switch to another application.
+#
+# None of the paths below are part of the Rust crate's compile inputs, so
+# excluding them from the watcher does NOT skip any necessary rebuilds.
+
+# Python sidecar source + venv + build artifacts. The compiled binary in
+# src-tauri/bin/ IS the input to Tauri (via `externalBin`), and that binary
+# is rebuilt manually via build_sidecar.sh — Tauri itself never needs to
+# react to changes inside python/.
+python/
+
+# Pre-built sidecar binaries. These change only when build_sidecar.sh runs
+# (manually). The Rust crate doesn't reference these at compile time —
+# Tauri picks them up at bundle/runtime via tauri.conf.json's `externalBin`.
+bin/
+
+# Cargo build output (also already implicit, but explicit for clarity).
+target/
+
+# Tauri-generated capabilities cache and codegen.
+gen/

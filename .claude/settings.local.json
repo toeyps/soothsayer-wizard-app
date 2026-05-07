@@ -51,7 +51,11 @@
       "Bash(pip3 --version)",
       "Bash(brew list *)",
       "Read(//opt/homebrew/Cellar/python@3.13/3.13.12_1/Frameworks/Python.framework/Versions/3.13/bin/**)",
-      "Bash(/opt/homebrew/bin/python3.13 --version)"
+      "Bash(/opt/homebrew/bin/python3.13 --version)",
+      "Bash(git ls-tree *)",
+      "Bash(git restore *)",
+      "Bash(git rm *)",
+      "Bash(git add *)"
     ]
   }
 }
