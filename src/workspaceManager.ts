@@ -40,27 +40,6 @@ export async function saveRecentWorkspaces(workspaces: WorkspaceMetadata[]) {
     }
 }
 
-export async function getLastWorkspaceId(): Promise<string | null> {
-    try {
-        const s = await getStore();
-        const id = await s.get('last_workspace_id');
-        return (id as string) || null;
-    } catch (e) {
-        console.error("Failed to get last workspace ID:", e);
-        return null;
-    }
-}
-
-export async function setLastWorkspaceId(id: string | null) {
-    try {
-        const s = await getStore();
-        await s.set('last_workspace_id', id);
-        await s.save();
-    } catch (e) {
-        console.error("Failed to set last workspace ID:", e);
-    }
-}
-
 // Simple mutex to prevent concurrent saves
 let isSaving = false;
 let saveQueue: WorkspaceState | null = null;
@@ -111,8 +90,7 @@ export async function saveWorkspaceData(state: WorkspaceState) {
         recent = recent.sort((a, b) => b.lastModified - a.lastModified).slice(0, 10);
         
         await saveRecentWorkspaces(recent);
-        await setLastWorkspaceId(state.id);
-        
+
         console.log("Workspace save successful.");
     } catch (e) {
         console.error("CRITICAL: Failed to save workspace:", e);
@@ -178,12 +156,6 @@ export async function deleteWorkspace(id: string) {
             // Remove from recent list
             const updated = recent.filter(w => w.id !== id);
             await saveRecentWorkspaces(updated);
-            
-            // If it was last session, clear it
-            const lastId = await getLastWorkspaceId();
-            if (lastId === id) {
-                await setLastWorkspaceId(null);
-            }
         }
     } catch (e) {
         console.error("Failed to delete workspace:", e);

@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
-import { CsvMetadata, SensorMetadata, DashboardSnapshot, FailureGroup, FailureSensorRow as SensorRow } from "../../types";
+import { CsvMetadata, SensorMetadata, DashboardSnapshot, FailureGroup, FailureSensorRow as SensorRow, WorkspaceState } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, Minus, Square, GripVertical, Play, ArrowLeft } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
-import { updateWorkspaceData, loadWorkspaceData, setLastWorkspaceId } from "../../workspaceManager";
+import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -19,6 +19,18 @@ interface FailureGroupData {
     sensorMetadata: SensorMetadata[] | null;
     metadata: CsvMetadata;
     dashboardSnapshot?: DashboardSnapshot;
+    /**
+     * Explicit navigation directive from the parent (DataUploadPage).
+     *   - undefined / 'failure-group' → just land in FG.
+     *   - 'predictive-model'          → FG should spawn PM once hydrated,
+     *                                   using the workspace's persisted
+     *                                   predictiveModelState as the seed.
+     *
+     * This replaces the previous "FG reads disk on mount and decides whether
+     * to auto-resume into PM" pattern. The decision is now explicit and
+     * user-initiated (came from clicking a Recent Workspace).
+     */
+    targetRoute?: 'failure-group' | 'predictive-model';
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -40,6 +52,7 @@ const getGroupColor = (no: number): string => no === 0 ? 'slate' : GROUP_PALETTE
 export default function FailureGroupCreation() {
     const isMacOS = useIsMacOS();
     const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+    const [workspaceName, setWorkspaceName] = useState<string>("");
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const [allSensors, setAllSensors] = useState<string[]>([]);
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
@@ -70,11 +83,105 @@ export default function FailureGroupCreation() {
     // (React state closures are stale otherwise — needed by `onCloseRequested`).
     const isBuildModelOpenRef = useRef(false);
     useEffect(() => { isBuildModelOpenRef.current = isBuildModelOpen; }, [isBuildModelOpen]);
-    // Guard: only attempt the "auto-reopen predictive-model on resume" once per
-    // workspaceId. Without this, the effect can re-fire when `isMacOS` resolves
-    // late (it starts `false` then flips to `true`) and double-spawn the PM
-    // window when the user has already closed it in between.
-    const reopenedForWorkspaceRef = useRef<string | null>(null);
+
+    // Holds target/predictors for the next PM `request-predictive-data`
+    // handshake. Declared at the top so both the cascade-from-payload path
+    // (in the setup listener) and `handleBuildModel` can write to it.
+    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[] } | null>(null);
+
+    // Spawn the predictive-model window for a given (workspace, target,
+    // predictors). Called from two places:
+    //   1. `handleBuildModel` — user clicks "Build Model" on a sensor row.
+    //   2. The recent-workspace cascade in the setup listener — user opened
+    //      a workspace whose `lastRoute` was 'predictive-model', so we hop
+    //      straight into PM after FG hydrates.
+    //
+    // We pass `wsId` as an arg (rather than reading the `workspaceId` state)
+    // because the cascade path fires inside the same async tick that called
+    // `setWorkspaceId(d.workspaceId)` — React state isn't visible yet.
+    const spawnPMHelper = useCallback(async (
+        wsId: string,
+        target: string,
+        predictors: string[],
+    ) => {
+        pendingModelDataRef.current = { targetSensor: target, predictorSensors: predictors };
+
+        await updateWorkspaceData(wsId, (prev) => ({
+            ...prev,
+            lastRoute: 'predictive-model',
+            predictiveModelState: {
+                ...(prev.predictiveModelState ?? {
+                    individualChecked: true,
+                    rcMode: null,
+                    scatterXSensor: "",
+                    relModelName: "",
+                    relStiffness: 1,
+                    clusterModelName: "",
+                    numClusters: 3,
+                    // Default to 3 equal-width ranges over [0, 100] — matches the
+                    // numClusters default and gets resized to fit `numClusters`
+                    // by the sync effect in PredictiveModelBuild.
+                    criteriaSensor: "",
+                    clusterRanges: [
+                        { min: 0, max: 33 },
+                        { min: 33, max: 66 },
+                        { min: 66, max: 100 },
+                    ],
+                    filterTimeStart: "",
+                    filterTimeEnd: "",
+                    filterSensorValue: "",
+                }),
+                targetSensor: target,
+                predictorSensors: predictors,
+            },
+        }));
+
+        try {
+            // Idempotency: if PM already exists, just focus it. Spawning a
+            // duplicate with the same label produces the "เด้งออกแล้วเปิดขึ้นมาใหม่"
+            // symptom on re-mount races.
+            const existingPM = await WebviewWindow.getByLabel('predictive-model');
+            if (existingPM) {
+                try { await existingPM.setFocus(); } catch { /* ignore */ }
+                setIsBuildModelOpen(true);
+                isBuildModelOpenRef.current = true;
+                return;
+            }
+            const screenW = window.screen.width;
+            const screenH = window.screen.height;
+            // Synchronous platform sniff — the cascade path can fire before
+            // the async `useIsMacOS` hook resolves.
+            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
+            const webview = new WebviewWindow('predictive-model', {
+                url: '/?window=predictive-model',
+                title: `Predictive Model — ${target}`,
+                // width/height keep a sensible un-maximized restore size;
+                // `maximized: true` opens fullscreen on launch.
+                width: Math.round(screenW * 0.75),
+                height: Math.round(screenH * 0.85),
+                center: true,
+                maximized: true,
+                decorations: isMac,
+            });
+            webview.once('tauri://created', () => setIsBuildModelOpen(true));
+            webview.once('tauri://error', (e) => console.error('Failed to open predictive model window:', e));
+            // PRIMARY signal — fires for any close path (button / native / crash).
+            webview.once('tauri://destroyed', () => {
+                setIsBuildModelOpen(false);
+                isBuildModelOpenRef.current = false;
+                updateWorkspaceData(wsId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => { /* ignore */ });
+            });
+            // Secondary signal — explicit ordering for state syncing.
+            const unlistenClose = await listen('predictive-model-closed', () => {
+                setIsBuildModelOpen(false);
+                isBuildModelOpenRef.current = false;
+                updateWorkspaceData(wsId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => { /* ignore */ });
+                unlistenClose();
+            });
+        } catch (err) {
+            console.error('Error opening predictive model window:', err);
+        }
+    }, []);
 
     // ── Setup ────────────────────────────────────────────────────
 
@@ -93,8 +200,12 @@ export default function FailureGroupCreation() {
                 if (d.dashboardSnapshot) setDashboardSnapshot(d.dashboardSnapshot);
 
                 // Restore failure-group slice from workspace file (per-workspace, not global).
+                // Also grab `predictiveModelState` here so the cascade below has it
+                // — we want a single disk read, not two.
+                let pmState: WorkspaceState['predictiveModelState'] | undefined;
                 try {
                     const ws = await loadWorkspaceData(d.workspaceId);
+                    if (ws?.name) setWorkspaceName(ws.name);
                     if (ws?.failureGroupState) {
                         setGroups(ws.failureGroupState.groups);
                         setRows(ws.failureGroupState.rows);
@@ -108,17 +219,32 @@ export default function FailureGroupCreation() {
                     if (ws?.dashboardSnapshot && !d.dashboardSnapshot) {
                         setDashboardSnapshot(ws.dashboardSnapshot);
                     }
+                    pmState = ws?.predictiveModelState;
                 } catch (e) {
                     console.warn('Failed to hydrate failure-group state from workspace:', e);
                 }
                 hydratedRef.current = true;
                 setLoading(false);
+
+                // Recent-workspace cascade: if the parent (DataUploadPage)
+                // told us the user clicked a workspace whose `lastRoute`
+                // was 'predictive-model', spawn PM now. This replaces the
+                // previous "FG snoops at disk to decide whether to auto-
+                // resume" pattern — the decision is explicit, the trigger
+                // is the user click, and there's no auto-resume on app start.
+                if (d.targetRoute === 'predictive-model' && pmState?.targetSensor) {
+                    await spawnPMHelper(
+                        d.workspaceId,
+                        pmState.targetSensor,
+                        pmState.predictorSensors ?? [],
+                    );
+                }
             });
             await emit('request-failure-group-data');
         };
         setup();
         return () => { if (unlistenData) unlistenData(); };
-    }, []);
+    }, [spawnPMHelper]);
 
     useEffect(() => {
         const handleClick = (e: MouseEvent) => {
@@ -128,6 +254,19 @@ export default function FailureGroupCreation() {
         };
         document.addEventListener('mousedown', handleClick);
         return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
+
+    // Keep the workspace name pill in the toolbar in sync when the user
+    // renames the workspace from this window's native menu (the rename UI
+    // emits `workspace-renamed-internal` after writing to disk).
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen<{ newName: string }>('workspace-renamed-internal', (event) => {
+                setWorkspaceName(event.payload.newName);
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
     }, []);
 
     useEffect(() => {
@@ -148,80 +287,6 @@ export default function FailureGroupCreation() {
         return () => clearTimeout(timer);
     }, [groups, rows, workspaceId]);
 
-    // Auto-reopen Step 3 (predictive-model) window on app resume if that's where the user left off.
-    //
-    // Notes:
-    //   • `isMacOS` is intentionally NOT in the deps array — it resolves async
-    //     after mount and would re-fire this effect, racing the user closing the
-    //     PM window and causing a duplicate spawn ("PM closes then a new PM
-    //     appears"). We read the platform synchronously inline instead.
-    //   • `reopenedForWorkspaceRef` ensures we only attempt the resume once per
-    //     workspace, even if hydration deps change again later.
-    useEffect(() => {
-        if (!workspaceId || !hydratedRef.current || loading) return;
-        if (reopenedForWorkspaceRef.current === workspaceId) return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const ws = await loadWorkspaceData(workspaceId);
-                if (cancelled) return;
-                if (ws?.lastRoute === 'predictive-model' && ws.predictiveModelState?.targetSensor && metadata) {
-                    // Sync claim — re-check + set the ref atomically AFTER the
-                    // await. Multiple effect runs could have entered the IIFE
-                    // while `loadWorkspaceData` was pending; whichever resumes
-                    // first wins, the rest see the claim and bail before spawn.
-                    if (reopenedForWorkspaceRef.current === workspaceId) return;
-                    reopenedForWorkspaceRef.current = workspaceId;
-                    // Avoid re-spawning if the window already exists.
-                    const existing = await WebviewWindow.getByLabel('predictive-model');
-                    if (existing) return;
-                    pendingModelDataRef.current = {
-                        targetSensor: ws.predictiveModelState.targetSensor,
-                        predictorSensors: ws.predictiveModelState.predictorSensors,
-                    };
-                    const screenW = window.screen.width;
-                    const screenH = window.screen.height;
-                    // Synchronous platform sniff so window decorations are correct
-                    // even before the async `useIsMacOS` hook resolves.
-                    const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-                    const webview = new WebviewWindow('predictive-model', {
-                        url: '/?window=predictive-model',
-                        title: `Predictive Model — ${ws.predictiveModelState.targetSensor}`,
-                        // width/height are kept as the un-maximized restore size
-                        // so dragging the window out of maximized state yields a
-                        // sensible default. `maximized: true` opens it fullscreen.
-                        width: Math.round(screenW * 0.75),
-                        height: Math.round(screenH * 0.85),
-                        center: true,
-                        maximized: true,
-                        decorations: isMac,
-                    });
-                    webview.once('tauri://created', () => setIsBuildModelOpen(true));
-                    webview.once('tauri://error', (e) => console.error('Failed to open predictive model window on resume:', e));
-                    // PRIMARY signal: `tauri://destroyed` fires for ALL close paths
-                    // (custom button, native red-close, force-quit, crash). Without
-                    // this, our `isBuildModelOpen` flag can go stale and the FG
-                    // close handler will preventDefault forever.
-                    webview.once('tauri://destroyed', () => {
-                        setIsBuildModelOpen(false);
-                        isBuildModelOpenRef.current = false;
-                        updateWorkspaceData(workspaceId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => {});
-                    });
-                    // Secondary (legacy) signal — keep for explicit flow ordering.
-                    const unlistenClose = await listen('predictive-model-closed', () => {
-                        setIsBuildModelOpen(false);
-                        isBuildModelOpenRef.current = false;
-                        updateWorkspaceData(workspaceId, (prev) => ({ ...prev, lastRoute: 'failure-group' })).catch(() => {});
-                        unlistenClose();
-                    });
-                }
-            } catch (e) {
-                console.warn('Failed to check for predictive-model resume:', e);
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [workspaceId, loading, metadata]);
-
     // No `onCloseRequested` handler — let close proceed unconditionally.
     // We previously prevented close on macOS native red-close while PM was
     // open, but that handler also turned out to silently block close in some
@@ -232,8 +297,6 @@ export default function FailureGroupCreation() {
     // shake-while-PM-open behavior for those platforms.
 
     // ── Build Model ──────────────────────────────────────────────
-
-    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[] } | null>(null);
 
     useEffect(() => {
         let unlistenReq: (() => void) | undefined;
@@ -265,96 +328,7 @@ export default function FailureGroupCreation() {
         const prevState = (await loadWorkspaceData(workspaceId))?.predictiveModelState;
         const sameTarget = prevState?.targetSensor === row.mappedSensorTag;
         const carriedPredictors = sameTarget ? (prevState?.predictorSensors ?? []) : [];
-        pendingModelDataRef.current = {
-            targetSensor: row.mappedSensorTag,
-            predictorSensors: carriedPredictors,
-        };
-        // Flip lastRoute so auto-resume re-opens the predictive-model window.
-        await updateWorkspaceData(workspaceId, (prev) => ({
-            ...prev,
-            lastRoute: 'predictive-model',
-            predictiveModelState: {
-                ...(prev.predictiveModelState ?? {
-                    individualChecked: true,
-                    rcMode: null,
-                    scatterXSensor: "",
-                    relModelName: "",
-                    relStiffness: 1,
-                    clusterModelName: "",
-                    numClusters: 3,
-                    criteriaSensor: "",
-                    // Default to 3 equal-width ranges over [0, 100] — matches the
-                    // numClusters default and gets resized to fit `numClusters`
-                    // by the sync effect in PredictiveModelBuild.
-                    clusterRanges: [
-                        { min: 0, max: 33 },
-                        { min: 33, max: 66 },
-                        { min: 66, max: 100 },
-                    ],
-                    filterTimeStart: "",
-                    filterTimeEnd: "",
-                    filterSensorValue: "",
-                }),
-                targetSensor: row.mappedSensorTag,
-                predictorSensors: carriedPredictors,
-            },
-        }));
-        try {
-            // Idempotency: if PM already exists, just focus it. Spawning a
-            // duplicate with the same label is what produces the "เด้งออก
-            // แล้วเปิดขึ้นมาใหม่" symptom on re-mount races.
-            const existingPM = await WebviewWindow.getByLabel('predictive-model');
-            if (existingPM) {
-                try { await existingPM.setFocus(); } catch { /* ignore */ }
-                setIsBuildModelOpen(true);
-                isBuildModelOpenRef.current = true;
-                return;
-            }
-            const screenW = window.screen.width;
-            const screenH = window.screen.height;
-            const webview = new WebviewWindow('predictive-model', {
-                url: '/?window=predictive-model',
-                title: `Predictive Model — ${row.mappedSensorTag}`,
-                // width/height keep a sensible un-maximized restore size;
-                // `maximized: true` opens fullscreen on launch.
-                width: Math.round(screenW * 0.75),
-                height: Math.round(screenH * 0.85),
-                center: true,
-                maximized: true,
-                decorations: isMacOS,
-            });
-            webview.once('tauri://created', () => {
-                setIsBuildModelOpen(true);
-            });
-            webview.once('tauri://error', (e) => {
-                console.error('Failed to open predictive model window:', e);
-            });
-            // PRIMARY signal — fires for any close path (button / native / crash).
-            webview.once('tauri://destroyed', () => {
-                setIsBuildModelOpen(false);
-                isBuildModelOpenRef.current = false;
-                if (workspaceId) {
-                    updateWorkspaceData(workspaceId, (prev) => ({
-                        ...prev,
-                        lastRoute: 'failure-group',
-                    })).catch(() => { /* ignore */ });
-                }
-            });
-            // Secondary signal — explicit ordering for state syncing.
-            const unlistenClose = await listen('predictive-model-closed', () => {
-                setIsBuildModelOpen(false);
-                isBuildModelOpenRef.current = false;
-                if (workspaceId) {
-                    updateWorkspaceData(workspaceId, (prev) => ({
-                        ...prev,
-                        lastRoute: 'failure-group',
-                    })).catch(() => { /* ignore */ });
-                }
-                unlistenClose();
-            });
-        } catch (err) {
-            console.error('Error opening predictive model window:', err);
-        }
+        await spawnPMHelper(workspaceId, row.mappedSensorTag, carriedPredictors);
     };
 
     // ── Group Actions ─────────────────────────────────────────────
@@ -615,9 +589,6 @@ export default function FailureGroupCreation() {
             if (!confirmed) return;
         } catch { /* fall through to confirm via window.confirm */ }
 
-        // Reset workspace anchor so the main window lands on the import page.
-        try { await setLastWorkspaceId(null); } catch { /* ignore */ }
-
         try {
             const existing = await WebviewWindow.getByLabel('main');
             if (existing) {
@@ -682,7 +653,9 @@ export default function FailureGroupCreation() {
                 </div>
             )}
 
-            {/* Command bar — toolbar with breadcrumb + actions */}
+            {/* Command bar — Back button + workspace name on the left,
+                file actions on the right. Step/breadcrumb context removed
+                per UX; the workspace label is the only anchor now. */}
             <div className="fg-toolbar">
                 <div className="fg-toolbar-left">
                     <button
@@ -693,12 +666,12 @@ export default function FailureGroupCreation() {
                         <ArrowLeft size={14} />
                         <span>Back to Upload</span>
                     </button>
-                    <div className="fg-breadcrumb">
-                        <span className="fg-breadcrumb-label">Predictive Mode</span>
-                        <span className="fg-breadcrumb-sep">/</span>
-                        <span className="fg-breadcrumb-title">Failure Groups</span>
-                    </div>
-                    <span className="fg-step-pill">Step 2 of 3</span>
+                    {workspaceName && (
+                        <div className="fg-workspace-label" title={workspaceName}>
+                            <span className="fg-workspace-eyebrow">Workspace</span>
+                            <span className="fg-workspace-name">{workspaceName}</span>
+                        </div>
+                    )}
                 </div>
                 <div className="fg-toolbar-right">
                     <button className="fg-upload-btn" onClick={handleUpload}>

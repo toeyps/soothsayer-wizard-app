@@ -2079,22 +2079,23 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        // Exit the app when its last *user* webview window is destroyed. This
-        // overrides Tauri's default "stay alive on macOS after all windows
-        // close" behavior — without this, closing every window leaves the
-        // process running with no UI but a phantom macOS menu bar, which the
-        // user has no way to recover from short of Cmd+Q.
+        // Exit the app when the last *visible* webview window is destroyed.
+        // Overrides Tauri's default "stay alive on macOS after all windows
+        // close" — otherwise closing every window leaves the process running
+        // with no UI but a phantom macOS menu bar, which the user has no way
+        // to recover from short of Cmd+Q.
         //
-        // Why filter to "user windows" instead of `is_empty()`:
-        // - The `splashscreen` window may still live in the manager map even
-        //   after `splash.close()` is called (the unmap is async on macOS).
-        // - The hidden `main` window may also linger if `Window.destroy()`
-        //   raced with a re-mount. Either of these alone keeps the process
-        //   alive forever after FG + PM are closed by the user.
+        // The visibility filter handles the recent-workspace-navigation case:
+        // when the user clicks a Recent Workspace whose `lastRoute` is
+        // `failure-group` / `predictive-model`, the main window calls
+        // `Window.destroy()` immediately after spawning the sub-window. If
+        // that destroy races a re-mount and the manager-map entry lingers as
+        // a hidden window, the visibility filter ignores it so the app still
+        // exits when the sub-window closes.
         //
         // Belt-and-suspenders: if `app_handle.exit(0)` doesn't terminate the
-        // process within 500 ms (it sometimes hangs on the cocoa runloop after
-        // all windows are gone), force-kill with `std::process::exit(0)`.
+        // process within 500 ms (it sometimes hangs on the cocoa runloop
+        // after the last window is gone), force-kill with `std::process::exit(0)`.
         .run(|app_handle, event| {
             use tauri::Manager;
             if let tauri::RunEvent::WindowEvent {
@@ -2103,22 +2104,10 @@ pub fn run() {
                 ..
             } = &event
             {
-                // A window keeps the app alive only if it's a *visible* user
-                // window. Filter out:
-                //  - `splashscreen` (close() may unmap async, never user-facing)
-                //  - any window with `is_visible() == false` — e.g. `main`
-                //    when we resumed straight into a sub-window and main was
-                //    never shown (tauri.conf.json sets `visible: false`).
-                //    The auto-resume flow tries to `Window.destroy()` main,
-                //    but if that races/fails main lingers hidden forever —
-                //    without this filter it blocks exit indefinitely.
                 let remaining: Vec<String> = app_handle
                     .webview_windows()
                     .iter()
-                    .filter(|(label, w)| {
-                        if label.as_str() == "splashscreen" {
-                            return false;
-                        }
+                    .filter(|(_label, w)| {
                         // Conservative: if `is_visible` errors, treat as visible
                         // so we don't kill the app prematurely.
                         w.is_visible().unwrap_or(true)
@@ -2126,20 +2115,17 @@ pub fn run() {
                     .map(|(label, _)| label.clone())
                     .collect();
                 eprintln!(
-                    "[exit-guard] Window destroyed: {} | remaining visible user windows: {:?}",
+                    "[exit-guard] Window destroyed: {} | remaining visible windows: {:?}",
                     label, remaining
                 );
                 if remaining.is_empty() {
-                    eprintln!("[exit-guard] No visible user windows left — exiting.");
-                    // Force-destroy any hidden/leftover windows (splashscreen,
-                    // hidden main) so they don't keep the cocoa runloop alive.
+                    eprintln!("[exit-guard] No visible windows left — exiting.");
+                    // Force-destroy any hidden/leftover windows so they don't
+                    // keep the cocoa runloop alive.
                     for (_, w) in app_handle.webview_windows() {
                         let _ = w.destroy();
                     }
                     app_handle.exit(0);
-                    // If the Tauri runtime doesn't terminate the process
-                    // within 500 ms, force it. This guards against the cocoa
-                    // runloop staying alive after the last window dies.
                     std::thread::spawn(|| {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         eprintln!("[exit-guard] app.exit(0) didn't terminate — forcing process exit.");

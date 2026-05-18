@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Search,
-  ChevronRight,
   Check,
   X,
   Download,
   Info,
   ArrowRight,
-  Sun,
-  Moon,
   Filter as FilterIcon,
   Activity,
   Loader2,
@@ -19,6 +16,9 @@ import {
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen, emit } from "@tauri-apps/api/event";
 import { useDataUpload } from "../../hooks/useDataUpload";
 import { useMappingData, buildSensorMetadataFromMapping } from "../../hooks/useMappingData";
 import type { CsvMetadata, SensorMetadata, WorkspaceState, WorkspaceMetadata } from "../../types";
@@ -124,7 +124,12 @@ const fmt = (n: number | undefined | null) =>
 export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const dataUpload = useDataUpload();
   const mapping = useMappingData();
-  const [dark, setDark] = useState(() => (localStorage.getItem("theme") ?? "dark") !== "light");
+  // Theme is owned by App.tsx via TitleBar — DataUploadPage just reads the
+  // current value off `<html data-theme=...>` and re-renders when it flips.
+  // The in-page toggle button was removed alongside the top command bar.
+  const [dark, setDark] = useState(() =>
+    (document.documentElement.getAttribute("data-theme") ?? "dark") !== "light"
+  );
   const T = dark ? DARK : LIGHT;
 
   const [mode, setMode] = useState<SelectedMode>("soothsayer");
@@ -135,9 +140,15 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-    localStorage.setItem("theme", dark ? "dark" : "light");
-  }, [dark]);
+    const observer = new MutationObserver(() => {
+      setDark((document.documentElement.getAttribute("data-theme") ?? "dark") !== "light");
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   const refreshWorkspaces = () => {
     getRecentWorkspaces().then(setWorkspaces).catch(console.error);
@@ -152,7 +163,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const hasFiles = files.length > 0;
   const isReady = !!report;
   const totalRows = report?.total_rows ?? 0;
-  const totalCols = report?.columns.length ?? 0;
 
   const filteredWs = useMemo(
     () =>
@@ -232,6 +242,88 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
           sm = await invoke<SensorMetadata[]>("load_metadata_command", { path: state.metadataFilePath });
         } catch { /* ignore */ }
       }
+
+      // Recent-workspace navigation: route to whichever window the user was
+      // last in. There's no auto-resume on app start — this branch is the
+      // ONLY path that re-enters FG/PM from a stored workspace.
+      //   • dashboard (or no lastRoute) → render Dashboard inside main
+      //   • failure-group                → spawn FG, destroy main
+      //   • predictive-model             → spawn FG (which cascades into PM
+      //                                    via its own mount effect), destroy main
+      const route = state.lastRoute;
+      if (route === 'failure-group' || route === 'predictive-model') {
+        const sensorHeaders = dataMetadata.headers.filter((h) => {
+          const lower = h.trim().toLowerCase();
+          return lower !== 'timestamp' && lower !== 'time';
+        });
+
+        // Idempotency: if FG already exists (e.g. user double-clicked the
+        // workspace row), just focus it and tear down main. Spawning a
+        // second `failure-group` would error out under Tauri's
+        // unique-label rule.
+        const existingFG = await WebviewWindow.getByLabel('failure-group');
+        if (existingFG) {
+          try { await existingFG.setFocus(); } catch { /* ignore */ }
+          try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
+          return;
+        }
+
+        const screenW = window.screen.width;
+        const screenH = window.screen.height;
+        const isMac = /mac/i.test(
+          (navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent
+        );
+
+        // Listener-first: register the handshake BEFORE creating the FG
+        // webview. Otherwise FG's mount-time `emit('request-failure-group-data')`
+        // can land before we're listening, the request is dropped, and the
+        // sub-window sits forever waiting for data.
+        const unlisten = await listen('request-failure-group-data', async () => {
+          await emit('failure-group-data', {
+            workspaceId: state.id,
+            sensorHeaders,
+            sensorMetadata: sm,
+            metadata: dataMetadata,
+            dashboardSnapshot: state.dashboardSnapshot,
+            // Explicit cascade directive: if the workspace was last in PM, tell
+            // FG to spawn PM as soon as it hydrates. FG no longer reads disk on
+            // its own to decide this — the decision lives here in the click handler.
+            targetRoute: route,
+          });
+          unlisten();
+          // `destroy()` skips the close-requested chain — guarantees main is
+          // gone even if some race re-armed a handler.
+          try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
+        });
+
+        const fgWindow = new WebviewWindow('failure-group', {
+          url: '/?window=failure-group',
+          title: 'Predictive Mode - Failure Group Creation',
+          width: Math.round(screenW * 0.8),
+          height: Math.round(screenH * 0.8),
+          center: true,
+          decorations: isMac,
+        });
+        // Hide main as soon as the FG webview is *created* (≈ tens to a few
+        // hundred ms), instead of waiting for the full React-mount → handshake
+        // round-trip (≈ ~1 s). Without this, the user briefly sees the import
+        // page sitting under a loading FG. The destroy below still happens
+        // after the handshake — hide() is purely a visual quick-cut.
+        //
+        // Safety: by the time `tauri://created` fires, FG's webview is
+        // registered as a visible window in the manager, so the exit-guard
+        // sees ≥1 visible window even though main is now hidden. If FG fails
+        // to load and the user closes it, exit-guard still finds 0 visible
+        // windows and shuts the process down cleanly.
+        fgWindow.once('tauri://created', async () => {
+          try { await getCurrentWindow().hide(); } catch { /* ignore */ }
+        });
+        fgWindow.once('tauri://error', (e) =>
+          console.error('Failed to create failure group window:', e),
+        );
+        return;
+      }
+
       onDataReady(dataMetadata, state, sm);
     } catch (err) {
       setWorkspaceError(String(err));
@@ -266,50 +358,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
 
   return (
     <div style={{ width: "100%", height: "100vh", background: T.bg, color: T.text, fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif', display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      {/* Command bar */}
-      <div style={{
-        height: 52, display: "flex", alignItems: "center", padding: "0 18px",
-        borderBottom: `1px solid ${T.border}`, background: T.surface, gap: 12, flexShrink: 0,
-      }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, fontFamily: mono }}>
-          <span style={{ color: T.textFaint, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase" }}>Workspace</span>
-          <ChevronRight size={12} style={{ color: T.textFaint }} />
-          <span style={{ color: T.text, fontSize: 13, fontWeight: 600, fontFamily: 'inherit' }}>New</span>
-        </div>
-        <Pill T={T} tone="info">Step 1</Pill>
-
-        <div style={{ width: 1, height: 22, background: T.border, margin: "0 4px" }} />
-
-        <Stepper
-          T={T}
-          current={1}
-          steps={[
-            { n: 1, label: "Prepare Dataset" },
-            { n: 2, label: "Failure Groups" },
-            { n: 3, label: "Predictive Model" },
-          ]}
-        />
-
-        <div style={{ flex: 1 }} />
-
-        {isReady && (
-          <span style={{ fontSize: 11, color: T.textFaint, fontFamily: mono }}>
-            {files.length} file{files.length !== 1 ? "s" : ""} · {fmt(totalRows)} rows · {totalCols} cols
-          </span>
-        )}
-
-        <button
-          onClick={() => setDark((d) => !d)}
-          style={{
-            background: "none", border: `1px solid ${T.border}`, color: T.textMuted,
-            cursor: "pointer", width: 30, height: 28, borderRadius: 7,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          {dark ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-      </div>
-
       {/* Main grid: sidebar + content */}
       <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", background: T.bg, flex: 1, minHeight: 0 }}>
         {/* Sidebar */}
@@ -847,44 +895,6 @@ function Card({ T, children, style = {} }: { T: Tokens; children: ReactNode; sty
       borderRadius: 10, ...style,
     }}>
       {children}
-    </div>
-  );
-}
-
-function Stepper({ T, current, steps }: { T: Tokens; current: number; steps: { n: number; label: string }[] }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      {steps.map((s, i) => {
-        const done = s.n < current;
-        const active = s.n === current;
-        return (
-          <div key={s.n} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {i > 0 && <div style={{ width: 14, height: 1, background: done ? T.ok : T.border }} />}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: active ? "4px 9px" : "4px 6px",
-              background: active ? T.accentMuted : "transparent",
-              border: active ? `1px solid ${T.accent}` : "1px solid transparent",
-              borderRadius: 999,
-            }}>
-              <div style={{
-                width: 16, height: 16, borderRadius: "50%",
-                background: done ? T.ok : active ? T.accent : "transparent",
-                border: done || active ? "none" : `1.5px solid ${T.borderStrong}`,
-                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 9.5, fontWeight: 700, fontFamily: mono,
-              }}>
-                {done ? <Check size={9} color="#fff" /> : <span style={{ color: active ? "#fff" : T.textFaint }}>{s.n}</span>}
-              </div>
-              <span style={{
-                fontSize: 12, fontWeight: active ? 600 : 500,
-                color: active ? T.text : done ? T.textMuted : T.textFaint,
-                letterSpacing: "-0.005em",
-              }}>{s.label}</span>
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }

@@ -958,7 +958,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 try {
                                     if (!initialState) return;
                                     // Persist the dashboard snapshot + flip lastRoute BEFORE spawning the window,
-                                    // so auto-resume and Step 2 can both read it from disk.
+                                    // so FG can hydrate from disk and the next Recent Workspace click
+                                    // lands the user back in FG (or onward to PM via cascade).
                                     const snapshot = {
                                         selectedSensors,
                                         visibleSensors,
@@ -999,6 +1000,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             sensorMetadata,
                                             metadata,
                                             dashboardSnapshot: snapshot,
+                                            // Save & Continue always lands in FG.
+                                            // Explicit so FG won't accidentally cascade
+                                            // to PM (the cascade only fires when
+                                            // `targetRoute === 'predictive-model'`).
+                                            targetRoute: 'failure-group',
                                         });
                                         unlisten();
                                         try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
@@ -1010,6 +1016,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                         height: Math.round(screenH * 0.8),
                                         center: true,
                                         decorations: isMac,
+                                    });
+                                    // Hide the dashboard window as soon as FG is created (~few hundred ms)
+                                    // rather than waiting for the full handshake (~1 s). Without this,
+                                    // the user briefly sees Dashboard sitting under a loading FG.
+                                    // The destroy in the handshake listener above still runs — hide()
+                                    // is just a visual quick-cut.
+                                    webview.once('tauri://created', async () => {
+                                        try { await getCurrentWindow().hide(); } catch { /* ignore */ }
                                     });
                                     webview.once('tauri://error', (e) => {
                                         console.error('Failed to create failure group window:', e);

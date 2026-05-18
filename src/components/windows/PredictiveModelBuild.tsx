@@ -148,6 +148,7 @@ interface PredictiveModelData {
 export default function PredictiveModelBuild() {
     const isMacOS = useIsMacOS();
     const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+    const [workspaceName, setWorkspaceName] = useState<string>("");
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
     // Data from previous page
@@ -337,6 +338,7 @@ export default function PredictiveModelBuild() {
                 let slice: PredictiveModelStateSlice | undefined;
                 try {
                     const ws = await loadWorkspaceData(d.workspaceId);
+                    if (ws?.name) setWorkspaceName(ws.name);
                     slice = ws?.predictiveModelState;
                     if (ws?.dashboardSnapshot && !d.dashboardSnapshot) setDashboardSnapshot(ws.dashboardSnapshot);
                     // Hydrate the remembered save folder so the next picker
@@ -403,6 +405,18 @@ export default function PredictiveModelBuild() {
         return () => {
             if (unlistenData) unlistenData();
         };
+    }, []);
+
+    // Keep workspaceName synced when the user renames via this window's
+    // native menu (rename UI emits `workspace-renamed-internal` after disk write).
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen<{ newName: string }>('workspace-renamed-internal', (event) => {
+                setWorkspaceName(event.payload.newName);
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
     }, []);
 
     // Persist predictive-model slice back into the workspace file on change.
@@ -1618,9 +1632,11 @@ export default function PredictiveModelBuild() {
                 <button className="pm-back-btn" title="Back"><ChevronLeft size={16} /></button>
                 <div className="pm-breadcrumb">
                     <span className="pm-crumb-eyebrow">Workspace</span>
+                    <span className="pm-crumb-current" title={workspaceName || undefined}>
+                        {workspaceName || 'Unnamed'}
+                    </span>
                     <ChevronRight size={12} className="pm-crumb-sep" />
-                    <span className="pm-crumb-muted">Predictive</span>
-                    <ChevronRight size={12} className="pm-crumb-sep" />
+                    <span className="pm-crumb-muted">Target</span>
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
                 <span className="pm-step-pill">Step 3 of 3</span>

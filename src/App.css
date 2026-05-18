@@ -5642,55 +5642,47 @@ body {
     flex-shrink: 0;
 }
 
-.fg-breadcrumb {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    font-family: var(--mono);
-    min-width: 0;
-}
-
-.fg-breadcrumb-label {
-    color: var(--text-faint);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    font-weight: 600;
-}
-
-.fg-breadcrumb-sep {
-    color: var(--text-faint);
-    font-size: 12px;
-}
-
-.fg-breadcrumb-title {
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 600;
-    font-family: 'Inter', sans-serif;
-    letter-spacing: -0.01em;
-}
-
-.fg-step-pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 7px;
-    background: var(--accent-muted);
-    color: var(--accent-hi);
-    border: 1px solid transparent;
-    border-radius: 4px;
-    font-size: 10.5px;
-    font-weight: 600;
-    font-family: var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-}
-
 .fg-toolbar-divider {
     width: 1px;
     height: 22px;
     background: var(--border);
     flex-shrink: 0;
+}
+
+/* Workspace label pill — anchors the user's location after step/breadcrumb
+   context was removed from the top bar. Sits to the right of the Back button. */
+.fg-workspace-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    background: var(--bg-secondary, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-width: 0;
+    max-width: 320px;
+}
+
+.fg-workspace-eyebrow {
+    color: var(--text-faint, var(--text-secondary));
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    opacity: 0.7;
+    flex-shrink: 0;
+}
+
+.fg-workspace-name {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 /* ── Progress strip ────────────────────────────────────────────────── */
@@ -6741,10 +6733,6 @@ body {
     .fg-toolbar-left {
         gap: 8px;
         flex-wrap: wrap;
-    }
-
-    .fg-breadcrumb-label {
-        display: none;
     }
 
     .fg-progress-strip {

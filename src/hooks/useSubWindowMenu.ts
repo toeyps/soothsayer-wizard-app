@@ -7,7 +7,6 @@ import { message } from '@tauri-apps/plugin-dialog';
 import {
     loadWorkspaceData,
     saveWorkspaceData,
-    setLastWorkspaceId,
     renameWorkspaceFile,
 } from '../workspaceManager';
 import type { WorkspaceState } from '../types';
@@ -22,8 +21,8 @@ export interface SubWindowMenuHandlers {
 }
 
 // Returns a bridge to the main window: focuses it if it exists, otherwise spawns a fresh main
-// window (pointed at the import page since lastWorkspaceId was cleared). Closes the current window
-// after a short delay so the user always lands somewhere.
+// window (always pointed at the import page — there is no auto-resume). Closes the current window
+// so the user always lands somewhere.
 async function openMainAndClose() {
     try {
         const existing = await WebviewWindow.getByLabel('main');
@@ -69,7 +68,6 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
         };
 
         const doNewOrCloseWorkspace = async () => {
-            await setLastWorkspaceId(null);
             await openMainAndClose();
         };
 
@@ -131,6 +129,11 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
                 const wsId = ref.current.workspaceId;
                 if (!wsId) return;
                 await renameWorkspaceFile(wsId, event.payload.newName);
+                // Broadcast so the caller window's UI (FG / PM workspace labels)
+                // updates without needing a reload. Same event name the main
+                // window's TitleBar already listens for.
+                try { await emit('workspace-renamed-internal', { newName: event.payload.newName }); }
+                catch { /* ignore */ }
                 try { await message(`Workspace renamed to "${event.payload.newName}".`, { title: 'Renamed', kind: 'info' }); }
                 catch { /* ignore */ }
                 unlistenReq(); unlistenSubmit();

@@ -28,7 +28,8 @@ function findColumnIndex(headers: string[], candidates: string[]): number | null
   return null;
 }
 
-/** Build SensorMetadata[] from mapping data + result. Exported for reuse in auto-resume. */
+/** Build SensorMetadata[] from mapping data + result. Exported for reuse by the
+ *  Recent Workspace click flow in `DataUploadPage.handleLoadWorkspace`. */
 export function buildSensorMetadataFromMapping(
   mappingData: MappingData,
   mappingResult: MappingResult,
