@@ -7187,10 +7187,669 @@ body {
     min-height: 0;
 }
 
+/* ── Expand button on each chart header ───────────────────────────── */
+.pm-chart-expand-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.pm-chart-expand-btn:hover {
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.1));
+    color: var(--text-primary);
+    border-color: var(--accent-color, var(--text-secondary));
+}
+.pm-chart-expand-btn:focus-visible {
+    outline: 2px solid var(--accent-color, #3b82f6);
+    outline-offset: 1px;
+}
+
+/* ── Expanded-chart fullscreen modal ─────────────────────────────── */
+.pm-chart-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(2, 6, 23, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    animation: pm-chart-modal-fade 0.14s ease-out;
+}
+@keyframes pm-chart-modal-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.pm-chart-modal-card {
+    width: 100%;
+    height: 100%;
+    max-width: 1600px;
+    background: var(--bg-surface, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    padding: 20px 22px 22px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    animation: pm-chart-modal-pop 0.16s ease-out;
+}
+@keyframes pm-chart-modal-pop {
+    from { transform: scale(0.97); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+}
+.pm-chart-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.pm-chart-modal-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.pm-chart-modal-close:hover {
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.1));
+    color: var(--text-primary);
+}
+.pm-chart-modal-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Preview Modal ─────────────────────────────────────────────────
+   Triggered by the toolbar Preview button. Lays out wizard.py's
+   `PreviewModel.{individual, relationship, clustering}` outputs in a
+   single scrollable card so the user can review before clicking Save
+   Model (which commits files to disk). */
+.pm-preview-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(2, 6, 23, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    animation: pm-chart-modal-fade 0.14s ease-out;
+}
+/* The sub-models modal needs to feel "full screen" — slim the backdrop
+   gutter from 32px → 16px so the wide 2-column chart grid doesn't lose
+   pixels to dead space. `:has()` ships in every Tauri-shipped webview
+   (WebKit / Blink / WebView2 ≥ 105). Falls through to the default
+   32px padding on the off chance a runtime predates :has() support,
+   which still works — just slightly snugger margins. */
+.pm-preview-modal-backdrop:has(> .pm-submodels-modal-card) {
+    padding: 16px;
+}
+.pm-preview-modal-card {
+    width: 100%;
+    max-width: 880px;
+    max-height: 90vh;
+    background: var(--bg-surface, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    animation: pm-chart-modal-pop 0.16s ease-out;
+}
+.pm-preview-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.pm-preview-modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+.pm-preview-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 22px 18px;
+    border-top: 1px solid var(--border);
+}
+.pm-preview-footer-status {
+    margin-right: auto;
+    font-size: 12px;
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+.pm-preview-section {
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.06));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+.pm-preview-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+.pm-preview-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.pm-preview-section-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.pm-preview-section-sub code {
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.15));
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.pm-preview-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: baseline;
+}
+.pm-preview-meta strong {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+}
+.pm-preview-meta-faint {
+    color: var(--text-secondary);
+    opacity: 0.7;
+    font-size: 11px;
+    margin-left: 4px;
+}
+
+.pm-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+}
+.pm-preview-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.1));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+.pm-preview-stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+.pm-preview-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.pm-preview-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.08));
+}
+.pm-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.pm-preview-table th,
+.pm-preview-table td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.pm-preview-table th {
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.04));
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10.5px;
+}
+.pm-preview-table tbody tr:last-child td {
+    border-bottom: none;
+}
+.pm-preview-table td {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+}
+.pm-preview-table td code {
+    font-size: 11px;
+    background: transparent;
+    padding: 0;
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+.pm-preview-empty {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 12px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+.pm-preview-error {
+    font-size: 12px;
+    color: #f43f5e;
+    padding: 10px 12px;
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.3);
+    border-radius: 6px;
+}
+
+/* ── Sub-models Modal ──────────────────────────────────────────────
+   Shares the .pm-preview-modal-* shell but expands to fill (almost)
+   the full viewport so the 2-column grid of per-step scatter charts
+   has room to breathe on every screen size. The backdrop's 32px
+   padding becomes the modal's natural outer margin. */
+.pm-submodels-modal-card {
+    /* Drop the preview modal's 880px width cap entirely — sub-models
+       need every horizontal pixel they can get, especially on wide
+       monitors where the preview text card looks lonely. */
+    max-width: none;
+    width: 100%;
+    /* `100vh - 32px` matches the slimmer 16px×2 backdrop padding for
+       sub-models, so the modal fills the visible area top-to-bottom. */
+    max-height: calc(100vh - 32px);
+    height: calc(100vh - 32px);
+}
+/* Override the parent .pm-preview-modal-body's flex layout — sub-models
+   render as a 2-column responsive grid so several cumulative-step
+   charts fit in view at once. Falls back to a single column under the
+   ~900px breakpoint where two scatters would each be too cramped.
+   Tighter padding gives the charts more breathing room. */
+.pm-submodels-body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-content: start;
+    padding: 14px 16px;
+}
+@media (max-width: 900px) {
+    .pm-submodels-body {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+.pm-submodels-stale-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 6px;
+    font-size: 12px;
+    color: #f59e0b;
+    /* Span both grid columns so the banner reads as a header above the
+       per-step cards rather than as a sibling cell. */
+    grid-column: 1 / -1;
+}
+/* Empty / loading / error placeholders should also span the full row
+   instead of getting tucked into one column of the 2-column grid. */
+.pm-submodels-body > .pm-preview-empty,
+.pm-submodels-body > .pm-preview-error {
+    grid-column: 1 / -1;
+}
+.pm-submodel-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.05));
+    /* Trimmed from 14px / 12px to give the chart more vertical room
+       inside a viewport-sized modal — chrome was overflowing on
+       shorter screens. */
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+}
+.pm-submodel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.pm-submodel-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.pm-submodel-step {
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.pm-submodel-predictors {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+.pm-submodel-predictors code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.1));
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--text-primary);
+}
+.pm-submodel-arrow {
+    color: var(--text-secondary);
+    margin: 0 2px;
+}
+.pm-submodel-stats {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.pm-submodel-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.08));
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 4px 9px;
+    min-width: 64px;
+    align-items: center;
+}
+.pm-submodel-stat-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+.pm-submodel-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.pm-submodel-chart {
+    width: 100%;
+    /* Each card occupies ~half the modal body, minus its own chrome.
+       The `calc(50vh - 140px)` term targets that budget: 140px ≈
+       modal header (~50) + body padding (~28) + card padding/header/gap
+       (~62) — averaged so two rows fit comfortably on a 720p+ screen
+       without the bottom card clipping. Clamped to a 180px floor for
+       legibility and a 420px ceiling so big monitors don't get
+       sparse-looking cards. */
+    height: clamp(180px, calc(50vh - 140px), 420px);
+    min-height: 180px;
+}
+
 /* Inline progress bar shown at the top of the chart card while a relationship
    fit is in flight. Determinate variant fills based on (current/total)
    predictors; indeterminate variant slides a hot region across the track when
    we don't have countable steps (single-predictor fit). */
+/* ── Configure Clustering Model layout ────────────────────────────── */
+.pm-fields-clustering {
+    /* Slightly tighter row spacing than the default pm-fields */
+    gap: 12px;
+}
+.pm-field-grid-2 {
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+}
+@media (max-width: 480px) {
+    .pm-field-grid-2 {
+        grid-template-columns: 1fr;
+    }
+}
+.pm-field-hint-inline {
+    font-size: 0.65rem;
+    font-weight: 400;
+    color: var(--text-secondary, #94a3b8);
+    opacity: 0.75;
+    margin-left: 2px;
+}
+
+/* Range input pair (Min — to — Max) */
+.pm-range-input {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.4));
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.pm-range-input:focus-within {
+    border-color: rgba(99, 102, 241, 0.55);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
+}
+.pm-range-input-num {
+    flex: 1 1 0;
+    min-width: 0;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.pm-range-input-num:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
+.pm-range-sep {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 11px;
+    color: var(--text-secondary, #94a3b8);
+    opacity: 0.7;
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    border-left: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+    border-right: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+    background: rgba(148, 163, 184, 0.06);
+    user-select: none;
+}
+
+/* Per-cluster range list — one row per cluster, each row showing a
+   colour swatch (matching the scatter chart palette), the cluster id,
+   and a [min, max) range pair. Replaces the single Min—Max input from
+   the pre-multi-cluster build. */
+.pm-cluster-ranges {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.pm-cluster-range-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.18));
+    border-radius: 8px;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.3));
+    padding: 4px 6px 4px 8px;
+}
+.pm-cluster-range-row:focus-within {
+    border-color: rgba(99, 102, 241, 0.55);
+}
+.pm-cluster-range-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    align-self: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 2px var(--bg-secondary, rgba(15, 23, 42, 0.3));
+}
+.pm-cluster-range-label {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-secondary, #94a3b8);
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 22px;
+}
+.pm-cluster-range-row .pm-range-input-num {
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.18)) !important;
+    border-radius: 5px !important;
+    background: transparent !important;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.pm-cluster-range-row .pm-range-sep {
+    border: none;
+    background: transparent;
+    padding: 0 4px;
+}
+
+/* Inline error under config */
+.pm-config-error {
+    font-size: 12px;
+    color: #f43f5e;
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.25);
+    border-radius: 6px;
+    padding: 6px 10px;
+    line-height: 1.4;
+}
+
+/* Stat pills (preview info) */
+.pm-stat-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 4px;
+}
+.pm-stat-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+    border-radius: 999px;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.35));
+    font-size: 11px;
+    line-height: 1.2;
+}
+.pm-stat-pill-label {
+    color: var(--text-secondary, #94a3b8);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 9px;
+}
+.pm-stat-pill-value {
+    color: var(--text-primary, #f1f5f9);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+/* ── Stepper (Number of Clusters) ─────────────────────────────────── */
+.pm-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.4));
+    height: 32px;
+}
+.pm-stepper-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 100%;
+    background: transparent;
+    border: 0;
+    color: var(--text-primary, #f1f5f9);
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+    padding: 0;
+}
+.pm-stepper-btn:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.18);
+    color: #818cf8;
+}
+.pm-stepper-btn:active:not(:disabled) {
+    background: rgba(99, 102, 241, 0.28);
+}
+.pm-stepper-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+.pm-stepper-value {
+    min-width: 38px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary, #f1f5f9);
+    border-left: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+    border-right: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+    padding: 0 6px;
+    line-height: 32px;
+    user-select: none;
+}
+
 .pm-progress {
     display: flex;
     flex-direction: column;

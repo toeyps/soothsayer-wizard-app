@@ -49,7 +49,7 @@ export interface IndividualModelInfo {
   saved_path: string;
 }
 
-/** New: ellipse parameters from a single-cluster GMM fit. */
+/** Ellipse parameters from a single Gaussian fit (one cluster). */
 export interface EllipseFit {
   x_center: number;
   y_center: number;
@@ -58,22 +58,53 @@ export interface EllipseFit {
   angle_deg: number;
 }
 
-/** New: result of `compute_clustering_preview`. */
+/**
+ * Half-open `[min, max)` range over the criteria sensor's value used to
+ * assign rows to a cluster. `null` on either bound means "unbounded in
+ * that direction" — matches Rust's `Option<f64>` (which is how
+ * `wizard.py`'s `-inf` / `+inf` round-trips through JSON without
+ * relying on non-finite floats).
+ */
+export interface ClusterRange {
+  min: number | null;
+  max: number | null;
+}
+
+/** Per-cluster ellipse fit returned by `compute_clustering_preview`. */
+export interface ClusterDetail {
+  /** 1-based cluster id, matching `wizard.py`'s string keys ("1", "2", …). */
+  cluster_id: number;
+  /** `null` for the single-cluster path (no criteria split). */
+  range: ClusterRange | null;
+  n_rows: number;
+  ellipse: EllipseFit;
+  /** Per-row X values for this cluster (first_sensor, NaN-dropped). */
+  xs: number[];
+  /** Per-row Y values for this cluster (second_sensor, NaN-dropped). */
+  ys: number[];
+}
+
+/** Result of `compute_clustering_preview` — supports 1..N clusters. */
 export interface ClusteringPreview {
   first_sensor: string;
   second_sensor: string;
+  /** Set when `cluster_count > 1`; null on the single-cluster path. */
+  criteria_sensor: string | null;
   cluster_count: number;
+  /** Total rows assigned across all clusters (sum of clusters[*].n_rows). */
   n_rows: number;
-  ellipse: EllipseFit;
+  /** One entry per cluster, in cluster_id order (1..=N). */
+  clusters: ClusterDetail[];
 }
 
-/** New: result of `train_clustering_model`. */
+/** Result of `train_clustering_model` (writes JSON to disk). */
 export interface ClusteringModelInfo {
   model_name: string;
   first_sensor: string;
   second_sensor: string;
+  criteria_sensor: string | null;
   cluster_count: number;
-  ellipse: EllipseFit;
+  clusters: ClusterDetail[];
   saved_path: string;
 }
 
@@ -194,22 +225,35 @@ export type TauriCommands = {
     };
     returns: IndividualModelInfo;
   };
-  /** Single-cluster GMM ellipse fit (preview only — no disk write). */
+  /**
+   * GMM ellipse fit preview — supports 1..N clusters. When
+   * `n_clusters === 1`, both `criteria_sensor` and `cluster_ranges` are
+   * ignored (single-cluster path uses all rows). When `n_clusters > 1`,
+   * both are required: rows are split into clusters by whether the
+   * criteria sensor's value falls in `[range.min, range.max)`, and one
+   * Gaussian is fit per cluster. No disk write — preview only.
+   */
   compute_clustering_preview: {
     args: {
       first_sensor: string;
       second_sensor: string;
       n_clusters: number;
+      criteria_sensor: string | null;
+      cluster_ranges: ClusterRange[] | null;
     };
     returns: ClusteringPreview;
   };
-  /** Train + persist a Clustering model. Writes CLUS_INFO_*.json under
-   *  `{save_path}/output/{second_sensor}/`. */
+  /** Train + persist a Clustering model (1..N clusters). Writes
+   *  CLUS_INFO_*.json under `{save_path}/output/{second_sensor}/`,
+   *  matching wizard.py's CLUSTERING_INFO shape including the
+   *  per-cluster criteria-range fields. */
   train_clustering_model: {
     args: {
       first_sensor: string;
       second_sensor: string;
       n_clusters: number;
+      criteria_sensor: string | null;
+      cluster_ranges: ClusterRange[] | null;
       model_name: string | null;
       save_path: string;
     };

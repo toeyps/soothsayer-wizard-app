@@ -283,8 +283,14 @@ export default function FailureGroupCreation() {
                     clusterModelName: "",
                     numClusters: 3,
                     criteriaSensor: "",
-                    clusterRangeMin: 0,
-                    clusterRangeMax: 100,
+                    // Default to 3 equal-width ranges over [0, 100] — matches the
+                    // numClusters default and gets resized to fit `numClusters`
+                    // by the sync effect in PredictiveModelBuild.
+                    clusterRanges: [
+                        { min: 0, max: 33 },
+                        { min: 33, max: 66 },
+                        { min: 66, max: 100 },
+                    ],
                     filterTimeStart: "",
                     filterTimeEnd: "",
                     filterSensorValue: "",

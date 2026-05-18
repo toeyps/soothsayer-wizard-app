@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { appDataDir, join as pathJoin } from "@tauri-apps/api/path";
-import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice } from "../../types";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -11,7 +11,7 @@ import type {
     ClusteringModelInfo,
     RelationshipTrainResult,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer, Loader2 } from "lucide-react";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
@@ -182,8 +182,16 @@ export default function PredictiveModelBuild() {
     const [clusterModelName, setClusterModelName] = useState("");
     const [numClusters, setNumClusters] = useState<number>(3);
     const [criteriaSensor, setCriteriaSensor] = useState<string>("");
-    const [clusterRangeMin, setClusterRangeMin] = useState<number>(0);
-    const [clusterRangeMax, setClusterRangeMax] = useState<number>(100);
+    // One range per cluster; length === numClusters at steady state.
+    // null bound = unbounded in that direction (round-trips to Rust's
+    // `Option<f64>` for the cluster-edge case).
+    const [clusterRanges, setClusterRanges] = useState<PredictiveClusterRange[]>(
+        () => [
+            { min: 0, max: 33 },
+            { min: 33, max: 66 },
+            { min: 66, max: 100 },
+        ],
+    );
 
     // Data Filter
     const [filterTimeStart, setFilterTimeStart] = useState("");
@@ -223,18 +231,92 @@ export default function PredictiveModelBuild() {
     // countable steps, so the bar always uses the sliding animation.
     const [relFitProgress, setRelFitProgress] = useState<{ current: number; total: number } | null>(null);
 
+    // ── Sub-model fits (per cumulative-step) ──────────────────────────
+    // For predictors=[p1,p2,p3] we make N=3 LinearGAM fits — f(p1),
+    // f(p1,p2), f(p1,p2,p3) — and stash each one's full preview payload.
+    // This lets the user open a "sub-models" view from the Relationship
+    // chart and see one detail chart per cumulative step, each with its
+    // own R² / 2·RMSE so they can judge how each added predictor
+    // contributes to the fit. Fired by the LayoutGrid button on the
+    // Relationship chart card header.
+    interface SubModelFit {
+        predictors: string[];                  // cumulative subset (length 1..N)
+        result: RelationshipPreviewResult;     // sidecar response for THIS subset
+    }
+    const [subModels, setSubModels] = useState<SubModelFit[] | null>(null);
+    const [subModelsLoading, setSubModelsLoading] = useState(false);
+    const [subModelsError, setSubModelsError] = useState<string | null>(null);
+    const [subModelsProgress, setSubModelsProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+    const [subModelsOpen, setSubModelsOpen] = useState(false);
+
     // Clustering preview result + status.
     const [clusteringPreview, setClusteringPreview] = useState<ClusteringPreview | null>(null);
     const [clusteringLoading, setClusteringLoading] = useState(false);
     const [clusteringError, setClusteringError] = useState<string | null>(null);
 
     // Save flow status.
-    const [saveStatus, setSaveStatus] = useState<{ kind: 'idle' | 'saving' | 'success' | 'error'; message?: string }>({ kind: 'idle' });
+    const [saveStatus, setSaveStatus] = useState<{
+        kind: 'idle' | 'saving' | 'success' | 'error';
+        message?: string;
+        /** Which model is currently being trained — surfaced in the blocking
+         *  save overlay so the user sees concrete progress instead of a
+         *  generic spinner. Set transiently inside `handleSaveModel` right
+         *  before each `invoke('train_*_model')` call. */
+        step?: 'individual' | 'relationship' | 'clustering';
+    }>({ kind: 'idle' });
+    // Last folder the user picked in the Save Model dialog. Acts as the
+    // `defaultPath` for the next picker invocation, and is persisted into the
+    // workspace JSON (`WorkspaceState.outputDir`) so the choice survives app
+    // restarts. We always still open the picker — this never bypasses it.
+    const [outputDir, setOutputDir] = useState<string | null>(null);
 
     // ── Target sensor time-series (for Individual plot) ────────────────
     const [targetChartData, setTargetChartData] = useState<{ headers: string[]; rows: CsvRecord[] }>({ headers: [], rows: [] });
     const [targetChartLoading, setTargetChartLoading] = useState(false);
     const targetFetchIdRef = useRef(0);
+
+    // ── Expandable chart modal ────────────────────────────────────────
+    // `'individual'`  → Standard time-series (LineChart)
+    // `'rc'`          → Whichever Relationship/Clustering chart is active
+    // `null`          → Modal closed
+    const [expandedChart, setExpandedChart] = useState<'individual' | 'rc' | null>(null);
+    useEffect(() => {
+        if (!expandedChart) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setExpandedChart(null);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [expandedChart]);
+
+    // ── Preview modal ─────────────────────────────────────────────────
+    // Mirrors the wizard.py `PreviewModel.{individual, relationship,
+    // clustering}` outputs in a single modal so the user can sanity-check
+    // the preview payload BEFORE committing to disk via Save Model
+    // (`SaveThisSensor` in wizard.py). Opens via the toolbar's Preview
+    // button. Pure read-only — no disk I/O happens here.
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
+    useEffect(() => {
+        if (!previewOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setPreviewOpen(false);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [previewOpen]);
+
+    // ESC key closes the sub-models modal (parallels expandedChart /
+    // previewOpen). Listener is only attached while the modal is open
+    // so unrelated key presses don't pay for it.
+    useEffect(() => {
+        if (!subModelsOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setSubModelsOpen(false);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [subModelsOpen]);
 
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
@@ -257,6 +339,9 @@ export default function PredictiveModelBuild() {
                     const ws = await loadWorkspaceData(d.workspaceId);
                     slice = ws?.predictiveModelState;
                     if (ws?.dashboardSnapshot && !d.dashboardSnapshot) setDashboardSnapshot(ws.dashboardSnapshot);
+                    // Hydrate the remembered save folder so the next picker
+                    // defaults to wherever the user last picked.
+                    if (ws?.outputDir) setOutputDir(ws.outputDir);
                 } catch (e) {
                     console.warn('Failed to hydrate predictive-model state from workspace:', e);
                 }
@@ -274,8 +359,30 @@ export default function PredictiveModelBuild() {
                     setClusterModelName(slice.clusterModelName);
                     setNumClusters(slice.numClusters);
                     setCriteriaSensor(slice.criteriaSensor);
-                    setClusterRangeMin(slice.clusterRangeMin);
-                    setClusterRangeMax(slice.clusterRangeMax);
+                    // Restore per-cluster ranges. Older workspaces from before the
+                    // multi-cluster migration may carry the legacy
+                    // `clusterRangeMin` / `clusterRangeMax` scalar pair instead —
+                    // fall back to those (replicated across all clusters) when
+                    // `clusterRanges` is missing so old workspaces still open.
+                    const legacy = slice as unknown as {
+                        clusterRangeMin?: number;
+                        clusterRangeMax?: number;
+                    };
+                    if (Array.isArray(slice.clusterRanges) && slice.clusterRanges.length > 0) {
+                        setClusterRanges(slice.clusterRanges);
+                    } else if (typeof legacy.clusterRangeMin === 'number' && typeof legacy.clusterRangeMax === 'number') {
+                        // Spread the single pair into one range per cluster.
+                        const n = Math.max(1, slice.numClusters);
+                        const lo = legacy.clusterRangeMin;
+                        const hi = legacy.clusterRangeMax;
+                        const step = (hi - lo) / n;
+                        setClusterRanges(
+                            Array.from({ length: n }, (_, i) => ({
+                                min: lo + step * i,
+                                max: lo + step * (i + 1),
+                            })),
+                        );
+                    }
                     setFilterTimeStart(slice.filterTimeStart);
                     setFilterTimeEnd(slice.filterTimeEnd);
                     setFilterSensorValue(slice.filterSensorValue);
@@ -313,8 +420,7 @@ export default function PredictiveModelBuild() {
                 clusterModelName,
                 numClusters,
                 criteriaSensor,
-                clusterRangeMin,
-                clusterRangeMax,
+                clusterRanges,
                 filterTimeStart,
                 filterTimeEnd,
                 filterSensorValue,
@@ -329,7 +435,7 @@ export default function PredictiveModelBuild() {
     }, [
         workspaceId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
-        clusterRangeMin, clusterRangeMax, filterTimeStart, filterTimeEnd, filterSensorValue,
+        clusterRanges, filterTimeStart, filterTimeEnd, filterSensorValue,
     ]);
 
     // Fetch target-sensor time-series whenever targetSensor changes.
@@ -394,6 +500,45 @@ export default function PredictiveModelBuild() {
         };
     }, [targetSensor]);
 
+    // Keep `clusterRanges` in sync with `numClusters` so the array
+    // always has exactly N entries. When the user steps the count up
+    // we extrapolate from the last existing range (continuing its
+    // width); when they step down we just slice the tail off, preserving
+    // any edits the user made to the head ranges.
+    useEffect(() => {
+        setClusterRanges((prev) => {
+            if (prev.length === numClusters) return prev;
+            if (numClusters <= 0) return [];
+            if (prev.length === 0) {
+                // Bootstrap with N equal segments over [0, 100] — same shape
+                // the initial useState default uses.
+                const step = 100 / numClusters;
+                return Array.from({ length: numClusters }, (_, i) => ({
+                    min: step * i,
+                    max: step * (i + 1),
+                }));
+            }
+            if (numClusters < prev.length) {
+                return prev.slice(0, numClusters);
+            }
+            // Growing: append new ranges starting where the last one ended.
+            const last = prev[prev.length - 1];
+            const width =
+                last.min !== null && last.max !== null && last.max > last.min
+                    ? last.max - last.min
+                    : 33;
+            const next = [...prev];
+            let cursor = last.max ?? (last.min ?? 0);
+            for (let i = prev.length; i < numClusters; i++) {
+                const start = cursor;
+                const end = cursor + width;
+                next.push({ min: start, max: end });
+                cursor = end;
+            }
+            return next;
+        });
+    }, [numClusters]);
+
     // Compute mean / sd / 1σ / 3σ of the target sensor on the Rust side.
     useEffect(() => {
         if (!targetSensor) {
@@ -441,6 +586,47 @@ export default function PredictiveModelBuild() {
         { sensor: targetSensor, y: targetStats.upper3, label: '+3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
         { sensor: targetSensor, y: targetStats.lower3, label: '−3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
     ] : [];
+
+    // Convert an ISO-ish timestamp to the `YYYY-MM-DDTHH:mm` format expected
+    // by `<input type="datetime-local">` (in the user's local timezone).
+    const formatTimestampForInput = useCallback((dateStr: string | null) => {
+        if (!dateStr) return '';
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return '';
+            const offset = date.getTimezoneOffset() * 60000;
+            return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+        } catch {
+            return '';
+        }
+    }, []);
+
+    // Min / max timestamp of the loaded target-sensor series. Used as the
+    // default value (and as the picker's `min` / `max` constraint) for the
+    // Data-filter date pickers, so the user starts on a valid range.
+    const targetDataRange = useMemo<{ min: string; max: string } | null>(() => {
+        const rows = targetChartData.rows;
+        if (rows.length === 0) return null;
+        let minTs: string | null = null;
+        let maxTs: string | null = null;
+        for (const r of rows) {
+            const ts = r.timestamp;
+            if (!ts) continue;
+            if (minTs === null || ts < minTs) minTs = ts;
+            if (maxTs === null || ts > maxTs) maxTs = ts;
+        }
+        if (!minTs || !maxTs) return null;
+        return { min: minTs, max: maxTs };
+    }, [targetChartData]);
+
+    const targetMinForInput = useMemo(
+        () => targetDataRange ? formatTimestampForInput(targetDataRange.min) : '',
+        [targetDataRange, formatTimestampForInput]
+    );
+    const targetMaxForInput = useMemo(
+        () => targetDataRange ? formatTimestampForInput(targetDataRange.max) : '',
+        [targetDataRange, formatTimestampForInput]
+    );
 
     // X-axis predictor for the scatter. Prefer whatever the user explicitly
     // picked, but only honor it when that predictor is in the cached fit —
@@ -496,6 +682,23 @@ export default function PredictiveModelBuild() {
         return false;
     }, [relPreview, predictorSensors]);
 
+    // True when cached sub-model fits no longer line up with the current
+    // predictor list (count or order). Drives a "Refresh" hint in the
+    // sub-models modal and lets `handleOpenSubModels` know to re-fit on
+    // open. Mirrors `fitIsStale` semantics — predictor list changes are
+    // surfaced as stale rather than silently invalidated, so the user
+    // chooses when to pay for the N additional sidecar calls.
+    const subModelsStale = useMemo(() => {
+        if (!subModels) return false;
+        if (subModels.length !== predictorSensors.length) return true;
+        const last = subModels[subModels.length - 1].predictors;
+        if (last.length !== predictorSensors.length) return true;
+        for (let i = 0; i < last.length; i++) {
+            if (last[i] !== predictorSensors[i]) return true;
+        }
+        return false;
+    }, [subModels, predictorSensors]);
+
     // Build the dashboard-filter payload sent to `preview_relationship_model`.
     // The relationship preview must be computed off the same filtered slice
     // the user saw on the dashboard, so any timestamp / value filter set
@@ -538,6 +741,16 @@ export default function PredictiveModelBuild() {
     useEffect(() => {
         setRelPreview(null);
         setRelError(null);
+    }, [targetSensor, relStiffness, dashboardFilterKey]);
+
+    // Sub-models share the same cache-invalidation contract as relPreview:
+    // any change to (target, lambda, dashboard filter) makes prior sub-fits
+    // moot. Predictor-list changes are surfaced via `subModelsStale`
+    // instead, so we don't silently throw away results the user might
+    // still want to compare against.
+    useEffect(() => {
+        setSubModels(null);
+        setSubModelsError(null);
     }, [targetSensor, relStiffness, dashboardFilterKey]);
 
     // Scatter chart option for the Relationship mode preview:
@@ -677,6 +890,198 @@ export default function PredictiveModelBuild() {
         };
     }, [relPreview, effectiveScatterX, targetSensor, themeMode]);
 
+    /**
+     * Per-cluster palette — palette mirrors the multi-series colour set
+     * used elsewhere in the app (LineChart). Cycles when there are more
+     * clusters than colours.
+     */
+    const CLUSTER_PALETTE = [
+        '#3b82f6', // blue
+        '#10b981', // emerald
+        '#f59e0b', // amber
+        '#8b5cf6', // violet
+        '#f43f5e', // rose
+        '#14b8a6', // teal
+        '#ec4899', // pink
+        '#6366f1', // indigo
+    ];
+
+    const clusteringScatterOption = useMemo(() => {
+        if (!clusteringPreview) return null;
+        const { first_sensor, second_sensor, clusters, n_rows } = clusteringPreview;
+        if (!clusters || clusters.length === 0 || n_rows === 0) return null;
+
+        const isLight = themeMode === 'light';
+        const txtPrimary    = isLight ? '#0f172a' : '#f1f5f9';
+        const txtSecondary  = isLight ? '#475569' : '#94a3b8';
+        const gridLine      = isLight ? '#cbd5e1' : '#334155';
+        const tooltipBg     = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.95)';
+        const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+
+        // Density-based scatter tuning (mirrors relScatterOption).
+        const totalPoints = clusters.reduce((acc, c) => acc + c.xs.length, 0);
+        const isLargeData = totalPoints > 2000;
+        const isHugeData = totalPoints > 20000;
+        const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
+        const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
+
+        /** Custom-renderer factory producing one ECharts polygon series for
+         *  a single ellipse (one σ multiple, one cluster). Coordinates the
+         *  rotation in data-space then converts to pixel-space inside
+         *  renderItem so the polygon doesn't drift on zoom. */
+        const ellipseCustomSeries = (
+            cluster: typeof clusters[0],
+            sigma: number,
+            opts: { stroke: string; fill?: string; lineWidth: number; lineDash?: number[]; opacity: number; name: string; z: number },
+        ) => {
+            const cx = cluster.ellipse.x_center;
+            const cy = cluster.ellipse.y_center;
+            const rx = cluster.ellipse.x_sd * sigma;
+            const ry = cluster.ellipse.y_sd * sigma;
+            const angleRad = (cluster.ellipse.angle_deg * Math.PI) / 180;
+            const cos = Math.cos(angleRad);
+            const sin = Math.sin(angleRad);
+            return {
+                type: 'custom' as const,
+                name: opts.name,
+                itemStyle: { color: opts.stroke },
+                data: [[cx, cy]],
+                z: opts.z,
+                renderItem: (params: any, api: any) => {
+                    const polyPts: number[][] = [];
+                    for (let theta = 0; theta < 2 * Math.PI; theta += Math.PI / 36) {
+                        const x = rx * Math.cos(theta);
+                        const y = ry * Math.sin(theta);
+                        const xRot = cx + x * cos - y * sin;
+                        const yRot = cy + x * sin + y * cos;
+                        polyPts.push(api.coord([xRot, yRot]));
+                    }
+                    return {
+                        type: 'polygon',
+                        shape: { points: polyPts },
+                        style: {
+                            fill: opts.fill ?? 'none',
+                            stroke: opts.stroke,
+                            lineWidth: opts.lineWidth,
+                            lineDash: opts.lineDash ?? [0, 0],
+                            opacity: opts.opacity,
+                        },
+                        clipPath: {
+                            type: 'rect',
+                            shape: {
+                                x: params.coordSys.x,
+                                y: params.coordSys.y,
+                                width: params.coordSys.width,
+                                height: params.coordSys.height,
+                            },
+                        },
+                    };
+                },
+            };
+        };
+
+        // Build per-cluster scatter + ellipse pairs. Each cluster gets its
+        // own palette colour so points and ellipses read as one group.
+        const scatterSeries: any[] = [];
+        const ellipseSeries: any[] = [];
+        const legendData: string[] = [];
+
+        clusters.forEach((cluster, i) => {
+            const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+            const seriesName =
+                clusters.length === 1
+                    ? 'Data'
+                    : `Cluster ${cluster.cluster_id}`;
+            legendData.push(seriesName);
+
+            // Pair (xs[i], ys[i]) → ECharts point.
+            const points: [number, number][] = [];
+            const n = Math.min(cluster.xs.length, cluster.ys.length);
+            for (let j = 0; j < n; j++) {
+                const xv = cluster.xs[j], yv = cluster.ys[j];
+                if (Number.isFinite(xv) && Number.isFinite(yv)) points.push([xv, yv]);
+            }
+
+            scatterSeries.push({
+                type: 'scatter' as const,
+                name: seriesName,
+                data: points,
+                symbolSize,
+                large: isLargeData,
+                largeThreshold: 2000,
+                progressive: 5000,
+                progressiveThreshold: 10000,
+                emphasis: { scale: !isHugeData, disabled: isHugeData },
+                silent: isHugeData,
+                itemStyle: { color, opacity: pointOpacity },
+                z: 1,
+            });
+
+            // 1σ outline (filled with low-alpha cluster colour).
+            ellipseSeries.push(ellipseCustomSeries(cluster, 1, {
+                name: `${seriesName} 1σ`,
+                stroke: color,
+                fill: `${color}1F`, // ~12% alpha, hex AA
+                lineWidth: 2,
+                opacity: 1,
+                z: 3,
+            }));
+            // 3σ dashed outline (no fill).
+            ellipseSeries.push(ellipseCustomSeries(cluster, 3, {
+                name: `${seriesName} 3σ`,
+                stroke: color,
+                lineWidth: 1.5,
+                lineDash: [5, 5],
+                opacity: 0.55,
+                z: 2,
+            }));
+        });
+
+        return {
+            backgroundColor: 'transparent',
+            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+            animation: !isLargeData,
+            tooltip: {
+                trigger: 'item',
+                backgroundColor: tooltipBg,
+                borderColor: tooltipBorder,
+                textStyle: { color: txtPrimary },
+                formatter: (p: any) => {
+                    const v = p.value as [number, number];
+                    return `<div style="font-weight:bold;margin-bottom:4px;color:${p.color}">${p.seriesName}</div>`
+                        + `<div>${first_sensor}: ${typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—'}</div>`
+                        + `<div>${second_sensor}: ${typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—'}</div>`;
+                },
+            },
+            legend: {
+                data: legendData,
+                textStyle: { color: txtSecondary },
+                top: 4, right: 10, itemWidth: 12, itemHeight: 12,
+                type: 'scroll',
+            },
+            grid: { left: 64, right: 30, top: 36, bottom: 56, containLabel: false },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: 0, filterMode: 'filter' },
+                { type: 'inside', yAxisIndex: 0, filterMode: 'filter' },
+            ],
+            xAxis: {
+                type: 'value', name: first_sensor, nameLocation: 'middle', nameGap: 28,
+                nameTextStyle: { color: txtSecondary }, scale: true,
+                axisLabel: { color: txtSecondary },
+                axisLine: { lineStyle: { color: gridLine } },
+                splitLine: { show: false },
+            },
+            yAxis: {
+                type: 'value', name: second_sensor, nameLocation: 'middle', nameGap: 46,
+                nameTextStyle: { color: txtSecondary }, scale: true,
+                axisLabel: { color: txtSecondary },
+                axisLine: { lineStyle: { color: gridLine } },
+                splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } },
+            },
+            series: [...scatterSeries, ...ellipseSeries],
+        };
+    }, [clusteringPreview, themeMode]);
+
     // Shake animation when FailureGroup tries to close
     const containerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -766,6 +1171,201 @@ export default function PredictiveModelBuild() {
         runRelationshipFit();
     };
 
+    /**
+     * Loops `preview_relationship_model` over CUMULATIVE subsets of the
+     * predictor list — predictors=[p1,p2,p3] yields three sequential
+     * sidecar calls returning fits for [p1], [p1,p2], [p1,p2,p3]. The
+     * full payload of each fit is stashed so the sub-models view can
+     * draw a per-step scatter alongside the per-step R² / 2·RMSE.
+     *
+     * Reuses the cached `relPreview` for the final (full-predictor)
+     * subset when it's already up-to-date, so we don't refit the same
+     * model twice on a fresh open.
+     *
+     * Awaited sequentially rather than `Promise.all`'d on purpose: the
+     * sidecar is a single-process pool, so parallel calls would queue
+     * anyway, and serial execution gives us cheap progress reporting.
+     */
+    const runSubModelFits = useCallback(async () => {
+        if (!targetSensor || predictorSensors.length === 0) return;
+        const subsetPredictors = [...predictorSensors];
+        const total = subsetPredictors.length;
+        setSubModelsLoading(true);
+        setSubModelsError(null);
+        setSubModelsProgress({ current: 0, total });
+        const results: SubModelFit[] = [];
+        try {
+            for (let i = 1; i <= total; i++) {
+                const subset = subsetPredictors.slice(0, i);
+                const isLast = i === total;
+                const cachedMatches =
+                    relPreview &&
+                    !fitIsStale &&
+                    relPreview.predictorsAtApply.length === subset.length;
+                if (isLast && cachedMatches) {
+                    // Full-predictor fit already lives in `relPreview`; reuse it
+                    // verbatim so the bottom card matches the inline chart.
+                    results.push({ predictors: subset, result: relPreview!.result });
+                    setSubModelsProgress({ current: i, total });
+                    continue;
+                }
+                const r = await invoke<RelationshipPreviewResult>("preview_relationship_model", {
+                    predictors: subset,
+                    target: targetSensor,
+                    lambda: relStiffness,
+                    filter: dashboardFilterPayload,
+                });
+                if (r.error) throw new Error(r.error);
+                results.push({ predictors: subset, result: r });
+                setSubModelsProgress({ current: i, total });
+            }
+            setSubModels(results);
+            console.log("Sub-model fits complete:", results.map(r => ({
+                predictors: r.predictors,
+                rows: r.result.predicted.length,
+                r2: r.result.r2_per_step[r.result.r2_per_step.length - 1],
+            })));
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setSubModelsError(msg);
+            console.error("runSubModelFits failed:", e);
+        } finally {
+            setSubModelsLoading(false);
+        }
+    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload, relPreview, fitIsStale]);
+
+    /** Open the sub-models modal; lazy-fits when no/stale cache. */
+    const handleOpenSubModels = () => {
+        setSubModelsOpen(true);
+        if (!targetSensor || predictorSensors.length === 0) return;
+        if ((!subModels || subModelsStale) && !subModelsLoading) {
+            runSubModelFits();
+        }
+    };
+
+    /**
+     * Build an ECharts scatter option for ONE sub-model fit. Mirrors the
+     * structure of the main `relScatterOption` but tailored for the
+     * compact card layout in the sub-models modal (smaller margins,
+     * font sizes). All sub-graphs share the same X-axis sensor — the
+     * first predictor in the cumulative subset, which is also the FIRST
+     * predictor of the full list, so apples-to-apples across cards.
+     */
+    const buildSubModelOption = useCallback((fit: SubModelFit, xSensor: string) => {
+        const { result, predictors } = fit;
+        const xRaw = result.predictor_raw;
+        const yRaw = result.target_raw;
+        const yPred = result.predicted;
+        if (!xRaw || !yRaw || !yPred) return null;
+        if (xRaw.length === 0) return null;
+
+        const xIdx = predictors.indexOf(xSensor);
+        if (xIdx < 0) return null;
+
+        const isLight = themeMode === 'light';
+        const txtPrimary    = isLight ? '#0f172a' : '#f1f5f9';
+        const txtSecondary  = isLight ? '#475569' : '#94a3b8';
+        const gridLine      = isLight ? '#cbd5e1' : '#334155';
+        const tooltipBg     = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.95)';
+        const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+
+        const rawPoints: [number, number][] = [];
+        const modelPoints: [number, number][] = [];
+        const n = Math.min(xRaw.length, yRaw.length, yPred.length);
+        for (let i = 0; i < n; i++) {
+            const xv = xRaw[i]?.[xIdx];
+            if (typeof xv !== 'number' || !Number.isFinite(xv)) continue;
+            const yr = yRaw[i];
+            if (typeof yr === 'number' && Number.isFinite(yr)) rawPoints.push([xv, yr]);
+            const yp = yPred[i];
+            if (typeof yp === 'number' && Number.isFinite(yp)) modelPoints.push([xv, yp]);
+        }
+
+        const totalPoints = rawPoints.length + modelPoints.length;
+        const isLargeData = totalPoints > 2000;
+        const isHugeData = totalPoints > 20000;
+        const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
+        const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
+
+        const seriesCommon = {
+            type: 'scatter' as const,
+            symbolSize,
+            large: isLargeData,
+            largeThreshold: 2000,
+            progressive: 5000,
+            progressiveThreshold: 10000,
+            emphasis: { scale: !isHugeData, disabled: isHugeData },
+            silent: isHugeData,
+        };
+
+        return {
+            backgroundColor: 'transparent',
+            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+            animation: !isLargeData,
+            tooltip: {
+                trigger: 'item',
+                backgroundColor: tooltipBg,
+                borderColor: tooltipBorder,
+                textStyle: { color: txtPrimary },
+                formatter: (p: any) => {
+                    const v = p.value as [number, number];
+                    return `<div style="font-weight:bold;margin-bottom:4px;color:${p.color}">${p.seriesName}</div>`
+                        + `<div>${xSensor}: ${typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—'}</div>`
+                        + `<div>${targetSensor}: ${typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—'}</div>`;
+                },
+            },
+            legend: {
+                data: ['Raw', 'Model'],
+                textStyle: { color: txtSecondary, fontSize: 11 },
+                top: 4,
+                right: 10,
+                itemWidth: 10,
+                itemHeight: 10,
+            },
+            grid: { left: 56, right: 22, top: 32, bottom: 50, containLabel: false },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: 0, filterMode: 'filter' },
+                { type: 'inside', yAxisIndex: 0, filterMode: 'filter' },
+            ],
+            xAxis: {
+                type: 'value',
+                name: xSensor,
+                nameLocation: 'middle',
+                nameGap: 26,
+                nameTextStyle: { color: txtSecondary, fontSize: 11 },
+                scale: true,
+                axisLabel: { color: txtSecondary, fontSize: 10 },
+                axisLine: { lineStyle: { color: gridLine } },
+                splitLine: { show: false },
+            },
+            yAxis: {
+                type: 'value',
+                name: targetSensor,
+                nameLocation: 'middle',
+                nameGap: 40,
+                nameTextStyle: { color: txtSecondary, fontSize: 11 },
+                scale: true,
+                axisLabel: { color: txtSecondary, fontSize: 10 },
+                axisLine: { lineStyle: { color: gridLine } },
+                splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } },
+            },
+            series: [
+                {
+                    ...seriesCommon,
+                    name: 'Raw',
+                    data: rawPoints,
+                    itemStyle: { color: '#3b82f6', opacity: pointOpacity },
+                },
+                {
+                    ...seriesCommon,
+                    name: 'Model',
+                    data: modelPoints,
+                    itemStyle: { color: '#f43f5e', opacity: pointOpacity },
+                },
+            ],
+        };
+    }, [themeMode, targetSensor]);
+
     const handleClusteringApply = async () => {
         if (!targetSensor) {
             setClusteringError("Target sensor is required.");
@@ -777,11 +1377,21 @@ export default function PredictiveModelBuild() {
             setClusteringError("Select a predictor sensor for the X-axis.");
             return;
         }
-        // Phase 4 supports n_clusters == 1 only.
+        // Multi-cluster requires a criteria sensor + one range per cluster.
+        // Fall back to 1 cluster when no criteria is picked (matches the
+        // disabled-state of the criteria/range inputs in the UI).
         const effectiveClusters = criteriaSensor ? numClusters : 1;
-        if (effectiveClusters !== 1) {
-            setClusteringError("Multi-cluster not yet supported in Rust port. Clear the criteria sensor or set Number of Clusters to 1.");
-            return;
+        if (effectiveClusters > 1) {
+            if (!criteriaSensor) {
+                setClusteringError("Pick a criteria sensor to split rows into clusters.");
+                return;
+            }
+            if (clusterRanges.length !== effectiveClusters) {
+                setClusteringError(
+                    `Expected ${effectiveClusters} cluster ranges but found ${clusterRanges.length}.`,
+                );
+                return;
+            }
         }
 
         setClusteringLoading(true);
@@ -790,7 +1400,9 @@ export default function PredictiveModelBuild() {
             const result = await invoke<ClusteringPreview>("compute_clustering_preview", {
                 first_sensor: firstSensor,
                 second_sensor: targetSensor,
-                n_clusters: 1,
+                n_clusters: effectiveClusters,
+                criteria_sensor: effectiveClusters > 1 ? criteriaSensor : null,
+                cluster_ranges: effectiveClusters > 1 ? clusterRanges.slice(0, effectiveClusters) : null,
             });
             setClusteringPreview(result);
             console.log("Clustering preview:", result);
@@ -804,11 +1416,75 @@ export default function PredictiveModelBuild() {
         }
     };
 
-    /** Build the on-disk save_path for the current workspace. */
-    const resolveSavePath = async (): Promise<string> => {
+    /**
+     * Open the Preview modal and lazily refresh any stale fits.
+     *
+     * The modal mirrors the per-mode return shapes from `wizard.py` —
+     * `PreviewModel.individual`, `PreviewModel.relationship`,
+     * `PreviewModel.clustering` — so the user can review the preview
+     * payload before committing to disk via Save Model. Crucially, this
+     * does NOT write anything; it just lays out cached state in the
+     * wizard.py shape.
+     *
+     *   • Individual: target stats are auto-fetched on `targetSensor`
+     *     change (via `compute_sensor_stats`), so nothing to do here.
+     *   • Relationship: re-fit only if no cache OR if predictor list has
+     *     drifted since last Apply (`fitIsStale`).
+     *   • Clustering: re-fit only if no cache.
+     *
+     * State updates from `runRelationshipFit` / `handleClusteringApply`
+     * propagate normally — the modal renders skeletons while loading and
+     * fills in as the results land.
+     */
+    const handleOpenPreview = () => {
+        setPreviewError(null);
+        setPreviewOpen(true);
+
+        if (!targetSensor) return;
+
+        if (rcMode === 'relationship' && predictorSensors.length > 0 && !relLoading) {
+            if (!relPreview || fitIsStale) {
+                runRelationshipFit();
+            }
+        }
+        if (rcMode === 'clustering' && !clusteringLoading && !clusteringPreview) {
+            // Fire-and-forget — handleClusteringApply manages its own state.
+            handleClusteringApply();
+        }
+    };
+
+    /** Prompt the user to pick the on-disk root folder for the save (the
+     *  `saved_path` in the wizard payload). Output files land under
+     *  `{savePath}/output/{target}/...` — see `train_*_model` in `lib.rs`.
+     *
+     *  Returns the chosen absolute path, or `null` if the user cancelled.
+     *  Side-effect: persists the choice to `WorkspaceState.outputDir` so the
+     *  next picker invocation defaults to the same folder.
+     */
+    const pickSavePath = async (): Promise<string | null> => {
         if (!workspaceId) throw new Error("No workspace loaded.");
-        const root = await appDataDir();
-        return await pathJoin(root, "workspaces", workspaceId);
+        const picked = await openDialog({
+            directory: true,
+            multiple: false,
+            // Default to the last-used folder when available, otherwise let
+            // the OS decide (typically the user's home dir).
+            defaultPath: outputDir ?? undefined,
+            title: 'Choose Save Folder',
+        });
+        if (typeof picked !== 'string' || !picked) return null;
+        // Remember the choice immediately, even if the train calls fail —
+        // the user's intent ("save into X") is independent of the model
+        // training outcome.
+        setOutputDir(picked);
+        try {
+            await updateWorkspaceData(workspaceId, (prev) => ({
+                ...prev,
+                outputDir: picked,
+            }));
+        } catch (e) {
+            console.warn('Failed to persist outputDir to workspace:', e);
+        }
+        return picked;
     };
 
     const handleSaveModel = async () => {
@@ -816,12 +1492,26 @@ export default function PredictiveModelBuild() {
             setSaveStatus({ kind: 'error', message: 'Select a target sensor first.' });
             return;
         }
+        let savePath: string;
+        try {
+            const picked = await pickSavePath();
+            if (picked === null) {
+                // User cancelled — leave saveStatus as-is (don't surface an
+                // error; cancellation is a normal flow).
+                return;
+            }
+            savePath = picked;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setSaveStatus({ kind: 'error', message: msg });
+            return;
+        }
         setSaveStatus({ kind: 'saving' });
         try {
-            const savePath = await resolveSavePath();
             const written: string[] = [];
 
             if (individualChecked) {
+                setSaveStatus({ kind: 'saving', step: 'individual' });
                 const info = await invoke<IndividualModelInfo>("train_individual_model", {
                     target: targetSensor,
                     model_name: null,
@@ -834,6 +1524,7 @@ export default function PredictiveModelBuild() {
                 if (predictorSensors.length === 0) {
                     throw new Error("Relationship mode requires at least one predictor.");
                 }
+                setSaveStatus({ kind: 'saving', step: 'relationship' });
                 const trained = await invoke<RelationshipTrainResult>("train_relationship_model", {
                     predictors: predictorSensors,
                     target: targetSensor,
@@ -848,13 +1539,23 @@ export default function PredictiveModelBuild() {
                 const firstSensor = scatterXSensor || predictorSensors[0] || "";
                 if (!firstSensor) throw new Error("Clustering mode requires a predictor on the X-axis.");
                 const effectiveClusters = criteriaSensor ? numClusters : 1;
-                if (effectiveClusters !== 1) {
-                    throw new Error("Clustering mode only supports n_clusters=1 for now.");
+                if (effectiveClusters > 1) {
+                    if (!criteriaSensor) {
+                        throw new Error("Clustering mode requires a criteria sensor when n_clusters > 1.");
+                    }
+                    if (clusterRanges.length !== effectiveClusters) {
+                        throw new Error(
+                            `Cluster ranges length (${clusterRanges.length}) does not match n_clusters (${effectiveClusters}).`,
+                        );
+                    }
                 }
+                setSaveStatus({ kind: 'saving', step: 'clustering' });
                 const trained = await invoke<ClusteringModelInfo>("train_clustering_model", {
                     first_sensor: firstSensor,
                     second_sensor: targetSensor,
-                    n_clusters: 1,
+                    n_clusters: effectiveClusters,
+                    criteria_sensor: effectiveClusters > 1 ? criteriaSensor : null,
+                    cluster_ranges: effectiveClusters > 1 ? clusterRanges.slice(0, effectiveClusters) : null,
                     model_name: clusterModelName.trim() || null,
                     save_path: savePath,
                 });
@@ -924,10 +1625,18 @@ export default function PredictiveModelBuild() {
                 </div>
                 <span className="pm-step-pill">Step 3 of 3</span>
                 <div className="pm-flex-spacer" />
-                <button className="pm-btn pm-btn-secondary">Preview</button>
-                <button className="pm-btn pm-btn-primary" onClick={handleSaveModel}>
-                    <Check size={13} />
-                    <span>Save Model</span>
+                <button className="pm-btn pm-btn-secondary" onClick={handleOpenPreview}>Preview</button>
+                <button
+                    className="pm-btn pm-btn-primary"
+                    onClick={handleSaveModel}
+                    disabled={saveStatus.kind === 'saving'}
+                >
+                    {saveStatus.kind === 'saving' ? (
+                        <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                        <Check size={13} />
+                    )}
+                    <span>{saveStatus.kind === 'saving' ? 'Saving…' : 'Save Model'}</span>
                 </button>
             </div>
 
@@ -988,6 +1697,7 @@ export default function PredictiveModelBuild() {
                         )}
                     </div>
 
+
                     {/* Data filter */}
                     <div className="pm-section">
                         <div className="pm-section-header">
@@ -1000,7 +1710,9 @@ export default function PredictiveModelBuild() {
                                 <Calendar size={14} />
                                 <input
                                     type="datetime-local"
-                                    value={filterTimeStart}
+                                    value={filterTimeStart || targetMinForInput}
+                                    min={targetMinForInput || undefined}
+                                    max={targetMaxForInput || undefined}
                                     onChange={e => setFilterTimeStart(e.target.value)}
                                 />
                             </div>
@@ -1011,7 +1723,9 @@ export default function PredictiveModelBuild() {
                                 <Calendar size={14} />
                                 <input
                                     type="datetime-local"
-                                    value={filterTimeEnd}
+                                    value={filterTimeEnd || targetMaxForInput}
+                                    min={targetMinForInput || undefined}
+                                    max={targetMaxForInput || undefined}
                                     onChange={e => setFilterTimeEnd(e.target.value)}
                                 />
                             </div>
@@ -1083,6 +1797,14 @@ export default function PredictiveModelBuild() {
                                         <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-warn" />±1σ</span>
                                         <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-danger pm-legend-dashed" />±3σ</span>
                                     </div>
+                                    <button
+                                        className="pm-chart-expand-btn"
+                                        onClick={() => setExpandedChart('individual')}
+                                        title="Expand chart"
+                                        aria-label="Expand chart"
+                                    >
+                                        <Maximize2 size={14} />
+                                    </button>
                                 </div>
                                 <div className="pm-chart-body">
                                     {!targetSensor ? (
@@ -1140,6 +1862,27 @@ export default function PredictiveModelBuild() {
                                             />
                                         </div>
                                     )}
+                                    {/* Sub-models button — only meaningful for ≥2 predictors,
+                                        since a single-predictor "sub-model" view would just
+                                        duplicate the inline chart. */}
+                                    {rcMode === 'relationship' && predictorSensors.length > 1 && (
+                                        <button
+                                            className="pm-chart-expand-btn"
+                                            onClick={handleOpenSubModels}
+                                            title="View sub-models (one chart per cumulative-predictor step)"
+                                            aria-label="View sub-models"
+                                        >
+                                            <LayoutGrid size={14} />
+                                        </button>
+                                    )}
+                                    <button
+                                        className="pm-chart-expand-btn"
+                                        onClick={() => setExpandedChart('rc')}
+                                        title="Expand chart"
+                                        aria-label="Expand chart"
+                                    >
+                                        <Maximize2 size={14} />
+                                    </button>
                                 </div>
                                 {/* Inline progress bar — shown only while a relationship fit
                                     is in flight. Indeterminate (sliding) when the batch is a
@@ -1171,6 +1914,13 @@ export default function PredictiveModelBuild() {
                                         <div className="plot-placeholder pm-chart-placeholder">
                                             <Loader2 size={36} style={{ opacity: 0.45 }} className="pm-spin" />
                                             <p>Running LinearGAM…</p>
+                                        </div>
+                                    ) : rcMode === 'clustering' && clusteringScatterOption ? (
+                                        <ResponsiveECharts option={clusteringScatterOption} style={{ minHeight: '200px' }} />
+                                    ) : rcMode === 'clustering' && clusteringLoading ? (
+                                        <div className="plot-placeholder pm-chart-placeholder">
+                                            <Loader2 size={36} style={{ opacity: 0.45 }} className="pm-spin" />
+                                            <p>Fitting cluster ellipse…</p>
                                         </div>
                                     ) : (
                                         <div className="plot-placeholder pm-chart-placeholder">
@@ -1367,74 +2117,175 @@ export default function PredictiveModelBuild() {
                                 ) : 'Apply'}
                             </button>
                         </div>
-                        <div className="pm-fields">
+                        <div className="pm-fields pm-fields-clustering">
+                            {/* Row 1: Model Name (full-width) */}
                             <div className="filter-row">
                                 <label>Model Name</label>
                                 <input
                                     type="text"
                                     value={clusterModelName}
                                     onChange={e => setClusterModelName(e.target.value)}
-                                    placeholder="Optional"
+                                    placeholder="Optional — auto-generated if left blank"
                                     className="config-input"
                                     disabled={rcMode !== 'clustering'}
                                 />
                             </div>
+
+                            {/* Row 1.5: X sensor — picks from the user's selected predictors. */}
                             <div className="filter-row">
-                                <label>Number of Clusters</label>
-                                <input
-                                    type="number"
-                                    value={numClusters}
-                                    onChange={e => setNumClusters(Number(e.target.value))}
-                                    className="config-input"
-                                    min={1}
-                                    disabled={rcMode !== 'clustering'}
-                                />
-                            </div>
-                            <div className="filter-row">
-                                <label>Criteria Sensor</label>
+                                <label>
+                                    X sensor (vs target on Y)
+                                    {predictorSensors.length === 0 && (
+                                        <span className="pm-field-hint-inline"> · add a predictor first</span>
+                                    )}
+                                </label>
                                 <SensorAutocomplete
-                                    sensors={allSensors}
+                                    sensors={predictorSensors}
                                     getDesc={getDesc}
-                                    value={criteriaSensor}
-                                    onSelect={setCriteriaSensor}
-                                    placeholder="None (1 cluster)"
-                                    allowNone
-                                    disabled={rcMode !== 'clustering'}
+                                    value={scatterXSensor}
+                                    onSelect={setScatterXSensor}
+                                    placeholder={predictorSensors.length === 0 ? 'No predictors selected' : 'Pick from predictors...'}
+                                    disabled={rcMode !== 'clustering' || predictorSensors.length === 0}
                                 />
                             </div>
-                            <div className="filter-row">
-                                <label>Clustering Range</label>
-                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                    <input
-                                        type="number"
-                                        value={clusterRangeMin}
-                                        onChange={e => setClusterRangeMin(Number(e.target.value))}
-                                        className="config-input"
-                                        style={{ width: '80px' }}
-                                        disabled={rcMode !== 'clustering'}
-                                    />
-                                    <span style={{ color: 'var(--text-secondary)' }}>to</span>
-                                    <input
-                                        type="number"
-                                        value={clusterRangeMax}
-                                        onChange={e => setClusterRangeMax(Number(e.target.value))}
-                                        className="config-input"
-                                        style={{ width: '80px' }}
-                                        disabled={rcMode !== 'clustering'}
+
+                            {/* Row 2: # of Clusters + Criteria Sensor (2-col grid) */}
+                            <div className="pm-field-grid-2">
+                                <div className="filter-row">
+                                    <label>Number of Clusters</label>
+                                    <div className="pm-stepper">
+                                        <button
+                                            type="button"
+                                            className="pm-stepper-btn"
+                                            onClick={() => setNumClusters(n => Math.max(1, n - 1))}
+                                            disabled={rcMode !== 'clustering' || numClusters <= 1}
+                                            aria-label="Decrease number of clusters"
+                                        >
+                                            <Minus size={14} />
+                                        </button>
+                                        <span className="pm-stepper-value">{numClusters}</span>
+                                        <button
+                                            type="button"
+                                            className="pm-stepper-btn"
+                                            onClick={() => setNumClusters(n => n + 1)}
+                                            disabled={rcMode !== 'clustering'}
+                                            aria-label="Increase number of clusters"
+                                        >
+                                            <Plus size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="filter-row">
+                                    <label>
+                                        Criteria Sensor
+                                        {numClusters <= 1 && (
+                                            <span className="pm-field-hint-inline"> · used when N ≥ 2</span>
+                                        )}
+                                    </label>
+                                    <SensorAutocomplete
+                                        sensors={allSensors}
+                                        getDesc={getDesc}
+                                        value={criteriaSensor}
+                                        onSelect={setCriteriaSensor}
+                                        placeholder={numClusters <= 1 ? 'Not needed for 1 cluster' : 'Pick criteria sensor...'}
+                                        allowNone
+                                        disabled={rcMode !== 'clustering' || numClusters <= 1}
                                     />
                                 </div>
                             </div>
+
+                            {/* Row 3: Per-cluster ranges. One [min, max) interval per
+                                cluster on the criteria sensor. Empty inputs map to
+                                `null` = "unbounded" (matches Rust's `Option<f64>`
+                                edge-cluster semantics). */}
+                            <div className="filter-row">
+                                <label>
+                                    Cluster Ranges
+                                    {(numClusters <= 1 || !criteriaSensor) && (
+                                        <span className="pm-field-hint-inline"> · requires criteria sensor + N≥2</span>
+                                    )}
+                                </label>
+                                <div className="pm-cluster-ranges">
+                                    {clusterRanges.map((range, idx) => {
+                                        const color = CLUSTER_PALETTE[idx % CLUSTER_PALETTE.length];
+                                        const updateRange = (field: 'min' | 'max', raw: string) => {
+                                            // Empty string → null (= unbounded on that side).
+                                            const parsed = raw === '' ? null : Number(raw);
+                                            const next: PredictiveClusterRange = {
+                                                ...range,
+                                                [field]: Number.isNaN(parsed as number) ? null : parsed,
+                                            };
+                                            setClusterRanges(prev => prev.map((r, i) => (i === idx ? next : r)));
+                                        };
+                                        const inputsDisabled = rcMode !== 'clustering' || numClusters <= 1 || !criteriaSensor;
+                                        return (
+                                            <div key={idx} className="pm-cluster-range-row">
+                                                <span
+                                                    className="pm-cluster-range-dot"
+                                                    style={{ background: color }}
+                                                    title={`Cluster ${idx + 1}`}
+                                                />
+                                                <span className="pm-cluster-range-label">#{idx + 1}</span>
+                                                <input
+                                                    type="number"
+                                                    value={range.min === null ? '' : range.min}
+                                                    onChange={e => updateRange('min', e.target.value)}
+                                                    className="config-input pm-range-input-num"
+                                                    disabled={inputsDisabled}
+                                                    placeholder="min (blank = −∞)"
+                                                />
+                                                <span className="pm-range-sep">to</span>
+                                                <input
+                                                    type="number"
+                                                    value={range.max === null ? '' : range.max}
+                                                    onChange={e => updateRange('max', e.target.value)}
+                                                    className="config-input pm-range-input-num"
+                                                    disabled={inputsDisabled}
+                                                    placeholder="max (blank = +∞)"
+                                                />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
                             {clusteringError && (
-                                <div className="filter-row" style={{ color: '#f43f5e', fontSize: 12 }}>
+                                <div className="pm-config-error">
                                     {clusteringError}
                                 </div>
                             )}
                             {clusteringPreview && !clusteringError && (
-                                <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch', color: 'var(--text-secondary)', fontSize: 12, gap: 2 }}>
-                                    <div>Fit on {clusteringPreview.n_rows.toLocaleString()} rows</div>
-                                    <div>center: ({clusteringPreview.ellipse.x_center.toFixed(3)}, {clusteringPreview.ellipse.y_center.toFixed(3)})</div>
-                                    <div>σ: {clusteringPreview.ellipse.x_sd.toFixed(3)} × {clusteringPreview.ellipse.y_sd.toFixed(3)}</div>
-                                    <div>angle: {clusteringPreview.ellipse.angle_deg.toFixed(2)}°</div>
+                                <div className="pm-stat-pills">
+                                    <div className="pm-stat-pill">
+                                        <span className="pm-stat-pill-label">Clusters</span>
+                                        <span className="pm-stat-pill-value">{clusteringPreview.cluster_count}</span>
+                                    </div>
+                                    <div className="pm-stat-pill">
+                                        <span className="pm-stat-pill-label">Total Rows</span>
+                                        <span className="pm-stat-pill-value">{clusteringPreview.n_rows.toLocaleString()}</span>
+                                    </div>
+                                    {/* For multi-cluster, show a one-line summary per cluster.
+                                        For single-cluster, fall back to the previous detailed pills. */}
+                                    {clusteringPreview.clusters.length === 1 && clusteringPreview.clusters[0] && (
+                                        <>
+                                            <div className="pm-stat-pill">
+                                                <span className="pm-stat-pill-label">Center</span>
+                                                <span className="pm-stat-pill-value">
+                                                    ({clusteringPreview.clusters[0].ellipse.x_center.toFixed(3)}, {clusteringPreview.clusters[0].ellipse.y_center.toFixed(3)})
+                                                </span>
+                                            </div>
+                                            <div className="pm-stat-pill">
+                                                <span className="pm-stat-pill-label">σ</span>
+                                                <span className="pm-stat-pill-value">
+                                                    {clusteringPreview.clusters[0].ellipse.x_sd.toFixed(3)} × {clusteringPreview.clusters[0].ellipse.y_sd.toFixed(3)}
+                                                </span>
+                                            </div>
+                                            <div className="pm-stat-pill">
+                                                <span className="pm-stat-pill-label">Angle</span>
+                                                <span className="pm-stat-pill-value">{clusteringPreview.clusters[0].ellipse.angle_deg.toFixed(2)}°</span>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -1464,6 +2315,516 @@ export default function PredictiveModelBuild() {
                     )}
                 </div>
             </div>
+
+            {/* Expanded chart modal — re-renders the active chart at full screen */}
+            {expandedChart && (
+                <div
+                    className="pm-chart-modal-backdrop"
+                    onClick={() => setExpandedChart(null)}
+                    role="dialog"
+                    aria-modal="true"
+                >
+                    <div
+                        className="pm-chart-modal-card"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="pm-chart-modal-header">
+                            <div className="pm-chart-title-block">
+                                {expandedChart === 'individual' ? (
+                                    <>
+                                        <div className="pm-chart-title">Standard Time Series</div>
+                                        <div className="pm-chart-subtitle">
+                                            {targetSensor || '—'} · 1σ + 3σ boundary
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="pm-chart-title">
+                                            {rcMode === 'relationship' ? 'Predictor vs. Target' : 'Cluster Assignment'}
+                                        </div>
+                                        <div className="pm-chart-subtitle">
+                                            {rcMode === 'relationship'
+                                                ? 'Raw (blue) vs. LinearGAM model output (red)'
+                                                : 'K-means clustering with confidence ellipses'}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            <button
+                                className="pm-chart-modal-close"
+                                onClick={() => setExpandedChart(null)}
+                                title="Close (Esc)"
+                                aria-label="Close"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="pm-chart-modal-body">
+                            {expandedChart === 'individual' && targetSensor && targetChartData.rows.length > 0 ? (
+                                <LineChart
+                                    data={targetChartData.rows}
+                                    sensors={[targetSensor]}
+                                    headers={targetChartData.headers}
+                                    markLines={targetMarkLines}
+                                    hideYSplitLine
+                                />
+                            ) : expandedChart === 'rc' && rcMode === 'relationship' && relScatterOption ? (
+                                <ResponsiveECharts option={relScatterOption} style={{ height: '100%', minHeight: '100%' }} />
+                            ) : expandedChart === 'rc' && rcMode === 'clustering' && clusteringScatterOption ? (
+                                <ResponsiveECharts option={clusteringScatterOption} style={{ height: '100%', minHeight: '100%' }} />
+                            ) : (
+                                <div className="plot-placeholder pm-chart-placeholder">
+                                    <Activity size={48} style={{ opacity: 0.2 }} />
+                                    <p>No chart data to display</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Preview Modal ────────────────────────────────────────────
+                Mirrors `wizard.py`'s `PreviewModel.*` return shapes so the
+                user can review the preview payload before Save Model commits
+                files to disk (= `wizard.py`'s `SaveThisSensor`). */}
+            {previewOpen && (
+                <div
+                    className="pm-preview-modal-backdrop"
+                    onClick={() => setPreviewOpen(false)}
+                    role="dialog"
+                    aria-modal="true"
+                >
+                    <div
+                        className="pm-preview-modal-card"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="pm-preview-modal-header">
+                            <div className="pm-chart-title-block">
+                                <div className="pm-chart-title">Model Preview</div>
+                                <div className="pm-chart-subtitle">
+                                    Review the wizard.py preview output before committing to disk.
+                                </div>
+                            </div>
+                            <button
+                                className="pm-chart-modal-close"
+                                onClick={() => setPreviewOpen(false)}
+                                title="Close (Esc)"
+                                aria-label="Close"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="pm-preview-modal-body">
+                            {previewError && (
+                                <div className="pm-preview-error">{previewError}</div>
+                            )}
+
+                            {!individualChecked && !rcMode && (
+                                <div className="pm-preview-empty">
+                                    Toggle Individual / Relationship / Clustering on the chart row to preview a model.
+                                </div>
+                            )}
+
+                            {/* ── PreviewModel.individual ──────────────── */}
+                            {individualChecked && (
+                                <section className="pm-preview-section">
+                                    <header className="pm-preview-section-header">
+                                        <div>
+                                            <div className="pm-preview-section-title">Individual</div>
+                                            <div className="pm-preview-section-sub">
+                                                request: <code>PreviewModel/individual</code> · target: <code>{targetSensor || '—'}</code>
+                                            </div>
+                                        </div>
+                                    </header>
+                                    {!targetSensor ? (
+                                        <div className="pm-preview-empty">No target sensor selected.</div>
+                                    ) : !targetStats ? (
+                                        <div className="pm-preview-empty">
+                                            <Loader2 size={14} className="animate-spin" /> Computing target stats…
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="pm-preview-meta">
+                                                output_dataframe: <strong>{targetStats.count.toLocaleString()}</strong> rows × <strong>1</strong> col
+                                                <span className="pm-preview-meta-faint">({targetSensor})</span>
+                                            </div>
+                                            <div className="pm-preview-grid">
+                                                <div className="pm-preview-stat">
+                                                    <span className="pm-preview-stat-label">mean</span>
+                                                    <span className="pm-preview-stat-value">{targetStats.mean.toFixed(3)}</span>
+                                                </div>
+                                                <div className="pm-preview-stat">
+                                                    <span className="pm-preview-stat-label">sd</span>
+                                                    <span className="pm-preview-stat-value">{targetStats.sd.toFixed(3)}</span>
+                                                </div>
+                                                <div className="pm-preview-stat">
+                                                    <span className="pm-preview-stat-label">1sd_boundary</span>
+                                                    <span className="pm-preview-stat-value">[{targetStats.lower1.toFixed(3)}, {targetStats.upper1.toFixed(3)}]</span>
+                                                </div>
+                                                <div className="pm-preview-stat">
+                                                    <span className="pm-preview-stat-label">3sd_boundary</span>
+                                                    <span className="pm-preview-stat-value">[{targetStats.lower3.toFixed(3)}, {targetStats.upper3.toFixed(3)}]</span>
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+                                </section>
+                            )}
+
+                            {/* ── PreviewModel.relationship ────────────── */}
+                            {rcMode === 'relationship' && (
+                                <section className="pm-preview-section">
+                                    <header className="pm-preview-section-header">
+                                        <div>
+                                            <div className="pm-preview-section-title">Relationship</div>
+                                            <div className="pm-preview-section-sub">
+                                                request: <code>PreviewModel/relationship</code> · linearGAM_lambda: <code>{relStiffness}</code>
+                                            </div>
+                                        </div>
+                                    </header>
+                                    {relLoading ? (
+                                        <div className="pm-preview-empty">
+                                            <Loader2 size={14} className="animate-spin" /> Running LinearGAM…
+                                        </div>
+                                    ) : relError ? (
+                                        <div className="pm-preview-error">{relError}</div>
+                                    ) : !relPreview ? (
+                                        <div className="pm-preview-empty">
+                                            {predictorSensors.length === 0
+                                                ? 'Add a predictor and click Apply on the Relationship config first.'
+                                                : 'Click Apply on the Relationship config to compute a preview.'}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="pm-preview-meta">
+                                                output_dataframe: <strong>{relPreview.result.predicted.length.toLocaleString()}</strong> rows
+                                                <span className="pm-preview-meta-faint">
+                                                    (predictors: {relPreview.predictorsAtApply.join(', ')} · target: {targetSensor} · plus PREDICTED_* columns per cumulative step)
+                                                </span>
+                                            </div>
+                                            <div className="pm-preview-table-wrap">
+                                                <table className="pm-preview-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>step</th>
+                                                            <th>cumulative predictor key</th>
+                                                            <th>r2_dict</th>
+                                                            <th>2rmse_dict</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {relPreview.result.r2_per_step.map((r2, i) => {
+                                                            const cum = relPreview.predictorsAtApply.slice(0, i + 1);
+                                                            const rmse2 = relPreview.result.rmse2_per_step[i];
+                                                            // Build the Python-list-repr-style key wizard.py uses:
+                                                            //   PREDICTED_['SENS01', 'SENS02']
+                                                            const cumRepr = `[${cum.map(s => `'${s}'`).join(', ')}]`;
+                                                            return (
+                                                                <tr key={i}>
+                                                                    <td>{i + 1}</td>
+                                                                    <td><code>PREDICTED_{cumRepr}</code></td>
+                                                                    <td>{typeof r2 === 'number' ? r2.toFixed(2) : '—'}</td>
+                                                                    <td>{typeof rmse2 === 'number' ? rmse2.toFixed(4) : '—'}</td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            {fitIsStale && (
+                                                <div className="pm-preview-meta" style={{ color: '#f59e0b', marginTop: 8 }}>
+                                                    Predictor selection has changed since last fit — click Apply to refresh.
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </section>
+                            )}
+
+                            {/* ── PreviewModel.clustering ──────────────── */}
+                            {rcMode === 'clustering' && (
+                                <section className="pm-preview-section">
+                                    <header className="pm-preview-section-header">
+                                        <div>
+                                            <div className="pm-preview-section-title">Clustering</div>
+                                            <div className="pm-preview-section-sub">
+                                                request: <code>PreviewModel/clustering</code>
+                                            </div>
+                                        </div>
+                                    </header>
+                                    {clusteringLoading ? (
+                                        <div className="pm-preview-empty">
+                                            <Loader2 size={14} className="animate-spin" /> Fitting GMM ellipses…
+                                        </div>
+                                    ) : clusteringError ? (
+                                        <div className="pm-preview-error">{clusteringError}</div>
+                                    ) : !clusteringPreview ? (
+                                        <div className="pm-preview-empty">
+                                            Click Apply on the Clustering config to compute a preview.
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="pm-preview-meta">
+                                                cluster_count: <strong>{clusteringPreview.cluster_count}</strong> ·
+                                                output_dataframe: <strong>{clusteringPreview.n_rows.toLocaleString()}</strong> rows
+                                                <span className="pm-preview-meta-faint">
+                                                    (first_sensor: {clusteringPreview.first_sensor} · second_sensor: {clusteringPreview.second_sensor}
+                                                    {clusteringPreview.criteria_sensor && ` · criteria_sensor: ${clusteringPreview.criteria_sensor}`})
+                                                </span>
+                                            </div>
+                                            <div className="pm-preview-table-wrap">
+                                                <table className="pm-preview-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>cluster</th>
+                                                            <th>range</th>
+                                                            <th>n_rows</th>
+                                                            <th>x_center</th>
+                                                            <th>y_center</th>
+                                                            <th>x_sd</th>
+                                                            <th>y_sd</th>
+                                                            <th>angle (°)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {clusteringPreview.clusters.map(c => {
+                                                            // Format range as wizard.py-friendly bracket notation,
+                                                            // using ∞ when a bound is null.
+                                                            const lo = c.range?.min;
+                                                            const hi = c.range?.max;
+                                                            const loStr = lo === null || lo === undefined ? '−∞' : lo.toString();
+                                                            const hiStr = hi === null || hi === undefined ? '+∞' : hi.toString();
+                                                            const rangeStr = c.range
+                                                                ? `[${loStr}, ${hiStr})`
+                                                                : '—';
+                                                            return (
+                                                                <tr key={c.cluster_id}>
+                                                                    <td>{c.cluster_id}</td>
+                                                                    <td><code>{rangeStr}</code></td>
+                                                                    <td>{c.n_rows.toLocaleString()}</td>
+                                                                    <td>{c.ellipse.x_center.toFixed(3)}</td>
+                                                                    <td>{c.ellipse.y_center.toFixed(3)}</td>
+                                                                    <td>{c.ellipse.x_sd.toFixed(3)}</td>
+                                                                    <td>{c.ellipse.y_sd.toFixed(3)}</td>
+                                                                    <td>{c.ellipse.angle_deg.toFixed(3)}</td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </>
+                                    )}
+                                </section>
+                            )}
+                        </div>
+                        <div className="pm-preview-modal-footer">
+                            <span className="pm-preview-footer-status">
+                                {saveStatus.kind === 'saving' && 'Saving…'}
+                                {saveStatus.kind === 'success' && <span style={{ color: '#10b981' }}>Saved.</span>}
+                                {saveStatus.kind === 'error' && <span style={{ color: '#f43f5e' }}>{saveStatus.message}</span>}
+                            </span>
+                            <button
+                                className="pm-btn pm-btn-secondary"
+                                onClick={() => setPreviewOpen(false)}
+                            >
+                                Close
+                            </button>
+                            <button
+                                className="pm-btn pm-btn-primary"
+                                onClick={() => { handleSaveModel(); }}
+                                disabled={saveStatus.kind === 'saving'}
+                            >
+                                <Check size={13} />
+                                <span>{saveStatus.kind === 'saving' ? 'Saving…' : 'Save Model'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Sub-models Modal ─────────────────────────────────────────
+                Detail view fired from the LayoutGrid button on the
+                Relationship chart card. Renders one scatter card per
+                cumulative-predictor step (1, 2, …, N), each with its own
+                R² / 2·RMSE / RMSE / N so the user can see how each added
+                predictor moves the model. Charts share an X-axis (the
+                first predictor) so the comparison is apples-to-apples. */}
+            {subModelsOpen && (
+                <div
+                    className="pm-preview-modal-backdrop"
+                    onClick={() => setSubModelsOpen(false)}
+                    role="dialog"
+                    aria-modal="true"
+                >
+                    <div
+                        className="pm-preview-modal-card pm-submodels-modal-card"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="pm-preview-modal-header">
+                            <div className="pm-chart-title-block">
+                                <div className="pm-chart-title">Sub-models</div>
+                                <div className="pm-chart-subtitle">
+                                    One LinearGAM fit per cumulative-feature subset · target: <code>{targetSensor || '—'}</code> · λ: <code>{relStiffness}</code>
+                                </div>
+                            </div>
+                            <button
+                                className="pm-chart-modal-close"
+                                onClick={() => setSubModelsOpen(false)}
+                                title="Close (Esc)"
+                                aria-label="Close"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="pm-preview-modal-body pm-submodels-body">
+                            {!targetSensor ? (
+                                <div className="pm-preview-empty">No target sensor selected.</div>
+                            ) : predictorSensors.length === 0 ? (
+                                <div className="pm-preview-empty">Add at least one predictor to compute sub-models.</div>
+                            ) : subModelsLoading ? (
+                                <div className="pm-preview-empty">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    Fitting LinearGAM model {Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of {subModelsProgress.total}…
+                                </div>
+                            ) : subModelsError ? (
+                                <div className="pm-preview-error">{subModelsError}</div>
+                            ) : !subModels || subModels.length === 0 ? (
+                                <div className="pm-preview-empty">
+                                    No sub-models computed yet.
+                                    <button
+                                        className="pm-btn pm-btn-secondary pm-btn-sm"
+                                        onClick={runSubModelFits}
+                                        style={{ marginLeft: 8 }}
+                                    >
+                                        Run now
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    {subModelsStale && (
+                                        <div className="pm-submodels-stale-banner">
+                                            <span>
+                                                Predictor selection changed since last fit — these results may be stale.
+                                            </span>
+                                            <button
+                                                className="pm-btn pm-btn-secondary pm-btn-sm"
+                                                onClick={runSubModelFits}
+                                                disabled={subModelsLoading}
+                                            >
+                                                Refresh
+                                            </button>
+                                        </div>
+                                    )}
+                                    {subModels.map((fit, idx) => {
+                                        // Last entry of `r2_per_step` is the score for the
+                                        // full subset of THIS sub-fit (per the sidecar
+                                        // contract). We surface it as the headline R² for
+                                        // this card.
+                                        const r2 = fit.result.r2_per_step[fit.result.r2_per_step.length - 1];
+                                        const rmse2 = fit.result.rmse2_per_step[fit.result.rmse2_per_step.length - 1];
+                                        const xSensor = fit.predictors[0] ?? '';
+                                        const opt = buildSubModelOption(fit, xSensor);
+                                        return (
+                                            <div key={idx} className="pm-submodel-card">
+                                                <div className="pm-submodel-header">
+                                                    <div className="pm-submodel-title-block">
+                                                        <div className="pm-submodel-step">Step {idx + 1} of {subModels.length}</div>
+                                                        <div className="pm-submodel-predictors">
+                                                            <code>{fit.predictors.join(' + ')}</code>
+                                                            <span className="pm-submodel-arrow"> → </span>
+                                                            <code>{targetSensor}</code>
+                                                        </div>
+                                                    </div>
+                                                    <div className="pm-submodel-stats">
+                                                        <div className="pm-submodel-stat">
+                                                            <span className="pm-submodel-stat-label">R²</span>
+                                                            <span className="pm-submodel-stat-value">{typeof r2 === 'number' ? r2.toFixed(4) : '—'}</span>
+                                                        </div>
+                                                        <div className="pm-submodel-stat">
+                                                            <span className="pm-submodel-stat-label">RMSE</span>
+                                                            <span className="pm-submodel-stat-value">{typeof rmse2 === 'number' ? (rmse2 / 2).toFixed(4) : '—'}</span>
+                                                        </div>
+                                                        <div className="pm-submodel-stat">
+                                                            <span className="pm-submodel-stat-label">2·RMSE</span>
+                                                            <span className="pm-submodel-stat-value">{typeof rmse2 === 'number' ? rmse2.toFixed(4) : '—'}</span>
+                                                        </div>
+                                                        <div className="pm-submodel-stat">
+                                                            <span className="pm-submodel-stat-label">N</span>
+                                                            <span className="pm-submodel-stat-value">{fit.result.predicted.length.toLocaleString()}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="pm-submodel-chart">
+                                                    {opt ? (
+                                                        <ResponsiveECharts option={opt} style={{ height: '280px', minHeight: '280px' }} />
+                                                    ) : (
+                                                        <div className="plot-placeholder pm-chart-placeholder">
+                                                            <Activity size={32} style={{ opacity: 0.2 }} />
+                                                            <p>No data to render</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Saving overlay ────────────────────────────────────────────
+                Full-viewport blocking overlay shown while `train_*_model`
+                commands run. Renders above every other modal (chart, preview,
+                sub-models) because it's the last JSX node and uses a high
+                `zIndex`. Intentionally has no close button — the save is
+                non-cancellable from Rust's side, so letting the user click
+                away would create a UI that no longer matches the in-flight
+                operation. */}
+            {saveStatus.kind === 'saving' && (
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Saving model"
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(2, 6, 23, 0.55)',
+                        backdropFilter: 'blur(2px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                    }}
+                >
+                    <div
+                        style={{
+                            background: 'var(--bg-secondary, #1e293b)',
+                            color: 'var(--text-primary, #e2e8f0)',
+                            borderRadius: 12,
+                            padding: '24px 32px',
+                            minWidth: 280,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 14,
+                            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+                            border: '1px solid var(--border-color, #334155)',
+                        }}
+                    >
+                        <Loader2 size={36} className="animate-spin" style={{ color: '#3b82f6' }} />
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>Saving model…</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary, #94a3b8)', minHeight: 18 }}>
+                            {saveStatus.step === 'individual' && 'Training individual model'}
+                            {saveStatus.step === 'relationship' && 'Fitting LinearGAM (relationship model)'}
+                            {saveStatus.step === 'clustering' && 'Fitting GMM ellipses (clustering model)'}
+                            {!saveStatus.step && 'Preparing…'}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

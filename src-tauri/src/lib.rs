@@ -618,7 +618,7 @@ pub struct IndividualModelInfo {
 ///
 /// Numeric values are rounded to 3 decimals to match wizard.py's
 /// `round(..., 3)` calls in `_execute_individual`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 fn train_individual_model(
     target: String,
     model_name: Option<String>,
@@ -737,26 +737,78 @@ fn train_individual_model(
     })
 }
 
+/// Half-open interval `[min, max)` over the criteria sensor's value.
+/// `None` on either bound means "unbounded in that direction" — i.e.
+/// the cluster catches everything at/above min (if max is None) or
+/// strictly below max (if min is None). Mirrors `wizard.py`'s use of
+/// `-inf` / `+inf` sentinels via `Option` so JSON stays well-formed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterRange {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
+
+impl ClusterRange {
+    fn contains(&self, v: f64) -> bool {
+        if let Some(lo) = self.min {
+            if v < lo { return false; }
+        }
+        if let Some(hi) = self.max {
+            if v >= hi { return false; }
+        }
+        true
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClusterDetail {
+    /// 1-based cluster id, matching wizard.py's keys ("1", "2", …).
+    pub cluster_id: u32,
+    /// `None` for the single-cluster path (no criteria split).
+    pub range: Option<ClusterRange>,
+    pub n_rows: usize,
+    pub ellipse: clustering::EllipseFit,
+    /// Per-row X values for this cluster (first_sensor, NaN-dropped).
+    pub xs: Vec<f64>,
+    /// Per-row Y values for this cluster (second_sensor, NaN-dropped).
+    pub ys: Vec<f64>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ClusteringPreview {
     pub first_sensor: String,
     pub second_sensor: String,
+    /// Set when `n_clusters > 1`, else `None`.
+    pub criteria_sensor: Option<String>,
     pub cluster_count: u32,
+    /// Total rows assigned across all clusters (sum of `clusters[*].n_rows`).
     pub n_rows: usize,
-    pub ellipse: clustering::EllipseFit,
+    /// One entry per cluster, in cluster_id order (1..=N).
+    pub clusters: Vec<ClusterDetail>,
 }
 
-/// Compute a single-cluster ellipse fit over (first_sensor, second_sensor).
-/// Multi-cluster (n_clusters > 1) is not yet supported in the Rust port.
-#[tauri::command]
+/// Compute one ellipse fit per cluster.
+///
+///   • `n_clusters == 1`: single-cluster path — ignore `criteria_sensor` /
+///     `cluster_ranges`. Fits one ellipse over all (first, second) rows
+///     after NaN-drop.
+///   • `n_clusters > 1`: multi-cluster path — requires `criteria_sensor`
+///     and a `cluster_ranges` vec of length `n_clusters`. For each
+///     range, filters rows whose criteria_sensor value falls in
+///     `[range.min, range.max)`, drops NaNs on (first, second), and fits
+///     a single Gaussian to produce an ellipse. Mirrors
+///     `wizard.py::PreviewModel.clustering` semantics.
+#[tauri::command(rename_all = "snake_case")]
 fn compute_clustering_preview(
     first_sensor: String,
     second_sensor: String,
     n_clusters: u32,
+    criteria_sensor: Option<String>,
+    cluster_ranges: Option<Vec<ClusterRange>>,
     state: State<AppState>,
 ) -> Result<ClusteringPreview, String> {
-    if n_clusters != 1 {
-        return Err("Multi-cluster not yet supported in Rust port".into());
+    if n_clusters == 0 {
+        return Err("n_clusters must be at least 1".into());
     }
     if first_sensor.is_empty() || second_sensor.is_empty() {
         return Err("Both sensors are required.".into());
@@ -777,32 +829,115 @@ fn compute_clustering_preview(
         .position(|h| h == &second_sensor)
         .ok_or_else(|| format!("Sensor not found: {}", second_sensor))?;
 
-    let mut xs: Vec<f64> = Vec::with_capacity(data.rows.len());
-    let mut ys: Vec<f64> = Vec::with_capacity(data.rows.len());
-    for row in &data.rows {
-        let x = match row.values.get(i1).and_then(|v| *v) {
-            Some(v) if v.is_finite() => v,
-            _ => continue,
-        };
-        let y = match row.values.get(i2).and_then(|v| *v) {
-            Some(v) if v.is_finite() => v,
-            _ => continue,
-        };
-        xs.push(x);
-        ys.push(y);
+    // ── Single-cluster path ──────────────────────────────────────
+    if n_clusters == 1 {
+        let mut xs: Vec<f64> = Vec::with_capacity(data.rows.len());
+        let mut ys: Vec<f64> = Vec::with_capacity(data.rows.len());
+        for row in &data.rows {
+            let x = match row.values.get(i1).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            let y = match row.values.get(i2).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            xs.push(x);
+            ys.push(y);
+        }
+        if xs.is_empty() {
+            return Err("No rows remain after dropping nulls.".into());
+        }
+        let ellipse = clustering::fit_single_cluster_ellipse(&xs, &ys)?;
+        let n_rows = xs.len();
+        return Ok(ClusteringPreview {
+            first_sensor,
+            second_sensor,
+            criteria_sensor: None,
+            cluster_count: 1,
+            n_rows,
+            clusters: vec![ClusterDetail {
+                cluster_id: 1,
+                range: None,
+                n_rows,
+                ellipse,
+                xs,
+                ys,
+            }],
+        });
     }
 
-    if xs.is_empty() {
-        return Err("No rows remain after dropping nulls.".into());
+    // ── Multi-cluster path ──────────────────────────────────────
+    let criteria = criteria_sensor
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "criteria_sensor is required when n_clusters > 1".to_string())?;
+    let ranges = cluster_ranges
+        .ok_or_else(|| "cluster_ranges is required when n_clusters > 1".to_string())?;
+    if ranges.len() as u32 != n_clusters {
+        return Err(format!(
+            "cluster_ranges length ({}) must equal n_clusters ({})",
+            ranges.len(),
+            n_clusters
+        ));
+    }
+    let ic = data
+        .headers
+        .iter()
+        .position(|h| h == &criteria)
+        .ok_or_else(|| format!("Criteria sensor not found: {}", criteria))?;
+
+    let mut clusters: Vec<ClusterDetail> = Vec::with_capacity(n_clusters as usize);
+    let mut total_rows: usize = 0;
+
+    for (idx, range) in ranges.iter().enumerate() {
+        let cluster_id = (idx + 1) as u32;
+        let mut xs: Vec<f64> = Vec::new();
+        let mut ys: Vec<f64> = Vec::new();
+        for row in &data.rows {
+            let c = match row.values.get(ic).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            if !range.contains(c) {
+                continue;
+            }
+            let x = match row.values.get(i1).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            let y = match row.values.get(i2).and_then(|v| *v) {
+                Some(v) if v.is_finite() => v,
+                _ => continue,
+            };
+            xs.push(x);
+            ys.push(y);
+        }
+        if xs.is_empty() {
+            return Err(format!(
+                "Cluster {} has no rows after applying its criteria range.",
+                cluster_id
+            ));
+        }
+        let ellipse = clustering::fit_single_cluster_ellipse(&xs, &ys)?;
+        let n_rows = xs.len();
+        total_rows += n_rows;
+        clusters.push(ClusterDetail {
+            cluster_id,
+            range: Some(range.clone()),
+            n_rows,
+            ellipse,
+            xs,
+            ys,
+        });
     }
 
-    let ellipse = clustering::fit_single_cluster_ellipse(&xs, &ys)?;
     Ok(ClusteringPreview {
         first_sensor,
         second_sensor,
-        cluster_count: 1,
-        n_rows: xs.len(),
-        ellipse,
+        criteria_sensor: Some(criteria),
+        cluster_count: n_clusters,
+        n_rows: total_rows,
+        clusters,
     })
 }
 
@@ -811,39 +946,48 @@ pub struct ClusteringModelInfo {
     pub model_name: String,
     pub first_sensor: String,
     pub second_sensor: String,
+    pub criteria_sensor: Option<String>,
     pub cluster_count: u32,
-    pub ellipse: clustering::EllipseFit,
+    /// Per-cluster ellipse fits, in cluster_id order.
+    pub clusters: Vec<ClusterDetail>,
     pub saved_path: String,
 }
 
-/// Persist a single-cluster GMM ellipse fit to
+/// Persist a (single- or multi-) cluster GMM ellipse fit to
 /// `{save_path}/output/{second_sensor}/CLUS_INFO_{first_sensor}_{second_sensor}.json`
-/// matching wizard.py's `CLUSTERING_INFO` template.
-#[tauri::command]
+/// matching `wizard.py`'s `CLUSTERING_INFO` template, including the
+/// per-cluster `critera_sensor_value_higher_than` /
+/// `critera_sensor_value_lower_than` keys (note the `critera` typo —
+/// preserved for parity with the upstream wizard payload).
+#[tauri::command(rename_all = "snake_case")]
 fn train_clustering_model(
     first_sensor: String,
     second_sensor: String,
     n_clusters: u32,
+    criteria_sensor: Option<String>,
+    cluster_ranges: Option<Vec<ClusterRange>>,
     model_name: Option<String>,
     save_path: String,
     state: State<AppState>,
 ) -> Result<ClusteringModelInfo, String> {
-    if n_clusters != 1 {
-        return Err("Multi-cluster not yet supported in Rust port".into());
-    }
     if save_path.is_empty() {
         return Err("save_path is required.".into());
     }
 
-    // Reuse the preview path for ellipse + n_rows.
+    // Reuse the preview path — it already does all the validation /
+    // splitting / ellipse-fitting for both 1-cluster and N-cluster cases.
     let preview = compute_clustering_preview(
         first_sensor.clone(),
         second_sensor.clone(),
         n_clusters,
+        criteria_sensor.clone(),
+        cluster_ranges,
         state.clone(),
     )?;
 
-    // Need start/end dates over the joined-non-null subset.
+    // Need start/end dates over the joined-non-null subset (matches
+    // single-cluster behaviour even when n_clusters > 1; the criteria
+    // filter doesn't shift the training date range).
     let (start_date, end_date) = {
         let state_lock = state.0.lock().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
@@ -881,25 +1025,50 @@ fn train_clustering_model(
 
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Single cluster keyed "1" for parity with wizard.py.
-    let cluster_info = serde_json::json!({
-        "1": {
-            "x_cluster_center": r3(preview.ellipse.x_center),
-            "y_cluster_center": r3(preview.ellipse.y_center),
-            "x_sd": r3(preview.ellipse.x_sd),
-            "y_sd": r3(preview.ellipse.y_sd),
-            "angle_deg": r3(preview.ellipse.angle_deg),
-            "boundary_sd_health_score": serde_json::Value::Null,
+    // Build the wizard.py-shaped cluster_info map. Each cluster entry
+    // gets the ellipse params plus optional criteria-range fields,
+    // emitted only when the corresponding bound is finite (mirrors
+    // wizard.py's three-branch handling of -inf / +inf).
+    let mut cluster_info_map = serde_json::Map::new();
+    for cluster in &preview.clusters {
+        let mut entry = serde_json::Map::new();
+        if let Some(range) = &cluster.range {
+            if let Some(lo) = range.min {
+                entry.insert(
+                    "critera_sensor_value_higher_than".into(),
+                    serde_json::json!(r3(lo)),
+                );
+            }
+            if let Some(hi) = range.max {
+                entry.insert(
+                    "critera_sensor_value_lower_than".into(),
+                    serde_json::json!(r3(hi)),
+                );
+            }
         }
-    });
+        entry.insert("x_cluster_center".into(), serde_json::json!(r3(cluster.ellipse.x_center)));
+        entry.insert("y_cluster_center".into(), serde_json::json!(r3(cluster.ellipse.y_center)));
+        entry.insert("x_sd".into(), serde_json::json!(r3(cluster.ellipse.x_sd)));
+        entry.insert("y_sd".into(), serde_json::json!(r3(cluster.ellipse.y_sd)));
+        entry.insert("angle_deg".into(), serde_json::json!(r3(cluster.ellipse.angle_deg)));
+        entry.insert("boundary_sd_health_score".into(), serde_json::Value::Null);
+
+        cluster_info_map.insert(cluster.cluster_id.to_string(), serde_json::Value::Object(entry));
+    }
+    let cluster_info = serde_json::Value::Object(cluster_info_map);
+
+    let composition_criteria = preview
+        .criteria_sensor
+        .clone()
+        .unwrap_or_default();
 
     let json_payload = serde_json::json!({
         "model_name": resolved_name,
         "model_composition": {
             "first_sensor": first_sensor,
             "second_sensor": second_sensor,
-            "criteria_sensor": "",
-            "cluster_count": 1
+            "criteria_sensor": composition_criteria,
+            "cluster_count": preview.cluster_count,
         },
         "model_training_set_info": {
             "publish_id": 0,
@@ -937,8 +1106,9 @@ fn train_clustering_model(
         model_name: resolved_name,
         first_sensor,
         second_sensor,
-        cluster_count: 1,
-        ellipse: preview.ellipse,
+        criteria_sensor: preview.criteria_sensor,
+        cluster_count: preview.cluster_count,
+        clusters: preview.clusters,
         saved_path: out_file.to_string_lossy().into_owned(),
     })
 }
@@ -955,7 +1125,7 @@ pub struct RelationshipTrainResult {
 /// Train a Relationship (LinearGAM) model via the sidecar and persist:
 ///   - The pickled model under `{save_path}/output/{target}/REL_MODEL_*.pkl`
 ///   - A `REL_INFO_*.json` written by Rust (Python only saves the .pkl).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 async fn train_relationship_model(
     predictors: Vec<String>,
     target: String,
@@ -975,8 +1145,12 @@ async fn train_relationship_model(
         return Err("save_path is required.".into());
     }
 
-    // Build (X, y) the same way preview does.
-    let (x_matrix, y_vector, time_bounds) = {
+    // Build (X, y) the same way preview does. Also capture the raw timestamp
+    // string per surviving row — we use it later as the first CSV column so
+    // the REL_DATASET file aligns with `wizard.py::SaveThisSensor`'s
+    // `training_set.to_csv(...)` (which writes the DataFrame's DatetimeIndex
+    // as the unnamed first column).
+    let (x_matrix, y_vector, row_timestamps, time_bounds) = {
         let state_lock = state.0.lock().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
@@ -998,6 +1172,7 @@ async fn train_relationship_model(
 
         let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
         let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
+        let mut row_timestamps: Vec<Option<String>> = Vec::with_capacity(data.rows.len());
         let mut min_dt: Option<chrono::NaiveDateTime> = None;
         let mut max_dt: Option<chrono::NaiveDateTime> = None;
         for row in &data.rows {
@@ -1016,6 +1191,7 @@ async fn train_relationship_model(
             };
             x_matrix.push(x_row);
             y_vector.push(y_val);
+            row_timestamps.push(row.timestamp.clone());
             if let Some(ts) = row.timestamp.as_deref().and_then(parse_timestamp) {
                 min_dt = Some(min_dt.map_or(ts, |m| m.min(ts)));
                 max_dt = Some(max_dt.map_or(ts, |m| m.max(ts)));
@@ -1031,7 +1207,7 @@ async fn train_relationship_model(
             ),
             _ => (String::new(), String::new()),
         };
-        (x_matrix, y_vector, bounds)
+        (x_matrix, y_vector, row_timestamps, bounds)
     };
 
     let n_rows = x_matrix.len();
@@ -1084,6 +1260,12 @@ async fn train_relationship_model(
         r2: Option<f64>,
         rmse2: Option<f64>,
         model_path: Option<String>,
+        /// Per-row LinearGAM predictions, NaN-cleaned (None) and rounded to
+        /// 3 decimals by `backend.py::train_relationship`. Length matches
+        /// the surviving-row count we sent over.
+        predicted: Option<Vec<Option<f64>>>,
+        /// Per-row residuals (`y - predicted`), same shape as `predicted`.
+        residual: Option<Vec<Option<f64>>>,
         error: Option<String>,
         #[allow(dead_code)]
         trace: Option<String>,
@@ -1097,6 +1279,76 @@ async fn train_relationship_model(
     let r2 = resp.r2.ok_or("Sidecar response missing r2")?;
     let rmse2 = resp.rmse2.ok_or("Sidecar response missing rmse2")?;
     let model_path = resp.model_path.ok_or("Sidecar response missing model_path")?;
+    let predicted = resp
+        .predicted
+        .ok_or("Sidecar response missing predicted")?;
+    let residual = resp
+        .residual
+        .ok_or("Sidecar response missing residual")?;
+    if predicted.len() != n_rows || residual.len() != n_rows {
+        return Err(format!(
+            "Sidecar predicted/residual length mismatch (got {}/{} expected {})",
+            predicted.len(),
+            residual.len(),
+            n_rows,
+        ));
+    }
+
+    let feat_token = predictors.join("+");
+    let out_dir = std::path::Path::new(&save_path).join("output").join(&target);
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+
+    // ── REL_DATASET_*.csv ─────────────────────────────────────────────
+    // Mirror wizard.py::_execute_relationship line 239:
+    //   training_set.to_csv(f"{saved_path}/output/{target}/REL_DATASET_{features}_{target}.csv")
+    // The file is the input matrix plus the model's predictions and
+    // residuals on the same rows. PREDICTED and RESIDUAL arrive from the
+    // sidecar already rounded to 3 decimals (`backend.py::train_relationship`).
+    // Raw predictor + target values are written verbatim — pandas's
+    // default `to_csv` also doesn't reformat numeric columns.
+    {
+        let fmt_f = |v: f64| format!("{}", v);
+        let fmt_opt = |v: Option<f64>| -> String {
+            match v {
+                Some(n) if n.is_finite() => fmt_f(n),
+                _ => String::new(),
+            }
+        };
+
+        let mut csv = String::new();
+        csv.push_str("timestamp");
+        for p in &predictors {
+            csv.push(',');
+            csv.push_str(p);
+        }
+        csv.push(',');
+        csv.push_str(&target);
+        csv.push_str(",PREDICTED,RESIDUAL\n");
+
+        for i in 0..n_rows {
+            let ts = row_timestamps
+                .get(i)
+                .and_then(|t| t.as_deref())
+                .unwrap_or("");
+            csv.push_str(ts);
+            for v in &x_matrix[i] {
+                csv.push(',');
+                csv.push_str(&fmt_f(*v));
+            }
+            csv.push(',');
+            csv.push_str(&fmt_f(y_vector[i]));
+            csv.push(',');
+            csv.push_str(&fmt_opt(predicted[i]));
+            csv.push(',');
+            csv.push_str(&fmt_opt(residual[i]));
+            csv.push('\n');
+        }
+
+        let csv_path = out_dir.join(format!("REL_DATASET_{}_{}.csv", feat_token, target));
+        std::fs::write(&csv_path, csv)
+            .map_err(|e| format!("Failed to write {}: {}", csv_path.display(), e))?;
+    }
 
     // Write the REL_INFO_*.json on the Rust side (parity with wizard.py).
     let resolved_name = model_name
@@ -1118,7 +1370,6 @@ async fn train_relationship_model(
         .collect();
 
     let now = chrono::Utc::now().to_rfc3339();
-    let feat_token = predictors.join("+");
     let info_payload = serde_json::json!({
         "model_name": resolved_name,
         "model_composition": {
@@ -1155,10 +1406,7 @@ async fn train_relationship_model(
         ]
     });
 
-    let info_dir = std::path::Path::new(&save_path).join("output").join(&target);
-    std::fs::create_dir_all(&info_dir)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
-    let info_path = info_dir.join(format!("REL_INFO_{}_{}.json", feat_token, target));
+    let info_path = out_dir.join(format!("REL_INFO_{}_{}.json", feat_token, target));
     let info_text = serde_json::to_string_pretty(&info_payload)
         .map_err(|e| format!("JSON serialize failed: {}", e))?;
     std::fs::write(&info_path, info_text)
@@ -1831,24 +2079,72 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        // Exit the app when its last webview window is destroyed. This overrides
-        // Tauri's default "stay alive on macOS after all windows close" behavior
-        // — without this, closing every window leaves the process running with
-        // no UI, which the user has no way to recover from short of Cmd+Q.
+        // Exit the app when its last *user* webview window is destroyed. This
+        // overrides Tauri's default "stay alive on macOS after all windows
+        // close" behavior — without this, closing every window leaves the
+        // process running with no UI but a phantom macOS menu bar, which the
+        // user has no way to recover from short of Cmd+Q.
         //
-        // Handled at the `RunEvent::WindowEvent` level (not `.on_window_event`)
-        // because by the time this fires, the destroyed window has already been
-        // removed from the webview manager map — `webview_windows()` reflects
-        // the post-destruction state, so we don't need a deferred re-check.
+        // Why filter to "user windows" instead of `is_empty()`:
+        // - The `splashscreen` window may still live in the manager map even
+        //   after `splash.close()` is called (the unmap is async on macOS).
+        // - The hidden `main` window may also linger if `Window.destroy()`
+        //   raced with a re-mount. Either of these alone keeps the process
+        //   alive forever after FG + PM are closed by the user.
+        //
+        // Belt-and-suspenders: if `app_handle.exit(0)` doesn't terminate the
+        // process within 500 ms (it sometimes hangs on the cocoa runloop after
+        // all windows are gone), force-kill with `std::process::exit(0)`.
         .run(|app_handle, event| {
             use tauri::Manager;
             if let tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::Destroyed,
+                label,
                 ..
             } = &event
             {
-                if app_handle.webview_windows().is_empty() {
+                // A window keeps the app alive only if it's a *visible* user
+                // window. Filter out:
+                //  - `splashscreen` (close() may unmap async, never user-facing)
+                //  - any window with `is_visible() == false` — e.g. `main`
+                //    when we resumed straight into a sub-window and main was
+                //    never shown (tauri.conf.json sets `visible: false`).
+                //    The auto-resume flow tries to `Window.destroy()` main,
+                //    but if that races/fails main lingers hidden forever —
+                //    without this filter it blocks exit indefinitely.
+                let remaining: Vec<String> = app_handle
+                    .webview_windows()
+                    .iter()
+                    .filter(|(label, w)| {
+                        if label.as_str() == "splashscreen" {
+                            return false;
+                        }
+                        // Conservative: if `is_visible` errors, treat as visible
+                        // so we don't kill the app prematurely.
+                        w.is_visible().unwrap_or(true)
+                    })
+                    .map(|(label, _)| label.clone())
+                    .collect();
+                eprintln!(
+                    "[exit-guard] Window destroyed: {} | remaining visible user windows: {:?}",
+                    label, remaining
+                );
+                if remaining.is_empty() {
+                    eprintln!("[exit-guard] No visible user windows left — exiting.");
+                    // Force-destroy any hidden/leftover windows (splashscreen,
+                    // hidden main) so they don't keep the cocoa runloop alive.
+                    for (_, w) in app_handle.webview_windows() {
+                        let _ = w.destroy();
+                    }
                     app_handle.exit(0);
+                    // If the Tauri runtime doesn't terminate the process
+                    // within 500 ms, force it. This guards against the cocoa
+                    // runloop staying alive after the last window dies.
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        eprintln!("[exit-guard] app.exit(0) didn't terminate — forcing process exit.");
+                        std::process::exit(0);
+                    });
                 }
             }
         });

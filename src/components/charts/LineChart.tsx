@@ -128,6 +128,12 @@ function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartP
                 return {
                     type: 'value',
                     name: sensor,
+                    // `scale: true` lets ECharts auto-fit the Y range to the
+                    // actual data instead of forcing the axis to include 0.
+                    // Time-series with a non-zero baseline (e.g. a sensor
+                    // that hovers around 50–80) reads much better this way,
+                    // and the ±1σ / ±3σ markLines stay close to the trace.
+                    scale: true,
                     position: index % 2 === 0 ? 'left' : 'right',
                     offset: Math.floor(index / 2) * 60,
                     axisLine: { show: true, lineStyle: { color: color } },

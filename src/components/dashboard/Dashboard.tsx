@@ -982,14 +982,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     const screenW = window.screen.width;
                                     const screenH = window.screen.height;
                                     const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-                                    const webview = new WebviewWindow('failure-group', {
-                                        url: '/?window=failure-group',
-                                        title: 'Predictive Mode - Failure Group Creation',
-                                        width: Math.round(screenW * 0.8),
-                                        height: Math.round(screenH * 0.8),
-                                        center: true,
-                                        decorations: isMac,
-                                    });
+                                    // ──────────────────────────────────────────────
+                                    // Register the `request-failure-group-data`
+                                    // listener BEFORE spawning the FG webview —
+                                    // otherwise we race the FG window's mount
+                                    // emit and the request can land before we're
+                                    // listening. When that happened, the handshake
+                                    // never completed and `getCurrentWindow().destroy()`
+                                    // never ran — so the dashboard window
+                                    // appeared to "not close" after Save & Continue.
+                                    // ──────────────────────────────────────────────
                                     const unlisten = await listen('request-failure-group-data', async () => {
                                         await emit('failure-group-data', {
                                             workspaceId: initialState.id,
@@ -1000,6 +1002,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                         });
                                         unlisten();
                                         try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
+                                    });
+                                    const webview = new WebviewWindow('failure-group', {
+                                        url: '/?window=failure-group',
+                                        title: 'Predictive Mode - Failure Group Creation',
+                                        width: Math.round(screenW * 0.8),
+                                        height: Math.round(screenH * 0.8),
+                                        center: true,
+                                        decorations: isMac,
                                     });
                                     webview.once('tauri://error', (e) => {
                                         console.error('Failed to create failure group window:', e);

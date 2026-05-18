@@ -112,14 +112,11 @@ function App() {
             const screenW = window.screen.width;
             const screenH = window.screen.height;
             const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-            const fgWindow = new WebviewWindow('failure-group', {
-                url: '/?window=failure-group',
-                title: 'Predictive Mode - Failure Group Creation',
-                width: Math.round(screenW * 0.8),
-                height: Math.round(screenH * 0.8),
-                center: true,
-                decorations: isMac,
-            });
+            // Register the handshake listener BEFORE spawning FG —
+            // otherwise FG's mount-time `emit('request-failure-group-data')`
+            // can land before we're listening, the request is lost, and
+            // main never destroys (same root-cause as the Dashboard
+            // "doesn't close after Save & Continue" symptom).
             const unlisten = await listen('request-failure-group-data', async () => {
                 await emit('failure-group-data', {
                     workspaceId: state.id,
@@ -137,6 +134,14 @@ function App() {
                 // by a later macOS reactivation event — there's no window to
                 // unhide.
                 try { await Window.getCurrent().destroy(); } catch { /* ignore */ }
+            });
+            const fgWindow = new WebviewWindow('failure-group', {
+                url: '/?window=failure-group',
+                title: 'Predictive Mode - Failure Group Creation',
+                width: Math.round(screenW * 0.8),
+                height: Math.round(screenH * 0.8),
+                center: true,
+                decorations: isMac,
             });
             fgWindow.once('tauri://error', (e) => console.error('Failed to create failure group window on resume:', e));
             return; // skip the normal dashboard render path
@@ -189,23 +194,53 @@ function App() {
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       try {
+        // ──────────────────────────────────────────────────────────────
+        // Three-step handover. The ordering threads a needle between
+        // two failure modes:
+        //
+        //   (A) If we destroy splash first, main is still `visible:false`
+        //       (initial state from tauri.conf.json), the Rust-side
+        //       `exit-guard` sees no visible windows on the destroy
+        //       event and force-quits the app — symptom: splash flashes,
+        //       then everything dies ("ขึ้น loading แล้วโปรแกรมปิด").
+        //
+        //   (B) If we show main BEFORE hiding splash, splash's
+        //       `alwaysOnTop: true` (from tauri.conf.json) keeps it
+        //       layered over main while `splash.close()` is still
+        //       resolving — symptom: splash + dashboard visible at the
+        //       same time ("loading และ dashboard ขึ้นมาพร้อมกัน").
+        //
+        // The fix: hide() the splash first (no destroy event, so the
+        // exit-guard doesn't fire), then show main, then close (destroy)
+        // the now-hidden splash. The destroy event still fires on close,
+        // but by then main is visible — exit-guard sees that and
+        // doesn't quit. The user never sees splash overlap main because
+        // splash was hidden before main appeared.
+        //
+        // The sub-window resume path (FG/PM) skips main.show() — FG or
+        // PM is what keeps the app alive when splash dies in that flow.
+        // ──────────────────────────────────────────────────────────────
         const splash = await Window.getByLabel("splashscreen");
+
+        if (!resumingToSubWindowRef.current) {
+          // 1. Hide splash WITHOUT destroying it — no exit-guard fire.
+          if (splash) {
+            try { await splash.hide(); } catch { /* ignore */ }
+          }
+          // 2. Show main. It's now the only visible window.
+          const main = await Window.getByLabel("main");
+          if (main) {
+            await main.show();
+            await main.setFocus();
+          }
+        }
+
+        // 3. Destroy the (already-hidden) splash. exit-guard fires
+        //    on this destroy, but by now either main is visible (normal
+        //    path) or a sub-window like FG/PM is visible (resume path),
+        //    so the visible-window count is ≥ 1 and the app stays up.
         if (splash) {
           await splash.close();
-        }
-
-        // When auto-resume is taking us straight into a sub-window (FG / PM),
-        // do NOT show or focus the main window — `autoResume` will close it
-        // itself once the sub-window's data handshake completes. Showing main
-        // here causes a visible "flash → disappear" when CSV load is slow.
-        if (resumingToSubWindowRef.current) {
-          return;
-        }
-
-        const main = await Window.getByLabel("main");
-        if (main) {
-          await main.show();
-          await main.setFocus();
         }
       } catch (error) {
         console.warn("Could not manage windows (not in Tauri?)", error);

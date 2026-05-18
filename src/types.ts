@@ -90,6 +90,16 @@ export interface FailureGroupStateSlice {
     rows: FailureSensorRow[];
 }
 
+/**
+ * A single cluster's criteria range. `null` = unbounded in that
+ * direction (matches the Rust `Option<f64>` round-trip). Lives in the
+ * persisted slice so multi-cluster configs survive workspace reload.
+ */
+export interface PredictiveClusterRange {
+    min: number | null;
+    max: number | null;
+}
+
 export interface PredictiveModelStateSlice {
     targetSensor: string;
     predictorSensors: string[];
@@ -101,8 +111,9 @@ export interface PredictiveModelStateSlice {
     clusterModelName: string;
     numClusters: number;
     criteriaSensor: string;
-    clusterRangeMin: number;
-    clusterRangeMax: number;
+    /** One entry per cluster, length === numClusters. Replaces the
+     *  pre-multi-cluster `clusterRangeMin` / `clusterRangeMax` fields. */
+    clusterRanges: PredictiveClusterRange[];
     filterTimeStart: string;
     filterTimeEnd: string;
     filterSensorValue: string;
@@ -128,4 +139,9 @@ export interface WorkspaceState {
     dashboardSnapshot?: DashboardSnapshot;
     failureGroupState?: FailureGroupStateSlice;
     predictiveModelState?: PredictiveModelStateSlice;
+    /** Last folder the user picked in the Save Model dialog. Used as the
+     *  `defaultPath` for the next folder-picker invocation so they don't have
+     *  to re-navigate to the same place every save. The actual save still
+     *  always opens the picker — this is only the default, not a bypass. */
+    outputDir?: string;
 }
