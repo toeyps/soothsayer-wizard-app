@@ -108,6 +108,11 @@ jobs:
       - name: Build Python sidecar (Nuitka --onefile)
         working-directory: src-tauri/python
         shell: bash
+        env:
+          # Nuitka on Windows auto-downloads Dependency Walker for --standalone/
+          # --onefile. CI has no TTY → prompt defaults to "no" → fatal. This env
+          # var auto-answers "yes". Harmless on macOS/Linux (no download needed).
+          NUITKA_ASSUME_YES_FOR_DOWNLOADS: '1'
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             source .venv/Scripts/activate
