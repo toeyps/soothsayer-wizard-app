@@ -1,0 +1,195 @@
+name: Build installers
+
+# Triggers:
+#   - Push a version tag (e.g. `v0.1.0`) to publish a GitHub Release with installers.
+#   - Manual `workflow_dispatch` to build artifacts on demand (no release published).
+#
+# Outputs:
+#   - macOS Apple Silicon  → Soothsayer-Wizard_<version>_aarch64.dmg
+#   - macOS Intel          → Soothsayer-Wizard_<version>_x64.dmg
+#   - Windows x86_64       → Soothsayer-Wizard_<version>_x64-setup.exe (NSIS)
+#                          → Soothsayer-Wizard_<version>_x64_en-US.msi  (WiX)
+#
+# The Python sidecar (backend.py → Nuitka --onefile) is built fresh on each
+# runner since it is gitignored. Expect ~8–15 min per platform.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # Needed for the final `release` job to upload assets.
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-14            # M-series runner → builds aarch64 natively
+            rust_target: aarch64-apple-darwin
+            tauri_args: '--target aarch64-apple-darwin'
+            sidecar_shell: bash
+          - name: macos-x64
+            os: macos-13            # Intel runner → builds x86_64 natively
+            rust_target: x86_64-apple-darwin
+            tauri_args: '--target x86_64-apple-darwin'
+            sidecar_shell: bash
+          - name: windows-x64
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            tauri_args: '--target x86_64-pc-windows-msvc'
+            sidecar_shell: bash     # Git Bash ships on windows-latest
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust_target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust_target }}-
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('src-tauri/python/requirements.txt') }}
+
+      - name: Install Python sidecar deps
+        working-directory: src-tauri/python
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            source .venv/Scripts/activate
+          else
+            source .venv/bin/activate
+          fi
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install platform sidecar prerequisites (Linux deps)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y patchelf ccache
+
+      - name: Install platform sidecar prerequisites (macOS ccache)
+        if: runner.os == 'macOS'
+        run: brew install ccache || true
+
+      - name: Build Python sidecar (Nuitka --onefile)
+        working-directory: src-tauri/python
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            source .venv/Scripts/activate
+          else
+            source .venv/bin/activate
+          fi
+          chmod +x ./build_sidecar.sh
+          ./build_sidecar.sh
+
+      - name: Verify sidecar artifact exists
+        shell: bash
+        run: |
+          ls -la src-tauri/bin/
+          # Tauri's externalBin lookup is `bin/backend-<rust-target>(.exe)`
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            test -f "src-tauri/bin/backend-${{ matrix.rust_target }}.exe"
+          else
+            test -f "src-tauri/bin/backend-${{ matrix.rust_target }}"
+          fi
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build Tauri app
+        env:
+          # Disable code signing in CI — users will see an unsigned warning
+          # on first launch but the installer still works. Set the secrets
+          # below in repo Settings → Secrets to enable signing.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build ${{ matrix.tauri_args }}
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          TARGET_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          # macOS DMG
+          find "$TARGET_DIR/dmg" -maxdepth 1 -type f -name '*.dmg' -exec cp {} artifacts/ \; 2>/dev/null || true
+          # Windows NSIS + MSI
+          find "$TARGET_DIR/nsis" -maxdepth 1 -type f -name '*.exe' -exec cp {} artifacts/ \; 2>/dev/null || true
+          find "$TARGET_DIR/msi"  -maxdepth 1 -type f -name '*.msi' -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -la artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    # Only publish a GitHub Release on tag pushes (not workflow_dispatch).
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: installer-*
+          merge-multiple: true
+
+      - name: List collected installers
+        run: ls -la release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Soothsayer-Wizard ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            release-assets/*.dmg
+            release-assets/*.exe
+            release-assets/*.msi

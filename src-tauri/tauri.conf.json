@@ -30,6 +30,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Alpha-Com Thailand",
+    "copyright": "Copyright © 2026 Alpha-Com Thailand",
+    "category": "DeveloperTool",
+    "shortDescription": "Sensor data exploration & predictive modeling workspace",
+    "longDescription": "Soothsayer-Wizard is a desktop workspace for importing CSV sensor data, building failure groups, and training predictive models.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,6 +44,22 @@
     ],
     "externalBin": [
       "bin/backend"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "dmg": {
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 },
+        "windowSize": { "width": 660, "height": 400 }
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "perMachine",
+        "languages": ["English"],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }
