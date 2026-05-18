@@ -73,8 +73,12 @@ fi
 echo "[build_sidecar] target triple: $TARGET_TRIPLE"
 
 # 4) Run Nuitka with the proven-safer flag set for scientific stacks.
+#    --assume-yes-for-downloads is required on Windows (Nuitka prompts to
+#    download Dependency Walker for --standalone/--onefile; in non-interactive
+#    CI the prompt defaults to "no" → fatal). On macOS/Linux it is a no-op.
 mkdir -p build
 python -m nuitka \
+    --assume-yes-for-downloads \
     --onefile \
     --standalone \
     --enable-plugin=numpy \
