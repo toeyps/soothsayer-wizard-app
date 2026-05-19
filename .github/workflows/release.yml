@@ -105,6 +105,42 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ccache || true
 
+      # Windows-only: exclude build dirs + compiler processes from Defender
+      # real-time scanning. Defender otherwise scans every .obj / .c / .pyc
+      # Nuitka writes during compilation, easily 3-5x'ing the sidecar build
+      # time on GitHub-hosted runners. Excluded paths are scoped to the
+      # workspace so this does not weaken the runner globally.
+      - name: Exclude build dirs from Windows Defender
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE\src-tauri\python\build"
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE\src-tauri\python\.venv"
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE\src-tauri\bin"
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE\src-tauri\target"
+          Add-MpPreference -ExclusionProcess "python.exe"
+          Add-MpPreference -ExclusionProcess "cl.exe"
+          Add-MpPreference -ExclusionProcess "link.exe"
+          Add-MpPreference -ExclusionProcess "rustc.exe"
+          Write-Host "Defender exclusions added for build paths and compiler processes"
+
+      # Cache Nuitka's per-user cache dir + the intermediate build/ dir.
+      # Hit rate is modest (Nuitka invalidates aggressively on dep changes)
+      # but a warm cache shaves ~30% off the constants-module + downloads
+      # phase. Key on backend.py + requirements.txt so any source change
+      # busts the cache cleanly.
+      - name: Cache Nuitka build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/Nuitka/Nuitka/Cache
+            ~/Library/Caches/Nuitka
+            ~/.cache/Nuitka
+            src-tauri/python/build
+          key: ${{ runner.os }}-${{ matrix.rust_target }}-nuitka-${{ hashFiles('src-tauri/python/backend.py', 'src-tauri/python/requirements.txt', 'src-tauri/python/build_sidecar.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.rust_target }}-nuitka-
+
       - name: Build Python sidecar (Nuitka --onefile)
         working-directory: src-tauri/python
         shell: bash

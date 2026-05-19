@@ -76,7 +76,15 @@ echo "[build_sidecar] target triple: $TARGET_TRIPLE"
 #    --assume-yes-for-downloads is required on Windows (Nuitka prompts to
 #    download Dependency Walker for --standalone/--onefile; in non-interactive
 #    CI the prompt defaults to "no" → fatal). On macOS/Linux it is a no-op.
+#    --jobs defaults to the number of available cores when omitted; GitHub
+#    Actions runners have 4 vCPUs, so dropping the explicit `--jobs=2` ~2x's
+#    the build on CI. Override with NUITKA_JOBS env var if you need to limit
+#    parallelism on a memory-constrained machine.
 mkdir -p build
+NUITKA_JOBS_FLAG=""
+if [[ -n "${NUITKA_JOBS:-}" ]]; then
+    NUITKA_JOBS_FLAG="--jobs=${NUITKA_JOBS}"
+fi
 python -m nuitka \
     --assume-yes-for-downloads \
     --onefile \
@@ -85,7 +93,7 @@ python -m nuitka \
     --enable-plugin=anti-bloat \
     --include-package=pygam \
     --include-package=scipy \
-    --jobs=2 \
+    ${NUITKA_JOBS_FLAG} \
     --lto=no \
     --output-dir=build \
     backend.py
