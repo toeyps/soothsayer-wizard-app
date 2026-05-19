@@ -136,19 +136,34 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Build Tauri app
+      # Apple code signing — only export the env vars if the user has
+      # populated the secrets. An empty APPLE_CERTIFICATE still triggers
+      # Tauri's signing path, which then fails with
+      #   "failed to import keychain certificate".
+      # The `if:` guard below skips the step entirely on unconfigured repos,
+      # so the env vars stay unset and Tauri ships an unsigned .app/.dmg.
+      - name: Configure macOS code signing
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         env:
-          # Disable code signing in CI — users will see an unsigned warning
-          # on first launch but the installer still works. Set the secrets
-          # below in repo Settings → Secrets to enable signing.
+          HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          echo "Apple signing secrets present — exporting to job env"
+          {
+            echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            echo "APPLE_ID=$APPLE_ID"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Tauri app
         run: npm run tauri -- build ${{ matrix.tauri_args }}
 
       - name: Collect installers
