@@ -71,7 +71,16 @@
       "Bash(git -C /Users/tide/Desktop/w/tauri-sensor-viz status --short)",
       "Bash(git check-ignore *)",
       "Bash(python3 -c \"import json; json.load\\(open\\('src-tauri/tauri.conf.json'\\)\\)\")",
-      "Bash(python3 -c \"import json; json.load\\(open\\('package.json'\\)\\)\")"
+      "Bash(python3 -c \"import json; json.load\\(open\\('package.json'\\)\\)\")",
+      "Bash(rustup target *)",
+      "Bash(npx tauri *)",
+      "Bash(npm run *)",
+      "Bash(tee /tmp/tauri-build-mac-arm64.log)",
+      "Bash(npm ci *)",
+      "Bash(chmod +x scripts/build-installer-mac-arm64.sh scripts/build-installer-mac-x64.sh)",
+      "Bash(tee /tmp/installer-script-test.log)",
+      "Bash(command -v pwsh)",
+      "Bash(pwsh -NoLogo -Command \"Get-Content scripts/build-installer-windows.ps1 | Out-Null; Write-Host 'PS syntax OK'\")"
     ]
   }
 }

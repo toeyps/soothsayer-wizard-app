@@ -33,11 +33,11 @@ jobs:
             rust_target: aarch64-apple-darwin
             tauri_args: '--target aarch64-apple-darwin'
             sidecar_shell: bash
-          - name: macos-x64
-            os: macos-13            # Intel runner → builds x86_64 natively
-            rust_target: x86_64-apple-darwin
-            tauri_args: '--target x86_64-apple-darwin'
-            sidecar_shell: bash
+          # NOTE: Intel Mac (macos-13) build was dropped — GitHub is
+          # deprecating Intel runners and free-tier queue is unreliable
+          # (jobs hang in "waiting for runner" indefinitely). Apple stopped
+          # selling Intel Macs in 2023; users on Intel Macs can build
+          # locally via ./scripts/build-installer-mac-x64.sh
           - name: windows-x64
             os: windows-latest
             rust_target: x86_64-pc-windows-msvc
@@ -172,16 +172,23 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      # Apple code signing — only export the env vars if the user has
-      # populated the secrets. An empty APPLE_CERTIFICATE still triggers
-      # Tauri's signing path, which then fails with
-      #   "failed to import keychain certificate".
-      # The `if:` guard below skips the step entirely on unconfigured repos,
-      # so the env vars stay unset and Tauri ships an unsigned .app/.dmg.
-      - name: Configure macOS code signing
-        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
+      # macOS signing — two paths:
+      #
+      #   Real signing  (APPLE_CERTIFICATE secret populated):
+      #     → Tauri imports the .p12 cert, signs with Developer ID,
+      #       app opens with no warning at all once notarized.
+      #
+      #   Ad-hoc signing (no cert):
+      #     → APPLE_SIGNING_IDENTITY="-" tells codesign to sign with a
+      #       throwaway identity. macOS still won't trust it, but the
+      #       signature is "valid" — so the user sees the friendlier
+      #       "unidentified developer" prompt instead of "damaged".
+      #       Without ad-hoc, downloaded DMGs trip the quarantine attr
+      #       and Gatekeeper rejects with "...is damaged and can't be
+      #       opened" because there's no signature to evaluate.
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
         env:
-          HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -189,15 +196,20 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          echo "Apple signing secrets present — exporting to job env"
-          {
-            echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
-            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
-            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
-            echo "APPLE_ID=$APPLE_ID"
-            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
-            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
-          } >> "$GITHUB_ENV"
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "Apple Developer cert present — configuring real signing"
+            {
+              echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
+              echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+              echo "APPLE_ID=$APPLE_ID"
+              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+            } >> "$GITHUB_ENV"
+          else
+            echo "No Apple cert — falling back to ad-hoc signing (-)"
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+          fi
 
       - name: Build Tauri app
         run: npm run tauri -- build ${{ matrix.tauri_args }}
