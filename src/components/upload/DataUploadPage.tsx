@@ -29,8 +29,6 @@ import {
   deleteWorkspace,
 } from "../../workspaceManager";
 
-type SelectedMode = "free_exploration" | "soothsayer";
-
 interface DataUploadPageProps {
   onDataReady: (
     metadata: CsvMetadata,
@@ -132,7 +130,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   );
   const T = dark ? DARK : LIGHT;
 
-  const [mode, setMode] = useState<SelectedMode>("soothsayer");
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMetadata[]>([]);
@@ -161,7 +158,13 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const files = dataUpload.selectedFiles;
   const report = dataUpload.loadReport;
   const hasFiles = files.length > 0;
-  const isReady = !!report;
+  const hasReport = !!report;
+  const isStale = dataUpload.isStale;
+  // "Ready" means: parsed report exists AND the current file selection still
+  // matches the snapshot used for that parse. Editing the file list after
+  // parse (add / remove / reorder) demotes the report back to not-ready so
+  // the user is prompted to re-parse before continuing.
+  const isReady = hasReport && !isStale && hasFiles;
   const totalRows = report?.total_rows ?? 0;
 
   const filteredWs = useMemo(
@@ -432,15 +435,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
             <>
               {/* Title block */}
               <div style={{ flexShrink: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 2 }}>
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, color: T.accentHi,
-                    letterSpacing: "0.12em", textTransform: "uppercase", fontFamily: mono,
-                  }}>
-                    Step 1 · Data Upload
-                  </span>
-                  <span style={{ width: 12, height: 1, background: T.accent, opacity: 0.5 }} />
-                </div>
                 <h1 style={{
                   margin: 0, fontSize: 19, fontWeight: 600, color: T.text,
                   letterSpacing: "-0.02em", lineHeight: 1.2,
@@ -780,47 +774,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                 </Card>
               </div>
 
-              {/* Mode choice */}
-              <div style={{ flexShrink: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, color: T.textFaint,
-                    letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: mono,
-                  }}>
-                    Analysis mode
-                  </span>
-                  <span style={{ fontSize: 11, color: T.textFaint }}>
-                    — pick how you want to work with this data. You can change later.
-                  </span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <ModeCard
-                    T={T}
-                    selected={mode === "free_exploration"}
-                    onClick={() => setMode("free_exploration")}
-                    disabled={!isReady}
-                    tone="s2"
-                    glyph={<ExploreGlyph T={T} />}
-                    tag="Exploratory"
-                    title="Free exploration"
-                    desc="Browse sensors freely with interactive charts, filters, and correlations. Ideal for discovery and ad-hoc analysis."
-                    bullets={["Multi-sensor overlay", "Range + filter controls", "Export snapshots"]}
-                  />
-                  <ModeCard
-                    T={T}
-                    selected={mode === "soothsayer"}
-                    onClick={() => setMode("soothsayer")}
-                    disabled={!isReady}
-                    tone="accent"
-                    glyph={<PredictiveGlyph T={T} />}
-                    tag="Guided"
-                    title="Predictive model"
-                    desc="Build fault-detection models by grouping sensors into failure categories, then training bounds or regressions per target."
-                    bullets={["Failure group builder", "σ-boundary or kernel fit", "Residual alerting"]}
-                  />
-                </div>
-              </div>
-
               {/* Empty-state hint */}
               {!isReady && (
                 <div style={{
@@ -831,9 +784,11 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                 }}>
                   <Info size={14} style={{ color: T.warn, flexShrink: 0 }} />
                   <div style={{ fontSize: 12.5, color: T.text, flex: 1 }}>
-                    {hasFiles
-                      ? "Click Parse files to validate and unlock analysis modes."
-                      : "Add at least one CSV file to unlock analysis modes and continue."}
+                    {!hasFiles
+                      ? "Add at least one CSV file to continue."
+                      : isStale
+                        ? "File selection changed — click Parse files to re-validate."
+                        : "Click Parse files to validate and continue."}
                   </div>
                 </div>
               )}
@@ -854,11 +809,13 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
             fontSize: 11, color: T.textFaint, fontFamily: mono, letterSpacing: "0.04em",
           }}>
             {isReady
-              ? `Ready · ${fmt(totalRows)} rows · mode: ${mode === "soothsayer" ? "Predictive" : "Exploration"}`
-              : "Awaiting data"}
+              ? `Ready · ${fmt(totalRows)} rows`
+              : isStale
+                ? "Selection changed · re-parse required"
+                : "Awaiting data"}
           </span>
           <div style={{ flex: 1 }} />
-          <ContinueButton T={T} enabled={isReady} mode={mode} onClick={handleContinue} />
+          <ContinueButton T={T} enabled={isReady} onClick={handleContinue} />
         </div>
       </div>
     </div>
@@ -911,102 +868,6 @@ function Req({ T, ok, children }: { T: Tokens; ok: boolean; children: ReactNode 
       </span>
       <span>{children}</span>
     </span>
-  );
-}
-
-function ModeCard({
-  T, selected, onClick, tone, disabled, glyph, tag, title, desc, bullets,
-}: {
-  T: Tokens; selected: boolean; onClick: () => void;
-  tone: "accent" | "s2"; disabled: boolean;
-  glyph: ReactNode; tag: string; title: string; desc: string; bullets: string[];
-}) {
-  const toneColor = tone === "accent" ? T.accent : T.s2;
-  const toneHi = tone === "accent" ? T.accentHi : T.s2;
-  const toneGlow = tone === "accent" ? T.accentMuted : "oklch(0.74 0.15 155 / 0.15)";
-  return (
-    <button
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      style={{
-        textAlign: "left", cursor: disabled ? "not-allowed" : "pointer",
-        padding: 12, borderRadius: 10,
-        background: selected && !disabled
-          ? `linear-gradient(135deg, ${toneGlow} 0%, ${T.surface} 60%)`
-          : T.surface,
-        border: `1px solid ${selected && !disabled ? toneColor : T.border}`,
-        opacity: disabled ? 0.5 : 1,
-        fontFamily: "inherit",
-        display: "flex", alignItems: "center", gap: 12,
-        position: "relative",
-        boxShadow: selected && !disabled ? `0 0 0 2px ${toneGlow}` : "none",
-        transition: "all 120ms ease",
-        color: T.text,
-      }}
-    >
-      <div style={{
-        width: 42, height: 42, borderRadius: 8,
-        background: T.bg, border: `1px solid ${T.border}`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        flexShrink: 0,
-      }}>
-        {glyph}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-          <Pill T={T} tone={tone === "accent" ? "info" : "ok"}>{tag}</Pill>
-          {selected && !disabled && (
-            <span style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              fontSize: 10, fontWeight: 600, color: toneHi,
-              fontFamily: mono, letterSpacing: "0.04em",
-            }}>
-              <Check size={10} strokeWidth={2.5} color={toneHi} /> SELECTED
-            </span>
-          )}
-        </div>
-        <div style={{
-          fontSize: 14, fontWeight: 600, color: T.text,
-          letterSpacing: "-0.01em", lineHeight: 1.2,
-        }}>{title}</div>
-        <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 2, lineHeight: 1.4 }}>
-          {desc}
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-          {bullets.map((b) => (
-            <span key={b} style={{
-              fontSize: 10, padding: "2px 7px",
-              background: T.surfaceHi, border: `1px solid ${T.border}`,
-              borderRadius: 999, color: T.textMuted, fontFamily: mono,
-            }}>{b}</span>
-          ))}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function ExploreGlyph({ T }: { T: Tokens }) {
-  return (
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-      <path d="M3 24 L8 18 L13 21 L18 13 L23 16 L29 8" stroke={T.s2} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="13" cy="21" r="1.8" fill={T.s2} />
-      <circle cx="18" cy="13" r="1.8" fill={T.s2} />
-      <circle cx="23" cy="16" r="1.8" fill={T.s2} />
-      <path d="M3 28 H29" stroke={T.textFaint} strokeWidth="0.75" strokeDasharray="1.5 2" />
-    </svg>
-  );
-}
-
-function PredictiveGlyph({ T }: { T: Tokens }) {
-  return (
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-      <rect x="3" y="10" width="26" height="12" rx="1" stroke={T.textFaint} strokeWidth="0.75" strokeDasharray="2 2" />
-      <path d="M3 16 C 8 16, 10 12, 14 12 S 20 20, 24 16 S 28 14, 29 14" stroke={T.accent} strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M14 12 V 6" stroke={T.danger} strokeWidth="1.2" strokeDasharray="1.5 1.5" />
-      <circle cx="14" cy="6" r="2" fill="none" stroke={T.danger} strokeWidth="1.2" />
-      <circle cx="14" cy="6" r="0.8" fill={T.danger} />
-    </svg>
   );
 }
 
@@ -1148,9 +1009,9 @@ function MappingResultDetails({ T, result }: { T: Tokens; result: MappingResult 
 }
 
 function ContinueButton({
-  T, enabled, mode, onClick,
+  T, enabled, onClick,
 }: {
-  T: Tokens; enabled: boolean; mode: SelectedMode; onClick: () => void;
+  T: Tokens; enabled: boolean; onClick: () => void;
 }) {
   return (
     <button
@@ -1168,7 +1029,7 @@ function ContinueButton({
         boxShadow: enabled ? `0 1px 0 0 rgba(255,255,255,0.15) inset, 0 4px 14px ${T.accentMuted}` : "none",
       }}
     >
-      Continue to {mode === "soothsayer" ? "failure groups" : "exploration"}
+      Continue
       <ArrowRight size={13} />
     </button>
   );

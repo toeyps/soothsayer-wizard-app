@@ -80,7 +80,8 @@
       "Bash(chmod +x scripts/build-installer-mac-arm64.sh scripts/build-installer-mac-x64.sh)",
       "Bash(tee /tmp/installer-script-test.log)",
       "Bash(command -v pwsh)",
-      "Bash(pwsh -NoLogo -Command \"Get-Content scripts/build-installer-windows.ps1 | Out-Null; Write-Host 'PS syntax OK'\")"
+      "Bash(pwsh -NoLogo -Command \"Get-Content scripts/build-installer-windows.ps1 | Out-Null; Write-Host 'PS syntax OK'\")",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")"
     ]
   }
 }

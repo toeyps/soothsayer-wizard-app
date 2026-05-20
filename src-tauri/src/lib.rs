@@ -45,6 +45,11 @@ fn get_loaded_paths(state: State<AppState>) -> Result<Vec<String>, String> {
 #[tauri::command]
 fn get_data(
     sensors: Vec<String>,
+    // Optional dashboard filter (timestamp + value bounds). When `None` —
+    // legacy behavior, all rows streamed. When present, only rows passing
+    // the filter are emitted. Sensors not present in the dataset are
+    // skipped (matching the legacy projection behavior).
+    filter: Option<PreviewFilter>,
     window: tauri::Window,
     state: State<AppState>,
 ) -> Result<(), String> {
@@ -60,34 +65,48 @@ fn get_data(
         }
     }
 
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+
     const CHUNK_SIZE: usize = 5000;
+    let mut chunk_buf: Vec<csv_processor::CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
 
-    for (_chunk_idx, chunk) in data.rows.chunks(CHUNK_SIZE).enumerate() {
-        let chunk_data: Vec<csv_processor::CsvRecord> = chunk
-            .iter()
-            .map(|row| {
-                let mut new_values = Vec::new();
-                for &idx in &indices {
-                    if idx < row.values.len() {
-                        new_values.push(row.values[idx]);
-                    } else {
-                        new_values.push(None);
-                    }
-                }
+    for row in &data.rows {
+        if !resolved.is_noop() && !resolved.keeps(row) {
+            continue;
+        }
+        let mut new_values = Vec::with_capacity(indices.len());
+        for &idx in &indices {
+            if idx < row.values.len() {
+                new_values.push(row.values[idx]);
+            } else {
+                new_values.push(None);
+            }
+        }
+        chunk_buf.push(csv_processor::CsvRecord {
+            timestamp: row.timestamp.clone(),
+            values: new_values,
+        });
 
-                csv_processor::CsvRecord {
-                    timestamp: row.timestamp.clone(),
-                    values: new_values,
-                }
-            })
-            .collect();
+        if chunk_buf.len() >= CHUNK_SIZE {
+            window
+                .emit(
+                    "data-stream-chunk",
+                    ProcessedData {
+                        headers: sensors.clone(),
+                        rows: std::mem::replace(&mut chunk_buf, Vec::with_capacity(CHUNK_SIZE)),
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
+    if !chunk_buf.is_empty() {
         window
             .emit(
                 "data-stream-chunk",
                 ProcessedData {
                     headers: sensors.clone(),
-                    rows: chunk_data,
+                    rows: chunk_buf,
                 },
             )
             .map_err(|e| e.to_string())?;
@@ -138,6 +157,11 @@ struct SensorStats {
 #[tauri::command]
 fn compute_sensor_stats(
     sensor: String,
+    // Same dashboard filter the predictive-model preview commands take.
+    // When present, mean/SD/±σ are computed over the filtered slice — so
+    // the boundary markers on the PM target chart match the slice the user
+    // explored in the dashboard.
+    filter: Option<PreviewFilter>,
     state: State<AppState>,
 ) -> Result<SensorStats, String> {
     use rayon::prelude::*;
@@ -152,17 +176,32 @@ fn compute_sensor_stats(
         .position(|h| h == &sensor)
         .ok_or_else(|| format!("Sensor not found: {}", sensor))?;
 
-    // Parallel collect of all non-null, finite values for the target column.
-    let values: Vec<f64> = data
-        .rows
-        .par_iter()
-        .filter_map(|row| {
-            row.values
-                .get(idx)
-                .and_then(|v| *v)
-                .filter(|v| v.is_finite())
-        })
-        .collect();
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+
+    // Parallel collect of all non-null, finite values for the target column —
+    // restricted to rows passing the dashboard filter when one is set.
+    let values: Vec<f64> = if resolved.is_noop() {
+        data.rows
+            .par_iter()
+            .filter_map(|row| {
+                row.values
+                    .get(idx)
+                    .and_then(|v| *v)
+                    .filter(|v| v.is_finite())
+            })
+            .collect()
+    } else {
+        data.rows
+            .par_iter()
+            .filter(|row| resolved.keeps(row))
+            .filter_map(|row| {
+                row.values
+                    .get(idx)
+                    .and_then(|v| *v)
+                    .filter(|v| v.is_finite())
+            })
+            .collect()
+    };
 
     let count = values.len();
     if count == 0 {
@@ -267,7 +306,7 @@ async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
 /// Mirrors the JSON shape produced by the dashboard's FilterPanel, so the
 /// preview scatter can be built off the same filtered slice the user is
 /// looking at on the previous page.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct PreviewValueFilter {
     sensor: String,
     operation: String, // "greater_than" | "less_than" | "between" | "equals"
@@ -275,7 +314,7 @@ struct PreviewValueFilter {
     value2: Option<f64>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 struct PreviewFilter {
     #[serde(default)]
     timestamp_start: Option<String>,
@@ -283,6 +322,111 @@ struct PreviewFilter {
     timestamp_end: Option<String>,
     #[serde(default)]
     value_filters: Vec<PreviewValueFilter>,
+}
+
+/// One pre-resolved value filter: sensor name → header index (resolved once
+/// up front so the per-row hot loop never re-scans `headers`).
+struct ResolvedValueFilter {
+    sensor_idx: usize,
+    operation: String,
+    value1: Option<f64>,
+    value2: Option<f64>,
+}
+
+/// Parsed/resolved form of a `PreviewFilter`. Built once per command call
+/// from a `&[String]` of headers; thereafter `.keeps(row)` is a cheap predicate
+/// suitable for use inside the row-iteration loop of every data-reading
+/// command. A noop filter (`is_noop() == true`) is what every command saw
+/// before this refactor — included for symmetry but most call sites short-
+/// circuit when noop to preserve the parallel-rayon fast paths.
+struct ResolvedFilter {
+    ts_start: Option<chrono::NaiveDateTime>,
+    ts_end: Option<chrono::NaiveDateTime>,
+    value_filters: Vec<ResolvedValueFilter>,
+}
+
+impl ResolvedFilter {
+    fn resolve(filter: Option<&PreviewFilter>, headers: &[String]) -> Self {
+        let Some(f) = filter else {
+            return Self {
+                ts_start: None,
+                ts_end: None,
+                value_filters: Vec::new(),
+            };
+        };
+        let ts_start = f.timestamp_start.as_deref().and_then(parse_timestamp);
+        let ts_end = f.timestamp_end.as_deref().and_then(parse_timestamp);
+        let value_filters = f
+            .value_filters
+            .iter()
+            .filter_map(|vf| {
+                headers
+                    .iter()
+                    .position(|h| h == &vf.sensor)
+                    .map(|idx| ResolvedValueFilter {
+                        sensor_idx: idx,
+                        operation: vf.operation.clone(),
+                        value1: vf.value1,
+                        value2: vf.value2,
+                    })
+            })
+            .collect();
+        Self {
+            ts_start,
+            ts_end,
+            value_filters,
+        }
+    }
+
+    #[inline]
+    fn is_noop(&self) -> bool {
+        self.ts_start.is_none() && self.ts_end.is_none() && self.value_filters.is_empty()
+    }
+
+    /// True if `row` falls inside the dashboard filter window (timestamp AND
+    /// all value-filter predicates). Rows with unparseable timestamps under a
+    /// timestamp gate are excluded — matches the existing
+    /// `preview_relationship_model` + `get_filtered_data` behavior.
+    #[inline]
+    fn keeps(&self, row: &csv_processor::CsvRecord) -> bool {
+        if self.ts_start.is_some() || self.ts_end.is_some() {
+            let parsed = row.timestamp.as_deref().and_then(parse_timestamp);
+            let ts = match parsed {
+                Some(t) => t,
+                None => return false,
+            };
+            if let Some(s) = self.ts_start {
+                if ts < s {
+                    return false;
+                }
+            }
+            if let Some(e) = self.ts_end {
+                if ts > e {
+                    return false;
+                }
+            }
+        }
+        for rf in &self.value_filters {
+            let val = row.values.get(rf.sensor_idx).and_then(|v| *v);
+            let ok = match val {
+                None => false,
+                Some(v) => match rf.operation.as_str() {
+                    "greater_than" => rf.value1.map_or(true, |v1| v > v1),
+                    "less_than" => rf.value1.map_or(true, |v1| v < v1),
+                    "equals" => rf.value1.map_or(true, |v1| (v - v1).abs() < f64::EPSILON),
+                    "between" => match (rf.value1, rf.value2) {
+                        (Some(v1), Some(v2)) => v >= v1 && v <= v2,
+                        _ => true,
+                    },
+                    _ => true,
+                },
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Preview the Relationship (LinearGAM) model on the currently loaded
@@ -552,17 +696,22 @@ fn parse_timestamp(s: &str) -> Option<chrono::NaiveDateTime> {
         .ok()
 }
 
-/// Scan a column's rows; return (min_iso, max_iso, count_with_value) where
-/// the timestamp strings are taken in their original ISO form for any row
-/// whose value at `value_idx` is finite. Falls back to empty strings if no
-/// timestamps parse.
+/// Scan a column's rows; return (min_iso, max_iso) where the timestamps
+/// are taken in their original ISO form for any row whose value at
+/// `value_idx` is finite. Falls back to empty strings if no timestamps
+/// parse. When `filter.is_noop()` is false, rows are first gated by the
+/// dashboard filter (timestamp + value bounds).
 fn dataset_time_bounds(
     data: &csv_processor::ProcessedData,
     value_idx: usize,
+    filter: &ResolvedFilter,
 ) -> (String, String) {
     let mut min_dt: Option<(chrono::NaiveDateTime, String)> = None;
     let mut max_dt: Option<(chrono::NaiveDateTime, String)> = None;
     for row in &data.rows {
+        if !filter.is_noop() && !filter.keeps(row) {
+            continue;
+        }
         let val_ok = row
             .values
             .get(value_idx)
@@ -623,6 +772,10 @@ fn train_individual_model(
     target: String,
     model_name: Option<String>,
     save_path: String,
+    // Dashboard filter (timestamp + value gates). When set, the trained mean/
+    // SD and the saved start/end_date all reflect the filtered slice rather
+    // than the entire dataset.
+    filter: Option<PreviewFilter>,
     state: State<AppState>,
 ) -> Result<IndividualModelInfo, String> {
     use rayon::prelude::*;
@@ -644,17 +797,32 @@ fn train_individual_model(
         .position(|h| h == &target)
         .ok_or_else(|| format!("Sensor not found: {}", target))?;
 
-    // Non-NaN finite values for the target column.
-    let values: Vec<f64> = data
-        .rows
-        .par_iter()
-        .filter_map(|row| {
-            row.values
-                .get(idx)
-                .and_then(|v| *v)
-                .filter(|v| v.is_finite())
-        })
-        .collect();
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+
+    // Non-NaN finite values for the target column, gated by the dashboard
+    // filter when one is set.
+    let values: Vec<f64> = if resolved.is_noop() {
+        data.rows
+            .par_iter()
+            .filter_map(|row| {
+                row.values
+                    .get(idx)
+                    .and_then(|v| *v)
+                    .filter(|v| v.is_finite())
+            })
+            .collect()
+    } else {
+        data.rows
+            .par_iter()
+            .filter(|row| resolved.keeps(row))
+            .filter_map(|row| {
+                row.values
+                    .get(idx)
+                    .and_then(|v| *v)
+                    .filter(|v| v.is_finite())
+            })
+            .collect()
+    };
 
     if values.is_empty() {
         return Err(format!("No valid numeric values for sensor '{}'", target));
@@ -671,7 +839,9 @@ fn train_individual_model(
     let b1 = [r3(mean_r - sd_r), r3(mean_r + sd_r)];
     let b3 = [r3(mean_r - 3.0 * sd_r), r3(mean_r + 3.0 * sd_r)];
 
-    let (start_date, end_date) = dataset_time_bounds(data, idx);
+    // start/end_date follow the same filter — otherwise saved metadata
+    // would advertise the full dataset's span.
+    let (start_date, end_date) = dataset_time_bounds(data, idx, &resolved);
 
     // Default model_name follows wizard.py: f"{descr} ({tag})". We don't have
     // the sensor mapper Rust-side, so just use the tag.
@@ -805,6 +975,10 @@ fn compute_clustering_preview(
     n_clusters: u32,
     criteria_sensor: Option<String>,
     cluster_ranges: Option<Vec<ClusterRange>>,
+    // Same dashboard filter the predictive-model preview commands take.
+    // When present the ellipse fit and per-cluster scatter are restricted
+    // to the filtered slice, matching what the user saw in the dashboard.
+    filter: Option<PreviewFilter>,
     state: State<AppState>,
 ) -> Result<ClusteringPreview, String> {
     if n_clusters == 0 {
@@ -829,11 +1003,16 @@ fn compute_clustering_preview(
         .position(|h| h == &second_sensor)
         .ok_or_else(|| format!("Sensor not found: {}", second_sensor))?;
 
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+
     // ── Single-cluster path ──────────────────────────────────────
     if n_clusters == 1 {
         let mut xs: Vec<f64> = Vec::with_capacity(data.rows.len());
         let mut ys: Vec<f64> = Vec::with_capacity(data.rows.len());
         for row in &data.rows {
+            if !resolved.is_noop() && !resolved.keeps(row) {
+                continue;
+            }
             let x = match row.values.get(i1).and_then(|v| *v) {
                 Some(v) if v.is_finite() => v,
                 _ => continue,
@@ -894,6 +1073,9 @@ fn compute_clustering_preview(
         let mut xs: Vec<f64> = Vec::new();
         let mut ys: Vec<f64> = Vec::new();
         for row in &data.rows {
+            if !resolved.is_noop() && !resolved.keeps(row) {
+                continue;
+            }
             let c = match row.values.get(ic).and_then(|v| *v) {
                 Some(v) if v.is_finite() => v,
                 _ => continue,
@@ -968,6 +1150,9 @@ fn train_clustering_model(
     cluster_ranges: Option<Vec<ClusterRange>>,
     model_name: Option<String>,
     save_path: String,
+    // Forwarded straight to `compute_clustering_preview` so the trained
+    // ellipse mirrors the dashboard's filtered slice.
+    filter: Option<PreviewFilter>,
     state: State<AppState>,
 ) -> Result<ClusteringModelInfo, String> {
     if save_path.is_empty() {
@@ -976,18 +1161,23 @@ fn train_clustering_model(
 
     // Reuse the preview path — it already does all the validation /
     // splitting / ellipse-fitting for both 1-cluster and N-cluster cases.
+    // We clone `filter` because the date-range computation below needs
+    // the same predicate to clip start/end to the filtered window.
     let preview = compute_clustering_preview(
         first_sensor.clone(),
         second_sensor.clone(),
         n_clusters,
         criteria_sensor.clone(),
         cluster_ranges,
+        filter.clone(),
         state.clone(),
     )?;
 
     // Need start/end dates over the joined-non-null subset (matches
     // single-cluster behaviour even when n_clusters > 1; the criteria
-    // filter doesn't shift the training date range).
+    // filter doesn't shift the training date range). The dashboard
+    // filter — distinct from the per-cluster criteria range — does narrow
+    // it, so we gate rows by `resolved.keeps(row)` here too.
     let (start_date, end_date) = {
         let state_lock = state.0.lock().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
@@ -995,9 +1185,11 @@ fn train_clustering_model(
         let i1 = data.headers.iter().position(|h| h == &first_sensor).unwrap();
         let i2 = data.headers.iter().position(|h| h == &second_sensor).unwrap();
 
+        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
         let mut min_dt: Option<chrono::NaiveDateTime> = None;
         let mut max_dt: Option<chrono::NaiveDateTime> = None;
         for row in &data.rows {
+            if !resolved.is_noop() && !resolved.keeps(row) { continue; }
             let ok1 = row.values.get(i1).and_then(|v| *v).map(|v| v.is_finite()).unwrap_or(false);
             let ok2 = row.values.get(i2).and_then(|v| *v).map(|v| v.is_finite()).unwrap_or(false);
             if !(ok1 && ok2) { continue; }
@@ -1132,6 +1324,10 @@ async fn train_relationship_model(
     lambda: f64,
     save_path: String,
     model_name: Option<String>,
+    // Dashboard filter (timestamp + value gates). When set, the LinearGAM
+    // is trained on the filtered slice and the REL_DATASET CSV / time
+    // bounds reflect the same restricted row set.
+    filter: Option<PreviewFilter>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<RelationshipTrainResult, String> {
@@ -1170,12 +1366,17 @@ async fn train_relationship_model(
             .position(|h| h == &target)
             .ok_or_else(|| format!("Target not found: {}", target))?;
 
+        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+
         let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
         let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
         let mut row_timestamps: Vec<Option<String>> = Vec::with_capacity(data.rows.len());
         let mut min_dt: Option<chrono::NaiveDateTime> = None;
         let mut max_dt: Option<chrono::NaiveDateTime> = None;
         for row in &data.rows {
+            if !resolved.is_noop() && !resolved.keeps(row) {
+                continue;
+            }
             let mut x_row: Vec<f64> = Vec::with_capacity(predictor_indices.len());
             let mut ok = true;
             for &i in &predictor_indices {

@@ -11,7 +11,7 @@ import type {
     ClusteringModelInfo,
     RelationshipTrainResult,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Plus, Square, Search, X, Calendar, ChevronLeft, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid } from "lucide-react";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Square, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
@@ -151,6 +151,47 @@ export default function PredictiveModelBuild() {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
+
+    // ── Dashboard filter passed through to every Rust data-reading command ──
+    // The Dashboard "Save & Continue" path snapshots its FilterPanel state into
+    // `dashboardSnapshot.filters`. We translate that into the snake_case shape
+    // Rust expects (`PreviewFilter`) and forward it on every invoke so target
+    // chart, σ markers, clustering preview, and all `train_*` commands operate
+    // on the same filtered slice the user explored.
+    //
+    // Returns `null` when no filter is active — Rust then falls back to "use
+    // every row" (legacy behavior, plus identical request shape for tests).
+    //
+    // Hoisted above the chart/stats effects (~line 470/560 below) because
+    // those effects depend on `dashboardFilterKey` — moving the memos here
+    // avoids a temporal-dead-zone reference during render.
+    const dashboardFilterPayload = useMemo(() => {
+        const f = dashboardSnapshot?.filters;
+        if (!f) return null;
+        const valueFilters = (f.sensorFilters ?? [])
+            .filter(sf => sf.value1 !== '')
+            .map(sf => ({
+                sensor: sf.sensor,
+                operation: sf.operation,
+                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+            }));
+        const tsStart = f.timestampStart || null;
+        const tsEnd = f.timestampEnd || null;
+        if (!tsStart && !tsEnd && valueFilters.length === 0) return null;
+        return {
+            timestamp_start: tsStart,
+            timestamp_end: tsEnd,
+            value_filters: valueFilters,
+        };
+    }, [dashboardSnapshot]);
+
+    // Stable string key used to detect filter changes for cache invalidation
+    // without re-running effects on identical-but-new object references.
+    const dashboardFilterKey = useMemo(
+        () => JSON.stringify(dashboardFilterPayload),
+        [dashboardFilterPayload],
+    );
     // Data from previous page
     const [targetSensor, setTargetSensor] = useState<string>("");
     const [predictorSensors, setPredictorSensors] = useState<string[]>([]);
@@ -486,7 +527,7 @@ export default function PredictiveModelBuild() {
                     if (targetFetchIdRef.current === myFetchId) resolveDone();
                 });
 
-                await invoke("get_data", { sensors: [targetSensor] });
+                await invoke("get_data", { sensors: [targetSensor], filter: dashboardFilterPayload });
                 await streamDone;
 
                 if (cancelled || targetFetchIdRef.current !== myFetchId) return;
@@ -512,7 +553,10 @@ export default function PredictiveModelBuild() {
             if (unlistenChunk) unlistenChunk();
             if (unlistenEnd) unlistenEnd();
         };
-    }, [targetSensor]);
+        // dashboardFilterKey: re-fetch the chart when the dashboard filter
+        // changes — otherwise the target series would still show the
+        // pre-filter data even though we already trained on the slice.
+    }, [targetSensor, dashboardFilterKey]);
 
     // Keep `clusterRanges` in sync with `numClusters` so the array
     // always has exactly N entries. When the user steps the count up
@@ -561,7 +605,10 @@ export default function PredictiveModelBuild() {
             return;
         }
         let cancelled = false;
-        invoke<SensorStats>("compute_sensor_stats", { sensor: targetSensor })
+        invoke<SensorStats>("compute_sensor_stats", {
+            sensor: targetSensor,
+            filter: dashboardFilterPayload,
+        })
             .then(s => {
                 if (!cancelled) {
                     setTargetStats(s);
@@ -576,7 +623,9 @@ export default function PredictiveModelBuild() {
                 }
             });
         return () => { cancelled = true; };
-    }, [targetSensor]);
+        // dashboardFilterKey in deps: σ-band markers must move when the
+        // user re-explores the dashboard with different filters.
+    }, [targetSensor, dashboardFilterKey]);
 
     // Track theme so the Mean markLine stays visible in both dark & light modes.
     const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
@@ -712,40 +761,6 @@ export default function PredictiveModelBuild() {
         }
         return false;
     }, [subModels, predictorSensors]);
-
-    // Build the dashboard-filter payload sent to `preview_relationship_model`.
-    // The relationship preview must be computed off the same filtered slice
-    // the user saw on the dashboard, so any timestamp / value filter set
-    // there flows through to the (X, y) construction on the Rust side.
-    // Returns `null` when no filter is active — Rust then falls back to
-    // "use every row" (legacy behavior).
-    const dashboardFilterPayload = useMemo(() => {
-        const f = dashboardSnapshot?.filters;
-        if (!f) return null;
-        const valueFilters = (f.sensorFilters ?? [])
-            .filter(sf => sf.value1 !== '')
-            .map(sf => ({
-                sensor: sf.sensor,
-                operation: sf.operation,
-                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
-                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
-            }));
-        const tsStart = f.timestampStart || null;
-        const tsEnd = f.timestampEnd || null;
-        if (!tsStart && !tsEnd && valueFilters.length === 0) return null;
-        return {
-            timestamp_start: tsStart,
-            timestamp_end: tsEnd,
-            value_filters: valueFilters,
-        };
-    }, [dashboardSnapshot]);
-
-    // Stable string key used to detect filter changes for cache invalidation
-    // without re-running effects on identical-but-new object references.
-    const dashboardFilterKey = useMemo(
-        () => JSON.stringify(dashboardFilterPayload),
-        [dashboardFilterPayload],
-    );
 
     // Invalidate the cached fit whenever the regression target, the smoothness
     // parameter, or the dashboard filter changes — any of those produce a
@@ -1417,6 +1432,7 @@ export default function PredictiveModelBuild() {
                 n_clusters: effectiveClusters,
                 criteria_sensor: effectiveClusters > 1 ? criteriaSensor : null,
                 cluster_ranges: effectiveClusters > 1 ? clusterRanges.slice(0, effectiveClusters) : null,
+                filter: dashboardFilterPayload,
             });
             setClusteringPreview(result);
             console.log("Clustering preview:", result);
@@ -1530,6 +1546,7 @@ export default function PredictiveModelBuild() {
                     target: targetSensor,
                     model_name: null,
                     save_path: savePath,
+                    filter: dashboardFilterPayload,
                 });
                 written.push(`Individual → ${info.saved_path}`);
             }
@@ -1545,6 +1562,7 @@ export default function PredictiveModelBuild() {
                     lambda: relStiffness,
                     save_path: savePath,
                     model_name: relModelName.trim() || null,
+                    filter: dashboardFilterPayload,
                 });
                 written.push(`Relationship → ${trained.info_path}`);
             }
@@ -1572,6 +1590,7 @@ export default function PredictiveModelBuild() {
                     cluster_ranges: effectiveClusters > 1 ? clusterRanges.slice(0, effectiveClusters) : null,
                     model_name: clusterModelName.trim() || null,
                     save_path: savePath,
+                    filter: dashboardFilterPayload,
                 });
                 written.push(`Clustering → ${trained.saved_path}`);
             }
@@ -1629,9 +1648,7 @@ export default function PredictiveModelBuild() {
 
             {/* Command bar */}
             <div className="pm-commandbar">
-                <button className="pm-back-btn" title="Back"><ChevronLeft size={16} /></button>
                 <div className="pm-breadcrumb">
-                    <span className="pm-crumb-eyebrow">Workspace</span>
                     <span className="pm-crumb-current" title={workspaceName || undefined}>
                         {workspaceName || 'Unnamed'}
                     </span>
@@ -1639,7 +1656,6 @@ export default function PredictiveModelBuild() {
                     <span className="pm-crumb-muted">Target</span>
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
-                <span className="pm-step-pill">Step 3 of 3</span>
                 <div className="pm-flex-spacer" />
                 <button className="pm-btn pm-btn-secondary" onClick={handleOpenPreview}>Preview</button>
                 <button

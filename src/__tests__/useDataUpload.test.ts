@@ -239,5 +239,88 @@ describe('useDataUpload', () => {
     expect(result.current.loadReport).toBeNull();
     expect(result.current.error).toBeNull();
     expect(result.current.isLoading).toBe(false);
+    expect(result.current.isStale).toBe(false);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // isStale lifecycle — guards against shipping a stale loadReport whose
+  // selectedFiles no longer match the snapshot used at parse time.
+  // ──────────────────────────────────────────────────────────────────────
+  describe('isStale', () => {
+    it('is false initially (no parse yet)', () => {
+      const { result } = renderHook(() => useDataUpload());
+      expect(result.current.isStale).toBe(false);
+    });
+
+    it('is false right after a successful parse', async () => {
+      mockOpen.mockResolvedValue(['/a.csv']);
+      mockInvoke.mockResolvedValue(sampleReport);
+      const { result } = renderHook(() => useDataUpload());
+
+      await act(async () => { await result.current.selectFiles(); });
+      await act(async () => { await result.current.uploadDataset(); });
+
+      expect(result.current.isStale).toBe(false);
+    });
+
+    it('flips to true when a new file is added after parse', async () => {
+      mockOpen.mockResolvedValueOnce(['/a.csv']);
+      mockInvoke.mockResolvedValueOnce(sampleReport);
+      const { result } = renderHook(() => useDataUpload());
+
+      await act(async () => { await result.current.selectFiles(); });
+      await act(async () => { await result.current.uploadDataset(); });
+      expect(result.current.isStale).toBe(false);
+
+      mockOpen.mockResolvedValueOnce(['/b.csv']);
+      await act(async () => { await result.current.selectFiles(); });
+
+      expect(result.current.selectedFiles).toEqual(['/a.csv', '/b.csv']);
+      expect(result.current.isStale).toBe(true);
+    });
+
+    it('flips to true when a file is removed after parse', async () => {
+      mockOpen.mockResolvedValue(['/a.csv', '/b.csv']);
+      mockInvoke.mockResolvedValue(sampleReport);
+      const { result } = renderHook(() => useDataUpload());
+
+      await act(async () => { await result.current.selectFiles(); });
+      await act(async () => { await result.current.uploadDataset(); });
+      expect(result.current.isStale).toBe(false);
+
+      act(() => { result.current.removeFile('/b.csv'); });
+
+      expect(result.current.isStale).toBe(true);
+    });
+
+    it('resets to false after a re-parse with the new selection', async () => {
+      mockOpen.mockResolvedValueOnce(['/a.csv']);
+      mockInvoke.mockResolvedValueOnce(sampleReport);
+      const { result } = renderHook(() => useDataUpload());
+
+      await act(async () => { await result.current.selectFiles(); });
+      await act(async () => { await result.current.uploadDataset(); });
+
+      mockOpen.mockResolvedValueOnce(['/b.csv']);
+      await act(async () => { await result.current.selectFiles(); });
+      expect(result.current.isStale).toBe(true);
+
+      mockInvoke.mockResolvedValueOnce(sampleReport);
+      await act(async () => { await result.current.uploadDataset(); });
+
+      expect(result.current.isStale).toBe(false);
+    });
+
+    it('stays false when a parse fails (no snapshot to diverge from)', async () => {
+      mockOpen.mockResolvedValue(['/a.csv']);
+      mockInvoke.mockRejectedValue(new Error('parse boom'));
+      const { result } = renderHook(() => useDataUpload());
+
+      await act(async () => { await result.current.selectFiles(); });
+      await act(async () => { await result.current.uploadDataset(); });
+
+      expect(result.current.loadReport).toBeNull();
+      expect(result.current.isStale).toBe(false);
+    });
   });
 });
