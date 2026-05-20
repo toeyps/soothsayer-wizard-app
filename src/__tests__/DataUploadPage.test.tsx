@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, cleanup, act } from '@testing-library/react';
 import DataUploadPage from '../components/upload/DataUploadPage';
 import type {
   CsvMetadata,
@@ -157,10 +157,32 @@ function rowFor(text: string): HTMLElement {
 // Default setup — each test overrides only what it needs
 // ─────────────────────────────────────────────────────────────────────────
 
+// Capture the most recent focus-change handler so tests can simulate
+// `tauri://focus` events without going through the IPC layer.
+let lastFocusHandler: ((e: { payload: boolean }) => void) | null = null;
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.documentElement.setAttribute('data-theme', 'dark');
   mockGetRecent.mockResolvedValue([]);
+  // `listen` must return a Promise<unlisten>; the page chains `.then()` on it
+  // (e.g. the `upload-page-resumed` subscription). Default to a no-op.
+  mockListen.mockResolvedValue(() => {});
+  // `getCurrentWindow()` is called for: (a) onFocusChanged subscription,
+  // (b) destroy() in handleLoadWorkspace's FG-route branch, (c) hide() in the
+  // same branch. Return a stub covering all three. The focus handler is
+  // captured so I43 can fire it manually.
+  lastFocusHandler = null;
+  mockGetCurrentWindow.mockReturnValue({
+    onFocusChanged: vi.fn(async (handler: (e: { payload: boolean }) => void) => {
+      lastFocusHandler = handler;
+      return () => {};
+    }),
+    destroy: vi.fn().mockResolvedValue(undefined),
+    hide: vi.fn().mockResolvedValue(undefined),
+    show: vi.fn().mockResolvedValue(undefined),
+    setFocus: vi.fn().mockResolvedValue(undefined),
+  });
   useDataUploadMock.mockReturnValue(makeDataUpload());
   useMappingDataMock.mockReturnValue(makeMapping());
 });
@@ -842,6 +864,80 @@ describe('I. Stale-report state', () => {
 
     expect(screen.getByText('Parse dataset first')).toBeTruthy();
     expect(screen.queryByText('sensors.csv')).toBeNull();
+  });
+
+  it('I43. firing `upload-page-resumed` clears stuck loadingWorkspace state', async () => {
+    // Regression: sub-window (FG / PM) "Back to Upload" reuses the existing
+    // main webview via WebviewWindow.getByLabel('main') → show()+setFocus().
+    // React state survives, so `loadingWorkspace=true` (set when the user
+    // originally clicked the Recent Workspace row) was getting stuck — the
+    // navigation that was supposed to flip it off already happened in the
+    // sub-window's lifetime. The sub-window now emits `upload-page-resumed`
+    // before closing; this test verifies the page's listener clears the flag.
+    mockGetRecent.mockResolvedValue([
+      { id: 'ws_1', name: 'Stuck workspace', lastModified: Date.now(), filePath: '/ws/ws_1.json' },
+    ] satisfies WorkspaceMetadata[]);
+    // Make loadWorkspaceData hang so loadingWorkspace stays true.
+    mockLoadWorkspace.mockReturnValue(new Promise(() => { /* never resolves */ }));
+
+    render(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => expect(screen.getByText('Stuck workspace')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Stuck workspace'));
+    await waitFor(() => expect(screen.getByText('Loading workspace…')).toBeTruthy());
+
+    // Locate the `upload-page-resumed` listener (page also registers a
+    // `request-failure-group-data` listener inside handleLoadWorkspace).
+    const resumeCall = mockListen.mock.calls.find((c) => c[0] === 'upload-page-resumed');
+    expect(resumeCall).toBeDefined();
+    const handler = resumeCall![1] as (e: { event: string; payload: undefined; id: number }) => void;
+
+    await act(async () => {
+      handler({ event: 'upload-page-resumed', payload: undefined, id: 0 });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading workspace…')).toBeNull();
+    });
+  });
+
+  it('I44. fallback: window regaining focus >2s into a stuck load also clears the spinner', async () => {
+    // Defense-in-depth for the same regression as I43. If the explicit
+    // `upload-page-resumed` event is dropped (IPC swallowed, sub-window
+    // force-quit, etc.), the `tauri://focus` event still fires when main
+    // becomes the active window again — we use that as a secondary signal.
+    vi.useFakeTimers();
+    try {
+      mockGetRecent.mockResolvedValue([
+        { id: 'ws_1', name: 'Stuck workspace', lastModified: Date.now(), filePath: '/ws/ws_1.json' },
+      ] satisfies WorkspaceMetadata[]);
+      mockLoadWorkspace.mockReturnValue(new Promise(() => { /* never resolves */ }));
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await vi.waitFor(() => expect(screen.getByText('Stuck workspace')).toBeTruthy());
+
+      fireEvent.click(screen.getByText('Stuck workspace'));
+      await vi.waitFor(() => expect(screen.getByText('Loading workspace…')).toBeTruthy());
+
+      // Simulate enough wall-clock to exceed the 2 s freshness window the
+      // focus handler uses to decide stale.
+      await act(async () => {
+        vi.advanceTimersByTime(2500);
+      });
+
+      // The focus handler is registered during the page's mount effect.
+      // `lastFocusHandler` captures it (see beforeEach).
+      expect(lastFocusHandler).not.toBeNull();
+      await act(async () => {
+        lastFocusHandler!({ payload: true });
+      });
+
+      await vi.waitFor(() => {
+        expect(screen.queryByText('Loading workspace…')).toBeNull();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('I42. removing all files after parse → Continue disabled, no Parse button (nothing to parse)', () => {

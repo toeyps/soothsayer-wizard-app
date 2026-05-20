@@ -23,12 +23,18 @@ export interface SubWindowMenuHandlers {
 // Returns a bridge to the main window: focuses it if it exists, otherwise spawns a fresh main
 // window (always pointed at the import page — there is no auto-resume). Closes the current window
 // so the user always lands somewhere.
+//
+// When the existing main window is REUSED (show + setFocus), its React state still holds whatever
+// values were set right before the user navigated away (e.g. `loadingWorkspace=true` from the
+// click on a Recent Workspace). Emit `upload-page-resumed` so DataUploadPage can reset that
+// transient state — fresh-spawn path doesn't need this because React state starts clean.
 async function openMainAndClose() {
     try {
         const existing = await WebviewWindow.getByLabel('main');
         if (existing) {
             await existing.show();
             await existing.setFocus();
+            try { await emit('upload-page-resumed'); } catch { /* ignore */ }
         } else {
             new WebviewWindow('main', {
                 url: '/',

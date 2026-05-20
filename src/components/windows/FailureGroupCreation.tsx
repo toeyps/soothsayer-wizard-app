@@ -594,6 +594,12 @@ export default function FailureGroupCreation() {
             if (existing) {
                 await existing.show();
                 await existing.setFocus();
+                // Reused main: its React state still holds `loadingWorkspace=true`
+                // from the click that took the user here. Without this nudge the
+                // Upload page comes back showing a forever-spinning loader.
+                // Fresh-spawn path (else branch) doesn't need it — React state
+                // boots clean.
+                try { await emit('upload-page-resumed'); } catch { /* ignore */ }
             } else {
                 new WebviewWindow('main', {
                     url: '/',

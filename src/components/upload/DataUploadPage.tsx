@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Search,
   Check,
@@ -155,6 +155,62 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     refreshWorkspaces();
   }, []);
 
+  // Tracks when the current workspace-load started — used by the
+  // focus-fallback below to decide whether to nuke a stuck loading state.
+  const loadingStartedAtRef = useRef<number | null>(null);
+
+  const clearLoadingState = () => {
+    setLoadingWorkspace(false);
+    setActiveWorkspaceId(null);
+    setWorkspaceError(null);
+    loadingStartedAtRef.current = null;
+  };
+
+  // Reset in-flight workspace-load state when a sub-window (FG / PM) hands
+  // focus back to main. Without this the loading spinner sticks forever:
+  //   1. User clicks a Recent Workspace → setLoadingWorkspace(true), then
+  //      handleLoadWorkspace spawns the FG/PM sub-window and (in the
+  //      handshake's success path) destroys main.
+  //   2. If the user clicks "Back to Upload" BEFORE main is destroyed (or
+  //      the destroy is swallowed), the sub-window reuses main via
+  //      WebviewWindow.getByLabel('main') + show()+setFocus(). React state
+  //      survives intact — including the stale `loadingWorkspace=true`.
+  //
+  // Two layers of defense:
+  //   (a) Primary — sub-window emits `upload-page-resumed` right before
+  //       closing; we listen and reset. Explicit, unambiguous.
+  //   (b) Fallback — `tauri://focus` event. If main regains focus and
+  //       `loadingWorkspace` is still true after the typical load duration
+  //       (>2 s), the load has clearly handed off already → reset. Catches
+  //       paths the explicit emit might miss (e.g. native red-close on
+  //       macOS, force-quit of sub-window, IPC swallowed).
+  //
+  // We refresh the workspace list on either signal since the user may have
+  // saved / renamed in the sub-window.
+  useEffect(() => {
+    let disposeListen: (() => void) | undefined;
+    let disposeFocus: (() => void) | undefined;
+
+    listen('upload-page-resumed', () => {
+      clearLoadingState();
+      refreshWorkspaces();
+    }).then((fn) => { disposeListen = fn; });
+
+    getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) return;
+      const started = loadingStartedAtRef.current;
+      if (started !== null && Date.now() - started > 2000) {
+        clearLoadingState();
+        refreshWorkspaces();
+      }
+    }).then((fn) => { disposeFocus = fn; });
+
+    return () => {
+      if (disposeListen) disposeListen();
+      if (disposeFocus) disposeFocus();
+    };
+  }, []);
+
   const files = dataUpload.selectedFiles;
   const report = dataUpload.loadReport;
   const hasFiles = files.length > 0;
@@ -215,6 +271,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     setLoadingWorkspace(true);
     setWorkspaceError(null);
     setActiveWorkspaceId(id);
+    loadingStartedAtRef.current = Date.now();
     try {
       const state = await loadWorkspaceData(id);
       if (!state) throw new Error("Workspace not found");
@@ -332,6 +389,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       setWorkspaceError(String(err));
       setLoadingWorkspace(false);
       setActiveWorkspaceId(null);
+      loadingStartedAtRef.current = null;
     }
   };
 
