@@ -73,7 +73,7 @@ export function useAppMenu(handlers: AppMenuHandlers) {
 
                 const helpItems = [
                     await MenuItem.new({
-                        id: 'menu-about', text: 'About Soothsayer-Wizard',
+                        id: 'menu-about', text: 'About Wizard',
                         action: () => handlersRef.current.onAbout(),
                     }),
                 ];

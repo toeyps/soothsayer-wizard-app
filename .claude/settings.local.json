@@ -81,7 +81,25 @@
       "Bash(tee /tmp/installer-script-test.log)",
       "Bash(command -v pwsh)",
       "Bash(pwsh -NoLogo -Command \"Get-Content scripts/build-installer-windows.ps1 | Out-Null; Write-Host 'PS syntax OK'\")",
-      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")"
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")",
+      "Bash(ls -la /Users/tide/Desktop/w/Soothsayer-UI-migration/Soothsayer-UI/public/favicon.ico && ls -la /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/icons/)",
+      "Bash(find /Users/tide/Desktop/w/Soothsayer-UI-migration -type f \\\\\\( -iname \"*.png\" -o -iname \"*.svg\" -o -iname \"*.ico\" \\\\\\) -not -path \"*/node_modules/*\" 2>/dev/null | head -30)",
+      "Bash(npx --no-install @tauri-apps/cli --version)",
+      "Bash(cp /Users/tide/Desktop/w/Soothsayer-UI-migration/Soothsayer-UI/public/favicon.ico /tmp/fav.ico)",
+      "Bash(sips -s format png /tmp/fav.ico --out /tmp/fav.png)",
+      "Bash(xargs -I {} sh -c 'echo \"{}\"; file \"{}\" 2>/dev/null | head -1')",
+      "Bash(cp /Users/tide/Desktop/w/Soothsayer-UI-migration/Soothsayer-UI/public/favicon.ico /tmp/source-fav.ico)",
+      "Bash(sips -z 1024 1024 -s format png /tmp/source-fav.ico --out /tmp/source-1024.png)",
+      "Bash(npx @tauri-apps/cli icon /tmp/source-1024.png)",
+      "Bash(ls -laht ~/Downloads | head -25)",
+      "Bash(npx @tauri-apps/cli icon \"/Users/tide/Downloads/ChatGPT Image May 21, 2026, 10_07_15 AM.png\")",
+      "Bash(sips -g pixelHeight -g pixelWidth /Users/tide/Desktop/w/tauri-sensor-viz/public/splash-logo.png)",
+      "Bash(rm -rf /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/build/tauri-app-* /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app.d /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/deps/tauri_app-* 2>&1 | head -5; echo \"---\"; ls /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app 2>&1; echo \"---\"; ls -d /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/build/tauri-app-* 2>&1)",
+      "Bash(python3 -c \"from PIL import Image; print\\('PIL ok'\\)\")",
+      "Bash(python3 -m pip install --user --quiet Pillow)",
+      "Bash(python3 -m pip install --user Pillow)",
+      "Bash(npx @tauri-apps/cli icon /tmp/wizard-logo-transparent.png)",
+      "Bash(rm -rf /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/build/tauri-app-* /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app.d /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/deps/tauri_app-* 2>&1; ls /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app 2>&1; echo \"Build cache cleared\")"
     ]
   }
 }

@@ -38,7 +38,7 @@ async function openMainAndClose() {
         } else {
             new WebviewWindow('main', {
                 url: '/',
-                title: 'Soothsayer-Wizard',
+                title: 'Wizard',
                 width: 1200,
                 height: 800,
                 center: true,
@@ -204,9 +204,9 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
 
                 const helpItems = [
                     await MenuItem.new({
-                        id: 'sub-about', text: 'About Soothsayer-Wizard',
+                        id: 'sub-about', text: 'About Wizard',
                         action: async () => {
-                            try { await message('Soothsayer-Wizard v0.1.0', { title: 'About', kind: 'info' }); }
+                            try { await message('Wizard v0.1.0', { title: 'About', kind: 'info' }); }
                             catch { /* ignore */ }
                         },
                     }),

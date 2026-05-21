@@ -79,11 +79,11 @@ function App() {
     onAbout: async () => {
         try {
             await message(
-                'Soothsayer-Wizard\nVersion 0.1.0\n\nA desktop tool for CSV sensor data exploration and predictive modeling.',
+                'Wizard\nVersion 0.1.0\n\nA desktop tool for CSV sensor data exploration and predictive modeling.',
                 { title: 'About', kind: 'info' }
             );
         } catch {
-            alert('Soothsayer-Wizard v0.1.0');
+            alert('Wizard v0.1.0');
         }
     },
   });

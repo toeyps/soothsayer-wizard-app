@@ -2,14 +2,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readTextFile } from "@tauri-apps/plugin-fs";
+import { open as openDialog, save as saveDialog, ask, message } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { CsvMetadata, SensorMetadata, DashboardSnapshot, FailureGroup, FailureSensorRow as SensorRow, WorkspaceState } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, Minus, Square, GripVertical, Play, ArrowLeft } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
-import { ask } from "@tauri-apps/plugin-dialog";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -129,7 +128,10 @@ export default function FailureGroupCreation() {
                     ],
                     filterTimeStart: "",
                     filterTimeEnd: "",
-                    filterSensorValue: "",
+                    // Per-sensor value filters live on the PM page itself
+                    // (target+predictors pool). Seeded empty here; user
+                    // builds them up after the model window opens.
+                    pmSensorFilters: [],
                 }),
                 targetSensor: target,
                 predictorSensors: predictors,
@@ -555,27 +557,50 @@ export default function FailureGroupCreation() {
         }
     };
 
-    const handleDownloadTemplate = () => {
-        const blob = new Blob([CSV_HEADERS.join(",") + "\n"], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = 'failure_group_template.csv';
-        link.click();
-        URL.revokeObjectURL(link.href);
+    // Native save dialog → user picks destination + filename → writeTextFile.
+    // Previously this used `link.click()` with `<a download>`, which is a
+    // browser-only mechanism that silently drops files into ~/Downloads with
+    // no path control and no feedback. The dialog plugin's save() grants the
+    // selected path runtime fs scope, so writeTextFile to that exact path
+    // works even though the global scope only covers AppData.
+    const handleDownloadTemplate = async () => {
+        try {
+            const path = await saveDialog({
+                defaultPath: 'failure_group_template.csv',
+                filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+            });
+            if (!path) return;  // user cancelled
+            await writeTextFile(path, CSV_HEADERS.join(",") + "\n");
+            try { await message(`Template saved to:\n${path}`, { title: 'Saved', kind: 'info' }); }
+            catch { /* ignore */ }
+        } catch (e) {
+            console.error('Failed to save template:', e);
+            try { await message(`Failed to save template: ${e}`, { title: 'Save failed', kind: 'error' }); }
+            catch { /* ignore */ }
+        }
     };
 
-    const handleSave = () => {
-        const csvRows = rows.map(r => {
-            const group = groups.find(g => g.no === r.groupNo);
-            return [r.groupNo, group?.name || '', r.conceptSensor, r.mappedSensorTag, r.mappedSensorName, r.modelType, r.modelNotes, r.additionalNotes, r.status ? "Yes" : "No"]
-                .map(csvEscape).join(",");
-        });
-        const blob = new Blob([[CSV_HEADERS.join(","), ...csvRows].join("\n")], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `failure_groups_${new Date().toISOString().slice(0, 10)}.csv`;
-        link.click();
-        URL.revokeObjectURL(link.href);
+    const handleSave = async () => {
+        try {
+            const csvRows = rows.map(r => {
+                const group = groups.find(g => g.no === r.groupNo);
+                return [r.groupNo, group?.name || '', r.conceptSensor, r.mappedSensorTag, r.mappedSensorName, r.modelType, r.modelNotes, r.additionalNotes, r.status ? "Yes" : "No"]
+                    .map(csvEscape).join(",");
+            });
+            const csvText = [CSV_HEADERS.join(","), ...csvRows].join("\n");
+            const path = await saveDialog({
+                defaultPath: `failure_groups_${new Date().toISOString().slice(0, 10)}.csv`,
+                filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+            });
+            if (!path) return;  // user cancelled
+            await writeTextFile(path, csvText);
+            try { await message(`Failure groups saved to:\n${path}`, { title: 'Saved', kind: 'info' }); }
+            catch { /* ignore */ }
+        } catch (e) {
+            console.error('Failed to save failure groups:', e);
+            try { await message(`Failed to save groups: ${e}`, { title: 'Save failed', kind: 'error' }); }
+            catch { /* ignore */ }
+        }
     };
 
     // ── Back to Upload ────────────────────────────────────────────
@@ -603,7 +628,7 @@ export default function FailureGroupCreation() {
             } else {
                 new WebviewWindow('main', {
                     url: '/',
-                    title: 'Soothsayer-Wizard',
+                    title: 'Wizard',
                     width: 1200,
                     height: 800,
                     center: true,

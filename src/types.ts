@@ -116,7 +116,17 @@ export interface PredictiveModelStateSlice {
     clusterRanges: PredictiveClusterRange[];
     filterTimeStart: string;
     filterTimeEnd: string;
-    filterSensorValue: string;
+    /**
+     * Per-sensor value filters set on the PM page itself. Sensor pool is
+     * restricted to the page's target + predictors at the time the row is
+     * added (UI enforces this). Combined AND-style with whatever filters
+     * the user already applied on the Dashboard before navigating here —
+     * the dashboard slice is the base, PM filters narrow further.
+     *
+     * Shape matches `WorkspaceSensorFilter` so the same Rust-side
+     * `value_filters` payload format is reused (no new commands needed).
+     */
+    pmSensorFilters: WorkspaceSensorFilter[];
 }
 
 export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group' | 'predictive-model';

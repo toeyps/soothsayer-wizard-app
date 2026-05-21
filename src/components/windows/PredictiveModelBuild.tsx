@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange } from "../../types";
+import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -152,46 +153,6 @@ export default function PredictiveModelBuild() {
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
 
-    // ── Dashboard filter passed through to every Rust data-reading command ──
-    // The Dashboard "Save & Continue" path snapshots its FilterPanel state into
-    // `dashboardSnapshot.filters`. We translate that into the snake_case shape
-    // Rust expects (`PreviewFilter`) and forward it on every invoke so target
-    // chart, σ markers, clustering preview, and all `train_*` commands operate
-    // on the same filtered slice the user explored.
-    //
-    // Returns `null` when no filter is active — Rust then falls back to "use
-    // every row" (legacy behavior, plus identical request shape for tests).
-    //
-    // Hoisted above the chart/stats effects (~line 470/560 below) because
-    // those effects depend on `dashboardFilterKey` — moving the memos here
-    // avoids a temporal-dead-zone reference during render.
-    const dashboardFilterPayload = useMemo(() => {
-        const f = dashboardSnapshot?.filters;
-        if (!f) return null;
-        const valueFilters = (f.sensorFilters ?? [])
-            .filter(sf => sf.value1 !== '')
-            .map(sf => ({
-                sensor: sf.sensor,
-                operation: sf.operation,
-                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
-                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
-            }));
-        const tsStart = f.timestampStart || null;
-        const tsEnd = f.timestampEnd || null;
-        if (!tsStart && !tsEnd && valueFilters.length === 0) return null;
-        return {
-            timestamp_start: tsStart,
-            timestamp_end: tsEnd,
-            value_filters: valueFilters,
-        };
-    }, [dashboardSnapshot]);
-
-    // Stable string key used to detect filter changes for cache invalidation
-    // without re-running effects on identical-but-new object references.
-    const dashboardFilterKey = useMemo(
-        () => JSON.stringify(dashboardFilterPayload),
-        [dashboardFilterPayload],
-    );
     // Data from previous page
     const [targetSensor, setTargetSensor] = useState<string>("");
     const [predictorSensors, setPredictorSensors] = useState<string[]>([]);
@@ -238,7 +199,101 @@ export default function PredictiveModelBuild() {
     // Data Filter
     const [filterTimeStart, setFilterTimeStart] = useState("");
     const [filterTimeEnd, setFilterTimeEnd] = useState("");
-    const [filterSensorValue, setFilterSensorValue] = useState("");
+    // PM-page-local per-sensor value filters. AND-combined with the dashboard
+    // filter slice when building `dashboardFilterPayload` below, so users can
+    // narrow the explored slice further per-sensor before training/preview
+    // without going back to Dashboard. Sensor pool comes from `pmFilterSensorPool`
+    // (target + predictors), enforced by the UI's select.
+    const [pmSensorFilters, setPmSensorFilters] = useState<WorkspaceSensorFilter[]>([]);
+
+    // ── Dashboard filter passed through to every Rust data-reading command ──
+    // The Dashboard "Save & Continue" path snapshots its FilterPanel state into
+    // `dashboardSnapshot.filters`. We translate that into the snake_case shape
+    // Rust expects (`PreviewFilter`) and forward it on every invoke so target
+    // chart, σ markers, clustering preview, and all `train_*` commands operate
+    // on the same filtered slice the user explored.
+    //
+    // PM-page-local `pmSensorFilters` are appended to the dashboard's sensor
+    // filters with AND semantics — the dashboard slice is the base, PM
+    // filters narrow further per-sensor. Time range still comes only from
+    // dashboard (PM page exposes its own time inputs but those remain
+    // purely cosmetic for now; wire them in later if needed).
+    //
+    // Returns `null` when no filter is active — Rust then falls back to "use
+    // every row" (legacy behavior, plus identical request shape for tests).
+    //
+    // Hoisted above the chart/stats effects (~line 470/560 below) because
+    // those effects depend on `dashboardFilterKey` — placing the memos right
+    // after the filter inputs avoids a temporal-dead-zone reference during
+    // render.
+    const dashboardFilterPayload = useMemo(() => {
+        const dash = dashboardSnapshot?.filters;
+        const dashSensorFilters = dash?.sensorFilters ?? [];
+        const tsStart = dash?.timestampStart || null;
+        const tsEnd = dash?.timestampEnd || null;
+
+        const valueFilters = [...dashSensorFilters, ...pmSensorFilters]
+            .filter(sf => sf.value1 !== '')
+            .map(sf => ({
+                sensor: sf.sensor,
+                operation: sf.operation,
+                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+            }));
+
+        if (!tsStart && !tsEnd && valueFilters.length === 0) return null;
+        return {
+            timestamp_start: tsStart,
+            timestamp_end: tsEnd,
+            value_filters: valueFilters,
+        };
+    }, [dashboardSnapshot, pmSensorFilters]);
+
+    // Stable string key used to detect filter changes for cache invalidation
+    // without re-running effects on identical-but-new object references.
+    const dashboardFilterKey = useMemo(
+        () => JSON.stringify(dashboardFilterPayload),
+        [dashboardFilterPayload],
+    );
+
+    // ── PM-page per-sensor filter helpers ──────────────────────────────
+    // Pool of sensors the user can pick from when adding a filter row.
+    // Target appears first (it IS a sensor on this page, so the user can
+    // filter on it too), then predictors. Deduped because `targetSensor`
+    // could also live in `predictorSensors` after some user flows.
+    // Falls back to empty when nothing's chosen, in which case the Add
+    // button is disabled with a tooltip hint.
+    const pmFilterSensorPool = useMemo(() => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        if (targetSensor) { seen.add(targetSensor); out.push(targetSensor); }
+        for (const p of predictorSensors) {
+            if (!seen.has(p)) { seen.add(p); out.push(p); }
+        }
+        return out;
+    }, [targetSensor, predictorSensors]);
+
+    const addPmSensorFilter = useCallback(() => {
+        if (pmFilterSensorPool.length === 0) return;
+        setPmSensorFilters(prev => [...prev, {
+            id: `pmf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            sensor: pmFilterSensorPool[0],
+            operation: 'greater_than',
+            value1: '',
+            value2: '',
+        }]);
+    }, [pmFilterSensorPool]);
+
+    const updatePmSensorFilter = useCallback(
+        (id: string, patch: Partial<WorkspaceSensorFilter>) => {
+            setPmSensorFilters(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
+        },
+        [],
+    );
+
+    const removePmSensorFilter = useCallback((id: string) => {
+        setPmSensorFilters(prev => prev.filter(f => f.id !== id));
+    }, []);
 
     // Model Stats — computed on Rust side over ALL rows of the target sensor.
     const [targetStats, setTargetStats] = useState<SensorStats | null>(null);
@@ -360,6 +415,27 @@ export default function PredictiveModelBuild() {
         return () => window.removeEventListener('keydown', onKey);
     }, [subModelsOpen]);
 
+    // ── Save-confirmation modal ───────────────────────────────────────
+    // Intercepts every Save Model trigger (toolbar button, Preview
+    // modal's Save button, native sub-window menu's "Save Model" item)
+    // and presents a plain-language summary of what will be written
+    // before we open the folder picker + heavy train_*_model invokes.
+    //
+    // Catches three common mistakes BEFORE the user picks a folder:
+    //   • Wrong target sensor still selected from a previous workspace.
+    //   • Relationship mode toggled but no predictors selected.
+    //   • Clustering mode toggled with mismatched cluster ranges /
+    //     missing criteria sensor.
+    const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
+    useEffect(() => {
+        if (!confirmSaveOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setConfirmSaveOpen(false);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [confirmSaveOpen]);
+
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
@@ -428,7 +504,11 @@ export default function PredictiveModelBuild() {
                     }
                     setFilterTimeStart(slice.filterTimeStart);
                     setFilterTimeEnd(slice.filterTimeEnd);
-                    setFilterSensorValue(slice.filterSensorValue);
+                    // Backward-compat: older workspaces persisted a single free-text
+                    // `filterSensorValue` (e.g. "> 50") that was never wired to the
+                    // payload. Drop it on load; new per-sensor filters live in
+                    // `pmSensorFilters` and now actually affect the model.
+                    setPmSensorFilters(Array.isArray(slice.pmSensorFilters) ? slice.pmSensorFilters : []);
                 } else if (effectivePredictors.length > 0) {
                     setScatterXSensor(effectivePredictors[0]);
                 }
@@ -478,7 +558,7 @@ export default function PredictiveModelBuild() {
                 clusterRanges,
                 filterTimeStart,
                 filterTimeEnd,
-                filterSensorValue,
+                pmSensorFilters,
             };
             updateWorkspaceData(workspaceId, (prev) => ({
                 ...prev,
@@ -490,7 +570,7 @@ export default function PredictiveModelBuild() {
     }, [
         workspaceId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
-        clusterRanges, filterTimeStart, filterTimeEnd, filterSensorValue,
+        clusterRanges, filterTimeStart, filterTimeEnd, pmSensorFilters,
     ]);
 
     // Fetch target-sensor time-series whenever targetSensor changes.
@@ -1517,6 +1597,94 @@ export default function PredictiveModelBuild() {
         return picked;
     };
 
+    // ── Save plan (drives the confirmation modal) ─────────────────────
+    // Mirrors the branching inside `handleSaveModel` so the modal can
+    // show, per model that will be saved, the inputs the train_* call
+    // will actually receive — plus any blocking validation message that
+    // would cause `handleSaveModel` to throw. The modal disables
+    // Confirm when any warning is present, so the user fixes config
+    // BEFORE we open the folder picker (vs. picking, training, then
+    // failing).
+    interface SavePlanItem {
+        kind: 'individual' | 'relationship' | 'clustering';
+        title: string;
+        /** Blocking validation message — present only when `handleSaveModel`
+         *  would throw for this item. Causes Confirm to be disabled. */
+        warning?: string;
+        details: Array<{ label: string; value: ReactNode }>;
+    }
+    const savePlan = useMemo<SavePlanItem[]>(() => {
+        const items: SavePlanItem[] = [];
+        if (individualChecked) {
+            items.push({
+                kind: 'individual',
+                title: 'Individual model',
+                details: [
+                    { label: 'Target', value: targetSensor || '—' },
+                ],
+            });
+        }
+        if (rcMode === 'relationship') {
+            items.push({
+                kind: 'relationship',
+                title: 'Relationship model',
+                warning: predictorSensors.length === 0
+                    ? 'Requires at least one predictor.'
+                    : undefined,
+                details: [
+                    { label: 'Model name', value: relModelName.trim() || <em style={{ opacity: 0.7 }}>auto-generated</em> },
+                    { label: 'Target', value: targetSensor || '—' },
+                    { label: 'Predictors', value: predictorSensors.length > 0
+                        ? `${predictorSensors.length} · ${predictorSensors.join(', ')}`
+                        : '—' },
+                    { label: 'Stiffness (λ)', value: relStiffness },
+                ],
+            });
+        }
+        if (rcMode === 'clustering') {
+            const firstSensor = scatterXSensor || predictorSensors[0] || "";
+            const effectiveClusters = criteriaSensor ? numClusters : 1;
+            let warning: string | undefined;
+            if (!firstSensor) warning = 'Requires a predictor on the X-axis.';
+            else if (effectiveClusters > 1 && !criteriaSensor) warning = 'Requires a criteria sensor when N ≥ 2.';
+            else if (effectiveClusters > 1 && clusterRanges.length !== effectiveClusters) {
+                warning = `Cluster ranges length (${clusterRanges.length}) does not match N (${effectiveClusters}).`;
+            }
+            items.push({
+                kind: 'clustering',
+                title: 'Clustering model',
+                warning,
+                details: [
+                    { label: 'Model name', value: clusterModelName.trim() || <em style={{ opacity: 0.7 }}>auto-generated</em> },
+                    { label: 'X sensor', value: firstSensor || '—' },
+                    { label: 'Y sensor (target)', value: targetSensor || '—' },
+                    { label: 'Clusters (N)', value: effectiveClusters },
+                    ...(effectiveClusters > 1
+                        ? [{ label: 'Criteria sensor', value: criteriaSensor || '—' } as const]
+                        : []),
+                ],
+            });
+        }
+        return items;
+    }, [individualChecked, rcMode, targetSensor, predictorSensors, relModelName, relStiffness, scatterXSensor, criteriaSensor, numClusters, clusterRanges, clusterModelName]);
+
+    // Aggregated filter footnote shown in the confirm dialog so users
+    // know the filtered slice will carry into training (catches the
+    // "why is my model trained on only 200 rows?" surprise).
+    const activeFilterCount = useMemo(() => {
+        const dash = dashboardSnapshot?.filters?.sensorFilters?.filter(f => f.value1 !== '').length ?? 0;
+        const pm = pmSensorFilters.filter(f => f.value1 !== '').length;
+        const hasTime = !!(dashboardSnapshot?.filters?.timestampStart || dashboardSnapshot?.filters?.timestampEnd);
+        return { dash, pm, hasTime };
+    }, [dashboardSnapshot, pmSensorFilters]);
+
+    const canConfirmSave = useMemo(() => {
+        if (!targetSensor) return false;
+        if (savePlan.length === 0) return false;
+        if (savePlan.some(p => p.warning)) return false;
+        return true;
+    }, [targetSensor, savePlan]);
+
     const handleSaveModel = async () => {
         if (!targetSensor) {
             setSaveStatus({ kind: 'error', message: 'Select a target sensor first.' });
@@ -1611,7 +1779,10 @@ export default function PredictiveModelBuild() {
     useSubWindowMenu({
         workspaceId,
         localSaveLabel: 'Save Model',
-        onLocalSave: () => handleSaveModel(),
+        // Route the menu through the same confirmation modal as the toolbar
+        // button + Preview modal — so users always see the "what's going to
+        // be saved?" summary regardless of which Save Model trigger they use.
+        onLocalSave: () => setConfirmSaveOpen(true),
         onToggleTheme: () => {
             const current = localStorage.getItem('theme') || 'dark';
             const next = current === 'dark' ? 'light' : 'dark';
@@ -1660,7 +1831,7 @@ export default function PredictiveModelBuild() {
                 <button className="pm-btn pm-btn-secondary" onClick={handleOpenPreview}>Preview</button>
                 <button
                     className="pm-btn pm-btn-primary"
-                    onClick={handleSaveModel}
+                    onClick={() => setConfirmSaveOpen(true)}
                     disabled={saveStatus.kind === 'saving'}
                 >
                     {saveStatus.kind === 'saving' ? (
@@ -1711,22 +1882,33 @@ export default function PredictiveModelBuild() {
                             excluded={predictorSensors}
                             clearOnSelect
                         />
-                        {predictorSensors.length > 0 && (
-                            <div className="predictor-tags" style={{ marginTop: '0.6rem' }}>
-                                {predictorSensors.map(s => {
-                                    const d = getDesc(s);
-                                    return (
-                                        <span key={s} className="predictor-tag" title={d}>
-                                            <span className="predictor-tag-main">
-                                                <span className="predictor-tag-name">{s}</span>
-                                                {d && <span className="predictor-tag-desc">{d}</span>}
-                                            </span>
-                                            <button onClick={() => handlePredictorToggle(s)}>&times;</button>
-                                        </span>
-                                    );
-                                })}
-                            </div>
-                        )}
+                        {/* Selected predictor chips — uses the richer pm-selected
+                            styling (color dot per slot, tag + description, remove)
+                            inherited from the old right-column panel. Single
+                            source of truth so the right column doesn't duplicate. */}
+                        <div style={{ marginTop: '0.6rem' }}>
+                            {predictorSensors.length === 0 ? (
+                                <div className="pm-empty-dashed">No predictors selected</div>
+                            ) : (
+                                <div className="pm-selected-list">
+                                    {predictorSensors.map((sensor, idx) => {
+                                        const d = getDesc(sensor);
+                                        return (
+                                            <div key={sensor} className="pm-selected-chip" title={d}>
+                                                <span className={`pm-selected-dot pm-selected-dot-${(idx % 4) + 1}`} />
+                                                <div className="pm-selected-text">
+                                                    <div className="pm-selected-tag">{sensor}</div>
+                                                    {d && <div className="pm-selected-desc">{d}</div>}
+                                                </div>
+                                                <button className="pm-selected-remove" onClick={() => handlePredictorToggle(sensor)}>
+                                                    <X size={12} />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
 
@@ -1762,9 +1944,184 @@ export default function PredictiveModelBuild() {
                                 />
                             </div>
                         </div>
+                        {/* Per-sensor value filters — pool is target + predictors.
+                            AND-combined with dashboard filters via dashboardFilterPayload. */}
                         <div className="filter-row">
-                            <label>Sensor value</label>
-                            <input type="text" value={filterSensorValue} onChange={e => setFilterSensorValue(e.target.value)} placeholder="e.g. > 50" className="config-input" />
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '0.4rem',
+                            }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    Sensor value
+                                    {pmSensorFilters.length > 0 && (
+                                        <span className="pm-count-pill">{pmSensorFilters.length}</span>
+                                    )}
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={addPmSensorFilter}
+                                    disabled={pmFilterSensorPool.length === 0}
+                                    title={pmFilterSensorPool.length === 0
+                                        ? 'Pick a target or add a predictor first'
+                                        : 'Add a sensor value filter'}
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.2rem',
+                                        padding: '0.2rem 0.45rem',
+                                        background: 'rgba(59,130,246,0.12)',
+                                        border: '1px solid rgba(59,130,246,0.3)',
+                                        borderRadius: '4px',
+                                        color: 'var(--accent-color)',
+                                        fontSize: '0.65rem',
+                                        fontWeight: 600,
+                                        cursor: pmFilterSensorPool.length === 0 ? 'not-allowed' : 'pointer',
+                                        opacity: pmFilterSensorPool.length === 0 ? 0.5 : 1,
+                                    }}
+                                >
+                                    <Plus size={10} /> Add
+                                </button>
+                            </div>
+
+                            {pmSensorFilters.length === 0 ? (
+                                <div style={{
+                                    fontSize: '0.7rem',
+                                    color: 'var(--text-secondary)',
+                                    opacity: 0.65,
+                                    padding: '0.3rem 0 0',
+                                    fontStyle: 'italic',
+                                }}>
+                                    {pmFilterSensorPool.length === 0
+                                        ? 'Select a target or predictor to enable per-sensor filtering.'
+                                        : 'No filters. Click Add to create one.'}
+                                </div>
+                            ) : (
+                                <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '0.3rem',
+                                    marginTop: '0.3rem',
+                                }}>
+                                    {pmSensorFilters.map(f => {
+                                        // Sensor was selected at row creation but might no longer
+                                        // be in the pool (predictor removed since). Show it as a
+                                        // disabled stub option so the user can see what's broken
+                                        // and either reassign or remove it.
+                                        const sensorStillValid = pmFilterSensorPool.includes(f.sensor);
+                                        return (
+                                            <div key={f.id} style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.25rem',
+                                                padding: '0.35rem',
+                                                background: 'rgba(255,255,255,0.02)',
+                                                border: `1px solid ${sensorStillValid ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`,
+                                                borderRadius: '6px',
+                                            }}>
+                                                <select
+                                                    value={f.sensor}
+                                                    onChange={e => updatePmSensorFilter(f.id, { sensor: e.target.value })}
+                                                    title={sensorStillValid ? f.sensor : `${f.sensor} is no longer a target/predictor on this page`}
+                                                    style={{
+                                                        flex: 1,
+                                                        minWidth: 0,
+                                                        padding: '0.2rem 0.3rem',
+                                                        background: 'var(--input-bg)',
+                                                        border: '1px solid var(--border)',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '0.7rem',
+                                                        outline: 'none',
+                                                    }}
+                                                >
+                                                    {!sensorStillValid && (
+                                                        <option value={f.sensor} disabled>
+                                                            {f.sensor || '—'} (removed)
+                                                        </option>
+                                                    )}
+                                                    {pmFilterSensorPool.map(s => (
+                                                        <option key={s} value={s}>{s}</option>
+                                                    ))}
+                                                </select>
+                                                <select
+                                                    value={f.operation}
+                                                    onChange={e => updatePmSensorFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
+                                                    style={{
+                                                        padding: '0.2rem 0.3rem',
+                                                        background: 'rgba(59,130,246,0.1)',
+                                                        border: '1px solid rgba(59,130,246,0.25)',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--accent-color)',
+                                                        fontSize: '0.65rem',
+                                                        fontWeight: 600,
+                                                        outline: 'none',
+                                                        flexShrink: 0,
+                                                    }}
+                                                >
+                                                    <option value="greater_than">&gt;</option>
+                                                    <option value="less_than">&lt;</option>
+                                                    <option value="between">between</option>
+                                                    <option value="equals">=</option>
+                                                </select>
+                                                <input
+                                                    type="number"
+                                                    value={f.value1}
+                                                    onChange={e => updatePmSensorFilter(f.id, { value1: e.target.value })}
+                                                    placeholder="val"
+                                                    style={{
+                                                        width: '60px',
+                                                        padding: '0.2rem 0.3rem',
+                                                        background: 'var(--input-bg)',
+                                                        border: '1px solid var(--border)',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '0.7rem',
+                                                        outline: 'none',
+                                                        flexShrink: 0,
+                                                    }}
+                                                />
+                                                {f.operation === 'between' && (
+                                                    <input
+                                                        type="number"
+                                                        value={f.value2}
+                                                        onChange={e => updatePmSensorFilter(f.id, { value2: e.target.value })}
+                                                        placeholder="max"
+                                                        style={{
+                                                            width: '60px',
+                                                            padding: '0.2rem 0.3rem',
+                                                            background: 'var(--input-bg)',
+                                                            border: '1px solid var(--border)',
+                                                            borderRadius: '4px',
+                                                            color: 'var(--text-primary)',
+                                                            fontSize: '0.7rem',
+                                                            outline: 'none',
+                                                            flexShrink: 0,
+                                                        }}
+                                                    />
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removePmSensorFilter(f.id)}
+                                                    title="Remove filter"
+                                                    style={{
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        color: 'var(--text-secondary)',
+                                                        cursor: 'pointer',
+                                                        padding: '0.15rem',
+                                                        display: 'flex',
+                                                        flexShrink: 0,
+                                                    }}
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -2037,38 +2394,9 @@ export default function PredictiveModelBuild() {
                     </div>
                 </div>
 
-                {/* RIGHT - Selected predictors + context config */}
+                {/* RIGHT - Context config (predictors chips moved into LEFT
+                    "Predictor sensors" section to remove duplicate UI). */}
                 <div className="pm-col-right">
-                    {/* Selected predictor chips */}
-                    <div className="pm-section">
-                        <div className="pm-section-header">
-                            <span className="pm-eyebrow">Selected</span>
-                            <span className="pm-section-title">Predictors</span>
-                            <span className="pm-count-pill">{predictorSensors.length}</span>
-                        </div>
-                        {predictorSensors.length === 0 ? (
-                            <div className="pm-empty-dashed">No predictors selected</div>
-                        ) : (
-                            <div className="pm-selected-list">
-                                {predictorSensors.map((sensor, idx) => {
-                                    const d = getDesc(sensor);
-                                    return (
-                                        <div key={sensor} className="pm-selected-chip" title={d}>
-                                            <span className={`pm-selected-dot pm-selected-dot-${(idx % 4) + 1}`} />
-                                            <div className="pm-selected-text">
-                                                <div className="pm-selected-tag">{sensor}</div>
-                                                {d && <div className="pm-selected-desc">{d}</div>}
-                                            </div>
-                                            <button className="pm-selected-remove" onClick={() => handlePredictorToggle(sensor)}>
-                                                <X size={12} />
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-
                     {/* Relationship Model Config */}
                     <div className={`pm-section pm-config-block ${rcMode === 'relationship' ? '' : 'pm-config-dim'}`}>
                         <div className="pm-section-header">
@@ -2664,11 +2992,191 @@ export default function PredictiveModelBuild() {
                             </button>
                             <button
                                 className="pm-btn pm-btn-primary"
-                                onClick={() => { handleSaveModel(); }}
+                                onClick={() => { setConfirmSaveOpen(true); }}
                                 disabled={saveStatus.kind === 'saving'}
                             >
                                 <Check size={13} />
                                 <span>{saveStatus.kind === 'saving' ? 'Saving…' : 'Save Model'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Confirm Save Modal ───────────────────────────────────────
+                Gates every Save Model trigger (toolbar, native sub-window
+                menu, Preview modal's Save button) with a plain-language
+                summary of what will be written. Confirm → close + run
+                handleSaveModel (which opens the folder picker and
+                actually trains/saves). Cancel/Esc/backdrop click → close
+                silently (no error state). */}
+            {confirmSaveOpen && (
+                <div
+                    className="pm-preview-modal-backdrop"
+                    onClick={() => setConfirmSaveOpen(false)}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="pm-confirm-save-title"
+                >
+                    <div
+                        className="pm-preview-modal-card"
+                        onClick={e => e.stopPropagation()}
+                        style={{ maxWidth: 560 }}
+                    >
+                        <div className="pm-preview-modal-header">
+                            <div className="pm-chart-title-block">
+                                <div className="pm-chart-title" id="pm-confirm-save-title">
+                                    Save Model — Confirm
+                                </div>
+                                <div className="pm-chart-subtitle">
+                                    Review what will be written. You'll pick the save folder next.
+                                </div>
+                            </div>
+                            <button
+                                className="pm-chart-modal-close"
+                                onClick={() => setConfirmSaveOpen(false)}
+                                title="Close (Esc)"
+                                aria-label="Close"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="pm-preview-modal-body">
+                            {!targetSensor && (
+                                <div className="pm-preview-error" style={{ marginBottom: '0.6rem' }}>
+                                    No target sensor selected — pick one before saving.
+                                </div>
+                            )}
+
+                            {savePlan.length === 0 ? (
+                                <div className="pm-preview-empty">
+                                    Nothing to save. Toggle <strong>Individual</strong>, <strong>Relationship</strong>, or <strong>Clustering</strong> above first.
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+                                    {savePlan.map(item => (
+                                        <section key={item.kind} className="pm-preview-section">
+                                            <header className="pm-preview-section-header">
+                                                <div>
+                                                    <div className="pm-preview-section-title">{item.title}</div>
+                                                    <div className="pm-preview-section-sub">
+                                                        {item.kind === 'individual' && <>invokes <code>train_individual_model</code></>}
+                                                        {item.kind === 'relationship' && <>invokes <code>train_relationship_model</code></>}
+                                                        {item.kind === 'clustering' && <>invokes <code>train_clustering_model</code></>}
+                                                    </div>
+                                                </div>
+                                            </header>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                                {item.details.map((d, i) => (
+                                                    <div key={i} style={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'baseline',
+                                                        gap: '0.8rem',
+                                                        fontSize: '0.78rem',
+                                                        padding: '0.22rem 0',
+                                                        borderBottom: i < item.details.length - 1
+                                                            ? '1px dashed rgba(127,127,127,0.15)'
+                                                            : 'none',
+                                                    }}>
+                                                        <span style={{
+                                                            color: 'var(--text-secondary)',
+                                                            fontSize: '0.72rem',
+                                                            flexShrink: 0,
+                                                            textTransform: 'uppercase',
+                                                            letterSpacing: '0.04em',
+                                                            fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                                                        }}>
+                                                            {d.label}
+                                                        </span>
+                                                        <span style={{
+                                                            color: 'var(--text-primary)',
+                                                            textAlign: 'right',
+                                                            wordBreak: 'break-word',
+                                                        }}>
+                                                            {d.value}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {item.warning && (
+                                                <div style={{
+                                                    color: '#f43f5e',
+                                                    fontSize: 12,
+                                                    marginTop: 8,
+                                                    padding: '0.35rem 0.5rem',
+                                                    background: 'rgba(244,63,94,0.08)',
+                                                    border: '1px solid rgba(244,63,94,0.25)',
+                                                    borderRadius: 4,
+                                                }}>
+                                                    ⚠ {item.warning}
+                                                </div>
+                                            )}
+                                        </section>
+                                    ))}
+
+                                    {/* Filter footnote — heads-off "why so few rows trained?" */}
+                                    <div style={{
+                                        fontSize: '0.72rem',
+                                        color: 'var(--text-secondary)',
+                                        padding: '0.45rem 0.55rem',
+                                        background: 'rgba(127,127,127,0.06)',
+                                        border: '1px solid var(--border)',
+                                        borderRadius: 6,
+                                        lineHeight: 1.45,
+                                    }}>
+                                        <strong style={{ color: 'var(--text-primary)' }}>Filters on training data:</strong>{" "}
+                                        {activeFilterCount.dash + activeFilterCount.pm === 0 && !activeFilterCount.hasTime
+                                            ? 'none — using the full dataset.'
+                                            : (
+                                                <>
+                                                    {activeFilterCount.hasTime && <>time range</>}
+                                                    {activeFilterCount.hasTime && (activeFilterCount.dash > 0 || activeFilterCount.pm > 0) && ', '}
+                                                    {activeFilterCount.dash > 0 && <>{activeFilterCount.dash} Dashboard sensor filter{activeFilterCount.dash !== 1 ? 's' : ''}</>}
+                                                    {activeFilterCount.dash > 0 && activeFilterCount.pm > 0 && ', '}
+                                                    {activeFilterCount.pm > 0 && <>{activeFilterCount.pm} PM-page sensor filter{activeFilterCount.pm !== 1 ? 's' : ''}</>}
+                                                    {'.'}
+                                                </>
+                                            )
+                                        }
+                                    </div>
+
+                                    {outputDir && (
+                                        <div style={{
+                                            fontSize: '0.7rem',
+                                            color: 'var(--text-secondary)',
+                                            opacity: 0.8,
+                                        }}>
+                                            Folder picker will open at: <code style={{ wordBreak: 'break-all' }}>{outputDir}</code>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <div className="pm-preview-modal-footer">
+                            <span className="pm-preview-footer-status" />
+                            <button
+                                className="pm-btn pm-btn-secondary"
+                                onClick={() => setConfirmSaveOpen(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="pm-btn pm-btn-primary"
+                                onClick={() => {
+                                    setConfirmSaveOpen(false);
+                                    handleSaveModel();
+                                }}
+                                disabled={!canConfirmSave || saveStatus.kind === 'saving'}
+                                title={
+                                    !targetSensor ? 'Select a target sensor first'
+                                    : savePlan.length === 0 ? 'Toggle a model type first'
+                                    : savePlan.some(p => p.warning) ? 'Fix the warnings above first'
+                                    : 'Confirm and pick save folder'
+                                }
+                            >
+                                <Check size={13} />
+                                <span>Confirm &amp; Save</span>
                             </button>
                         </div>
                     </div>

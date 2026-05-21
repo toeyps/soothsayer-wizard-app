@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Soothsayer-Wizard",
+  "productName": "Wizard",
   "version": "0.1.0",
   "identifier": "com.prompt-solution.tauri-app",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Soothsayer-Wizard",
+        "title": "Wizard",
         "width": 800,
         "height": 600,
         "decorations": true,
@@ -34,7 +34,7 @@
     "copyright": "Copyright © 2026 Alpha-Com Thailand",
     "category": "DeveloperTool",
     "shortDescription": "Sensor data exploration & predictive modeling workspace",
-    "longDescription": "Soothsayer-Wizard is a desktop workspace for importing CSV sensor data, building failure groups, and training predictive models.",
+    "longDescription": "Wizard is a desktop workspace for importing CSV sensor data, building failure groups, and training predictive models.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

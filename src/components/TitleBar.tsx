@@ -74,7 +74,7 @@ export default function TitleBar({
         <span
           style={{ marginRight: "1rem", opacity: 0.7, pointerEvents: "none" }}
         >
-          Soothsayer-Wizard
+          Wizard
         </span>
         {workspaceName !== undefined && (
           <div

@@ -479,18 +479,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
           padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12,
           minWidth: 0, minHeight: 0, overflow: "hidden",
         }}>
-          {loadingWorkspace && (
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              padding: 40, gap: 10, color: T.textMuted, fontSize: 13,
-            }}>
-              <Loader2 size={18} className="animate-spin" />
-              Loading workspace…
-            </div>
-          )}
-
-          {!loadingWorkspace && (
-            <>
               {/* Title block */}
               <div style={{ flexShrink: 0 }}>
                 <h1 style={{
@@ -850,8 +838,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                   </div>
                 </div>
               )}
-            </>
-          )}
         </section>
       </div>
 
@@ -876,6 +862,47 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
           <ContinueButton T={T} enabled={isReady} onClick={handleContinue} />
         </div>
       </div>
+
+      {/* Full-screen loading overlay. Sits on top of EVERYTHING (sidebar,
+          sticky bar, content) while a workspace is loading so the user can
+          tell the app is working, not frozen. The wrapping div absorbs all
+          pointer events (default for non-transparent divs) and we set
+          cursor: 'wait' for a busy affordance. */}
+      {loadingWorkspace && (
+        <div
+          aria-busy="true"
+          role="alert"
+          aria-live="polite"
+          style={{
+            position: "fixed", inset: 0, zIndex: 100,
+            background: dark ? "rgba(10,10,11,0.65)" : "rgba(246,246,247,0.7)",
+            backdropFilter: "blur(4px)",
+            WebkitBackdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "wait",
+          }}
+        >
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "center",
+            gap: 14, padding: "26px 36px",
+            background: T.surface,
+            border: `1px solid ${T.borderStrong}`,
+            borderRadius: 12,
+            boxShadow: "0 16px 48px rgba(0,0,0,0.35)",
+            minWidth: 240,
+          }}>
+            <Loader2 size={26} className="animate-spin" style={{ color: T.accentHi }} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
+                Loading workspace…
+              </div>
+              <div style={{ fontSize: 11, color: T.textMuted, fontFamily: mono }}>
+                Reading dataset and metadata
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
