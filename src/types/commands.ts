@@ -174,10 +174,6 @@ export type TauriCommands = {
     args: { sensors: string[]; config: SensorOperationConfig };
     returns: string;
   };
-  run_python_analysis: {
-    args: Record<string, never>;
-    returns: string;
-  };
   /**
    * Run a Relationship-model preview (LinearGAM) via the Python sidecar.
    * Returns the raw JSON payload from the sidecar — see `RelationshipPreviewResult`.

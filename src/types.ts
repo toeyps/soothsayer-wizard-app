@@ -131,6 +131,43 @@ export interface PredictiveModelStateSlice {
 
 export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group' | 'predictive-model';
 
+/**
+ * Four fixed positions on the Dashboard that any panel can occupy. Naming
+ * is column-major: `left-top` = chart slot by default, `right-bottom` =
+ * filter slot by default. Resize ratios are tied to slots (not panels), so
+ * after a swap the new occupant inherits the previous panel's slot size.
+ */
+export type DashboardSlot = 'left-top' | 'left-bottom' | 'right-top' | 'right-bottom';
+
+/**
+ * The four swappable panels on the Dashboard. Save & Continue is NOT a
+ * panel — it lives permanently at the bottom of the right column.
+ */
+export type DashboardPanel = 'chart' | 'data' | 'sensors' | 'filter';
+
+/**
+ * Which panel is currently rendered in which slot. Mutated by drag-and-drop
+ * on panel headers and persisted in WorkspaceState so the layout survives
+ * reload.
+ */
+export type DashboardSlotMap = Record<DashboardSlot, DashboardPanel>;
+
+/**
+ * Persisted split-pane ratios for the Dashboard's resizable layout.
+ * Each tuple is `[primary%, secondary%]` summing to ~100. Stored per
+ * workspace so the user's preferred proportions survive reload. When
+ * absent on an older workspace, Dashboard falls back to its DEFAULT_LAYOUT_SIZES.
+ */
+export interface DashboardLayoutSizes {
+    /** Horizontal: [left-column%, right-column%]. Default ~ [66.67, 33.33]. */
+    columns: [number, number];
+    /** Vertical inside the left column: [chart%, data-insight%]. Default [60, 40]. */
+    leftRows: [number, number];
+    /** Vertical inside the right column (excluding Save & Continue):
+     *  [sensors%, filter%]. Default [50, 50]. */
+    rightRows: [number, number];
+}
+
 export interface WorkspaceState {
     id: string;
     name: string;
@@ -154,4 +191,8 @@ export interface WorkspaceState {
      *  to re-navigate to the same place every save. The actual save still
      *  always opens the picker — this is only the default, not a bypass. */
     outputDir?: string;
+    /** Dashboard's resizable layout ratios (split.js gutters). Optional so
+     *  older workspaces just use the default proportions. Updated on the
+     *  fly via `onDragEnd` and persisted by the existing autosave effect. */
+    layoutSizes?: DashboardLayoutSizes;
 }

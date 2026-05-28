@@ -243,65 +243,6 @@ fn compute_sensor_stats(
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-#[tauri::command]
-async fn run_python_analysis(app: tauri::AppHandle) -> Result<String, String> {
-    let data = ProcessedData {
-        headers: vec![
-            "Timestamp".to_string(),
-            "SensorA".to_string(),
-            "SensorB".to_string(),
-        ],
-        rows: vec![
-            csv_processor::CsvRecord {
-                timestamp: Some("2021-01-01T00:00:00Z".to_string()),
-                values: vec![None, Some(10.0), Some(20.0)],
-            },
-            csv_processor::CsvRecord {
-                timestamp: Some("2021-01-01T01:00:00Z".to_string()),
-                values: vec![None, Some(15.0), Some(25.0)],
-            },
-            csv_processor::CsvRecord {
-                timestamp: Some("2021-01-01T02:00:00Z".to_string()),
-                values: vec![None, Some(12.0), Some(22.0)],
-            },
-        ],
-    };
-
-    let json_data = serde_json::to_string(&data).map_err(|e| e.to_string())?;
-
-    println!("Rust: Spawning sidecar...");
-    let sidecar_command = app.shell().sidecar("backend").map_err(|e| e.to_string())?;
-    let (mut rx, mut child) = sidecar_command.spawn().map_err(|e| e.to_string())?;
-
-    println!("Rust: Writing data to stdin...");
-    let mut data_with_newline = json_data.clone();
-    data_with_newline.push('\n');
-    child
-        .write(data_with_newline.as_bytes())
-        .map_err(|e| e.to_string())?;
-    println!("Rust: Data written.");
-
-    let mut output = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                let line_str = String::from_utf8(line).map_err(|e| e.to_string())?;
-                output.push_str(&line_str);
-            }
-            CommandEvent::Stderr(line) => {
-                let line_str = String::from_utf8(line).map_err(|e| e.to_string())?;
-                println!("Python Error: {}", line_str);
-            }
-            CommandEvent::Terminated(_) => {
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    Ok(output)
-}
-
 /// Optional value-filter passed alongside `preview_relationship_model`.
 /// Mirrors the JSON shape produced by the dashboard's FilterPanel, so the
 /// preview scatter can be built off the same filtered slice the user is
@@ -2264,7 +2205,6 @@ pub fn run() {
             get_all_sensors,
             load_metadata_command,
             compute_sensor_stats,
-            run_python_analysis,
             preview_relationship_model,
             get_loaded_paths,
             calculate_new_sensor,

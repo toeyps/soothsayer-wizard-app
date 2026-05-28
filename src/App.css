@@ -284,21 +284,28 @@ body {
     background: #2563eb;
 }
 
-/* Dashboard Grid 2x2 */
+/* Dashboard Grid 2x2 — note: kept the class name for back-compat, but the
+   layout is now flex-based so split.js can inject draggable gutters between
+   the columns. The visual separation between panels is provided by the
+   split.js gutter element (.gutter / .gutter-horizontal / .gutter-vertical
+   defined further down), so no `gap` here. */
 .dashboard-grid-2x2 {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 1rem;
+    display: flex;
     padding: 1rem;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
 }
 
 .left-column {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
     overflow: hidden;
+    /* Initial flex ratio before split.js applies inline width. Matches the
+       previous 2fr:1fr grid template so the first paint isn't a jump. */
+    flex: 2 1 0;
+    min-width: 0;
+    min-height: 0;
 }
 
 .chart-section-large {
@@ -327,8 +334,23 @@ body {
 .right-column {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
     overflow: hidden;
+    /* See .left-column above for the initial-flex rationale. */
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Wrapper around the right-column's sensors + filter panels — split.js
+   manages these two. The Save & Continue button sits OUTSIDE this wrapper
+   (still a child of .right-column) so resizing the panels never pushes the
+   save button off-screen or below the fold. */
+.right-column-splits {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    overflow: hidden;
+    min-height: 0;
 }
 
 .widget-section {
@@ -433,17 +455,6 @@ body {
     background: var(--accent-color);
     color: white;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.chart-type-btn-accent {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
-    margin-left: 0.35rem;
-}
-
-.chart-type-btn-accent:hover {
-    background: #10b981;
-    color: white;
 }
 
 /* Save & Continue Section */
@@ -1230,12 +1241,19 @@ tr:hover {
     border-color: var(--text-secondary);
 }
 
-.panel-collapsed-placeholder {
-    display: none;
-}
-
-.panel-collapsed-placeholder-small {
-    display: none;
+/* =============================================
+   Dashboard slot wrapper (resizable panel container)
+   =============================================
+   Generic flex passthrough — split.js sets inline `flex-basis` on this
+   element, and the inner `.chart-section-large` / `.widget-section` keeps
+   its own visual card styling (background, border). */
+.dashboard-slot {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
 }
 
 /* Animation for panels */
@@ -1256,13 +1274,79 @@ tr:hover {
     }
 }
 
-/* Adjust grid when ALL left-column panels are collapsed */
-.dashboard-grid-2x2:has(.left-column > .panel-collapsed-placeholder):has(.left-column > .panel-collapsed-placeholder-small) {
-    grid-template-columns: 0fr 1fr;
+/* When ALL panels in a column are collapsed, the column has no visible
+   content. The horizontal split useEffect tears down split.js for this case
+   (so the surviving column has no leftover inline width from split.js),
+   and these rules visually remove the empty column so the other one fills
+   the row. The class flags are set in Dashboard.tsx based on whichever
+   panels happen to be in each column's slots. */
+.dashboard-grid-2x2.left-fully-collapsed .left-column {
+    display: none;
+}
+.dashboard-grid-2x2.left-fully-collapsed .right-column {
+    flex: 1 1 100%;
+}
+.dashboard-grid-2x2.right-fully-collapsed .right-column {
+    display: none;
+}
+.dashboard-grid-2x2.right-fully-collapsed .left-column {
+    flex: 1 1 100%;
 }
 
-.dashboard-grid-2x2:has(.left-column > .panel-collapsed-placeholder):has(.left-column > .panel-collapsed-placeholder-small) .right-column {
-    grid-column: 1 / -1;
+/* =============================================
+   split.js Gutter (dashboard resize handles)
+   =============================================
+   Wide hit-target (12px) for easy grabbing, with a 2px centered line as the
+   visual indicator. Hover state highlights with accent color so the user
+   knows it's interactive. The `.gutter` element itself is injected by
+   split.js between adjacent panels. */
+.gutter {
+    background-color: transparent;
+    position: relative;
+    transition: background-color 0.15s ease;
+    /* split.js sets inline `flex-basis: 12px` on us via our custom
+       gutterStyle. Lock flex-grow/shrink to 0 so the gutter stays exactly
+       12px and never gets sucked into flex-distribution math. */
+    flex-grow: 0;
+    flex-shrink: 0;
+    z-index: 1;
+}
+
+.gutter::before {
+    content: '';
+    position: absolute;
+    background-color: var(--border);
+    transition: background-color 0.15s ease;
+    border-radius: 1px;
+}
+
+.gutter:hover::before,
+.gutter:active::before {
+    background-color: #3b82f6;
+}
+
+.gutter-horizontal {
+    cursor: col-resize;
+    width: 12px;
+}
+
+.gutter-horizontal::before {
+    top: 8px;
+    bottom: 8px;
+    left: 5px;
+    width: 2px;
+}
+
+.gutter-vertical {
+    cursor: row-resize;
+    height: 12px;
+}
+
+.gutter-vertical::before {
+    left: 8px;
+    right: 8px;
+    top: 5px;
+    height: 2px;
 }
 
 /* =============================================
@@ -4538,17 +4622,13 @@ body {
     letter-spacing: -0.005em;
 }
 
-/* Grid & columns */
+/* Grid & columns (theme overrides). Layout itself is flex-based now —
+   `grid-template-columns` and `gap` were dropped because split.js manages
+   the column widths inline and inserts gutter elements as visual separators.
+   The padding/background still apply. */
 .dashboard-grid-2x2 {
-    grid-template-columns: 1fr 360px;
-    gap: 16px;
     padding: 16px;
     background: var(--bg-primary);
-}
-
-.left-column,
-.right-column {
-    gap: 16px;
 }
 
 /* Cards */
@@ -4635,23 +4715,6 @@ body {
 [data-theme="light"] .chart-type-btn.active {
     background: #fff;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-
-/* Run Python Analysis — secondary button style, not stuck in group */
-.chart-type-btn-accent {
-    margin-left: 8px;
-    padding: 6px 12px;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 500;
-}
-
-.chart-type-btn-accent:hover {
-    background: var(--surface-hi);
-    color: var(--text-primary);
 }
 
 /* Collapse button */
@@ -6918,6 +6981,93 @@ body {
 .pm-btn-primary:hover { filter: brightness(1.08); }
 
 .pm-btn-sm { padding: 4px 10px; font-size: 11.5px; }
+
+/* Slim variant of pm-btn-secondary that hosts a chevron after the label —
+   tightens the gap before the chevron so the trio (icon, text, chevron)
+   reads as one unit, not three. */
+.pm-btn-with-caret {
+    padding-right: 9px;
+}
+.pm-btn-with-caret > svg:last-child {
+    opacity: 0.7;
+    margin-left: 2px;
+}
+
+/* =============================================
+   Report dropdown (PM toolbar)
+   ============================================= */
+/* Wrapper is the positioning anchor for the floating menu. */
+.pm-report-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+/* Floating menu panel — anchored to the right edge of the wrapper so it
+   doesn't overflow when the toolbar runs out of room on small windows. */
+.pm-report-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 260px;
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+    padding: 6px;
+    z-index: 1000;
+    /* Subtle pop animation so the menu feels intentional. */
+    animation: pmReportMenuPop 0.12s ease-out;
+}
+@keyframes pmReportMenuPop {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Each row: icon on the left, two stacked text lines on the right. */
+.pm-report-menu-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary, #e2e8f0);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 0.1s ease;
+}
+.pm-report-menu-item:hover,
+.pm-report-menu-item:focus-visible {
+    background: var(--hover-bg, rgba(255, 255, 255, 0.06));
+    outline: none;
+}
+.pm-report-menu-item > svg {
+    margin-top: 1px;          /* nudges the icon to align with the first text line */
+    flex-shrink: 0;
+    color: var(--text-secondary, #94a3b8);
+}
+.pm-report-menu-item:hover > svg {
+    color: var(--accent-color, #3b82f6);
+}
+.pm-report-menu-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.pm-report-menu-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.pm-report-menu-sub {
+    font-size: 11px;
+    color: var(--text-faint, var(--text-secondary, #94a3b8));
+    line-height: 1.3;
+}
 
 /* Grid */
 .pm-grid {

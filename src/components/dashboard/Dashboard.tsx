@@ -1,8 +1,16 @@
 import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
+import Split from 'split.js';
 import { saveWorkspaceData } from '../../workspaceManager';
-import { ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, WorkspaceState } from '../../types';
+import {
+    ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
+    WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
+} from '../../types';
+// `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
+// swap was removed) but we still use the type internally to describe the
+// constant slot→panel mapping below.
+
 import DataTable from './DataTable';
 import { Chart } from '../charts';
 import FilterPanel, { FilterState } from './FilterPanel';
@@ -24,6 +32,53 @@ const PANELS = {
 
 type PanelId = keyof typeof PANELS;
 
+// Default split ratios used the first time a workspace is opened (no saved
+// layoutSizes yet). 66.67/33.33 mirrors the original CSS Grid `2fr 1fr`.
+const DEFAULT_LAYOUT_SIZES: DashboardLayoutSizes = {
+    columns: [66.67, 33.33],
+    leftRows: [60, 40],
+    rightRows: [50, 50],
+};
+
+// Fixed panel-to-slot layout. Was previously a stateful `slotMap` that the
+// user could rearrange via drag-and-drop, but the swap UI was removed so
+// this is now just a constant. Mirrors the original Dashboard layout:
+// chart at top-left, the data table just under it, sensors at top-right,
+// filter controls at bottom-right.
+const SLOT_LAYOUT: DashboardSlotMap = {
+    'left-top': 'chart',
+    'left-bottom': 'data',
+    'right-top': 'sensors',
+    'right-bottom': 'filter',
+};
+
+// Static list of all slots in render order — used to iterate when computing
+// drag-target visibility and for building the JSX of the two columns.
+const LEFT_SLOTS: DashboardSlot[] = ['left-top', 'left-bottom'];
+const RIGHT_SLOTS: DashboardSlot[] = ['right-top', 'right-bottom'];
+
+// Build the gutter element split.js inserts between panels. We use a wider
+// hit-target (12px) with a thin centered line so the resize handle is easy
+// to grab without dominating the layout visually.
+const createGutter = (_index: number, direction: 'horizontal' | 'vertical'): HTMLElement => {
+    const el = document.createElement('div');
+    el.className = `gutter gutter-${direction}`;
+    return el;
+};
+
+// Override split.js's default inline styling. Default sets `width`/`height`
+// inline, but in a flex layout those are overridden by `flex-basis` (from our
+// CSS `flex: 1` / `flex: 2 1 0`). Setting `flex-basis` inline beats the CSS
+// rule and actually controls the rendered size — without this, dragging the
+// gutter does nothing visually.
+const flexElementStyle = (_dim: string, size: number, gutSize: number): Record<string, string> => ({
+    'flex-basis': `calc(${size}% - ${gutSize}px)`,
+});
+
+const flexGutterStyle = (_dim: string, gutSize: number): Record<string, string> => ({
+    'flex-basis': `${gutSize}px`,
+});
+
 
 interface DashboardProps {
     metadata: CsvMetadata;
@@ -39,7 +94,6 @@ export interface DashboardRef {
 }
 
 const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata, onBack, initialState }, ref) => {
-    const [_, setAnalysisResult] = useState<string>("");
     const [localName, setLocalName] = useState(initialState?.name || "");
 
     const [sensorHeaders, setSensorHeaders] = useState<string[]>(() =>
@@ -115,18 +169,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
     }, [localName, initialState]);
 
-    const handleAnalysis = async () => {
-        try {
-            const result = await invoke<string>("run_python_analysis");
-            console.log("Python Analysis Result:", result);
-            setAnalysisResult(result);
-            alert("Analysis Result: " + result);
-        } catch (e) {
-            console.error("Analysis Failed:", e);
-            alert("Analysis Failed: " + String(e));
-        }
-    };
-
     const deferredSensors = useDeferredValue(selectedSensors);
     const [chartData, setChartData] = useState<ProcessedData | null>(null);
     const [loading, setLoading] = useState(false);
@@ -140,6 +182,117 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [collapsedPanels, setCollapsedPanels] = useState<Set<PanelId>>(
         new Set((initialState?.collapsedPanels ?? []) as PanelId[])
     );
+
+    // Resizable layout sizes (split.js percentages). Initialized from the
+    // persisted workspace value or DEFAULT_LAYOUT_SIZES on first open. Each
+    // tuple is `[primary, secondary]` summing to ~100. Updated by split.js's
+    // `onDragEnd` and picked up by the existing autosave effect via
+    // `buildWorkspaceState`.
+    const [layoutSizes, setLayoutSizes] = useState<DashboardLayoutSizes>(
+        initialState?.layoutSizes ?? DEFAULT_LAYOUT_SIZES
+    );
+
+    // Refs that split.js will manage. Attached to the slot wrappers below.
+    // Split.js stays mounted across renders and only re-mounts when a panel
+    // collapse/expand changes whether the split should exist at all.
+    const leftColumnRef = useRef<HTMLDivElement>(null);
+    const rightColumnRef = useRef<HTMLDivElement>(null);
+    const slotLTRef = useRef<HTMLDivElement>(null);
+    const slotLBRef = useRef<HTMLDivElement>(null);
+    const slotRTRef = useRef<HTMLDivElement>(null);
+    const slotRBRef = useRef<HTMLDivElement>(null);
+    const slotRefs: Record<DashboardSlot, React.RefObject<HTMLDivElement | null>> = {
+        'left-top': slotLTRef,
+        'left-bottom': slotLBRef,
+        'right-top': slotRTRef,
+        'right-bottom': slotRBRef,
+    };
+
+    // Read-only ref mirror of `layoutSizes` so the useEffects can pull the
+    // freshest sizes when they re-initialize (e.g. after a panel un-collapses)
+    // without listing layoutSizes itself in the deps and causing a re-init on
+    // every drag.
+    const layoutSizesRef = useRef(layoutSizes);
+    useEffect(() => { layoutSizesRef.current = layoutSizes; }, [layoutSizes]);
+
+    // Slot-aware collapse flags. Each one looks up which panel is in the
+    // slot via SLOT_LAYOUT, then checks if that panel is collapsed. Drives
+    // the split.js effects below (tear down when a slot's panel hides).
+    const ltCollapsed = collapsedPanels.has(SLOT_LAYOUT['left-top']);
+    const lbCollapsed = collapsedPanels.has(SLOT_LAYOUT['left-bottom']);
+    const rtCollapsed = collapsedPanels.has(SLOT_LAYOUT['right-top']);
+    const rbCollapsed = collapsedPanels.has(SLOT_LAYOUT['right-bottom']);
+    const allLeftCollapsed = ltCollapsed && lbCollapsed;
+    const allRightCollapsed = rtCollapsed && rbCollapsed;
+
+    // ── split.js: horizontal split between left and right columns ──
+    // Tears down when an entire column has no visible panels so the surviving
+    // column can take 100% width (CSS class on the grid hides the empty side).
+    useEffect(() => {
+        if (allLeftCollapsed || allRightCollapsed) return;
+        const left = leftColumnRef.current;
+        const right = rightColumnRef.current;
+        if (!left || !right) return;
+        const inst = Split([left, right], {
+            sizes: layoutSizesRef.current.columns,
+            minSize: [400, 280],
+            gutterSize: 12,
+            direction: 'horizontal',
+            gutter: createGutter,
+            elementStyle: flexElementStyle,
+            gutterStyle: flexGutterStyle,
+            onDragEnd: (sizes) => {
+                setLayoutSizes(prev => ({ ...prev, columns: [sizes[0], sizes[1]] as [number, number] }));
+            },
+        });
+        return () => { try { inst.destroy(); } catch { /* split.js may already be torn down */ } };
+    }, [allLeftCollapsed, allRightCollapsed]);
+
+    // ── split.js: vertical split inside left column (LT ↔ LB) ──
+    // Refs point to slot wrappers which stay STABLE across panel swaps, so
+    // swapping panels does NOT re-init split.js — only collapse toggles do.
+    useEffect(() => {
+        if (ltCollapsed || lbCollapsed) return;
+        const lt = slotLTRef.current;
+        const lb = slotLBRef.current;
+        if (!lt || !lb) return;
+        const inst = Split([lt, lb], {
+            sizes: layoutSizesRef.current.leftRows,
+            minSize: [200, 120],
+            gutterSize: 12,
+            direction: 'vertical',
+            gutter: createGutter,
+            elementStyle: flexElementStyle,
+            gutterStyle: flexGutterStyle,
+            onDragEnd: (sizes) => {
+                setLayoutSizes(prev => ({ ...prev, leftRows: [sizes[0], sizes[1]] as [number, number] }));
+            },
+        });
+        return () => { try { inst.destroy(); } catch { /* ignore */ } };
+    }, [ltCollapsed, lbCollapsed]);
+
+    // ── split.js: vertical split inside right column (RT ↔ RB) ──
+    // Save & Continue lives OUTSIDE the .right-column-splits wrapper so it
+    // isn't resized along with the panels.
+    useEffect(() => {
+        if (rtCollapsed || rbCollapsed) return;
+        const rt = slotRTRef.current;
+        const rb = slotRBRef.current;
+        if (!rt || !rb) return;
+        const inst = Split([rt, rb], {
+            sizes: layoutSizesRef.current.rightRows,
+            minSize: [120, 120],
+            gutterSize: 12,
+            direction: 'vertical',
+            gutter: createGutter,
+            elementStyle: flexElementStyle,
+            gutterStyle: flexGutterStyle,
+            onDragEnd: (sizes) => {
+                setLayoutSizes(prev => ({ ...prev, rightRows: [sizes[0], sizes[1]] as [number, number] }));
+            },
+        });
+        return () => { try { inst.destroy(); } catch { /* ignore */ } };
+    }, [rtCollapsed, rbCollapsed]);
 
     const togglePanel = (panelId: PanelId) => {
         setCollapsedPanels(prev => {
@@ -357,8 +510,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         chartType,
         samplingMethod,
         collapsedPanels: Array.from(collapsedPanels),
+        layoutSizes,
         ...overrides,
-    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels]);
+    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels, layoutSizes]);
 
     // Keep ref in sync for imperative handle usage
     buildStateRef.current = buildWorkspaceState;
@@ -663,6 +817,276 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const displayTimestampStart = filters.timestampStart || (dataRange ? formatForInput(dataRange.min) : '');
     const displayTimestampEnd = filters.timestampEnd || (dataRange ? formatForInput(dataRange.max) : '');
 
+    // Drag-and-drop swap was removed in favor of a fixed layout (see
+    // SLOT_LAYOUT at the top of this file). Resize via split.js remains.
+
+    // ── Panel content renderers ──
+    // Each returns the inner panel wrapper (.chart-section-large or
+    // .widget-section) WITHOUT the outer .dashboard-slot — the slot wrapper
+    // is added by the render loop in the JSX. This way the slot ref stays
+    // stable across swaps and only the inner content changes, so split.js
+    // doesn't have to tear down and re-init on every panel swap.
+    const renderChartContent = () => (
+        <div className="chart-section-large">
+            <div className="section-header collapsible-header">
+                <div className="section-header-left">
+<button
+                        onClick={onBack}
+                        className="collapse-btn"
+                        title="Back to Import"
+                        style={{ marginRight: '0.5rem', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                    >
+                        <ArrowLeft size={18} />
+                    </button>
+                    <h3>Sensor Readings</h3>
+                    <span className="section-badge">{samplingMethod.toUpperCase()} (1h)</span>
+                    <span className="section-badge">{visibleFilteredData.length.toLocaleString()} Points</span>
+                    {loading && <span className="section-badge section-badge-loading">Loading...</span>}
+                </div>
+                <div className="section-header-actions">
+                    <div className="chart-type-group">
+                        <button className={`chart-type-btn ${chartType === 'line' ? 'active' : ''}`} onClick={() => setChartType('line')}>Line</button>
+                        <button className={`chart-type-btn ${chartType === 'scatter' ? 'active' : ''}`} onClick={() => setChartType('scatter')}>Scatter</button>
+                        <button className={`chart-type-btn ${chartType === 'pair' ? 'active' : ''}`} onClick={() => setChartType('pair')}>Pair Plot</button>
+                    </div>
+                    <button className="collapse-btn" onClick={() => togglePanel('chart')} title="Hide panel">
+                        <EyeOff size={14} />
+                    </button>
+                </div>
+            </div>
+            <div className="chart-wrapper" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+                {chartData && (
+                    <Chart
+                        data={visibleFilteredData}
+                        sensors={displayHeaders}
+                        headers={displayHeaders}
+                        chartType={chartType}
+                    />
+                )}
+            </div>
+            <div className="chart-bottom-tab">
+                <div className="chart-tab-content">
+                    <div className="time-range-tab-group">
+                        <label>TIME RANGE</label>
+                        <div className="time-range-inputs">
+                            <div className="date-input-wrapper">
+                                <Calendar size={14} />
+                                <input
+                                    type="datetime-local"
+                                    value={displayTimestampStart}
+                                    onChange={(e) => handleFiltersChange({ ...filters, timestampStart: e.target.value })}
+                                    placeholder="Start Date"
+                                />
+                            </div>
+                            <span className="separator">-</span>
+                            <div className="date-input-wrapper">
+                                <Calendar size={14} />
+                                <input
+                                    type="datetime-local"
+                                    value={displayTimestampEnd}
+                                    onChange={(e) => handleFiltersChange({ ...filters, timestampEnd: e.target.value })}
+                                    placeholder="End Date"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="time-range-tab-group">
+                        <label>SAMPLING (1 HR)</label>
+                        <div className="date-input-wrapper">
+                            <select
+                                value={samplingMethod}
+                                onChange={(e) => setSamplingMethod(e.target.value as 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last')}
+                                style={{
+                                    background: 'var(--input-bg)',
+                                    border: 'none',
+                                    color: 'var(--text-primary)',
+                                    fontSize: '0.8rem',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    padding: 0
+                                }}
+                            >
+                                <option value="raw" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Raw</option>
+                                <option value="avg" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Avg</option>
+                                <option value="max" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Max</option>
+                                <option value="min" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Min</option>
+                                <option value="first" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>First</option>
+                                <option value="last" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Last</option>
+                            </select>
+                        </div>
+                    </div>
+                    {dataRange && filters.timestampStart && (
+                        <button
+                            className="reset-range-btn"
+                            onClick={() => {
+                                handleFiltersChange({
+                                    ...filters,
+                                    timestampStart: '',
+                                    timestampEnd: ''
+                                });
+                            }}
+                        >
+                            Reset
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+
+    const renderDataContent = () => (
+        <div className="widget-section data-widget">
+            <div className="section-header collapsible-header">
+                <div className="section-header-left">
+<h3>Data Insight</h3>
+                    <span className="section-badge">{visibleFilteredData.length} Rows</span>
+                </div>
+                <div className="section-header-actions">
+                    <button
+                        className="export-btn-header"
+                        onClick={async () => {
+                            if (visibleFilteredData.length === 0) return;
+                            try {
+                                const filePath = await save({
+                                    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+                                    defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
+                                });
+                                if (!filePath) return;
+                                const csvHeaders = ['Timestamp', ...displayHeaders].join(',');
+                                const csvRows = visibleFilteredData.map(row => {
+                                    const values = [
+                                        row.timestamp || '',
+                                        ...row.values.map(v => v !== null ? v.toString() : '')
+                                    ];
+                                    return values.map(val => {
+                                        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                                            return `"${val.replace(/"/g, '""')}"`;
+                                        }
+                                        return val;
+                                    }).join(',');
+                                });
+                                const csvContent = [csvHeaders, ...csvRows].join('\n');
+                                await writeTextFile(filePath, csvContent);
+                            } catch (err) {
+                                console.error('Export failed:', err);
+                            }
+                        }}
+                        title="Export to CSV"
+                        disabled={visibleFilteredData.length === 0}
+                    >
+                        <Download size={14} />
+                        Export dataset
+                    </button>
+                    <button
+                        className="collapse-btn"
+                        onClick={() => togglePanel('data')}
+                        title="Hide panel"
+                    >
+                        <EyeOff size={14} />
+                    </button>
+                </div>
+            </div>
+            <div className="widget-content">
+                {chartData && <DataTable headers={displayHeaders} data={visibleFilteredData} />}
+            </div>
+        </div>
+    );
+
+    const renderSensorsContent = () => (
+        <div className="widget-section">
+            <div className="section-header collapsible-header">
+                <div className="section-header-left">
+<h3>Recent Sensor Data</h3>
+                    <span className="section-badge">{sensorHeaders.length} Sensors</span>
+                </div>
+                <button
+                    className="collapse-btn"
+                    onClick={() => togglePanel('sensors')}
+                    title="Hide panel"
+                >
+                    <EyeOff size={14} />
+                </button>
+            </div>
+            <div className="widget-content">
+                <SensorSelection
+                    sensors={sensorHeaders}
+                    selectedSensors={selectedSensors}
+                    onSensorChange={setSelectedSensors}
+                    sensorMetadata={sensorMetadata}
+                />
+            </div>
+            <div className="widget-footer">
+                <button
+                    className="add-sensor-btn"
+                    onClick={async () => {
+                        const webview = new WebviewWindow('add-sensor', {
+                            url: '/?window=add-sensor',
+                            title: 'Add Special Sensor',
+                            width: 800,
+                            height: 700,
+                            center: true,
+                            alwaysOnTop: false,
+                            decorations: false
+                        });
+                        await webview.once('tauri://created', function () { });
+                        await webview.once('tauri://error', function (e) { console.error(e); });
+                    }}
+                >
+                    <Plus size={16} />
+                    Add Special Sensor
+                </button>
+            </div>
+        </div>
+    );
+
+    const renderFilterContent = () => (
+        <div className="widget-section filter-widget">
+            <div className="section-header collapsible-header">
+                <div className="section-header-left">
+<h3>Filter & Controls</h3>
+                </div>
+                <button
+                    className="collapse-btn"
+                    onClick={() => togglePanel('filter')}
+                    title="Hide panel"
+                >
+                    <EyeOff size={14} />
+                </button>
+            </div>
+            <div className="widget-content filter-content">
+                <FilterPanel
+                    selectedSensors={selectedSensors}
+                    filters={filters}
+                    onFiltersChange={handleFiltersChange}
+                />
+            </div>
+        </div>
+    );
+
+    const renderPanel = (panel: DashboardPanel) => {
+        switch (panel) {
+            case 'chart': return renderChartContent();
+            case 'data': return renderDataContent();
+            case 'sensors': return renderSensorsContent();
+            case 'filter': return renderFilterContent();
+        }
+    };
+
+    // Renders a single slot wrapper IF its current panel isn't collapsed.
+    // Returns null when collapsed so the surviving sibling slot (with its
+    // .dashboard-slot flex:1) takes the full column.
+    const renderSlot = (slot: DashboardSlot) => {
+        if (collapsedPanels.has(SLOT_LAYOUT[slot])) return null;
+        return (
+            <div
+                key={slot}
+                ref={slotRefs[slot]}
+                className="dashboard-slot"
+            >
+                {renderPanel(SLOT_LAYOUT[slot])}
+            </div>
+        );
+    };
 
     return (
         <div className="dashboard-container">
@@ -689,266 +1113,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
 
 
-            <div className="dashboard-grid-2x2">
-                {/* Left Column - Chart + Filter */}
-                <div className="left-column">
-                    {/* Chart Section */}
-                    {!collapsedPanels.has('chart') ? (
-                        <div className="chart-section-large">
-                            <div className="section-header collapsible-header">
-                                <div className="section-header-left">
-                                    <button 
-                                        onClick={onBack}
-                                        className="collapse-btn" 
-                                        title="Back to Import"
-                                        style={{ marginRight: '0.5rem', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                                    >
-                                        <ArrowLeft size={18} />
-                                    </button>
-                                    <h3>Sensor Readings</h3>
-                                    <span className="section-badge">{samplingMethod.toUpperCase()} (1h)</span>
-                                    <span className="section-badge">{visibleFilteredData.length.toLocaleString()} Points</span>
-                                    {loading && <span className="section-badge section-badge-loading">Loading...</span>}
-                                </div>
-                                <div className="section-header-actions">
-                                    <div className="chart-type-group">
-                                        <button className={`chart-type-btn ${chartType === 'line' ? 'active' : ''}`} onClick={() => setChartType('line')}>Line</button>
-                                        <button className={`chart-type-btn ${chartType === 'scatter' ? 'active' : ''}`} onClick={() => setChartType('scatter')}>Scatter</button>
-                                        <button className={`chart-type-btn ${chartType === 'pair' ? 'active' : ''}`} onClick={() => setChartType('pair')}>Pair Plot</button>
-                                    </div>
-                                    <button className="chart-type-btn chart-type-btn-accent" onClick={handleAnalysis}>Run Python Analysis</button>
-                                    <button className="collapse-btn" onClick={() => togglePanel('chart')} title="Hide panel">
-                                        <EyeOff size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="chart-wrapper" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity 0.2s' }}>
-                                {chartData && (
-                                    <Chart
-                                        data={visibleFilteredData}
-                                        sensors={displayHeaders}
-                                        headers={displayHeaders}
-                                        chartType={chartType}
-                                    />
-                                )}
-                            </div>
-                            {/* Chart Bottom Tab - Time Range & Sampling */}
-                            <div className="chart-bottom-tab">
-                                <div className="chart-tab-content">
-                                    <div className="time-range-tab-group">
-                                        <label>TIME RANGE</label>
-                                        <div className="time-range-inputs">
-                                            <div className="date-input-wrapper">
-                                                <Calendar size={14} />
-                                                <input
-                                                    type="datetime-local"
-                                                    value={displayTimestampStart}
-                                                    onChange={(e) => handleFiltersChange({ ...filters, timestampStart: e.target.value })}
-                                                    placeholder="Start Date"
-                                                />
-                                            </div>
-                                            <span className="separator">-</span>
-                                            <div className="date-input-wrapper">
-                                                <Calendar size={14} />
-                                                <input
-                                                    type="datetime-local"
-                                                    value={displayTimestampEnd}
-                                                    onChange={(e) => handleFiltersChange({ ...filters, timestampEnd: e.target.value })}
-                                                    placeholder="End Date"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="time-range-tab-group">
-                                        <label>SAMPLING (1 HR)</label>
-                                        <div className="date-input-wrapper">
-                                            <select
-                                                value={samplingMethod}
-                                                onChange={(e) => setSamplingMethod(e.target.value as 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last')}
-                                                style={{
-                                                    background: 'var(--input-bg)',
-                                                    border: 'none',
-                                                    color: 'var(--text-primary)',
-                                                    fontSize: '0.8rem',
-                                                    outline: 'none',
-                                                    cursor: 'pointer',
-                                                    padding: 0
-                                                }}
-                                            >
-                                                <option value="raw" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Raw</option>
-                                                <option value="avg" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Avg</option>
-                                                <option value="max" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Max</option>
-                                                <option value="min" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Min</option>
-                                                <option value="first" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>First</option>
-                                                <option value="last" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Last</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    {dataRange && filters.timestampStart && (
-                                        <button
-                                            className="reset-range-btn"
-                                            onClick={() => {
-                                                handleFiltersChange({
-                                                    ...filters,
-                                                    timestampStart: '',
-                                                    timestampEnd: ''
-                                                });
-                                            }}
-                                        >
-                                            Reset
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="panel-collapsed-placeholder" />
-                    )}
-
-                    {/* Data Insight Section */}
-                    {!collapsedPanels.has('data') ? (
-                        <div className="widget-section data-widget" style={collapsedPanels.has('chart') ? { flex: '1' } : { height: '400px', flex: '0 0 400px' }}>
-                            <div className="section-header collapsible-header">
-                                <div className="section-header-left">
-                                    <h3>Data Insight</h3>
-                                    <span className="section-badge">{visibleFilteredData.length} Rows</span>
-                                </div>
-                                <div className="section-header-actions">
-                                    <button
-                                        className="export-btn-header"
-                                        onClick={async () => {
-                                            if (visibleFilteredData.length === 0) return;
-                                            try {
-                                                const filePath = await save({
-                                                    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
-                                                    defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
-                                                });
-                                                if (!filePath) return;
-                                                const csvHeaders = ['Timestamp', ...displayHeaders].join(',');
-                                                const csvRows = visibleFilteredData.map(row => {
-                                                    const values = [
-                                                        row.timestamp || '',
-                                                        ...row.values.map(v => v !== null ? v.toString() : '')
-                                                    ];
-                                                    return values.map(val => {
-                                                        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-                                                            return `"${val.replace(/"/g, '""')}"`;
-                                                        }
-                                                        return val;
-                                                    }).join(',');
-                                                });
-                                                const csvContent = [csvHeaders, ...csvRows].join('\n');
-                                                await writeTextFile(filePath, csvContent);
-                                            } catch (err) {
-                                                console.error('Export failed:', err);
-                                            }
-                                        }}
-                                        title="Export to CSV"
-                                        disabled={visibleFilteredData.length === 0}
-                                    >
-                                        <Download size={14} />
-                                        Export dataset
-                                    </button>
-                                    <button
-                                        className="collapse-btn"
-                                        onClick={() => togglePanel('data')}
-                                        title="Hide panel"
-                                    >
-                                        <EyeOff size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="widget-content">
-                                {chartData && <DataTable headers={displayHeaders} data={visibleFilteredData} />}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="panel-collapsed-placeholder-small" />
-                    )}
+            <div className={`dashboard-grid-2x2 ${allLeftCollapsed ? 'left-fully-collapsed' : ''} ${allRightCollapsed ? 'right-fully-collapsed' : ''}`}>
+                {/* Left column — slots LT (chart) and LB (data table) per
+                    SLOT_LAYOUT. Slot wrappers exist so split.js has stable
+                    refs to manage vertical resize. */}
+                <div className="left-column" ref={leftColumnRef}>
+                    {LEFT_SLOTS.map(slot => renderSlot(slot))}
                 </div>
 
-                <div className="right-column">
-                    {/* Sensors Section */}
-                    {!collapsedPanels.has('sensors') ? (
-                        <div className="widget-section">
-                            <div className="section-header collapsible-header">
-                                <div className="section-header-left">
-                                    <h3>Recent Sensor Data</h3>
-                                    <span className="section-badge">{sensorHeaders.length} Sensors</span>
-                                </div>
-                                <button
-                                    className="collapse-btn"
-                                    onClick={() => togglePanel('sensors')}
-                                    title="Hide panel"
-                                >
-                                    <EyeOff size={14} />
-                                </button>
-                            </div>
-                            <div className="widget-content">
-                                <SensorSelection
-                                    sensors={sensorHeaders}
-                                    selectedSensors={selectedSensors}
-                                    onSensorChange={setSelectedSensors}
-                                    sensorMetadata={sensorMetadata}
-                                />
-                            </div>
-                            <div className="widget-footer">
-                                <button
-                                    className="add-sensor-btn"
-                                    onClick={async () => {
-                                        const webview = new WebviewWindow('add-sensor', {
-                                            url: '/?window=add-sensor',
-                                            title: 'Add Special Sensor',
-                                            width: 800,
-                                            height: 700,
-                                            center: true,
-                                            alwaysOnTop: false,
-                                            decorations: false
-                                        });
-                                        await webview.once('tauri://created', function () {
-                                            // webview window successfully created
-                                        });
-                                        await webview.once('tauri://error', function (e) {
-                                            // an error happened creating the webview window
-                                            console.error(e);
-                                        });
-                                    }}
-                                >
-                                    <Plus size={16} />
-                                    Add Special Sensor
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="panel-collapsed-placeholder-small" />
-                    )}
-
-                    {/* Filter Panel Section */}
-                    {!collapsedPanels.has('filter') ? (
-                        <div className="widget-section filter-widget">
-                            <div className="section-header collapsible-header">
-                                <div className="section-header-left">
-                                    <h3>Filter & Controls</h3>
-                                </div>
-                                <button
-                                    className="collapse-btn"
-                                    onClick={() => togglePanel('filter')}
-                                    title="Hide panel"
-                                >
-                                    <EyeOff size={14} />
-                                </button>
-                            </div>
-                            <div className="widget-content filter-content">
-                                <FilterPanel
-                                    selectedSensors={selectedSensors}
-                                    filters={filters}
-                                    onFiltersChange={handleFiltersChange}
-                                />
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="panel-collapsed-placeholder-small" />
-                    )}
+                <div className="right-column" ref={rightColumnRef}>
+                    {/* Right column's two slots (RT/RB) per SLOT_LAYOUT live in this
+                        wrapper. Save & Continue lives OUTSIDE so resizing the
+                        panels never pushes it off-screen. */}
+                    <div className="right-column-splits">
+                        {RIGHT_SLOTS.map(slot => renderSlot(slot))}
+                    </div>
+                    {/* end .right-column-splits */}
 
                     {/* Save & Continue Section */}
                     <div className="save-continue-section">

@@ -12,9 +12,12 @@ import type {
     ClusteringModelInfo,
     RelationshipTrainResult,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Plus, Square, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid } from "lucide-react";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Square, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, FileText, Image as ImageIcon, ChevronDown } from "lucide-react";
+import * as echarts from "echarts";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
+import { usePMReport } from "../../hooks/usePMReport";
+import type { PMReportData, ReportChartImage, ReportSensorRef } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
@@ -345,6 +348,17 @@ export default function PredictiveModelBuild() {
     const [subModelsError, setSubModelsError] = useState<string | null>(null);
     const [subModelsProgress, setSubModelsProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
     const [subModelsOpen, setSubModelsOpen] = useState(false);
+    // Generation counter for sub-model fits. Each call to `runSubModelFits`
+    // bumps this and remembers its own gen number; on completion it only
+    // commits results when its gen still matches `current` — guarantees a
+    // late-finishing older call can't overwrite a newer Apply's results.
+    // Needed because Apply now fires sub-models in the background, so two
+    // overlapping Applies are possible if the user re-clicks during phase 2.
+    const subModelsGenRef = useRef(0);
+    // Last fired sub-models Promise. PDF Export awaits this before building
+    // so the report still includes every step chart even if the user hits
+    // Export before background sub-models finish.
+    const subModelsPromiseRef = useRef<Promise<void> | null>(null);
 
     // Clustering preview result + status.
     const [clusteringPreview, setClusteringPreview] = useState<ClusteringPreview | null>(null);
@@ -436,6 +450,33 @@ export default function PredictiveModelBuild() {
         return () => window.removeEventListener('keydown', onKey);
     }, [confirmSaveOpen]);
 
+    // ── Report dropdown (Export PNG / Export PDF) ──
+    // `reportBusy` disables the button while html-to-image is rendering so
+    // the user can't double-click and trigger overlapping captures.
+    const [reportMenuOpen, setReportMenuOpen] = useState(false);
+    const [reportBusy, setReportBusy] = useState(false);
+    const reportMenuRef = useRef<HTMLDivElement>(null);
+    const { exportPNG, exportPDF } = usePMReport();
+    // Click-outside + Escape close the menu. Re-binds only while open so we
+    // don't leave a document listener attached the whole component lifetime.
+    useEffect(() => {
+        if (!reportMenuOpen) return;
+        const onDown = (e: MouseEvent) => {
+            if (reportMenuRef.current && !reportMenuRef.current.contains(e.target as Node)) {
+                setReportMenuOpen(false);
+            }
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setReportMenuOpen(false);
+        };
+        document.addEventListener('mousedown', onDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [reportMenuOpen]);
+
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
@@ -509,6 +550,11 @@ export default function PredictiveModelBuild() {
                     // payload. Drop it on load; new per-sensor filters live in
                     // `pmSensorFilters` and now actually affect the model.
                     setPmSensorFilters(Array.isArray(slice.pmSensorFilters) ? slice.pmSensorFilters : []);
+                    // NOTE: Fit results (relPreview / subModels / clusteringPreview)
+                    // are deliberately NOT persisted. With many target sensors or
+                    // large datasets the predictor_raw matrices balloon the workspace
+                    // JSON quickly, so we accept that re-opening a workspace requires
+                    // clicking Apply again.
                 } else if (effectivePredictors.length > 0) {
                     setScatterXSensor(effectivePredictors[0]);
                 }
@@ -541,6 +587,9 @@ export default function PredictiveModelBuild() {
     }, []);
 
     // Persist predictive-model slice back into the workspace file on change.
+    // Config only — fit results (relPreview / subModels / clusteringPreview)
+    // are deliberately excluded so workspace JSONs stay small even with many
+    // target sensors. Re-opening forces the user to click Apply again.
     useEffect(() => {
         if (!workspaceId || !hydratedRef.current) return;
         const timer = setTimeout(() => {
@@ -1267,7 +1316,7 @@ export default function PredictiveModelBuild() {
         }
     }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload]);
 
-    const handleRelationshipApply = () => {
+    const handleRelationshipApply = async () => {
         if (!targetSensor) {
             setRelError("Target sensor is required.");
             return;
@@ -1277,7 +1326,21 @@ export default function PredictiveModelBuild() {
             return;
         }
         setRelError(null);
-        runRelationshipFit();
+        // Phase 1 (main multivariate fit) is awaited so the Apply button
+        // stays "Running…" until the chart can render. Once phase 1 is in,
+        // the button re-enables and the user can keep working while phase 2
+        // (cumulative sub-model fits) finishes IN THE BACKGROUND. We stash
+        // the chained promise so PDF Export can `await` it before building
+        // the report — keeps the "every step chart in PDF" guarantee from
+        // the previous design without locking the UI for the full pipeline.
+        await runRelationshipFit();
+        const subModelsPromise = runSubModelFits().catch(err => {
+            // Errors are already surfaced via `subModelsError` state inside
+            // runSubModelFits; the catch here just prevents an unhandled
+            // promise rejection warning from the fire-and-forget pattern.
+            console.warn('Background sub-models fit failed:', err);
+        });
+        subModelsPromiseRef.current = subModelsPromise;
     };
 
     /**
@@ -1299,6 +1362,9 @@ export default function PredictiveModelBuild() {
         if (!targetSensor || predictorSensors.length === 0) return;
         const subsetPredictors = [...predictorSensors];
         const total = subsetPredictors.length;
+        // Claim a generation. Late-finishing older calls will see their
+        // gen != current at write time and skip the state commit.
+        const myGen = ++subModelsGenRef.current;
         setSubModelsLoading(true);
         setSubModelsError(null);
         setSubModelsProgress({ current: 0, total });
@@ -1328,18 +1394,29 @@ export default function PredictiveModelBuild() {
                 results.push({ predictors: subset, result: r });
                 setSubModelsProgress({ current: i, total });
             }
-            setSubModels(results);
-            console.log("Sub-model fits complete:", results.map(r => ({
-                predictors: r.predictors,
-                rows: r.result.predicted.length,
-                r2: r.result.r2_per_step[r.result.r2_per_step.length - 1],
-            })));
+            if (myGen === subModelsGenRef.current) {
+                setSubModels(results);
+                console.log("Sub-model fits complete:", results.map(r => ({
+                    predictors: r.predictors,
+                    rows: r.result.predicted.length,
+                    r2: r.result.r2_per_step[r.result.r2_per_step.length - 1],
+                })));
+            } else {
+                console.log(`[PM] Discarding stale sub-models result (gen ${myGen} vs current ${subModelsGenRef.current})`);
+            }
         } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setSubModelsError(msg);
-            console.error("runSubModelFits failed:", e);
+            if (myGen === subModelsGenRef.current) {
+                const msg = e instanceof Error ? e.message : String(e);
+                setSubModelsError(msg);
+                console.error("runSubModelFits failed:", e);
+            }
         } finally {
-            setSubModelsLoading(false);
+            // Only the latest gen flips loading off — older calls' finally
+            // would otherwise momentarily clear a still-running newer call's
+            // loading flag.
+            if (myGen === subModelsGenRef.current) {
+                setSubModelsLoading(false);
+            }
         }
     }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload, relPreview, fitIsStale]);
 
@@ -1791,6 +1868,226 @@ export default function PredictiveModelBuild() {
         },
     });
 
+    // ── Report data assembly ──
+    // Async because chart captures wait on ECharts' `finished` event so the
+    // PNG includes the fully-painted scatter (otherwise progressive/large
+    // rendering can leave only axes drawn by the time getDataURL fires).
+    const buildReportData = useCallback(async (): Promise<PMReportData> => {
+        const refFor = (tag: string): ReportSensorRef => {
+            const m = sensorMetadata?.find(
+                meta => meta.tag.toLowerCase() === tag.toLowerCase(),
+            );
+            return {
+                tag,
+                description: m?.description ?? '',
+                unit:        m?.unit        ?? '',
+                component:   m?.component   ?? '',
+            };
+        };
+
+        // ── Chart capture helper ──
+        // Render an ECharts option into a 1600×900 offscreen container so the
+        // chart re-lays out at "expanded view" size, then wait for its
+        // `finished` event before snapshotting. Three async-render flags get
+        // forced off in the cloned option so getDataURL captures a fully
+        // painted frame instead of stopping at the first progressive chunk:
+        //   • animation        — enter-animation hides points until done
+        //   • progressive      — streams scatter points across many frames
+        //   • large            — switches scatter to a batch path that
+        //                         doesn't always paint synchronously
+        // The previous version omitted these and only axes showed up in the
+        // captured PNG for any scatter with >2000 points.
+        const captureOption = async (option: any): Promise<string> => {
+            const offscreen = document.createElement('div');
+            offscreen.style.cssText =
+                'position:absolute; left:-99999px; top:0; width:1600px; height:900px';
+            document.body.appendChild(offscreen);
+            let temp: ReturnType<typeof echarts.init> | null = null;
+            try {
+                const seriesArr = Array.isArray(option.series) ? option.series : [];
+                const safeOption = {
+                    ...option,
+                    animation: false,
+                    series: seriesArr.map((s: any) => ({
+                        ...s,
+                        animation: false,
+                        progressive: 0,
+                        progressiveThreshold: 0,
+                        large: false,
+                    })),
+                };
+                temp = echarts.init(offscreen);
+                temp.setOption(safeOption, { notMerge: true });
+                // Wait for ECharts to finish drawing. 2s safety timeout
+                // covers edge cases where the event doesn't fire (e.g.,
+                // empty series) so the report doesn't hang.
+                await new Promise<void>(resolve => {
+                    let done = false;
+                    const settle = () => { if (done) return; done = true; resolve(); };
+                    temp!.on('finished', settle);
+                    setTimeout(settle, 2000);
+                });
+                return temp.getDataURL({
+                    type: 'png',
+                    pixelRatio: 2,
+                    backgroundColor: '#ffffff',
+                });
+            } finally {
+                if (temp) temp.dispose();
+                offscreen.remove();
+            }
+        };
+
+        const chartImages: ReportChartImage[] = [];
+
+        // 1) Time-series (Individual mode) — capture via live ECharts instance.
+        //    Filter the DOM walk to LINE charts only so scatter charts aren't
+        //    double-captured (those come from explicit React state below).
+        if (containerRef.current) {
+            const divs = containerRef.current.querySelectorAll('div');
+            for (const div of Array.from(divs)) {
+                const live = echarts.getInstanceByDom(div as HTMLDivElement);
+                if (!live) continue;
+                const rect = (div as HTMLDivElement).getBoundingClientRect();
+                if (rect.width < 300 || rect.height < 200) continue;
+                const opt = live.getOption();
+                const series = Array.isArray(opt.series) ? opt.series : [];
+                const isLineOnly = series.length > 0
+                    && series.every((s: any) => s?.type === 'line');
+                if (!isLineOnly) continue;
+                try {
+                    const dataUrl = await captureOption(opt);
+                    chartImages.push({
+                        label: `Time series · ${targetSensor || 'target'}`,
+                        dataUrl,
+                        aspectRatio: 16 / 9,
+                    });
+                } catch (e) {
+                    console.warn('[Report] Line chart capture failed:', e);
+                }
+            }
+        }
+
+        // 2) Relation mode — render EACH sub-model fit as its own chart
+        //    (matches the "sub-models" modal in the app). Falls back to a
+        //    single main-fit chart if the user hasn't computed sub-models yet.
+        if (rcMode === 'relationship' && relPreview) {
+            const fits: SubModelFit[] = (subModels && subModels.length > 0)
+                ? subModels
+                : [{
+                    predictors: relPreview.predictorsAtApply,
+                    result:     relPreview.result,
+                }];
+            for (let i = 0; i < fits.length; i++) {
+                const fit = fits[i];
+                const xSensor = fit.predictors[0] ?? '';
+                const opt = buildSubModelOption(fit, xSensor);
+                if (!opt) continue;
+                const r2 = fit.result.r2_per_step[fit.result.r2_per_step.length - 1];
+                const r2Str = typeof r2 === 'number' ? ` · R²=${r2.toFixed(4)}` : '';
+                try {
+                    const dataUrl = await captureOption(opt);
+                    chartImages.push({
+                        label:
+                            `Relationship · Step ${i + 1}/${fits.length} · `
+                            + `${fit.predictors.join(' + ')} → ${targetSensor}${r2Str}`,
+                        dataUrl,
+                        aspectRatio: 16 / 9,
+                    });
+                } catch (e) {
+                    console.warn('[Report] Sub-model capture failed:', e);
+                }
+            }
+        }
+
+        // 3) Clustering mode — single scatter from the live memoized option.
+        if (rcMode === 'clustering' && clusteringScatterOption) {
+            try {
+                const dataUrl = await captureOption(clusteringScatterOption);
+                chartImages.push({
+                    label: `Clustering · ${numClusters} clusters`
+                        + (criteriaSensor ? ` · criteria=${criteriaSensor}` : ''),
+                    dataUrl,
+                    aspectRatio: 16 / 9,
+                });
+            } catch (e) {
+                console.warn('[Report] Clustering capture failed:', e);
+            }
+        }
+
+        const dashSensorFilters = dashboardSnapshot?.filters?.sensorFilters ?? [];
+
+        return {
+            meta: {
+                workspaceName,
+                generatedAt: new Date(),
+            },
+            target: {
+                ref: refFor(targetSensor),
+                stats: targetStats
+                    ? {
+                        mean:  targetStats.mean,
+                        sd:    targetStats.sd,
+                        min:   targetStats.min,
+                        max:   targetStats.max,
+                        count: targetStats.count,
+                      }
+                    : null,
+            },
+            predictors: predictorSensors.map(p => ({
+                ref: refFor(p),
+                // Per-predictor stats aren't computed up-front on this page
+                // (only target gets a stats fetch). Leave null — the
+                // template displays "—" in stats columns.
+                stats: null,
+            })),
+            individualChecked,
+            mode: rcMode,
+            filters: {
+                timeStart:        filterTimeStart,
+                timeEnd:          filterTimeEnd,
+                dashboardFilters: dashSensorFilters,
+                pmFilters:        pmSensorFilters,
+            },
+            relationshipConfig: rcMode === 'relationship'
+                ? {
+                    modelName:      relModelName,
+                    stiffness:      relStiffness,
+                    scatterXSensor: scatterXSensor,
+                    r2:             modelStats.r2,
+                    rmse:           modelStats.rmse,
+                  }
+                : null,
+            clusteringConfig: rcMode === 'clustering'
+                ? {
+                    modelName:      clusterModelName,
+                    criteriaSensor: criteriaSensor,
+                    numClusters:    numClusters,
+                    ranges:         clusterRanges,
+                  }
+                : null,
+            chartImages,
+        };
+    }, [
+        sensorMetadata, workspaceName,
+        targetSensor, targetStats, predictorSensors,
+        individualChecked, rcMode,
+        filterTimeStart, filterTimeEnd, pmSensorFilters, dashboardSnapshot,
+        relModelName, relStiffness, scatterXSensor, modelStats,
+        clusterModelName, criteriaSensor, numClusters, clusterRanges,
+        // Chart-capture deps: option builders + their sources
+        relPreview, subModels, buildSubModelOption, clusteringScatterOption,
+    ]);
+
+    // Mirror the latest `buildReportData` into a ref so post-await callers
+    // (PDF Export waits on background sub-models, then builds) see the
+    // freshest closure — not whichever version was captured by the click
+    // handler at the moment the user clicked Export. Without this the
+    // background subModels never make it into the report because the
+    // captured buildReportData has stale state.
+    const buildReportDataRef = useRef(buildReportData);
+    useEffect(() => { buildReportDataRef.current = buildReportData; }, [buildReportData]);
+
     if (loading) {
         return (
             <div className="predictive-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1828,6 +2125,89 @@ export default function PredictiveModelBuild() {
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
                 <div className="pm-flex-spacer" />
+                {/* Report dropdown — captures the whole page as PNG or wraps
+                    that capture in a themed PDF. Lives in a relative wrapper
+                    so the floating menu can anchor to the button. */}
+                <div className="pm-report-wrap" ref={reportMenuRef}>
+                    <button
+                        className="pm-btn pm-btn-secondary pm-btn-with-caret"
+                        onClick={() => setReportMenuOpen(o => !o)}
+                        disabled={reportBusy}
+                        aria-haspopup="menu"
+                        aria-expanded={reportMenuOpen}
+                    >
+                        {reportBusy ? (
+                            <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                            <FileText size={13} />
+                        )}
+                        <span>{reportBusy ? 'Exporting…' : 'Report'}</span>
+                        <ChevronDown size={11} />
+                    </button>
+                    {reportMenuOpen && (
+                        <div className="pm-report-menu" role="menu">
+                            <button
+                                className="pm-report-menu-item"
+                                role="menuitem"
+                                onClick={async () => {
+                                    setReportMenuOpen(false);
+                                    if (!containerRef.current) return;
+                                    setReportBusy(true);
+                                    try {
+                                        await exportPNG(containerRef.current, workspaceName);
+                                    } catch (err) {
+                                        console.error('PNG export failed:', err);
+                                        alert('Export failed: ' + String(err));
+                                    } finally {
+                                        setReportBusy(false);
+                                    }
+                                }}
+                            >
+                                <ImageIcon size={14} />
+                                <div className="pm-report-menu-text">
+                                    <span className="pm-report-menu-title">Export as PNG</span>
+                                    <span className="pm-report-menu-sub">Full-page screenshot at 2× resolution</span>
+                                </div>
+                            </button>
+                            <button
+                                className="pm-report-menu-item"
+                                role="menuitem"
+                                onClick={async () => {
+                                    setReportMenuOpen(false);
+                                    setReportBusy(true);
+                                    try {
+                                        // If background sub-models are still fitting
+                                        // from a recent Apply, wait for them to finish
+                                        // before building the report so every step
+                                        // chart makes it into the PDF. No-op when no
+                                        // Apply has run yet (ref is null).
+                                        if (subModelsPromiseRef.current) {
+                                            await subModelsPromiseRef.current;
+                                        }
+                                        // Use the ref-mirrored builder so we get the
+                                        // LATEST closure (post-await React renders may
+                                        // have refreshed subModels into state). The
+                                        // original `buildReportData` captured at click
+                                        // time would still see the old null subModels.
+                                        const data = await buildReportDataRef.current();
+                                        await exportPDF(data);
+                                    } catch (err) {
+                                        console.error('PDF export failed:', err);
+                                        alert('Export failed: ' + String(err));
+                                    } finally {
+                                        setReportBusy(false);
+                                    }
+                                }}
+                            >
+                                <FileText size={14} />
+                                <div className="pm-report-menu-text">
+                                    <span className="pm-report-menu-title">Export as PDF Report</span>
+                                    <span className="pm-report-menu-sub">Structured document — target, predictors, filters, model config, charts</span>
+                                </div>
+                            </button>
+                        </div>
+                    )}
+                </div>
                 <button className="pm-btn pm-btn-secondary" onClick={handleOpenPreview}>Preview</button>
                 <button
                     className="pm-btn pm-btn-primary"
@@ -2273,13 +2653,23 @@ export default function PredictiveModelBuild() {
                                         <Maximize2 size={14} />
                                     </button>
                                 </div>
-                                {/* Inline progress bar — shown only while a relationship fit
-                                    is in flight. Indeterminate (sliding) when the batch is a
-                                    single predictor, determinate (current/total) otherwise. */}
-                                {rcMode === 'relationship' && relLoading && (
+                                {/* Inline progress bar — visible across BOTH Apply phases:
+                                    PHASE 1 (relLoading) is the main multivariate fit,
+                                    PHASE 2 (subModelsLoading) is the cumulative sub-model
+                                    fits that Apply now pre-computes so the PDF report
+                                    always has every step chart. Without the phase-2 arm,
+                                    after phase 1 the chart appears but the page goes
+                                    silent for the 1-3s/predictor of sub-model fitting —
+                                    which read to the user as a "stuck spinner". */}
+                                {rcMode === 'relationship' && (relLoading || subModelsLoading) && (
                                     <div className="pm-progress">
                                         <div className="pm-progress-track">
-                                            {relFitProgress && relFitProgress.total > 1 ? (
+                                            {subModelsLoading && subModelsProgress.total > 0 ? (
+                                                <div
+                                                    className="pm-progress-bar"
+                                                    style={{ width: `${Math.min(100, (subModelsProgress.current / subModelsProgress.total) * 100)}%` }}
+                                                />
+                                            ) : relFitProgress && relFitProgress.total > 1 ? (
                                                 <div
                                                     className="pm-progress-bar"
                                                     style={{ width: `${Math.min(100, (relFitProgress.current / relFitProgress.total) * 100)}%` }}
@@ -2290,9 +2680,11 @@ export default function PredictiveModelBuild() {
                                         </div>
                                         <div className="pm-progress-label">
                                             <Loader2 size={11} className="pm-spin" />
-                                            {relFitProgress && relFitProgress.total > 1
-                                                ? `Fitting predictor ${Math.min(relFitProgress.current + 1, relFitProgress.total)} of ${relFitProgress.total}…`
-                                                : 'Running LinearGAM…'}
+                                            {subModelsLoading
+                                                ? `Fitting sub-model ${Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of ${subModelsProgress.total}…`
+                                                : relFitProgress && relFitProgress.total > 1
+                                                    ? `Fitting predictor ${Math.min(relFitProgress.current + 1, relFitProgress.total)} of ${relFitProgress.total}…`
+                                                    : 'Running LinearGAM…'}
                                         </div>
                                     </div>
                                 )}
@@ -2405,6 +2797,13 @@ export default function PredictiveModelBuild() {
                             <button
                                 className="pm-btn pm-btn-primary pm-btn-sm"
                                 onClick={handleRelationshipApply}
+                                // Only block on phase 1 (the main multivariate fit) —
+                                // phase 2 (sub-models) runs in the background after
+                                // Apply returns, so the button re-enables as soon as
+                                // there's a chart to look at. Concurrent re-clicks
+                                // are handled by `subModelsGenRef` (older fits drop
+                                // their writes when they discover a newer Apply
+                                // claimed a fresher generation).
                                 disabled={rcMode !== 'relationship' || relLoading}
                             >
                                 {relLoading ? (
