@@ -7,7 +7,7 @@
 # If PowerShell blocks the script, allow it once for this process:
 #   PS> Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #
-# The script is idempotent — re-running skips work that is already done.
+# The script is idempotent - re-running skips work that is already done.
 #
 # Prerequisites (each is verified; the script bails with instructions if missing):
 #   - Windows 10/11 (x86_64)
@@ -109,11 +109,27 @@ $pyver = & $pythonBin --version
 Ok "$pyver ($pythonBin)"
 
 # Git Bash (needed to run build_sidecar.sh)
-$bashCmd = Get-Command bash -ErrorAction SilentlyContinue
-if (-not $bashCmd) {
-    Fail "bash not found. Install Git for Windows from https://git-scm.com — it ships Git Bash."
+# Prefer Git Bash over WSL bash (C:\WINDOWS\system32\bash.exe)
+$gitBashPaths = @(
+    "C:\Program Files\Git\bin\bash.exe",
+    "C:\Program Files\Git\usr\bin\bash.exe",
+    "C:\Program Files (x86)\Git\bin\bash.exe"
+)
+$bashExe = $null
+foreach ($p in $gitBashPaths) {
+    if (Test-Path $p) { $bashExe = $p; break }
 }
-Ok "bash found at $($bashCmd.Source)"
+if (-not $bashExe) {
+    # Fallback: any bash that is NOT the WSL stub
+    $found = Get-Command bash -ErrorAction SilentlyContinue
+    if ($found -and $found.Source -notlike "*system32*") {
+        $bashExe = $found.Source
+    }
+}
+if (-not $bashExe) {
+    Fail "Git Bash not found. Install Git for Windows from https://git-scm.com - it ships Git Bash."
+}
+Ok "Git Bash found at $bashExe"
 
 # ─── 2. npm install ───────────────────────────────────────────────────────
 Step "2/5  Installing npm dependencies"
@@ -160,7 +176,8 @@ if (Test-Path $sidecar) {
         # for older Nuitka versions; the script itself already passes
         # --assume-yes-for-downloads as a flag.
         $env:NUITKA_ASSUME_YES_FOR_DOWNLOADS = "1"
-        & bash ./build_sidecar.sh
+        $env:NUITKA_JOBS = "1"
+        & $bashExe ./build_sidecar.sh
         if ($LASTEXITCODE -ne 0) { Fail "build_sidecar.sh failed (exit $LASTEXITCODE)" }
     } finally {
         Pop-Location
@@ -174,7 +191,9 @@ if (Test-Path $sidecar) {
 
 # ─── 4. Tauri build ───────────────────────────────────────────────────────
 Step "4/5  Building Tauri app + NSIS/MSI installers"
-npm run tauri -- build --target $Target
+# Use npx directly to bypass npm's CLI config parsing, which swallows --target
+# (npm 10+ treats --target as an unknown npm config and drops it).
+npx tauri build --target $Target
 if ($LASTEXITCODE -ne 0) { Fail "tauri build failed (exit $LASTEXITCODE)" }
 
 # ─── 5. Locate + report installers ────────────────────────────────────────
