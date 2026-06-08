@@ -3,12 +3,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen, emit } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog, ask, message } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import { CsvMetadata, SensorMetadata, DashboardSnapshot, FailureGroup, FailureSensorRow as SensorRow, WorkspaceState } from "../../types";
 import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, Minus, Square, GripVertical, Play, ArrowLeft, Pencil, Check } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
-import { updateWorkspaceData, loadWorkspaceData, renameWorkspaceFile } from "../../workspaceManager";
+import { updateWorkspaceData, loadWorkspaceData, renameWorkspaceFile, writeUserTextFile } from "../../workspaceManager";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -158,7 +158,10 @@ export default function FailureGroupCreation() {
                     rcMode: null,
                     scatterXSensor: "",
                     relModelName: "",
-                    relStiffness: 1,
+                    // Default λ corresponds to the "Standard" stiffness preset
+                    // in PredictiveModelBuild. Keep this value in the STIFFNESS_OPTIONS
+                    // set there so the dropdown renders the matching option on first open.
+                    relStiffness: 100_000,
                     clusterModelName: "",
                     numClusters: 3,
                     // Default to 3 equal-width ranges over [0, 100] — matches the
@@ -601,12 +604,12 @@ export default function FailureGroupCreation() {
         }
     };
 
-    // Native save dialog → user picks destination + filename → writeTextFile.
+    // Native save dialog → user picks destination + filename → writeUserTextFile.
     // Previously this used `link.click()` with `<a download>`, which is a
     // browser-only mechanism that silently drops files into ~/Downloads with
-    // no path control and no feedback. The dialog plugin's save() grants the
-    // selected path runtime fs scope, so writeTextFile to that exact path
-    // works even though the global scope only covers AppData.
+    // no path control and no feedback. `writeUserTextFile` bridges through
+    // Rust so the write works for any user-picked path, regardless of the
+    // fs plugin's global scope (which only covers AppData).
     const handleDownloadTemplate = async () => {
         try {
             const path = await saveDialog({
@@ -614,7 +617,7 @@ export default function FailureGroupCreation() {
                 filters: [{ name: 'CSV Files', extensions: ['csv'] }],
             });
             if (!path) return;  // user cancelled
-            await writeTextFile(path, CSV_HEADERS.join(",") + "\n");
+            await writeUserTextFile(path, CSV_HEADERS.join(",") + "\n");
             try { await message(`Template saved to:\n${path}`, { title: 'Saved', kind: 'info' }); }
             catch { /* ignore */ }
         } catch (e) {
@@ -637,7 +640,7 @@ export default function FailureGroupCreation() {
                 filters: [{ name: 'CSV Files', extensions: ['csv'] }],
             });
             if (!path) return;  // user cancelled
-            await writeTextFile(path, csvText);
+            await writeUserTextFile(path, csvText);
             try { await message(`Failure groups saved to:\n${path}`, { title: 'Saved', kind: 'info' }); }
             catch { /* ignore */ }
         } catch (e) {

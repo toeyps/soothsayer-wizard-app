@@ -3,7 +3,7 @@ import { toPng } from 'html-to-image';
 import { pdf } from '@react-pdf/renderer';
 import * as echarts from 'echarts';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
+import { writeUserBinaryFile } from '../workspaceManager';
 import { PMReportTemplate } from '../components/reports/PMReportTemplate';
 import type { PMReportData } from '../components/reports/pmReportTypes';
 
@@ -11,7 +11,7 @@ import type { PMReportData } from '../components/reports/pmReportTypes';
 
 /**
  * Strip the `data:image/png;base64,` prefix from a data URL and decode the
- * remainder into raw bytes — Tauri's `writeFile` expects a Uint8Array.
+ * remainder into raw bytes — `writeUserBinaryFile` expects a Uint8Array.
  */
 function dataUrlToBytes(dataUrl: string): Uint8Array {
     const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
@@ -286,7 +286,7 @@ export function usePMReport(): PMReportHook {
         if (!filePath) return;  // user cancelled
 
         const dataUrl = await captureNodeFull(node, 2);
-        await writeFile(filePath, dataUrlToBytes(dataUrl));
+        await writeUserBinaryFile(filePath, dataUrlToBytes(dataUrl));
     }, []);
 
     const exportPDF = useCallback(async (data: PMReportData) => {
@@ -301,7 +301,7 @@ export function usePMReport(): PMReportHook {
         // runs the React render → PDF binary pipeline.
         const blob = await pdf(<PMReportTemplate data={data} />).toBlob();
         const arrayBuffer = await blob.arrayBuffer();
-        await writeFile(filePath, new Uint8Array(arrayBuffer));
+        await writeUserBinaryFile(filePath, new Uint8Array(arrayBuffer));
     }, []);
 
     return { exportPNG, exportPDF };

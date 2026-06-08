@@ -18,6 +18,7 @@ import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
 import { usePMReport } from "../../hooks/usePMReport";
 import type { PMReportData, ReportChartImage, ReportSensorRef } from "../reports/pmReportTypes";
+import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
@@ -182,7 +183,7 @@ export default function PredictiveModelBuild() {
 
     // Relationship Model Config
     const [relModelName, setRelModelName] = useState("");
-    const [relStiffness, setRelStiffness] = useState<number>(1);
+    const [relStiffness, setRelStiffness] = useState<number>(STIFFNESS_DEFAULT);
 
     // Clustering Model Config
     const [clusterModelName, setClusterModelName] = useState("");
@@ -523,7 +524,9 @@ export default function PredictiveModelBuild() {
                     setRcMode(slice.rcMode);
                     setScatterXSensor(slice.scatterXSensor || (effectivePredictors[0] ?? ''));
                     setRelModelName(slice.relModelName);
-                    setRelStiffness(slice.relStiffness);
+                    // Snap legacy values (e.g. old default `1`) to the nearest
+                    // preset so the dropdown always renders a valid option.
+                    setRelStiffness(snapStiffness(slice.relStiffness));
                     setClusterModelName(slice.clusterModelName);
                     setNumClusters(slice.numClusters);
                     setCriteriaSensor(slice.criteriaSensor);
@@ -1751,7 +1754,7 @@ export default function PredictiveModelBuild() {
                     { label: 'Predictors', value: predictorSensors.length > 0
                         ? `${predictorSensors.length} · ${predictorSensors.join(', ')}`
                         : '—' },
-                    { label: 'Stiffness (λ)', value: relStiffness },
+                    { label: 'Stiffness', value: stiffnessLabel(relStiffness) },
                 ],
             });
         }
@@ -2865,15 +2868,18 @@ export default function PredictiveModelBuild() {
                             </div>
                             <div className="filter-row">
                                 <label>Stiffness</label>
-                                <input
-                                    type="number"
+                                <select
                                     value={relStiffness}
                                     onChange={e => setRelStiffness(Number(e.target.value))}
                                     className="config-input"
-                                    min={0}
-                                    step={0.1}
                                     disabled={rcMode !== 'relationship'}
-                                />
+                                >
+                                    {STIFFNESS_OPTIONS.map(opt => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
                             {relError && (
                                 <div className="filter-row" style={{ color: '#f43f5e', fontSize: 12 }}>

@@ -267,4 +267,14 @@ export type TauriCommands = {
     };
     returns: RelationshipTrainResult;
   };
+  /**
+   * Write arbitrary bytes to a user-picked file path (CSV / PDF / PNG exports).
+   * Bridges through Rust so it bypasses the fs plugin's scope restrictions
+   * (Phase 2 will limit the fs plugin to `$APPDATA/**`). `contents` is the
+   * `Vec<u8>` payload — Tauri IPC serializes it as `number[]`.
+   */
+  write_user_file: {
+    args: { path: string; contents: number[] };
+    returns: void;
+  };
 };

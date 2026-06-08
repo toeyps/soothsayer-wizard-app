@@ -12,6 +12,189 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
+// ---------------------------------------------------------------------------
+// Security / path-validation helpers
+// ---------------------------------------------------------------------------
+
+/// Validate a single path component intended to be used as a filename
+/// (or directory name) on disk. Rejects empty strings, `.` / `..`, any
+/// path separators (`/` `\`), `:`, NUL, Windows-reserved chars (`* ? < > | "`),
+/// and ASCII control characters.
+///
+/// Used to defend the `train_*` commands against path-traversal via
+/// frontend-supplied sensor/target names that are interpolated into
+/// `Path::join` / `format!` filename templates.
+fn sanitize_filename_component(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        return Err("empty filename component".into());
+    }
+    if s == "." || s == ".." {
+        return Err("reserved filename component".into());
+    }
+    let bad = ['/', '\\', ':', '\0', '*', '?', '<', '>', '|', '"'];
+    if s.chars().any(|c| bad.contains(&c) || c.is_control()) {
+        return Err(format!("invalid character in name: {}", s));
+    }
+    Ok(s.to_string())
+}
+
+/// Validate a path passed from the frontend that we're about to open
+/// for read (`load_csv`, `load_metadata_command`, `load_mapping_csv`).
+///
+/// We deliberately do NOT canonicalize or check existence here —
+/// `File::open` already surfaces "file not found" with a useful error.
+/// We only reject shapes that indicate the frontend is constructing
+/// the path from attacker-controlled input (NUL bytes, `..` traversal).
+fn validate_read_path(p: &str) -> Result<(), String> {
+    if p.is_empty() {
+        return Err("path is empty".into());
+    }
+    if p.contains('\0') {
+        return Err("path contains NUL byte".into());
+    }
+    // Split on both Unix and Windows separators so cross-platform paths
+    // are caught regardless of which slash style the frontend serialized.
+    for component in p.split(['/', '\\']) {
+        if component == ".." {
+            return Err("path contains '..' component".into());
+        }
+    }
+    Ok(())
+}
+
+/// Prefix a string cell with a leading apostrophe if it would otherwise
+/// be interpreted as a formula by Excel / Numbers / LibreOffice
+/// (CSV injection / "formula injection" defense, CWE-1236).
+///
+/// The leading apostrophe forces spreadsheet apps to treat the cell as
+/// a literal string, and is stripped on display. Apply ONLY to string
+/// cells — numeric values written with `{:e}`/`{}` start with a digit,
+/// `+`, or `-`, but their value semantics rely on Excel parsing them as
+/// numbers, so escaping would break that.
+fn excel_safe(s: &str) -> String {
+    if let Some(c) = s.chars().next() {
+        if matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r') {
+            return format!("'{}", s);
+        }
+    }
+    s.to_string()
+}
+
+/// Validate a frontend-supplied directory the backend will write into
+/// (the `save_path` argument to the `train_*` commands). The user picks
+/// this via a native dialog, so we don't constrain it to a specific
+/// root — but we do reject obviously-malicious shapes.
+///
+///   - must be non-empty
+///   - must be absolute (rejects `./foo`, `../foo`, plain `foo`)
+///   - must not contain `..` components anywhere
+///   - must already exist on disk and be a directory
+fn validate_save_dir(p: &str) -> Result<(), String> {
+    if p.is_empty() {
+        return Err("save_path is empty".into());
+    }
+    if p.contains('\0') {
+        return Err("save_path contains NUL byte".into());
+    }
+    let path = std::path::Path::new(p);
+    if !path.is_absolute() {
+        return Err(format!("save_path must be absolute: {}", p));
+    }
+    for component in p.split(['/', '\\']) {
+        if component == ".." {
+            return Err("save_path contains '..' component".into());
+        }
+    }
+    if !path.exists() {
+        return Err(format!("save_path does not exist: {}", p));
+    }
+    if !path.is_dir() {
+        return Err(format!("save_path is not a directory: {}", p));
+    }
+    Ok(())
+}
+
+/// Bridge command for frontend `save()` dialog → arbitrary-path file write.
+///
+/// The user picks the destination via the OS-native save dialog, so the
+/// path itself is trusted to the extent the OS dialog vetted it. This
+/// command exists because the `tauri-plugin-fs` scope (which Phase 2 will
+/// lock down to `$APPDATA/**`) would otherwise reject writes outside the
+/// scoped directories. Validation here defends against frontend bugs that
+/// might pass through a malicious string without dialog confirmation.
+///
+/// Validation:
+///   - reject empty path or paths containing NUL byte
+///   - reject any `..` component (traversal)
+///   - canonicalize the *parent* directory (which must already exist —
+///     the dialog selected a path under it) and assert it starts with
+///     the lexical parent. This guards against a TOCTOU symlink-swap
+///     where the parent dir is replaced with a symlink between dialog
+///     and write. We don't canonicalize the file path itself because the
+///     file may not exist yet.
+///   - if parent doesn't exist, error out — we don't auto-mkdir because
+///     the user selected a path via dialog, so its parent should exist.
+#[tauri::command]
+fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("path is empty".into());
+    }
+    if path.contains('\0') {
+        return Err("path contains NUL byte".into());
+    }
+    let p = std::path::Path::new(&path);
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("path contains '..' component".into());
+        }
+    }
+    let parent = p
+        .parent()
+        .ok_or_else(|| format!("path has no parent directory: {}", path))?;
+    if parent.as_os_str().is_empty() {
+        return Err(format!("path has no parent directory: {}", path));
+    }
+    // Canonicalize the parent (resolves symlinks, normalizes `.` / `..`).
+    // If the parent doesn't exist, this errors — we don't auto-mkdir because
+    // the user picked the path via a native save dialog, so its parent
+    // directory must already exist.
+    let parent_canonical = parent
+        .canonicalize()
+        .map_err(|e| format!("parent dir not accessible ({}): {}", parent.display(), e))?;
+    // Defense against TOCTOU dir tricks: ensure the canonical parent path
+    // still ends with (i.e. starts at the suffix matching) the literal
+    // parent the caller passed in. If a symlink resolved to a totally
+    // different prefix (e.g. parent was `/tmp/safe` and it's actually a
+    // symlink to `/etc`), the canonical parent will not contain `safe`,
+    // so the starts_with check catches the divergence.
+    //
+    // We can't directly compare equality because Windows / macOS may
+    // legitimately rewrite drive letters / case / `/private` prefixes
+    // during canonicalize, so we use suffix containment of the literal
+    // parent's components against the canonical components.
+    let lex_components: Vec<_> = parent
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .collect();
+    let canon_components: Vec<_> = parent_canonical
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .collect();
+    if !lex_components.is_empty() {
+        let lex_len = lex_components.len();
+        if canon_components.len() < lex_len
+            || canon_components[canon_components.len() - lex_len..] != lex_components[..]
+        {
+            return Err(format!(
+                "parent dir canonicalization diverged (possible symlink): {}",
+                parent.display()
+            ));
+        }
+    }
+    std::fs::write(&path, &contents)
+        .map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
 struct SessionData {
     data: ProcessedData,
     paths: Vec<String>,
@@ -21,6 +204,12 @@ struct AppState(Mutex<Option<SessionData>>);
 
 #[tauri::command]
 fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport, String> {
+    // Reject any path with a `..` component, NUL byte, or empty string.
+    // File-existence is delegated to `File::open` so the error surface
+    // stays familiar.
+    for p in &paths {
+        validate_read_path(p).map_err(|e| format!("invalid path '{}': {}", p, e))?;
+    }
     let merge_result = csv_processor::read_merge_csvs_with_report(paths.clone())?;
     let report = csv_processor::build_load_report(&merge_result);
 
@@ -128,6 +317,7 @@ fn get_all_sensors(state: State<AppState>) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn load_metadata_command(path: String) -> Result<Vec<SensorMetadata>, String> {
+    validate_read_path(&path).map_err(|e| format!("invalid path '{}': {}", path, e))?;
     load_metadata(&path)
 }
 
@@ -727,6 +917,13 @@ fn train_individual_model(
     if save_path.is_empty() {
         return Err("save_path is required.".into());
     }
+    // Path-traversal defense: `target` is interpolated into the on-disk
+    // filename / directory under `save_path/output/{target}/INDV_INFO_*`.
+    // A sensor name containing `/`, `..`, etc. would either escape the
+    // intended directory or produce an opaque filesystem error.
+    let target = sanitize_filename_component(&target)
+        .map_err(|e| format!("target: {}", e))?;
+    validate_save_dir(&save_path)?;
 
     let state_lock = state.0.lock().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
@@ -1099,6 +1296,15 @@ fn train_clustering_model(
     if save_path.is_empty() {
         return Err("save_path is required.".into());
     }
+    // Path-traversal defense — both sensors land in the filename
+    // (`CLUS_INFO_{first}_{second}.json`) and `second_sensor` is also
+    // a directory component. Reject any traversal/separator chars before
+    // we let them anywhere near `Path::join` / `format!`.
+    let first_sensor = sanitize_filename_component(&first_sensor)
+        .map_err(|e| format!("first_sensor: {}", e))?;
+    let second_sensor = sanitize_filename_component(&second_sensor)
+        .map_err(|e| format!("second_sensor: {}", e))?;
+    validate_save_dir(&save_path)?;
 
     // Reuse the preview path — it already does all the validation /
     // splitting / ellipse-fitting for both 1-cluster and N-cluster cases.
@@ -1281,6 +1487,18 @@ async fn train_relationship_model(
     if save_path.is_empty() {
         return Err("save_path is required.".into());
     }
+    // Path-traversal defense: `target` ends up as a directory name
+    // (`save_path/output/{target}/`) and each predictor is joined with `+`
+    // to form the `{feat_token}` interpolated into REL_DATASET/REL_INFO
+    // filenames. Any of these containing path separators or `..` would
+    // either escape the output dir or corrupt the filename.
+    let target = sanitize_filename_component(&target)
+        .map_err(|e| format!("target: {}", e))?;
+    let predictors: Vec<String> = predictors
+        .iter()
+        .map(|p| sanitize_filename_component(p).map_err(|e| format!("predictor '{}': {}", p, e)))
+        .collect::<Result<Vec<_>, String>>()?;
+    validate_save_dir(&save_path)?;
 
     // Build (X, y) the same way preview does. Also capture the raw timestamp
     // string per surviving row — we use it later as the first CSV column so
@@ -1459,13 +1677,19 @@ async fn train_relationship_model(
         };
 
         let mut csv = String::new();
+        // `timestamp` is a hard-coded literal and safe, but the user-supplied
+        // predictor + target names are not — escape them so a sensor named
+        // `=cmd|...` doesn't run as a formula when the CSV is opened in
+        // Excel. Numeric value cells use `format!("{}", f64)` which always
+        // starts with a digit, `-`, or `inf`/`NaN` text — we leave those
+        // unescaped so Excel still parses them as numbers.
         csv.push_str("timestamp");
         for p in &predictors {
             csv.push(',');
-            csv.push_str(p);
+            csv.push_str(&excel_safe(p));
         }
         csv.push(',');
-        csv.push_str(&target);
+        csv.push_str(&excel_safe(&target));
         csv.push_str(",PREDICTED,RESIDUAL\n");
 
         for i in 0..n_rows {
@@ -1473,7 +1697,9 @@ async fn train_relationship_model(
                 .get(i)
                 .and_then(|t| t.as_deref())
                 .unwrap_or("");
-            csv.push_str(ts);
+            // Timestamp is the only per-row string cell — escape to prevent
+            // formula injection from a malformed-but-valid CSV input.
+            csv.push_str(&excel_safe(ts));
             for v in &x_matrix[i] {
                 csv.push(',');
                 csv.push_str(&fmt_f(*v));
@@ -1789,11 +2015,53 @@ struct FormulaValidationResult {
     referenced_sensors: Vec<String>,
 }
 
+/// Bound on formula source length + brace/paren nesting depth — a cheap
+/// DoS guard so a pathological string can't make `fasteval::Parser`
+/// allocate unbounded stack/Slab. Real formulas top out around a few
+/// hundred chars; 4 KB / 64 levels is an enormous headroom.
+const MAX_FORMULA_LEN: usize = 4096;
+const MAX_FORMULA_DEPTH: i32 = 64;
+
+fn check_formula_limits(formula: &str) -> Result<(), String> {
+    if formula.len() > MAX_FORMULA_LEN {
+        return Err(format!(
+            "Formula too long ({} chars, max {})",
+            formula.len(),
+            MAX_FORMULA_LEN
+        ));
+    }
+    let mut depth: i32 = 0;
+    let mut max_depth: i32 = 0;
+    for c in formula.chars() {
+        match c {
+            '(' | '{' => {
+                depth += 1;
+                if depth > max_depth {
+                    max_depth = depth;
+                }
+            }
+            ')' | '}' => {
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    if max_depth > MAX_FORMULA_DEPTH {
+        return Err(format!(
+            "Formula too deeply nested ({} levels, max {})",
+            max_depth, MAX_FORMULA_DEPTH
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn validate_formula(
     formula: String,
     state: State<AppState>,
 ) -> Result<FormulaValidationResult, String> {
+    check_formula_limits(&formula)?;
+
     let state_lock = state.0.lock().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     let data = &session.data;
@@ -1864,6 +2132,8 @@ fn evaluate_formula(
     custom_name: Option<String>,
     state: State<AppState>,
 ) -> Result<String, String> {
+    check_formula_limits(&formula)?;
+
     let mut state_lock = state.0.lock().map_err(|e| e.to_string())?;
     let session = state_lock.as_mut().ok_or("No data loaded")?;
     let data = &mut session.data;
@@ -1977,6 +2247,7 @@ fn evaluate_formula(
 
 #[tauri::command]
 fn load_mapping_csv(path: String) -> Result<MappingData, String> {
+    validate_read_path(&path).map_err(|e| format!("invalid path '{}': {}", path, e))?;
     csv_processor::load_mapping_csv_data(&path)
 }
 
@@ -2216,7 +2487,8 @@ pub fn run() {
             train_individual_model,
             compute_clustering_preview,
             train_clustering_model,
-            train_relationship_model
+            train_relationship_model,
+            write_user_file
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

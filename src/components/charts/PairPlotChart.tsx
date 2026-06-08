@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { Download, Lasso, RotateCcw, Table2, X, Search, Trash2 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { writeUserTextFile } from '../../workspaceManager';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import { ChartProps } from './ChartTypes';
 
@@ -312,7 +312,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
         }
 
         try {
-            await writeTextFile(filePath, lines.join('\n'));
+            await writeUserTextFile(filePath, lines.join('\n'));
         } catch (err) {
             console.error('CSV write failed:', err);
         }
