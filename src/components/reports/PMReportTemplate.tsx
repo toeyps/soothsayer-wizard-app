@@ -36,6 +36,7 @@
 
 import { Document, Page, View, Text, Image, StyleSheet } from '@react-pdf/renderer';
 import type { PMReportData, ReportSensorRef, ReportSensorStats } from './pmReportTypes';
+import { stiffnessLabel } from './pmReportTypes';
 import type { WorkspaceSensorFilter } from '../../types';
 import { REPORT_THEME as T } from './pmReportTheme';
 
@@ -501,7 +502,7 @@ const ModelConfigSection = ({ data }: { data: PMReportData }) => (
             number={4}
             title="Model Configuration"
             subtitle={
-                data.mode === 'relationship' ? 'Relationship (LinearGAM) parameters and metrics.'
+                data.mode === 'relationship' ? 'Relation model parameters and metrics.'
                     : data.mode === 'clustering' ? 'Clustering (KMeans) parameters and cluster bins.'
                         : 'No mode selected — pick Relationship or Clustering before saving.'
             }
@@ -509,7 +510,7 @@ const ModelConfigSection = ({ data }: { data: PMReportData }) => (
         {data.mode === 'relationship' && data.relationshipConfig ? (
             <View style={styles.kvGrid}>
                 <KV label="Model name"  value={data.relationshipConfig.modelName || '—'} />
-                <KV label="Stiffness"   value={fmtNum(data.relationshipConfig.stiffness, 2)} />
+                <KV label="Stiffness"   value={stiffnessLabel(data.relationshipConfig.stiffness)} />
                 <KV label="Scatter X"   value={data.relationshipConfig.scatterXSensor || '—'} />
                 <KV label="Individual"  value={data.individualChecked ? 'Yes' : 'No'} />
                 <KV label="R²"          value={fmtNum(data.relationshipConfig.r2, 4)} />

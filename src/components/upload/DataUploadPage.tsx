@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  Pencil,
 } from "lucide-react";
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
@@ -27,6 +28,7 @@ import {
   loadWorkspaceData,
   getRecentWorkspaces,
   deleteWorkspace,
+  renameWorkspaceFile,
 } from "../../workspaceManager";
 
 interface DataUploadPageProps {
@@ -405,6 +407,15 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     }
   };
 
+  // Rename a workspace from the inline edit field in the Recent sidebar.
+  // No-ops on empty / unchanged names to avoid pointless file rewrites.
+  const handleRenameWorkspace = async (id: string, newName: string, currentName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === currentName) return;
+    await renameWorkspaceFile(id, trimmed);
+    refreshWorkspaces();
+  };
+
   const formatWhen = (ts: number) => {
     const d = new Date(ts);
     const dd = String(d.getDate()).padStart(2, "0");
@@ -461,6 +472,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                 active={w.id === activeWorkspaceId}
                 onClick={() => handleLoadWorkspace(w.id)}
                 onDelete={(e) => handleDeleteWorkspace(w.id, e)}
+                onRename={(newName) => handleRenameWorkspace(w.id, newName, w.name)}
               />
             ))}
             {filteredWs.length === 0 && (
@@ -957,20 +969,62 @@ function Req({ T, ok, children }: { T: Tokens; ok: boolean; children: ReactNode 
 }
 
 function WorkspaceRow({
-  T, name, when, active, onClick, onDelete,
+  T, name, when, active, onClick, onDelete, onRename,
 }: {
   T: Tokens; name: string; when: string; active: boolean;
   onClick: () => void; onDelete: (e: React.MouseEvent) => void;
+  onRename: (newName: string) => void;
 }) {
   const [hover, setHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const inputRef = useRef<HTMLInputElement>(null);
   const highlighted = active || hover;
+
+  // Keep the draft in sync if the underlying name changes (e.g. another tab
+  // renamed it) but only while we're not actively editing.
+  useEffect(() => {
+    if (!editing) setDraft(name);
+  }, [name, editing]);
+
+  // Auto-focus + select-all when entering edit mode.
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDraft(name);
+    setEditing(true);
+  };
+
+  const commitEdit = () => {
+    setEditing(false);
+    onRename(draft);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(name);
+  };
+
+  const iconBtnStyle: CSSProperties = {
+    background: "none", border: "none", cursor: "pointer",
+    padding: 2, display: "flex",
+    transition: "color 120ms ease, opacity 120ms ease",
+  };
+
   return (
     <div
-      onClick={onClick}
+      onClick={() => { if (!editing) onClick(); }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        padding: "7px 8px", borderRadius: 6, cursor: "pointer",
+        padding: "7px 8px", borderRadius: 6,
+        cursor: editing ? "default" : "pointer",
         background: active ? T.surfaceHi : hover ? T.hover : "transparent",
         border: `1px solid ${active ? T.border : "transparent"}`,
         position: "relative",
@@ -983,28 +1037,85 @@ function WorkspaceRow({
           background: T.accent, flexShrink: 0,
           opacity: highlighted ? 1 : 0.7,
         }} />
-        <span style={{
-          fontSize: 12.5, fontWeight: 600,
-          color: highlighted ? T.text : T.textMuted,
-          letterSpacing: "-0.005em", flex: 1, minWidth: 0,
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          transition: "color 120ms ease",
-        }}>
-          {name}
-        </span>
-        <button
-          onClick={onDelete}
-          title="Delete workspace"
-          style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: hover ? T.danger : T.textFaint,
-            padding: 2, display: "flex",
-            opacity: hover ? 1 : 0.6,
-            transition: "color 120ms ease, opacity 120ms ease",
-          }}
-        >
-          <X size={11} />
-        </button>
+
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={commitEdit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
+              else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+            }}
+            style={{
+              flex: 1, minWidth: 0,
+              fontSize: 12.5, fontWeight: 600,
+              color: T.text, fontFamily: "inherit",
+              background: T.bg, border: `1px solid ${T.borderStrong}`,
+              borderRadius: 4, padding: "1px 6px",
+              outline: "none",
+            }}
+          />
+        ) : (
+          <span style={{
+            fontSize: 12.5, fontWeight: 600,
+            color: highlighted ? T.text : T.textMuted,
+            letterSpacing: "-0.005em", flex: 1, minWidth: 0,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            transition: "color 120ms ease",
+          }}>
+            {name}
+          </span>
+        )}
+
+        {editing ? (
+          <>
+            <button
+              onMouseDown={(e) => e.preventDefault() /* keep input focused */}
+              onClick={(e) => { e.stopPropagation(); commitEdit(); }}
+              title="Save (Enter)"
+              style={{ ...iconBtnStyle, color: T.accent, opacity: 1 }}
+            >
+              <Check size={11} />
+            </button>
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => { e.stopPropagation(); cancelEdit(); }}
+              title="Cancel (Esc)"
+              style={{ ...iconBtnStyle, color: T.textFaint, opacity: 1 }}
+            >
+              <X size={11} />
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={startEdit}
+              title="Rename workspace"
+              style={{
+                ...iconBtnStyle,
+                color: hover ? T.text : T.textFaint,
+                opacity: hover ? 1 : 0,
+                pointerEvents: hover ? "auto" : "none",
+              }}
+            >
+              <Pencil size={11} />
+            </button>
+            <button
+              onClick={onDelete}
+              title="Delete workspace"
+              style={{
+                ...iconBtnStyle,
+                color: hover ? T.danger : T.textFaint,
+                opacity: hover ? 1 : 0.6,
+              }}
+            >
+              <X size={11} />
+            </button>
+          </>
+        )}
       </div>
       <div style={{
         display: "flex", alignItems: "center", gap: 6,

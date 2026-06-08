@@ -102,6 +102,7 @@
       "Bash(rm -rf /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/build/tauri-app-* /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app.d /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/deps/tauri_app-* 2>&1; ls /Users/tide/Desktop/w/tauri-sensor-viz/src-tauri/target/debug/tauri-app 2>&1; echo \"Build cache cleared\")",
       "Bash(npm uninstall *)",
       "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && grep -A1 pako {}')",
+      "Bash(npm test *)",
       "PowerShell(Set-Location \"C:\\\\w\\\\ptt\\\\sooth\\\\Soothsayer-wizard-app\"; powershell -ExecutionPolicy Bypass -File scripts\\\\build-installer-windows.ps1)",
       "PowerShell(Get-Command clcache -ErrorAction SilentlyContinue)",
       "PowerShell(Get-Command clcache.exe -ErrorAction SilentlyContinue)"

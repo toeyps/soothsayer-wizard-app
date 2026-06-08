@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, use
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import Split from 'split.js';
-import { saveWorkspaceData } from '../../workspaceManager';
+import { saveWorkspaceData, writeUserTextFile } from '../../workspaceManager';
 import {
     ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
@@ -19,7 +19,6 @@ import SensorSelection from './SensorSelection';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { Plus, EyeOff, BarChart3, Radio, Table, Download, Filter, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 
 // Panel configuration
@@ -966,7 +965,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     }).join(',');
                                 });
                                 const csvContent = [csvHeaders, ...csvRows].join('\n');
-                                await writeTextFile(filePath, csvContent);
+                                await writeUserTextFile(filePath, csvContent);
                             } catch (err) {
                                 console.error('Export failed:', err);
                             }

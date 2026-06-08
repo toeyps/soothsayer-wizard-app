@@ -19,8 +19,7 @@ interface SensorToolingProps {
   sensorMetadata: SensorMetadata[] | null;
   onConfigChange: (config: SensorOperationConfig | null) => void;
   onRemoveSensor: (sensor: string) => void;
-  // New props for hybrid mode
-  allSensors?: string[];
+  // Formula mode submission callback
   onFormulaSubmit?: (formula: string, customName?: string) => void;
 }
 
@@ -29,11 +28,12 @@ export default function SensorTooling({
   sensorMetadata,
   onConfigChange,
   onRemoveSensor,
-  allSensors = [],
   onFormulaSubmit,
 }: SensorToolingProps) {
   const engine = useCalculationEngine(selectedSensors);
-  const formulaEditor = useFormulaEditor(allSensors);
+  // Autocomplete suggests ONLY the checked sensors so users can't reference
+  // sensors they haven't pulled into the Target Sensors panel.
+  const formulaEditor = useFormulaEditor(selectedSensors);
 
   const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
 

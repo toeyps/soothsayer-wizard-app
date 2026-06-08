@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, Folder, Clock, Filter, FileText } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-react';
 import { SensorMetadata } from '../../types';
 
 interface SensorExplorerProps {
@@ -92,18 +92,13 @@ export default function SensorExplorer({
         <div className="flex flex-col h-full bg-[#18181b] border-r border-[#27272a] text-[#cccccc]">
             {/* Search Header */}
             <div className="p-3 border-b border-[#27272a]">
-                <div className="relative">
-                    <input
-                        type="text"
-                        placeholder="Search sensors..."
-                        value={searchTerm}
-                        onChange={(e) => onSearchChange(e.target.value)}
-                        className="w-full bg-[#27272a] border border-[#3f3f46] text-sm px-2 py-1.5 focus:outline-none focus:border-[#007fd4] placeholder-[#6b7280] text-white"
-                    />
-                    <div className="absolute right-2 top-1.5 text-[#6b7280]">
-                        <Filter size={14} />
-                    </div>
-                </div>
+                <input
+                    type="text"
+                    placeholder="Search sensors..."
+                    value={searchTerm}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    className="w-full bg-[#27272a] border border-[#3f3f46] text-sm px-2 py-1.5 focus:outline-none focus:border-[#007fd4] placeholder-[#6b7280] text-white"
+                />
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -112,13 +107,6 @@ export default function SensorExplorer({
                 </div>
 
                 <div className="flex flex-col">
-                    {/* Recent Section (Mock) */}
-                    <div className="cursor-pointer hover:bg-[#2a2d2e] px-2 py-1 text-sm flex items-center gap-1.5 text-[#cccccc]">
-                        <ChevronRight size={14} className="text-[#6b7280]" />
-                        <Clock size={14} className="text-[#6b7280]" />
-                        <span>Recent</span>
-                    </div>
-
                     {/* All Components Root */}
                     <div>
                         <div

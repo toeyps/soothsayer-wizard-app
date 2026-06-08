@@ -3,6 +3,11 @@ use std::fs::File;
 use std::io::BufReader;
 use std::time::Instant;
 
+/// Hard cap on the size of a single CSV the desktop app will accept.
+/// At 2 GB the per-row Vec<Option<f64>> staging memory and `to_csv` pretty-
+/// printing dominate; anything larger should be pre-processed externally.
+const MAX_CSV_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CsvRecord {
     pub timestamp: Option<String>,
@@ -73,6 +78,17 @@ pub struct ReadCsvResult {
 
 pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let total_start = Instant::now();
+    // Refuse pathologically-large CSVs up front so we don't OOM partway
+    // through the parallel parse. `std::fs::metadata` follows symlinks,
+    // which is what we want — we want the size of what we'd actually open.
+    let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > MAX_CSV_BYTES {
+        let size_gb = size as f64 / (1024.0 * 1024.0 * 1024.0);
+        return Err(format!(
+            "CSV file too large: {:.1} GB (max 2 GB). Pre-process or split the file.",
+            size_gb
+        ));
+    }
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
