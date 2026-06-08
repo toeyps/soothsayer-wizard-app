@@ -5,10 +5,10 @@ import { listen, emit } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog, ask, message } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { CsvMetadata, SensorMetadata, DashboardSnapshot, FailureGroup, FailureSensorRow as SensorRow, WorkspaceState } from "../../types";
-import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, Minus, Square, GripVertical, Play, ArrowLeft } from "lucide-react";
+import { Upload, Download, Save, Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X, Edit3, FolderPlus, Minus, Square, GripVertical, Play, ArrowLeft, Pencil, Check } from "lucide-react";
 import { useIsMacOS } from "../../hooks/useIsMacOS";
 import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
-import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
+import { updateWorkspaceData, loadWorkspaceData, renameWorkspaceFile } from "../../workspaceManager";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -71,6 +71,50 @@ export default function FailureGroupCreation() {
 
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
     const [editingGroupName, setEditingGroupName] = useState("");
+
+    // ── Inline workspace-name edit (toolbar pill) ───────────────────────
+    const [editingWsName, setEditingWsName] = useState(false);
+    const [wsNameDraft, setWsNameDraft] = useState("");
+    const wsNameInputRef = useRef<HTMLInputElement>(null);
+
+    const startWsNameEdit = () => {
+        setWsNameDraft(workspaceName);
+        setEditingWsName(true);
+    };
+    const cancelWsNameEdit = () => {
+        setEditingWsName(false);
+        setWsNameDraft(workspaceName);
+    };
+    const commitWsNameEdit = async () => {
+        const trimmed = wsNameDraft.trim();
+        // Always leave edit mode; only persist when the name actually changed
+        // and we have a workspace id to target.
+        setEditingWsName(false);
+        if (!workspaceId || !trimmed || trimmed === workspaceName) {
+            setWsNameDraft(workspaceName);
+            return;
+        }
+        try {
+            const ok = await renameWorkspaceFile(workspaceId, trimmed);
+            if (ok) {
+                setWorkspaceName(trimmed);
+                // Mirror the existing listener pattern so any other open window
+                // (Dashboard, PM, etc.) updates its own pill in sync.
+                await emit('workspace-renamed-internal', { newName: trimmed });
+            }
+        } catch (e) {
+            console.error('Failed to rename workspace:', e);
+            setWsNameDraft(workspaceName);
+        }
+    };
+
+    // Auto-focus + select-all when entering edit mode.
+    useEffect(() => {
+        if (editingWsName && wsNameInputRef.current) {
+            wsNameInputRef.current.focus();
+            wsNameInputRef.current.select();
+        }
+    }, [editingWsName]);
 
     const [dropdownRowId, setDropdownRowId] = useState<string | null>(null);
     const [dropdownSearch, setDropdownSearch] = useState("");
@@ -700,7 +744,57 @@ export default function FailureGroupCreation() {
                     {workspaceName && (
                         <div className="fg-workspace-label" title={workspaceName}>
                             <span className="fg-workspace-eyebrow">Workspace</span>
-                            <span className="fg-workspace-name">{workspaceName}</span>
+                            {editingWsName ? (
+                                <>
+                                    <input
+                                        ref={wsNameInputRef}
+                                        className="fg-workspace-name-input"
+                                        value={wsNameDraft}
+                                        onChange={(e) => setWsNameDraft(e.target.value)}
+                                        onBlur={commitWsNameEdit}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') { e.preventDefault(); commitWsNameEdit(); }
+                                            else if (e.key === 'Escape') { e.preventDefault(); cancelWsNameEdit(); }
+                                        }}
+                                    />
+                                    <button
+                                        type="button"
+                                        className="fg-workspace-name-btn"
+                                        onMouseDown={(e) => e.preventDefault() /* keep input focused */}
+                                        onClick={commitWsNameEdit}
+                                        title="Save (Enter)"
+                                    >
+                                        <Check size={12} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="fg-workspace-name-btn"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={cancelWsNameEdit}
+                                        title="Cancel (Esc)"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <span
+                                        className="fg-workspace-name"
+                                        onDoubleClick={startWsNameEdit}
+                                        title="Double-click to rename"
+                                    >
+                                        {workspaceName}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        className="fg-workspace-name-btn"
+                                        onClick={startWsNameEdit}
+                                        title="Rename workspace"
+                                    >
+                                        <Pencil size={12} />
+                                    </button>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>

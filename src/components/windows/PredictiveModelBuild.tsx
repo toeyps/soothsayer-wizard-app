@@ -302,6 +302,14 @@ export default function PredictiveModelBuild() {
     const [targetStats, setTargetStats] = useState<SensorStats | null>(null);
     const [statsError, setStatsError] = useState<string | null>(null);
 
+    // Stats for the criteria sensor — drives the cluster slider's overall
+    // [min, max] bounds. Fetched independently of targetStats because the
+    // criteria sensor is usually NOT the target. `null` when no sensor is
+    // picked or while the fetch is in flight. Errors are console-logged
+    // (the slider just shows the "loading…" placeholder until valid stats
+    // arrive — the user can still fall back to picking another sensor).
+    const [criteriaStats, setCriteriaStats] = useState<SensorStats | null>(null);
+
     // Single multivariate relationship-model cache.
     //
     // One Apply click fits ONE LinearGAM over all currently selected
@@ -687,44 +695,48 @@ export default function PredictiveModelBuild() {
         // pre-filter data even though we already trained on the slice.
     }, [targetSensor, dashboardFilterKey]);
 
-    // Keep `clusterRanges` in sync with `numClusters` so the array
-    // always has exactly N entries. When the user steps the count up
-    // we extrapolate from the last existing range (continuing its
-    // width); when they step down we just slice the tail off, preserving
-    // any edits the user made to the head ranges.
+    // Auto-divide cluster ranges across the criteria sensor's [min, max]
+    // whenever the user picks a different criteria sensor OR steps the
+    // cluster count. We compute a "division key" (sensor + N) and reset
+    // only when it changes — so slider drags within the same (sensor, N)
+    // are preserved.
+    //
+    // When a criteriaSensor is set but its stats haven't loaded yet, we
+    // defer the reset (returning prev) so we don't briefly seed with the
+    // [0,100] fallback only to immediately re-reset with the real bounds.
+    // Length-mismatch is always reconciled so the array invariant
+    // (length === numClusters) holds regardless of stats state.
+    const divisionKey = `${criteriaSensor}::${numClusters}`;
+    const prevDivisionKeyRef = useRef<string>('');
     useEffect(() => {
+        const keyChanged = divisionKey !== prevDivisionKeyRef.current;
         setClusterRanges((prev) => {
-            if (prev.length === numClusters) return prev;
+            // Bail on degenerate counts (shouldn't happen — stepper blocks
+            // <= 0 — but keep the guard so we never produce an empty array
+            // and crash downstream consumers).
             if (numClusters <= 0) return [];
-            if (prev.length === 0) {
-                // Bootstrap with N equal segments over [0, 100] — same shape
-                // the initial useState default uses.
-                const step = 100 / numClusters;
-                return Array.from({ length: numClusters }, (_, i) => ({
-                    min: step * i,
-                    max: step * (i + 1),
-                }));
+
+            const lengthMismatch = prev.length !== numClusters;
+            const needsReset = lengthMismatch || keyChanged;
+            if (!needsReset) return prev;
+
+            // Wait for criteria stats if a sensor IS selected but stats
+            // haven't arrived yet. Without this guard we'd seed with the
+            // [0,100] fallback then reset again ~100ms later.
+            if (criteriaSensor && !criteriaStats && !lengthMismatch) {
+                return prev;
             }
-            if (numClusters < prev.length) {
-                return prev.slice(0, numClusters);
-            }
-            // Growing: append new ranges starting where the last one ended.
-            const last = prev[prev.length - 1];
-            const width =
-                last.min !== null && last.max !== null && last.max > last.min
-                    ? last.max - last.min
-                    : 33;
-            const next = [...prev];
-            let cursor = last.max ?? (last.min ?? 0);
-            for (let i = prev.length; i < numClusters; i++) {
-                const start = cursor;
-                const end = cursor + width;
-                next.push({ min: start, max: end });
-                cursor = end;
-            }
-            return next;
+
+            prevDivisionKeyRef.current = divisionKey;
+            const lo = criteriaStats?.min ?? 0;
+            const hi = criteriaStats?.max ?? 100;
+            const step = (hi - lo) / numClusters;
+            return Array.from({ length: numClusters }, (_, i) => ({
+                min: lo + step * i,
+                max: lo + step * (i + 1),
+            }));
         });
-    }, [numClusters]);
+    }, [divisionKey, numClusters, criteriaSensor, criteriaStats]);
 
     // Compute mean / sd / 1σ / 3σ of the target sensor on the Rust side.
     useEffect(() => {
@@ -755,6 +767,31 @@ export default function PredictiveModelBuild() {
         // dashboardFilterKey in deps: σ-band markers must move when the
         // user re-explores the dashboard with different filters.
     }, [targetSensor, dashboardFilterKey]);
+
+    // Same pattern, but for the clustering criteria sensor. Drives the
+    // cluster slider's overall [min, max] bounds so the user sees real
+    // sensor values (instead of an abstract 0–100 scale).
+    useEffect(() => {
+        if (!criteriaSensor) {
+            setCriteriaStats(null);
+            return;
+        }
+        let cancelled = false;
+        invoke<SensorStats>("compute_sensor_stats", {
+            sensor: criteriaSensor,
+            filter: dashboardFilterPayload,
+        })
+            .then(s => {
+                if (!cancelled) setCriteriaStats(s);
+            })
+            .catch(err => {
+                if (!cancelled) {
+                    console.error("compute_sensor_stats (criteria) failed:", err);
+                    setCriteriaStats(null);
+                }
+            });
+        return () => { cancelled = true; };
+    }, [criteriaSensor, dashboardFilterKey]);
 
     // Track theme so the Mean markLine stays visible in both dark & light modes.
     const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
@@ -2953,10 +2990,14 @@ export default function PredictiveModelBuild() {
                                 </div>
                             </div>
 
-                            {/* Row 3: Per-cluster ranges. One [min, max) interval per
-                                cluster on the criteria sensor. Empty inputs map to
-                                `null` = "unbounded" (matches Rust's `Option<f64>`
-                                edge-cluster semantics). */}
+                            {/* Row 3: Per-cluster ranges, now visualised as a
+                                multi-handle slider over the criteria sensor's
+                                actual [min, max] data range. N-1 draggable
+                                split handles partition the track into N
+                                colored segments; auto-divided evenly on
+                                sensor/N change. The persisted shape is still
+                                `PredictiveClusterRange[]` (each cluster's
+                                {min, max}) — only the editor changed. */}
                             <div className="filter-row">
                                 <label>
                                     Cluster Ranges
@@ -2964,48 +3005,150 @@ export default function PredictiveModelBuild() {
                                         <span className="pm-field-hint-inline"> · requires criteria sensor + N≥2</span>
                                     )}
                                 </label>
-                                <div className="pm-cluster-ranges">
-                                    {clusterRanges.map((range, idx) => {
-                                        const color = CLUSTER_PALETTE[idx % CLUSTER_PALETTE.length];
-                                        const updateRange = (field: 'min' | 'max', raw: string) => {
-                                            // Empty string → null (= unbounded on that side).
-                                            const parsed = raw === '' ? null : Number(raw);
-                                            const next: PredictiveClusterRange = {
-                                                ...range,
-                                                [field]: Number.isNaN(parsed as number) ? null : parsed,
-                                            };
-                                            setClusterRanges(prev => prev.map((r, i) => (i === idx ? next : r)));
-                                        };
-                                        const inputsDisabled = rcMode !== 'clustering' || numClusters <= 1 || !criteriaSensor;
+                                {(() => {
+                                    const sliderDisabled = rcMode !== 'clustering' || numClusters <= 1 || !criteriaSensor;
+                                    if (sliderDisabled) {
                                         return (
-                                            <div key={idx} className="pm-cluster-range-row">
-                                                <span
-                                                    className="pm-cluster-range-dot"
-                                                    style={{ background: color }}
-                                                    title={`Cluster ${idx + 1}`}
-                                                />
-                                                <span className="pm-cluster-range-label">#{idx + 1}</span>
-                                                <input
-                                                    type="number"
-                                                    value={range.min === null ? '' : range.min}
-                                                    onChange={e => updateRange('min', e.target.value)}
-                                                    className="config-input pm-range-input-num"
-                                                    disabled={inputsDisabled}
-                                                    placeholder="min (blank = −∞)"
-                                                />
-                                                <span className="pm-range-sep">to</span>
-                                                <input
-                                                    type="number"
-                                                    value={range.max === null ? '' : range.max}
-                                                    onChange={e => updateRange('max', e.target.value)}
-                                                    className="config-input pm-range-input-num"
-                                                    disabled={inputsDisabled}
-                                                    placeholder="max (blank = +∞)"
-                                                />
+                                            <div className="pm-cluster-slider pm-cluster-slider--empty">
+                                                {numClusters <= 1
+                                                    ? 'One cluster — every row goes in. No ranges to set.'
+                                                    : !criteriaSensor
+                                                        ? 'Pick a criteria sensor above to define cluster ranges.'
+                                                        : '—'}
                                             </div>
                                         );
-                                    })}
-                                </div>
+                                    }
+                                    if (!criteriaStats) {
+                                        return (
+                                            <div className="pm-cluster-slider pm-cluster-slider--empty">
+                                                <Loader2 size={12} className="animate-spin" /> Loading {criteriaSensor} range…
+                                            </div>
+                                        );
+                                    }
+                                    if (criteriaStats.min === criteriaStats.max) {
+                                        return (
+                                            <div className="pm-cluster-slider pm-cluster-slider--empty">
+                                                {criteriaSensor} has a constant value ({criteriaStats.min}) — cannot partition.
+                                            </div>
+                                        );
+                                    }
+                                    const lo = criteriaStats.min;
+                                    const hi = criteriaStats.max;
+                                    const span = hi - lo;
+                                    const fmt = (v: number | null) =>
+                                        v == null ? '—' : (
+                                            // Pick decimal precision based on the value's magnitude
+                                            // — small numbers get more precision, big numbers fewer.
+                                            Math.abs(v) >= 100 ? v.toFixed(1)
+                                            : Math.abs(v) >= 10 ? v.toFixed(2)
+                                            : v.toFixed(3)
+                                        );
+                                    const pctOf = (v: number) =>
+                                        Math.max(0, Math.min(100, ((v - lo) / span) * 100));
+
+                                    // Drag a split handle. The handle at index `idx` is the
+                                    // boundary between cluster[idx] and cluster[idx+1], i.e.
+                                    // cluster[idx].max = cluster[idx+1].min. Clamped against
+                                    // adjacent splits so handles can't cross.
+                                    const startSplitDrag = (idx: number, e: React.MouseEvent) => {
+                                        e.preventDefault();
+                                        const track = (e.currentTarget.parentElement) as HTMLDivElement | null;
+                                        if (!track) return;
+                                        const rect = track.getBoundingClientRect();
+                                        const onMove = (moveEvt: MouseEvent) => {
+                                            const x = moveEvt.clientX - rect.left;
+                                            const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+                                            const value = lo + (pct / 100) * span;
+                                            setClusterRanges(prev => {
+                                                // Clamp between the boundaries of the immediately
+                                                // adjacent clusters so handles can't cross.
+                                                const leftBound = (prev[idx]?.min ?? lo);
+                                                const rightBound = (prev[idx + 1]?.max ?? hi);
+                                                // Add a tiny epsilon so clusters never have
+                                                // zero width (would break downstream consumers).
+                                                const eps = span * 0.001;
+                                                const clamped = Math.max(leftBound + eps, Math.min(rightBound - eps, value));
+                                                return prev.map((r, i) => {
+                                                    if (i === idx) return { ...r, max: clamped };
+                                                    if (i === idx + 1) return { ...r, min: clamped };
+                                                    return r;
+                                                });
+                                            });
+                                        };
+                                        const onUp = () => {
+                                            document.removeEventListener('mousemove', onMove);
+                                            document.removeEventListener('mouseup', onUp);
+                                        };
+                                        document.addEventListener('mousemove', onMove);
+                                        document.addEventListener('mouseup', onUp);
+                                    };
+
+                                    return (
+                                        <div className="pm-cluster-slider">
+                                            {/* Bounds header */}
+                                            <div className="pm-cluster-slider-header">
+                                                <span className="pm-cluster-slider-bound">{fmt(lo)}</span>
+                                                <span className="pm-cluster-slider-sensor">{criteriaSensor}</span>
+                                                <span className="pm-cluster-slider-bound">{fmt(hi)}</span>
+                                            </div>
+                                            {/* Track with colored segments + draggable splits */}
+                                            <div className="pm-cluster-slider-track">
+                                                {clusterRanges.map((r, i) => {
+                                                    const segLo = r.min ?? lo;
+                                                    const segHi = r.max ?? hi;
+                                                    const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+                                                    return (
+                                                        <div
+                                                            key={`seg-${i}`}
+                                                            className="pm-cluster-slider-segment"
+                                                            style={{
+                                                                left: `${pctOf(segLo)}%`,
+                                                                width: `${pctOf(segHi) - pctOf(segLo)}%`,
+                                                                background: color,
+                                                            }}
+                                                            title={`Cluster ${i + 1}: ${fmt(segLo)} – ${fmt(segHi)}`}
+                                                        >
+                                                            <span className="pm-cluster-slider-seg-label">#{i + 1}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {/* One handle per split point (numClusters - 1 of them) */}
+                                                {clusterRanges.slice(0, -1).map((r, i) => {
+                                                    const splitVal = r.max ?? hi;
+                                                    return (
+                                                        <div
+                                                            key={`handle-${i}`}
+                                                            className="pm-cluster-slider-handle"
+                                                            style={{ left: `${pctOf(splitVal)}%` }}
+                                                            onMouseDown={e => startSplitDrag(i, e)}
+                                                            role="slider"
+                                                            aria-label={`Split between cluster ${i + 1} and ${i + 2}`}
+                                                            aria-valuemin={lo}
+                                                            aria-valuemax={hi}
+                                                            aria-valuenow={splitVal}
+                                                            title={`${fmt(splitVal)}`}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                            {/* Per-cluster value pills */}
+                                            <div className="pm-cluster-slider-values">
+                                                {clusterRanges.map((r, i) => {
+                                                    const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+                                                    return (
+                                                        <span key={`pill-${i}`} className="pm-cluster-slider-pill">
+                                                            <span
+                                                                className="pm-cluster-range-dot"
+                                                                style={{ background: color }}
+                                                            />
+                                                            #{i + 1}: {fmt(r.min)} – {fmt(r.max)}
+                                                        </span>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {clusteringError && (

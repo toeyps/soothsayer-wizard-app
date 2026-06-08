@@ -1,0 +1,495 @@
+import { useState, useEffect, useRef, useMemo, memo } from 'react';
+import createScatterplot from 'regl-scatterplot';
+import { scaleLinear } from 'd3-scale';
+import type { CsvRecord } from '../../types';
+
+/**
+ * One scatter / time × value cell of the pair plot. Wraps a single
+ * regl-scatterplot instance, exposes axis labels on the outer-edge cells,
+ * subscribes to lasso & hover events, and accepts a parent-owned list of
+ * brushed clusters so the multi-coloured highlight stays in sync across
+ * every cell.
+ */
+
+type ToolMode = 'pan' | 'lasso';
+
+/**
+ * One brushed group of rows. Multiple clusters can coexist — each gets its
+ * own colour, count, and is rendered as a separate visual group in every
+ * cell via regl-scatterplot's `colorBy: 'valueA'` + `pointColor` palette.
+ */
+export type Cluster = {
+    id: string;
+    label: string;
+    /** RGBA in 0..1 space, ready to push straight into regl uniforms. */
+    color: [number, number, number, number];
+    rowIndices: Set<number>;
+};
+
+export type HoverInfo = {
+    rowIdx: number;
+    xVal: number;
+    yVal: number;
+    sensorX: string;
+    sensorY: string;
+    isTimeAxis: boolean;
+    timestamp: string | null;
+    /** Screen coordinates of the canvas wrapper (page-level), used to position
+     *  the parent tooltip without per-cell relative math. */
+    pageX: number;
+    pageY: number;
+};
+
+interface PairPlotCellProps {
+    data: CsvRecord[];
+    headers: string[];
+    sensorY: string;
+    /** Omitted on time-axis cells (X is the row's timestamp instead). */
+    sensorX?: string;
+    isTimeAxis?: boolean;
+    /** Render an X-axis tick row (only outermost — top or bottom — cells). */
+    showXAxis: boolean;
+    /** Render a Y-axis tick column (only left-most cell of each row). */
+    showYAxis: boolean;
+    /** Show this cell's X-sensor name as a label on the top edge. */
+    showXLabel: boolean;
+    /** Show this cell's Y-sensor name as a label on the left edge. */
+    showYLabel: boolean;
+    /** Active tool — propagated to sc via `mouseMode`. */
+    tool: ToolMode;
+    /** Parent-owned list of brushed clusters. Each row may belong to at
+     *  most one cluster. Drives the multi-coloured highlight via the
+     *  regl-scatterplot category-colour pipeline. */
+    clusters: Cluster[];
+    /** Lasso completed in this cell → bubble the picked row indices up so
+     *  the parent can decide whether to spawn a new cluster (or append). */
+    onLasso: (rows: number[]) => void;
+    onHover: (info: HoverInfo | null) => void;
+    /** Default colour for points that DON'T belong to any cluster. */
+    pointColor: [number, number, number, number];
+    /** Monotonically-increasing counter. When it bumps higher than the
+     *  last value we acted on, the cell calls `sc.reset()` to snap its
+     *  camera back to the full data extent. Allows a single toolbox
+     *  button to broadcast a reset to every cell at once. */
+    resetTick: number;
+}
+
+/**
+ * Padding applied to EVERY cell — even when it doesn't actually render
+ * an axis on that side. Uniform reserved space keeps every cell's plot
+ * rect the same dimensions across the whole matrix, so the borders line
+ * up like graph paper instead of zig-zagging in/out.
+ *
+ * `top: 14`     leaves room for the column sensor name on the top row.
+ * `bottom: 18`  leaves room for the X-axis tick row on the bottom row.
+ * `left: 36`    leaves room for Y-axis tick labels when a cell shows them.
+ * `right: 4`    minimal breathing room on the right edge.
+ */
+const AXIS_PAD = { left: 36, right: 4, top: 14, bottom: 18 };
+
+function fmt(n: number): string {
+    if (!isFinite(n)) return '—';
+    if (Math.abs(n) >= 10000 || (Math.abs(n) > 0 && Math.abs(n) < 0.01)) return n.toExponential(1);
+    return n.toFixed(1);
+}
+
+function makeTicks(min: number, max: number, count: number): number[] {
+    if (max === min) return [min];
+    return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
+}
+
+function PairPlotCell({
+    data, headers, sensorY, sensorX, isTimeAxis,
+    showXAxis, showYAxis, showXLabel, showYLabel,
+    tool, clusters, onLasso, onHover, pointColor, resetTick,
+}: PairPlotCellProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    /** scatter-point index → original CSV row index (skips rows with null values). */
+    const pointToRowRef = useRef<number[]>([]);
+    /** row index → scatter-point index. Inverse of pointToRow; used to map
+     *  parent-owned cluster row indices back into local valueA categories. */
+    const rowToPointRef = useRef<Map<number, number>>(new Map());
+    /** Float32Array of per-point cluster categories (0 = none, 1..N = clusters).
+     *  Kept in a ref so we can rewrite it cheaply on every cluster change
+     *  without going through React's render cycle. */
+    const valueARef = useRef<Float32Array>(new Float32Array(0));
+    /** Last x/y arrays sent to draw(). We need to re-call draw() with the
+     *  same x/y + a fresh `valueA` when clusters change, since regl needs
+     *  the category dim re-uploaded alongside the position buffers. */
+    const drawDataRef = useRef<{ x: Float32Array; y: Float32Array } | null>(null);
+    const dataBoundsRef = useRef<{ xLo: number; xHi: number; yLo: number; yHi: number }>({
+        xLo: 0, xHi: 1, yLo: 0, yHi: 1,
+    });
+    /** Last resetTick value we've already applied to this cell. Stops the
+     *  reset effect from firing on initial mount (when tick=0) and from
+     *  re-firing if React re-runs the effect for unrelated reasons. */
+    const lastResetTickRef = useRef(0);
+
+    const [innerDims, setInnerDims] = useState({ width: 0, height: 0 });
+    const [wrapperDims, setWrapperDims] = useState({ width: 0, height: 0 });
+    const [visibleBounds, setVisibleBounds] = useState({
+        xMin: 0, xMax: 1, yMin: 0, yMax: 1,
+    });
+    const [sc, setSc] = useState<any>(null);
+
+    // Track wrapper size + carve out an inner plot area for the canvas.
+    // Padding is CONSTANT — see AXIS_PAD docstring. Conditional rendering
+    // below decides whether the reserved space actually shows ticks/labels,
+    // but the inner rect stays the same size no matter what so every cell's
+    // frame is identical across the matrix.
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        const update = () => {
+            const w = el.clientWidth;
+            const h = el.clientHeight;
+            setWrapperDims({ width: w, height: h });
+            setInnerDims({
+                width: Math.max(0, w - AXIS_PAD.left - AXIS_PAD.right),
+                height: Math.max(0, h - AXIS_PAD.top - AXIS_PAD.bottom),
+            });
+        };
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
+    // Build / tear down the regl-scatterplot instance whenever the inner
+    // canvas size changes.
+    useEffect(() => {
+        if (!canvasRef.current || innerDims.width === 0 || innerDims.height === 0) return;
+
+        const inst = createScatterplot({
+            canvas: canvasRef.current,
+            width: innerDims.width,
+            height: innerDims.height,
+            pointSize: 2,
+            pointColor,
+            pointColorActive: [0.99, 0.75, 0.18, 1.0],
+            pointColorHover: [1.0, 1.0, 1.0, 1.0],
+            opacity: 0.55,
+            // Pure black plot background
+            backgroundColor: [0, 0, 0, 1],
+            lassoColor: [0.65, 0.73, 0.97, 0.8],
+        });
+
+        inst.subscribe('select', ({ points }: { points: number[] }) => {
+            if (points.length === 0) return;
+            const map = pointToRowRef.current;
+            const rows: number[] = [];
+            for (const p of points) {
+                const r = map[p];
+                if (r != null) rows.push(r);
+            }
+            onLasso(rows);
+            // Drop the lib's transient `select` state immediately — we
+            // visualise clusters via our own category-colour pipeline, so
+            // letting regl hold onto its own highlighted set would just
+            // double-render the most recent cluster.
+            inst.deselect({ preventEvent: true });
+        });
+        // No 'deselect' subscription — clearing happens via parent state.
+        inst.subscribe('view', ({ xScale, yScale }: any) => {
+            if (!xScale || !yScale) return;
+            const [vxMin, vxMax] = xScale.domain();
+            const [vyMin, vyMax] = yScale.domain();
+            setVisibleBounds({ xMin: vxMin, xMax: vxMax, yMin: vyMin, yMax: vyMax });
+        });
+
+        // @ts-expect-error – lib type/runtime mismatch on event name
+        inst.subscribe('pointover', (pointIdx: number) => {
+            const rowIdx = pointToRowRef.current[pointIdx];
+            if (rowIdx == null) return;
+            const row = data[rowIdx];
+            if (!row) return;
+            // Position the parent tooltip relative to the page — easier
+            // than computing per-cell pixel offsets in the parent.
+            const rect = containerRef.current?.getBoundingClientRect();
+            let pos: [number, number] | undefined;
+            try { pos = inst.getScreenPosition(pointIdx); } catch { pos = undefined; }
+            const pageX = (rect?.left ?? 0) + AXIS_PAD.left + (pos?.[0] ?? 0);
+            const pageY = (rect?.top ?? 0) + AXIS_PAD.top + (pos?.[1] ?? 0);
+            const xIdx = sensorX != null ? headers.indexOf(sensorX) : -1;
+            const yIdx = headers.indexOf(sensorY);
+            const xVal = isTimeAxis
+                ? (row.timestamp ? new Date(row.timestamp).getTime() : NaN)
+                : (xIdx >= 0 ? (row.values[xIdx] ?? NaN) : NaN);
+            const yVal = yIdx >= 0 ? (row.values[yIdx] ?? NaN) : NaN;
+            onHover({
+                rowIdx,
+                xVal,
+                yVal,
+                sensorX: isTimeAxis ? 'Time' : (sensorX ?? ''),
+                sensorY,
+                isTimeAxis: !!isTimeAxis,
+                timestamp: row.timestamp,
+                pageX, pageY,
+            });
+        });
+        // @ts-expect-error – lib type/runtime mismatch on event name
+        inst.subscribe('pointout', () => {
+            onHover(null);
+        });
+
+        setSc(inst);
+
+        return () => {
+            inst.destroy();
+            setSc(null);
+        };
+        // We deliberately don't depend on the callback props — they may
+        // change identity every render and would force a costly recreate.
+        // The latest props are captured via the closures below in newer
+        // effects (selectedRows / tool sync).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [innerDims.width, innerDims.height]);
+
+    // Push fresh data whenever the source rows / chosen sensors / instance
+    // changes. Also (re)builds the row↔point lookups used by the linked
+    // highlight + hover handlers.
+    useEffect(() => {
+        if (!sc) return;
+        const xIdxRaw = sensorX != null ? headers.indexOf(sensorX) : -1;
+        const yIdx = headers.indexOf(sensorY);
+        if (yIdx < 0) return;
+        if (!isTimeAxis && xIdxRaw < 0) return;
+
+        const xs: number[] = [];
+        const ys: number[] = [];
+        const orig: number[] = [];
+        let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
+            const yVal = row.values[yIdx];
+            if (yVal == null || isNaN(yVal)) continue;
+            let xVal: number;
+            if (isTimeAxis) {
+                if (!row.timestamp) continue;
+                const t = new Date(row.timestamp).getTime();
+                if (isNaN(t)) continue;
+                xVal = t;
+            } else {
+                const xRaw = row.values[xIdxRaw];
+                if (xRaw == null || isNaN(xRaw)) continue;
+                xVal = xRaw;
+            }
+            xs.push(xVal);
+            ys.push(yVal);
+            orig.push(i);
+            if (xVal < xMin) xMin = xVal;
+            if (xVal > xMax) xMax = xVal;
+            if (yVal < yMin) yMin = yVal;
+            if (yVal > yMax) yMax = yVal;
+        }
+
+        const xLo = isFinite(xMin) ? xMin : 0;
+        const xHi = isFinite(xMax) ? xMax : 1;
+        const yLo = isFinite(yMin) ? yMin : 0;
+        const yHi = isFinite(yMax) ? yMax : 1;
+        const xRange = (xHi - xLo) || 1;
+        const yRange = (yHi - yLo) || 1;
+        const len = xs.length;
+        const xArr = new Float32Array(len);
+        const yArr = new Float32Array(len);
+        for (let i = 0; i < len; i++) {
+            xArr[i] = ((xs[i] - xLo) / xRange) * 2 - 1;
+            yArr[i] = ((ys[i] - yLo) / yRange) * 2 - 1;
+        }
+
+        // Build row→point inverse map for selection sync.
+        const rowToPoint = new Map<number, number>();
+        for (let i = 0; i < orig.length; i++) rowToPoint.set(orig[i], i);
+
+        pointToRowRef.current = orig;
+        rowToPointRef.current = rowToPoint;
+        dataBoundsRef.current = { xLo, xHi, yLo, yHi };
+        drawDataRef.current = { x: xArr, y: yArr };
+        // Build category dim aligned to the rendered points using the
+        // CURRENT cluster list. 0 = no cluster (default colour); 1..N =
+        // index into the colour palette built below.
+        const valueA = new Float32Array(orig.length);
+        for (let ci = 0; ci < clusters.length; ci++) {
+            const cluster = clusters[ci];
+            for (const r of cluster.rowIndices) {
+                const p = rowToPoint.get(r);
+                if (p != null) valueA[p] = ci + 1;
+            }
+        }
+        valueARef.current = valueA;
+        setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
+
+        sc.draw({ x: xArr, y: yArr, valueA });
+        sc.set({
+            pointColor: [pointColor, ...clusters.map(c => c.color)],
+            colorBy: 'valueA',
+            xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
+            yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sc, data, sensorX, sensorY, isTimeAxis, headers]);
+
+    // Cluster changes → rebuild valueA in-place + re-upload + bump palette.
+    // No need to recompute x/y arrays since the data didn't change.
+    useEffect(() => {
+        if (!sc) return;
+        const draw = drawDataRef.current;
+        if (!draw) return;
+        const rowToPoint = rowToPointRef.current;
+        const len = draw.x.length;
+        const valueA = new Float32Array(len);
+        for (let ci = 0; ci < clusters.length; ci++) {
+            const cluster = clusters[ci];
+            for (const r of cluster.rowIndices) {
+                const p = rowToPoint.get(r);
+                if (p != null) valueA[p] = ci + 1;
+            }
+        }
+        valueARef.current = valueA;
+        sc.draw({ x: draw.x, y: draw.y, valueA });
+        sc.set({
+            pointColor: [pointColor, ...clusters.map(c => c.color)],
+            colorBy: 'valueA',
+        });
+    }, [sc, clusters, pointColor]);
+
+    // Push tool changes (pan ↔ lasso) into the instance.
+    useEffect(() => {
+        if (!sc) return;
+        sc.set({ mouseMode: tool === 'lasso' ? 'lasso' : 'panZoom' });
+    }, [sc, tool]);
+
+    // Reset broadcast — when the parent's resetTick increments, snap the
+    // camera back to the full extent + clear any visible visible-bounds drift.
+    useEffect(() => {
+        if (!sc) return;
+        if (resetTick > lastResetTickRef.current) {
+            lastResetTickRef.current = resetTick;
+            sc.reset();
+            const { xLo, xHi, yLo, yHi } = dataBoundsRef.current;
+            setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
+        }
+    }, [sc, resetTick]);
+
+    // (Selection sync used to live here. Highlight now happens via the
+    // cluster-driven `valueA` re-upload + palette swap above.)
+
+    const yTicks = useMemo(() => makeTicks(visibleBounds.yMin, visibleBounds.yMax, 3), [visibleBounds]);
+    const xTicks = useMemo(() => makeTicks(visibleBounds.xMin, visibleBounds.xMax, 3), [visibleBounds]);
+
+    const padLeft = AXIS_PAD.left;
+    const padTop = AXIS_PAD.top;
+
+    return (
+        <div ref={containerRef} className="pair-regl-cell">
+            <div
+                className="pair-regl-cell-canvas-wrap"
+                style={{
+                    position: 'absolute',
+                    left: padLeft,
+                    top: padTop,
+                    width: innerDims.width,
+                    height: innerDims.height,
+                }}
+            >
+                <canvas
+                    ref={canvasRef}
+                    style={{ display: 'block', width: innerDims.width, height: innerDims.height }}
+                />
+            </div>
+
+            <svg
+                className="pair-regl-cell-axes"
+                style={{
+                    position: 'absolute',
+                    top: 0, left: 0,
+                    width: wrapperDims.width,
+                    height: wrapperDims.height,
+                    pointerEvents: 'none',
+                }}
+            >
+                {showXLabel && (
+                    <text
+                        x={padLeft + innerDims.width / 2}
+                        y={11}
+                        textAnchor="middle"
+                        fontSize="10"
+                        fill="#cbd5e1"
+                        fontFamily="Inter, system-ui"
+                    >
+                        {isTimeAxis ? 'Time' : sensorX}
+                    </text>
+                )}
+                {showYLabel && (
+                    <text
+                        x={9}
+                        y={padTop + innerDims.height / 2}
+                        transform={`rotate(-90, 9, ${padTop + innerDims.height / 2})`}
+                        textAnchor="middle"
+                        fontSize="10"
+                        fill="#cbd5e1"
+                        fontFamily="Inter, system-ui"
+                    >
+                        {sensorY}
+                    </text>
+                )}
+                {/* X-axis ticks (bottom edge) */}
+                {showXAxis && xTicks.map((v, i, arr) => {
+                    const x = padLeft + innerDims.width * (i / (arr.length - 1));
+                    const y = padTop + innerDims.height;
+                    const label = isTimeAxis
+                        ? new Date(v).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+                        : fmt(v);
+                    return (
+                        <g key={`x${i}`}>
+                            <line x1={x} y1={y} x2={x} y2={y + 3} stroke="#94a3b8" strokeWidth="0.5" />
+                            <text
+                                x={x}
+                                y={y + 12}
+                                textAnchor="middle"
+                                fontSize="8"
+                                fill="#94a3b8"
+                                fontFamily="Inter, system-ui"
+                            >
+                                {label}
+                            </text>
+                        </g>
+                    );
+                })}
+                {/* Y-axis ticks (left edge) */}
+                {showYAxis && yTicks.map((v, i, arr) => {
+                    const y = padTop + innerDims.height * (1 - i / (arr.length - 1));
+                    return (
+                        <g key={`y${i}`}>
+                            <line x1={padLeft - 3} y1={y} x2={padLeft} y2={y} stroke="#94a3b8" strokeWidth="0.5" />
+                            <text
+                                x={padLeft - 5}
+                                y={y + 3}
+                                textAnchor="end"
+                                fontSize="8"
+                                fill="#94a3b8"
+                                fontFamily="Inter, system-ui"
+                            >
+                                {fmt(v)}
+                            </text>
+                        </g>
+                    );
+                })}
+                {/* Cell border */}
+                <rect
+                    x={padLeft}
+                    y={padTop}
+                    width={innerDims.width}
+                    height={innerDims.height}
+                    fill="none"
+                    stroke="#334155"
+                    strokeWidth="1"
+                />
+            </svg>
+        </div>
+    );
+}
+
+export default memo(PairPlotCell);

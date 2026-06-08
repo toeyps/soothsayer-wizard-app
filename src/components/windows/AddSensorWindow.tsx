@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import Split from 'split.js';
+import { X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -174,10 +175,16 @@ export default function AddSensorWindow() {
 
     return (
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-            {/* Header */}
-            <div data-tauri-drag-region className="flex justify-between items-center px-4 py-3 shrink-0" style={{ backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
-                <h2 className="text-sm font-semibold pointer-events-none" style={{ color: 'var(--text-primary)' }}>Add Special Sensor</h2>
-                <button onClick={handleClose} className="hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>&times;</button>
+            {/* Header — matches View Table dialog (.pair-regl-modal-header) */}
+            <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
+                <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Add Special Sensor</h2>
+                <button
+                    onClick={handleClose}
+                    className="scatter-regl-btn scatter-regl-btn-icon"
+                    title="Close"
+                >
+                    <X size={14} />
+                </button>
             </div>
 
             {/* Main Content (Split.js) */}
@@ -211,7 +218,6 @@ export default function AddSensorWindow() {
                             sensorMetadata={sensorMetadata}
                             onConfigChange={handleConfigChange}
                             onRemoveSensor={handleSensorToggle}
-                            allSensors={sensors}
                             onFormulaSubmit={handleFormulaSubmit}
                         />
                     </div>

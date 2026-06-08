@@ -5746,6 +5746,48 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+    cursor: text;
+}
+
+/* Inline-edit input for the workspace pill — sized to match the static
+   .fg-workspace-name so the pill doesn't shift width when switching modes. */
+.fg-workspace-name-input {
+    flex: 1;
+    min-width: 80px;
+    max-width: 220px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    background: var(--input-bg, var(--bg-primary));
+    border: 1px solid var(--accent-color);
+    border-radius: 4px;
+    padding: 1px 6px;
+    outline: none;
+    font-family: inherit;
+}
+
+/* Pencil / Save / Cancel buttons inside the workspace pill. Subtle by
+   default, lights up on hover. */
+.fg-workspace-name-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    opacity: 0.6;
+    border-radius: 3px;
+    transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+    flex-shrink: 0;
+}
+
+.fg-workspace-name-btn:hover {
+    opacity: 1;
+    color: var(--text-primary);
+    background: var(--hover-bg);
 }
 
 /* ── Progress strip ────────────────────────────────────────────────── */
@@ -7866,6 +7908,133 @@ body {
     padding: 0 4px;
 }
 
+/* =============================================
+   Cluster slider — multi-handle range editor for clustering ranges.
+   Replaces the per-cluster Min/Max number inputs. Track shows colored
+   segments per cluster + N-1 draggable split handles at boundaries.
+   ============================================= */
+.pm-cluster-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Empty-state variant (no criteria sensor, single cluster, loading, etc.) */
+.pm-cluster-slider--empty {
+    align-items: center;
+    justify-content: center;
+    flex-direction: row;
+    gap: 6px;
+    padding: 12px 10px;
+    border: 1px dashed var(--border-color, rgba(148, 163, 184, 0.22));
+    border-radius: 8px;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.3));
+    color: var(--text-secondary, #94a3b8);
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* Bounds header: criteria sensor min/max + the sensor name in the center. */
+.pm-cluster-slider-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10.5px;
+    color: var(--text-secondary, #94a3b8);
+    padding: 0 2px;
+}
+.pm-cluster-slider-bound {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary, #e2e8f0);
+}
+.pm-cluster-slider-sensor {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    opacity: 0.65;
+}
+
+/* Track holds segments + handles. Position:relative anchors absolutely-
+   positioned children. Fixed height keeps layout stable when segments
+   redistribute on handle drag. */
+.pm-cluster-slider-track {
+    position: relative;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.4));
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.18));
+    overflow: hidden;
+}
+
+/* Colored segments fill the track from each cluster's [min, max] */
+.pm-cluster-slider-segment {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.55;
+    transition: opacity 0.12s ease;
+    pointer-events: none;        /* Don't intercept drags on handles */
+    overflow: hidden;
+}
+.pm-cluster-slider-segment:hover {
+    opacity: 0.7;
+}
+.pm-cluster-slider-seg-label {
+    color: #fff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+/* Draggable split handle — a vertical bar centered on its split value.
+   Sits on top of segments (higher z-index) so it stays grabbable. */
+.pm-cluster-slider-handle {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 8px;
+    margin-left: -4px;            /* center on `left` value */
+    background: var(--text-primary, #f1f5f9);
+    border: 1.5px solid var(--bg-secondary, #0f172a);
+    border-radius: 3px;
+    cursor: col-resize;
+    z-index: 2;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    transition: background-color 0.1s ease, transform 0.1s ease;
+}
+.pm-cluster-slider-handle:hover,
+.pm-cluster-slider-handle:active {
+    background: #60a5fa;
+    transform: scaleY(1.05);
+}
+
+/* Per-cluster value pills below the track — quick numeric readout. */
+.pm-cluster-slider-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    margin-top: 4px;
+}
+.pm-cluster-slider-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-secondary, #94a3b8);
+    background: var(--bg-secondary, rgba(15, 23, 42, 0.3));
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.18));
+    border-radius: 12px;
+    padding: 2px 9px;
+}
+
 /* Inline error under config */
 .pm-config-error {
     font-size: 12px;
@@ -8209,4 +8378,716 @@ body {
     border-color: var(--accent-color);
     color: var(--text-primary);
     background: rgba(59, 130, 246, 0.06);
+}
+
+/* =============================================
+   regl-scatterplot wrapper (Dashboard scatter chart)
+   ============================================= */
+.scatter-regl-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.scatter-regl-controls {
+    position: absolute;
+    top: 10px;
+    left: 70px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(30, 41, 59, 0.85);
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+.scatter-regl-select {
+    background: #1e293b;
+    color: white;
+    border: 1px solid transparent;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.scatter-regl-select:hover {
+    border-color: #6366f1;
+}
+
+.scatter-regl-vs {
+    color: #94a3b8;
+    margin: 0 2px;
+    font-size: 11px;
+}
+
+.scatter-regl-hint {
+    color: #64748b;
+    font-style: italic;
+    margin-left: 10px;
+    font-size: 10px;
+    user-select: none;
+}
+
+.scatter-regl-toolbox {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(30, 41, 59, 0.92);
+    border: 1px solid rgba(71, 85, 105, 0.6);
+    border-radius: 4px;
+    padding: 3px;
+    backdrop-filter: blur(4px);
+}
+
+.scatter-regl-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+
+.scatter-regl-tool:hover:not(:disabled) {
+    border-color: rgba(165, 180, 252, 0.4);
+    background: rgba(99, 102, 241, 0.18);
+    color: #e0e7ff;
+}
+
+.scatter-regl-tool.active {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.3);
+    color: #e0e7ff;
+}
+
+.scatter-regl-tool:disabled {
+    color: #475569;
+    cursor: not-allowed;
+}
+
+.scatter-regl-tooltip {
+    position: absolute;
+    z-index: 20;
+    pointer-events: none;
+    min-width: 180px;
+    background: rgba(15, 23, 42, 0.96);
+    border: 1px solid rgba(165, 180, 252, 0.4);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #f1f5f9;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    font-family: Inter, system-ui, sans-serif;
+}
+
+.scatter-regl-tooltip-title {
+    color: #a5b4fc;
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    padding-bottom: 3px;
+}
+
+.scatter-regl-tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 1px 0;
+}
+
+.scatter-regl-tooltip-label {
+    color: #94a3b8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100px;
+}
+
+.scatter-regl-tooltip-value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #fafafa;
+}
+
+.scatter-regl-tooltip-ts {
+    color: #94a3b8;
+    font-size: 10px;
+    margin-top: 4px;
+    padding-top: 3px;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+/* =============================================
+   Pair plot (regl-scatterplot grid)
+   ============================================= */
+.pair-regl-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    background: #000;
+}
+
+.pair-regl-toolbox {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(30, 41, 59, 0.92);
+    border: 1px solid rgba(71, 85, 105, 0.6);
+    border-radius: 4px;
+    padding: 3px;
+    backdrop-filter: blur(4px);
+}
+
+.pair-regl-grid {
+    position: absolute;
+    inset: 36px 8px 8px 8px;   /* leave room for toolbox above */
+    display: grid;
+    gap: 1px;
+    background: transparent;
+}
+
+.pair-regl-cell-slot {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.pair-regl-cell {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+.pair-regl-cell-canvas-wrap {
+    /* size + position set inline */
+}
+
+.pair-regl-cell-axes text {
+    user-select: none;
+}
+
+.pair-regl-panel {
+    position: absolute;
+    bottom: 10px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.85));
+    border: 1px solid rgba(165, 180, 252, 0.4);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: #f1f5f9;
+    z-index: 12;
+    backdrop-filter: blur(4px);
+}
+
+.pair-regl-panel b {
+    color: #fafafa;
+    font-weight: 600;
+}
+
+/* Cluster list panel (themed) ----------------------------------------- */
+.pair-regl-cluster-panel {
+    position: absolute;
+    bottom: 10px;
+    right: 12px;
+    width: 340px;
+    max-height: 60%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    z-index: 12;
+    font-size: 11px;
+    color: var(--text-primary);
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.pair-regl-cluster-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex: 0 0 auto;
+}
+
+.pair-regl-cluster-panel-head b {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.pair-regl-cluster-sep {
+    color: var(--text-secondary);
+    opacity: 0.4;
+    margin: 0 2px;
+}
+
+.pair-regl-cluster-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    flex: 1 1 auto;
+}
+
+.pair-regl-cluster-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    transition: background 0.1s;
+}
+
+.pair-regl-cluster-row:hover {
+    background: var(--hover-bg);
+}
+
+.pair-regl-cluster-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    flex: 0 0 auto;
+    transition: transform 0.1s, border-color 0.1s;
+}
+
+.pair-regl-cluster-swatch:hover {
+    transform: scale(1.15);
+    border-color: var(--accent-color);
+}
+
+/* Hide the actual color input — it overlays the swatch */
+.pair-regl-cluster-swatch input[type="color"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    border: none;
+}
+
+.pair-regl-cluster-label {
+    flex: 1 1 auto;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pair-regl-cluster-count {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    flex: 0 0 auto;
+}
+
+/* Inline chip used inside the View Table dialog for the Cluster column */
+.pair-regl-cluster-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: var(--hover-bg);
+    font-size: 10px;
+    color: var(--text-primary);
+}
+
+.pair-regl-cluster-chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+
+/* View Table cluster filter chips (themed) ----------------------------- */
+.pair-regl-modal-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-primary);
+    flex-wrap: wrap;
+    flex: 0 0 auto;
+}
+
+.pair-regl-modal-filter-label {
+    color: var(--text-secondary);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 2px;
+}
+
+.pair-regl-modal-filter-spacer {
+    flex: 1 1 auto;
+    min-width: 8px;
+}
+
+.pair-regl-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px 3px 7px;
+    border-radius: 999px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-family: Inter, system-ui, sans-serif;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+    line-height: 1;
+}
+
+.pair-regl-filter-chip:hover {
+    opacity: 0.9;
+    background: var(--hover-bg);
+}
+
+.pair-regl-filter-chip.active {
+    opacity: 1;
+    background: var(--hover-bg);
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+}
+
+.pair-regl-filter-chip-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.pair-regl-filter-chip-count {
+    color: inherit;
+    opacity: 0.65;
+    font-variant-numeric: tabular-nums;
+    font-size: 9px;
+}
+
+.pair-regl-filter-mini {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    line-height: 1;
+}
+
+.pair-regl-filter-mini:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+    background: var(--hover-bg);
+}
+
+.pair-regl-filter-mini:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Selection review dialog (themed to match AddSensorWindow) ------------ */
+.pair-regl-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.pair-regl-modal {
+    width: 100%;
+    max-width: 960px;
+    max-height: 80vh;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    font-family: Inter, system-ui, sans-serif;
+    color: var(--text-primary);
+}
+
+.pair-regl-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-primary);
+    flex: 0 0 auto;
+}
+
+.pair-regl-modal-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.pair-regl-modal-count {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    background: var(--hover-bg);
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+}
+
+.pair-regl-modal-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.pair-regl-modal-body {
+    flex: 1 1 auto;
+    overflow: auto;
+    background: var(--bg-secondary);
+}
+
+.pair-regl-modal-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+}
+
+.pair-regl-modal-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-primary);
+}
+
+.pair-regl-modal-table th {
+    padding: 7px 10px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+}
+
+.pair-regl-modal-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.pair-regl-modal-table tbody tr:hover {
+    background: var(--hover-bg);
+}
+
+.pair-regl-modal-more {
+    padding: 10px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+}
+
+/* Magnifier click-to-inspect overlay --------------------------------- */
+.pair-regl-inspect-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    cursor: zoom-in;
+    background: rgba(165, 180, 252, 0.05);
+    transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.pair-regl-inspect-overlay:hover {
+    background: rgba(165, 180, 252, 0.18);
+    box-shadow: inset 0 0 0 2px #818cf8;
+}
+
+/* Enlarged-view dialog (one cell big, themed) ------------------------- */
+.pair-regl-expand-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 150;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.pair-regl-expand-modal {
+    width: 86vw;
+    height: 78vh;
+    max-width: 1280px;
+    max-height: 860px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    font-family: Inter, system-ui, sans-serif;
+    color: var(--text-primary);
+}
+
+.pair-regl-expand-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+
+.pair-regl-expand-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.pair-regl-expand-toolbox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pair-regl-expand-body {
+    flex: 1 1 auto;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.pair-regl-expand-footer {
+    padding: 7px 14px;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+}
+
+.pair-regl-expand-footer b {
+    color: var(--text-primary);
+}
+
+.scatter-regl-panel {
+    position: absolute;
+    bottom: 10px;
+    left: 70px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.75));
+    border: 1px solid rgba(165, 180, 252, 0.35);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: #f1f5f9;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+}
+
+.scatter-regl-panel b {
+    color: #fafafa;
+    font-weight: 600;
+}
+
+.scatter-regl-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.scatter-regl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 10px;
+    cursor: pointer;
+    line-height: 1;
+    transition: all 0.12s ease;
+}
+
+.scatter-regl-btn:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    background: var(--hover-bg);
+}
+
+.scatter-regl-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.scatter-regl-btn-icon {
+    padding: 3px 6px;
 }
