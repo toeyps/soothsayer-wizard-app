@@ -2654,7 +2654,7 @@ export default function PredictiveModelBuild() {
                                         </div>
                                         <div className="pm-chart-subtitle">
                                             {rcMode === 'relationship'
-                                                ? `Raw (blue) vs. LinearGAM model output (red) — pick a predictor for the X-axis${dashboardFilterPayload ? ' · using Dashboard filter' : ''}`
+                                                ? `Raw (blue) vs. Relation model output (red) — pick a predictor for the X-axis${dashboardFilterPayload ? ' · using Dashboard filter' : ''}`
                                                 : 'K-means clustering'}
                                         </div>
                                     </div>
@@ -2724,7 +2724,7 @@ export default function PredictiveModelBuild() {
                                                 ? `Fitting sub-model ${Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of ${subModelsProgress.total}…`
                                                 : relFitProgress && relFitProgress.total > 1
                                                     ? `Fitting predictor ${Math.min(relFitProgress.current + 1, relFitProgress.total)} of ${relFitProgress.total}…`
-                                                    : 'Running LinearGAM…'}
+                                                    : 'Running Relation model…'}
                                         </div>
                                     </div>
                                 )}
@@ -2734,7 +2734,7 @@ export default function PredictiveModelBuild() {
                                     ) : rcMode === 'relationship' && relLoading ? (
                                         <div className="plot-placeholder pm-chart-placeholder">
                                             <Loader2 size={36} style={{ opacity: 0.45 }} className="pm-spin" />
-                                            <p>Running LinearGAM…</p>
+                                            <p>Running Relation model…</p>
                                         </div>
                                     ) : rcMode === 'clustering' && clusteringScatterOption ? (
                                         <ResponsiveECharts option={clusteringScatterOption} style={{ minHeight: '200px' }} />
@@ -3252,7 +3252,7 @@ export default function PredictiveModelBuild() {
                                         </div>
                                         <div className="pm-chart-subtitle">
                                             {rcMode === 'relationship'
-                                                ? 'Raw (blue) vs. LinearGAM model output (red)'
+                                                ? 'Raw (blue) vs. Relation model output (red)'
                                                 : 'K-means clustering with confidence ellipses'}
                                         </div>
                                     </>
@@ -3386,13 +3386,13 @@ export default function PredictiveModelBuild() {
                                         <div>
                                             <div className="pm-preview-section-title">Relationship</div>
                                             <div className="pm-preview-section-sub">
-                                                request: <code>PreviewModel/relationship</code> · linearGAM_lambda: <code>{relStiffness}</code>
+                                                Relation model preview · stiffness: <code>{stiffnessLabel(relStiffness)}</code>
                                             </div>
                                         </div>
                                     </header>
                                     {relLoading ? (
                                         <div className="pm-preview-empty">
-                                            <Loader2 size={14} className="animate-spin" /> Running LinearGAM…
+                                            <Loader2 size={14} className="animate-spin" /> Running Relation model…
                                         </div>
                                     ) : relError ? (
                                         <div className="pm-preview-error">{relError}</div>
@@ -3753,7 +3753,7 @@ export default function PredictiveModelBuild() {
                             <div className="pm-chart-title-block">
                                 <div className="pm-chart-title">Sub-models</div>
                                 <div className="pm-chart-subtitle">
-                                    One LinearGAM fit per cumulative-feature subset · target: <code>{targetSensor || '—'}</code> · λ: <code>{relStiffness}</code>
+                                    One Relation model fit per cumulative-feature subset · target: <code>{targetSensor || '—'}</code> · stiffness: <code>{stiffnessLabel(relStiffness)}</code>
                                 </div>
                             </div>
                             <button
@@ -3773,7 +3773,7 @@ export default function PredictiveModelBuild() {
                             ) : subModelsLoading ? (
                                 <div className="pm-preview-empty">
                                     <Loader2 size={14} className="animate-spin" />
-                                    Fitting LinearGAM model {Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of {subModelsProgress.total}…
+                                    Fitting Relation model {Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of {subModelsProgress.total}…
                                 </div>
                             ) : subModelsError ? (
                                 <div className="pm-preview-error">{subModelsError}</div>
@@ -3906,7 +3906,7 @@ export default function PredictiveModelBuild() {
                         <div style={{ fontSize: 14, fontWeight: 600 }}>Saving model…</div>
                         <div style={{ fontSize: 12, color: 'var(--text-secondary, #94a3b8)', minHeight: 18 }}>
                             {saveStatus.step === 'individual' && 'Training individual model'}
-                            {saveStatus.step === 'relationship' && 'Fitting LinearGAM (relationship model)'}
+                            {saveStatus.step === 'relationship' && 'Fitting Relation model'}
                             {saveStatus.step === 'clustering' && 'Fitting GMM ellipses (clustering model)'}
                             {!saveStatus.step && 'Preparing…'}
                         </div>

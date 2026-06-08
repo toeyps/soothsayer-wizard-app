@@ -502,7 +502,7 @@ const ModelConfigSection = ({ data }: { data: PMReportData }) => (
             number={4}
             title="Model Configuration"
             subtitle={
-                data.mode === 'relationship' ? 'Relationship (LinearGAM) parameters and metrics.'
+                data.mode === 'relationship' ? 'Relation model parameters and metrics.'
                     : data.mode === 'clustering' ? 'Clustering (KMeans) parameters and cluster bins.'
                         : 'No mode selected — pick Relationship or Clustering before saving.'
             }
