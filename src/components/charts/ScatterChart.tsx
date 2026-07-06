@@ -57,15 +57,31 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
     /** The regl-scatterplot instance kept in component state so the draw
      *  effect can react to its lifecycle (recreate on resize → redraw). */
     const [sc, setSc] = useState<any>(null);
+    /** WebGL context-loss guard. If the GPU drops the context (e.g. too many
+     *  points on a weak integrated GPU) the canvas goes black with NO error;
+     *  we catch the event, show a recoverable overlay, and let the user
+     *  rebuild via Retry (bumps `rebuildNonce` → the create effect re-runs). */
+    const [contextLost, setContextLost] = useState(false);
+    const [rebuildNonce, setRebuildNonce] = useState(0);
 
     // Default X/Y to the first two sensors, like the previous ECharts version.
     useEffect(() => {
         if (sensors.length >= 2) {
-            if (!sensors.includes(scatterX)) setScatterX(sensors[0]);
-            if (!sensors.includes(scatterY)) setScatterY(sensors[1]);
+            const x = sensors.includes(scatterX) ? scatterX : sensors[0];
+            if (x !== scatterX) setScatterX(x);
+            if (!sensors.includes(scatterY)) {
+                // Pick a DIFFERENT sensor than X so a fresh default never
+                // plots a column against itself.
+                setScatterY(sensors.find(s => s !== x) ?? sensors[1]);
+            }
         } else if (sensors.length === 1) {
             setScatterX(sensors[0]);
-            setScatterY(sensors[0]);
+            // Reset Y instead of pinning it to the only sensor: pinning left
+            // Y === X after a 1 → 2 sensor transition (`includes` saw it as
+            // valid), so the chart plotted the first column against itself
+            // instead of using the newly added sensor. The <2-sensor guard
+            // hides the chart while Y is unset, so '' is never visible.
+            setScatterY('');
         }
     }, [sensors, scatterX, scatterY]);
 
@@ -145,14 +161,25 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
             setVisibleBounds({ xMin: vxMin, xMax: vxMax, yMin: vyMin, yMax: vyMax });
         });
 
+        // WebGL context-loss recovery. Without `preventDefault` the browser
+        // never fires `webglcontextrestored`, leaving a permanently black
+        // canvas; we surface a Retry overlay instead of a silent black box.
+        const canvas = canvasRef.current;
+        const onContextLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
+        const onContextRestored = () => { setContextLost(false); };
+        canvas.addEventListener('webglcontextlost', onContextLost as EventListener);
+        canvas.addEventListener('webglcontextrestored', onContextRestored as EventListener);
+
         setSc(inst);
 
         return () => {
+            canvas.removeEventListener('webglcontextlost', onContextLost as EventListener);
+            canvas.removeEventListener('webglcontextrestored', onContextRestored as EventListener);
             inst.destroy();
             setSc(null);
             setSelectedIndices([]);
         };
-    }, [innerDims.width, innerDims.height]);
+    }, [innerDims.width, innerDims.height, rebuildNonce]);
 
     // Build points + normalise to [-1, 1] and push to the instance.
     // Runs whenever data / chosen sensors / the instance itself changes.
@@ -165,8 +192,15 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
         const xs: number[] = [];
         const ys: number[] = [];
         const orig: number[] = [];
+        // Defensive cap: the Dashboard already feeds a bounded sample, but if
+        // this chart is ever handed raw data, stride it down so we never push
+        // a GPU-unsafe point count (which would lose the WebGL context and
+        // black the canvas). `orig` still records the true row index, so
+        // tooltip + CSV export keep mapping back correctly.
+        const RENDER_CAP = 500_000;
+        const step = data.length > RENDER_CAP ? Math.ceil(data.length / RENDER_CAP) : 1;
         let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-        for (let i = 0; i < data.length; i++) {
+        for (let i = 0; i < data.length; i += step) {
             const x = data[i].values[xIdx];
             const y = data[i].values[yIdx];
             if (x == null || y == null || typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y)) continue;
@@ -402,6 +436,27 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                         {tooltip.timestamp && (
                             <div className="scatter-regl-tooltip-ts">{tooltip.timestamp}</div>
                         )}
+                    </div>
+                )}
+                {contextLost && (
+                    <div style={{
+                        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: 10,
+                        background: 'rgba(15,23,42,0.88)', color: '#e2e8f0', textAlign: 'center',
+                        padding: 16, zIndex: 5,
+                    }}>
+                        <span style={{ fontSize: 13, maxWidth: 300, lineHeight: 1.5 }}>
+                            Rendering paused — the GPU dropped the canvas. Try filtering the data or showing fewer sensors.
+                        </span>
+                        <button
+                            onClick={() => { setContextLost(false); setRebuildNonce(n => n + 1); }}
+                            style={{
+                                padding: '4px 14px', fontSize: 12, cursor: 'pointer', borderRadius: 6,
+                                border: '1px solid #475569', background: '#1e293b', color: '#e2e8f0',
+                            }}
+                        >
+                            Retry
+                        </button>
                     </div>
                 )}
             </div>

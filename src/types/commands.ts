@@ -117,6 +117,25 @@ export interface RelationshipTrainResult {
   info_path: string;
 }
 
+/**
+ * Bounded sample of the (filtered) dataset for scatter / pair-plot rendering,
+ * returned by `get_scatter_sample`. `rows.length <= max_points`, so the IPC
+ * payload, JS heap, and WebGL buffers stay bounded regardless of how large
+ * the underlying dataset is.
+ *
+ * `headers` lists the resolved sensors in the SAME column order as each row's
+ * `values` — `headers.length === rows[i].values.length`.
+ */
+export interface ScatterSample {
+  headers: string[];
+  /** Each row mirrors the Rust `CsvRecord` shape: timestamp + value columns. */
+  rows: { timestamp: string | null; values: (number | null)[] }[];
+  /** Total rows that passed the filter (the population sampled from). */
+  total: number;
+  /** Rows actually returned (`=== rows.length`). */
+  sampled: number;
+}
+
 export type TauriCommands = {
   /** Updated: now returns CsvLoadReport instead of CsvMetadata */
   load_csv: {
@@ -266,6 +285,33 @@ export type TauriCommands = {
       model_name: string | null;
     };
     returns: RelationshipTrainResult;
+  };
+  /**
+   * Return a bounded uniform random sample of the (filtered) dataset for
+   * scatter / pair-plot rendering. The sample never exceeds `maxPoints` rows,
+   * keeping IPC, heap, and GPU bounded for arbitrarily large datasets.
+   *
+   * `filter.sensors` selects which sensor columns to project (the chart's
+   * visible sensors). Timestamp / value filters mirror `get_filtered_data`.
+   * `max_points` uses snake_case to match the Rust param exactly, like the
+   * other commands in this file (Tauri matches the key verbatim).
+   */
+  get_scatter_sample: {
+    args: {
+      filter: {
+        sensors: string[];
+        timestamp_start: string | null;
+        timestamp_end: string | null;
+        value_filters: {
+          sensor: string;
+          operation: string;
+          value1: number | null;
+          value2: number | null;
+        }[];
+      };
+      max_points: number;
+    };
+    returns: ScatterSample;
   };
   /**
    * Write arbitrary bytes to a user-picked file path (CSV / PDF / PNG exports).
