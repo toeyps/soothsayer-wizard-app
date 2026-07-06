@@ -3,8 +3,8 @@ pub mod csv_processor;
 pub mod metrics;
 pub mod operation_registry;
 use csv_processor::{
-    load_metadata, CsvLoadReport, MappingData, MappingResult, ProcessedData,
-    SensorMetadata,
+    load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
+    CsvRecord, DataChunk, MappingData, MappingResult, SensorMetadata, TS_MISSING,
 };
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
@@ -196,7 +196,7 @@ fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
 }
 
 struct SessionData {
-    data: ProcessedData,
+    data: ColumnarData,
     paths: Vec<String>,
 }
 
@@ -257,30 +257,19 @@ fn get_data(
     let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
 
     const CHUNK_SIZE: usize = 5000;
-    let mut chunk_buf: Vec<csv_processor::CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
+    let mut chunk_buf: Vec<CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
 
-    for row in &data.rows {
-        if !resolved.is_noop() && !resolved.keeps(row) {
+    for r in 0..data.n_rows() {
+        if !resolved.is_noop() && !resolved.keeps(data, r) {
             continue;
         }
-        let mut new_values = Vec::with_capacity(indices.len());
-        for &idx in &indices {
-            if idx < row.values.len() {
-                new_values.push(row.values[idx]);
-            } else {
-                new_values.push(None);
-            }
-        }
-        chunk_buf.push(csv_processor::CsvRecord {
-            timestamp: row.timestamp.clone(),
-            values: new_values,
-        });
+        chunk_buf.push(data.wire_record(r, &indices));
 
         if chunk_buf.len() >= CHUNK_SIZE {
             window
                 .emit(
                     "data-stream-chunk",
-                    ProcessedData {
+                    DataChunk {
                         headers: sensors.clone(),
                         rows: std::mem::replace(&mut chunk_buf, Vec::with_capacity(CHUNK_SIZE)),
                     },
@@ -293,7 +282,7 @@ fn get_data(
         window
             .emit(
                 "data-stream-chunk",
-                ProcessedData {
+                DataChunk {
                     headers: sensors.clone(),
                     rows: chunk_buf,
                 },
@@ -368,28 +357,18 @@ fn compute_sensor_stats(
 
     let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
 
-    // Parallel collect of all non-null, finite values for the target column —
-    // restricted to rows passing the dashboard filter when one is set.
+    // Parallel collect of all finite values for the target column (NaN =
+    // missing, so `is_finite` drops missing and ±inf alike) — restricted to
+    // rows passing the dashboard filter when one is set.
+    let col = &data.columns[idx];
     let values: Vec<f64> = if resolved.is_noop() {
-        data.rows
-            .par_iter()
-            .filter_map(|row| {
-                row.values
-                    .get(idx)
-                    .and_then(|v| *v)
-                    .filter(|v| v.is_finite())
-            })
-            .collect()
+        col.par_iter().copied().filter(|v| v.is_finite()).collect()
     } else {
-        data.rows
-            .par_iter()
-            .filter(|row| resolved.keeps(row))
-            .filter_map(|row| {
-                row.values
-                    .get(idx)
-                    .and_then(|v| *v)
-                    .filter(|v| v.is_finite())
-            })
+        (0..data.n_rows())
+            .into_par_iter()
+            .filter(|&r| resolved.keeps(data, r))
+            .map(|r| col[r])
+            .filter(|v| v.is_finite())
             .collect()
     };
 
@@ -465,14 +444,16 @@ struct ResolvedValueFilter {
 }
 
 /// Parsed/resolved form of a `PreviewFilter`. Built once per command call
-/// from a `&[String]` of headers; thereafter `.keeps(row)` is a cheap predicate
-/// suitable for use inside the row-iteration loop of every data-reading
-/// command. A noop filter (`is_noop() == true`) is what every command saw
-/// before this refactor — included for symmetry but most call sites short-
-/// circuit when noop to preserve the parallel-rayon fast paths.
+/// from a `&[String]` of headers; thereafter `.keeps(data, row)` is a cheap
+/// predicate suitable for use inside the row-iteration loop of every
+/// data-reading command. Timestamp bounds are held as epoch microseconds and
+/// compared against `ColumnarData::ts_parsed` — rows are never re-parsed.
+/// A noop filter (`is_noop() == true`) is what every command saw before this
+/// refactor — included for symmetry but most call sites short-circuit when
+/// noop to preserve the parallel-rayon fast paths.
 struct ResolvedFilter {
-    ts_start: Option<chrono::NaiveDateTime>,
-    ts_end: Option<chrono::NaiveDateTime>,
+    ts_start: Option<i64>,
+    ts_end: Option<i64>,
     value_filters: Vec<ResolvedValueFilter>,
 }
 
@@ -485,8 +466,16 @@ impl ResolvedFilter {
                 value_filters: Vec::new(),
             };
         };
-        let ts_start = f.timestamp_start.as_deref().and_then(parse_timestamp);
-        let ts_end = f.timestamp_end.as_deref().and_then(parse_timestamp);
+        let ts_start = f
+            .timestamp_start
+            .as_deref()
+            .and_then(parse_timestamp)
+            .map(ts_to_micros);
+        let ts_end = f
+            .timestamp_end
+            .as_deref()
+            .and_then(parse_timestamp)
+            .map(ts_to_micros);
         let value_filters = f
             .value_filters
             .iter()
@@ -514,18 +503,17 @@ impl ResolvedFilter {
         self.ts_start.is_none() && self.ts_end.is_none() && self.value_filters.is_empty()
     }
 
-    /// True if `row` falls inside the dashboard filter window (timestamp AND
-    /// all value-filter predicates). Rows with unparseable timestamps under a
-    /// timestamp gate are excluded — matches the existing
-    /// `preview_relationship_model` + `get_filtered_data` behavior.
+    /// True if row `row` falls inside the dashboard filter window (timestamp
+    /// AND all value-filter predicates). Rows whose timestamp was missing or
+    /// unparseable at load (`TS_MISSING`) are excluded under a timestamp gate
+    /// — matches the legacy per-query parse behavior.
     #[inline]
-    fn keeps(&self, row: &csv_processor::CsvRecord) -> bool {
+    fn keeps(&self, data: &ColumnarData, row: usize) -> bool {
         if self.ts_start.is_some() || self.ts_end.is_some() {
-            let parsed = row.timestamp.as_deref().and_then(parse_timestamp);
-            let ts = match parsed {
-                Some(t) => t,
-                None => return false,
-            };
+            let ts = data.ts_parsed[row];
+            if ts == TS_MISSING {
+                return false;
+            }
             if let Some(s) = self.ts_start {
                 if ts < s {
                     return false;
@@ -538,7 +526,7 @@ impl ResolvedFilter {
             }
         }
         for rf in &self.value_filters {
-            let val = row.values.get(rf.sensor_idx).and_then(|v| *v);
+            let val = data.value(rf.sensor_idx, row);
             let ok = match val {
                 None => false,
                 Some(v) => match rf.operation.as_str() {
@@ -613,117 +601,43 @@ async fn preview_relationship_model(
             .position(|h| h == &target)
             .ok_or_else(|| format!("Target not found: {}", target))?;
 
-        // Resolve dashboard filter (timestamp + value filters), if any.
-        // Same accept-multiple-formats parsing used by `get_filtered_data`,
-        // routed through `parse_timestamp` so any format the dashboard sends
-        // (datetime-local, ISO, +offset, etc.) is honored consistently.
-        struct ResolvedValueFilter {
-            sensor_idx: usize,
-            operation: String,
-            value1: Option<f64>,
-            value2: Option<f64>,
-        }
-        let (ts_start, ts_end, resolved_value_filters): (
-            Option<chrono::NaiveDateTime>,
-            Option<chrono::NaiveDateTime>,
-            Vec<ResolvedValueFilter>,
-        ) = match &filter {
-            Some(f) => {
-                let s = f.timestamp_start.as_deref().and_then(parse_timestamp);
-                let e = f.timestamp_end.as_deref().and_then(parse_timestamp);
-                let v = f
-                    .value_filters
-                    .iter()
-                    .filter_map(|vf| {
-                        data.headers.iter().position(|h| h == &vf.sensor).map(|idx| {
-                            ResolvedValueFilter {
-                                sensor_idx: idx,
-                                operation: vf.operation.clone(),
-                                value1: vf.value1,
-                                value2: vf.value2,
-                            }
-                        })
-                    })
-                    .collect();
-                (s, e, v)
-            }
-            None => (None, None, Vec::new()),
-        };
-        let has_ts_filter = ts_start.is_some() || ts_end.is_some();
-        let has_value_filter = !resolved_value_filters.is_empty();
+        // Dashboard filter (timestamp + value gates) — same resolution used
+        // by every other data-reading command; row timestamps were parsed
+        // once at load, so the gate below is pure integer compares.
+        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
 
         // Drop rows with any null/non-finite across the (predictors + target) set,
         // and rows that fall outside the dashboard filter (when present).
-        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
-        let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
-        for row in &data.rows {
-            // Timestamp filter
-            if has_ts_filter {
-                let parsed = row.timestamp.as_deref().and_then(parse_timestamp);
-                let ts = match parsed {
-                    Some(t) => t,
-                    None => continue, // unparseable timestamps drop out under filter
-                };
-                if let Some(start) = ts_start {
-                    if ts < start {
-                        continue;
-                    }
-                }
-                if let Some(end) = ts_end {
-                    if ts > end {
-                        continue;
-                    }
-                }
-            }
+        let pred_cols: Vec<&[f64]> = predictor_indices
+            .iter()
+            .map(|&i| data.columns[i].as_slice())
+            .collect();
+        let target_col: &[f64] = &data.columns[target_idx];
 
-            // Value filters (AND across all)
-            if has_value_filter {
-                let mut pass = true;
-                for rf in &resolved_value_filters {
-                    let val = row.values.get(rf.sensor_idx).and_then(|v| *v);
-                    let ok = match val {
-                        None => false,
-                        Some(v) => match rf.operation.as_str() {
-                            "greater_than" => rf.value1.map_or(true, |v1| v > v1),
-                            "less_than" => rf.value1.map_or(true, |v1| v < v1),
-                            "equals" => {
-                                rf.value1.map_or(true, |v1| (v - v1).abs() < f64::EPSILON)
-                            }
-                            "between" => match (rf.value1, rf.value2) {
-                                (Some(v1), Some(v2)) => v >= v1 && v <= v2,
-                                _ => true,
-                            },
-                            _ => true,
-                        },
-                    };
-                    if !ok {
-                        pass = false;
-                        break;
-                    }
-                }
-                if !pass {
-                    continue;
-                }
+        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.n_rows());
+        let mut y_vector: Vec<f64> = Vec::with_capacity(data.n_rows());
+        for r in 0..data.n_rows() {
+            if !resolved.is_noop() && !resolved.keeps(data, r) {
+                continue;
             }
-
-            let mut x_row: Vec<f64> = Vec::with_capacity(predictor_indices.len());
+            let mut x_row: Vec<f64> = Vec::with_capacity(pred_cols.len());
             let mut ok = true;
-            for &i in &predictor_indices {
-                match row.values.get(i).and_then(|v| *v) {
-                    Some(v) if v.is_finite() => x_row.push(v),
-                    _ => {
-                        ok = false;
-                        break;
-                    }
+            for col in &pred_cols {
+                let v = col[r];
+                if v.is_finite() {
+                    x_row.push(v);
+                } else {
+                    ok = false;
+                    break;
                 }
             }
             if !ok {
                 continue;
             }
-            let y_val = match row.values.get(target_idx).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
+            let y_val = target_col[r];
+            if !y_val.is_finite() {
+                continue;
+            }
             x_matrix.push(x_row);
             y_vector.push(y_val);
         }
@@ -801,78 +715,38 @@ async fn preview_relationship_model(
 
 // ── Phase 3 / 4: Predictive-model save commands (Individual + Clustering) ──
 
-/// Try a few common timestamp formats and return the parsed `NaiveDateTime`,
-/// or `None` if no format matches. Same set as `get_filtered_data`.
-fn parse_timestamp(s: &str) -> Option<chrono::NaiveDateTime> {
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M"))
-        .or_else(|_| {
-            chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z").map(|dt| dt.naive_local())
-        })
-        .or_else(|_| {
-            chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%:z").map(|dt| dt.naive_local())
-        })
-        .or_else(|_| {
-            chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%:z")
-                .map(|dt| dt.naive_local())
-        })
-        .or_else(|_| {
-            chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%:z")
-                .map(|dt| dt.naive_local())
-        })
-        .ok()
-}
-
-/// Scan a column's rows; return (min_iso, max_iso) where the timestamps
-/// are taken in their original ISO form for any row whose value at
-/// `value_idx` is finite. Falls back to empty strings if no timestamps
-/// parse. When `filter.is_noop()` is false, rows are first gated by the
-/// dashboard filter (timestamp + value bounds).
+/// Scan a column; return (min_iso, max_iso) over the load-time-parsed
+/// timestamps of every row whose value at `value_idx` is finite. Falls back
+/// to empty strings if no timestamps parsed. When `filter.is_noop()` is
+/// false, rows are first gated by the dashboard filter (timestamp + value
+/// bounds).
 fn dataset_time_bounds(
-    data: &csv_processor::ProcessedData,
+    data: &ColumnarData,
     value_idx: usize,
     filter: &ResolvedFilter,
 ) -> (String, String) {
-    let mut min_dt: Option<(chrono::NaiveDateTime, String)> = None;
-    let mut max_dt: Option<(chrono::NaiveDateTime, String)> = None;
-    for row in &data.rows {
-        if !filter.is_noop() && !filter.keeps(row) {
+    let col = &data.columns[value_idx];
+    let mut min_us: Option<i64> = None;
+    let mut max_us: Option<i64> = None;
+    for (r, &v) in col.iter().enumerate() {
+        if !filter.is_noop() && !filter.keeps(data, r) {
             continue;
         }
-        let val_ok = row
-            .values
-            .get(value_idx)
-            .and_then(|v| *v)
-            .map(|v| v.is_finite())
-            .unwrap_or(false);
-        if !val_ok {
+        if !v.is_finite() {
             continue;
         }
-        let ts_str = match &row.timestamp {
-            Some(t) => t,
-            None => continue,
-        };
-        let parsed = match parse_timestamp(ts_str) {
-            Some(p) => p,
-            None => continue,
-        };
-        match &min_dt {
-            None => min_dt = Some((parsed, ts_str.clone())),
-            Some((m, _)) if parsed < *m => min_dt = Some((parsed, ts_str.clone())),
-            _ => {}
+        let us = data.ts_parsed[r];
+        if us == TS_MISSING {
+            continue;
         }
-        match &max_dt {
-            None => max_dt = Some((parsed, ts_str.clone())),
-            Some((m, _)) if parsed > *m => max_dt = Some((parsed, ts_str.clone())),
-            _ => {}
-        }
+        min_us = Some(min_us.map_or(us, |m| m.min(us)));
+        max_us = Some(max_us.map_or(us, |m| m.max(us)));
     }
-    match (min_dt, max_dt) {
-        (Some((mn, _)), Some((mx, _))) => (
+    match (
+        min_us.and_then(micros_to_naive),
+        max_us.and_then(micros_to_naive),
+    ) {
+        (Some(mn), Some(mx)) => (
             mn.format("%Y-%m-%dT%H:%M:%S").to_string(),
             mx.format("%Y-%m-%dT%H:%M:%S").to_string(),
         ),
@@ -937,28 +811,17 @@ fn train_individual_model(
 
     let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
 
-    // Non-NaN finite values for the target column, gated by the dashboard
-    // filter when one is set.
+    // Finite values for the target column (NaN = missing), gated by the
+    // dashboard filter when one is set.
+    let col = &data.columns[idx];
     let values: Vec<f64> = if resolved.is_noop() {
-        data.rows
-            .par_iter()
-            .filter_map(|row| {
-                row.values
-                    .get(idx)
-                    .and_then(|v| *v)
-                    .filter(|v| v.is_finite())
-            })
-            .collect()
+        col.par_iter().copied().filter(|v| v.is_finite()).collect()
     } else {
-        data.rows
-            .par_iter()
-            .filter(|row| resolved.keeps(row))
-            .filter_map(|row| {
-                row.values
-                    .get(idx)
-                    .and_then(|v| *v)
-                    .filter(|v| v.is_finite())
-            })
+        (0..data.n_rows())
+            .into_par_iter()
+            .filter(|&r| resolved.keeps(data, r))
+            .map(|r| col[r])
+            .filter(|v| v.is_finite())
             .collect()
     };
 
@@ -1145,20 +1008,22 @@ fn compute_clustering_preview(
 
     // ── Single-cluster path ──────────────────────────────────────
     if n_clusters == 1 {
-        let mut xs: Vec<f64> = Vec::with_capacity(data.rows.len());
-        let mut ys: Vec<f64> = Vec::with_capacity(data.rows.len());
-        for row in &data.rows {
-            if !resolved.is_noop() && !resolved.keeps(row) {
+        let c1 = &data.columns[i1];
+        let c2 = &data.columns[i2];
+        let mut xs: Vec<f64> = Vec::with_capacity(data.n_rows());
+        let mut ys: Vec<f64> = Vec::with_capacity(data.n_rows());
+        for r in 0..data.n_rows() {
+            if !resolved.is_noop() && !resolved.keeps(data, r) {
                 continue;
             }
-            let x = match row.values.get(i1).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
-            let y = match row.values.get(i2).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
+            let x = c1[r];
+            if !x.is_finite() {
+                continue;
+            }
+            let y = c2[r];
+            if !y.is_finite() {
+                continue;
+            }
             xs.push(x);
             ys.push(y);
         }
@@ -1206,29 +1071,30 @@ fn compute_clustering_preview(
     let mut clusters: Vec<ClusterDetail> = Vec::with_capacity(n_clusters as usize);
     let mut total_rows: usize = 0;
 
+    let c1 = &data.columns[i1];
+    let c2 = &data.columns[i2];
+    let cc = &data.columns[ic];
+
     for (idx, range) in ranges.iter().enumerate() {
         let cluster_id = (idx + 1) as u32;
         let mut xs: Vec<f64> = Vec::new();
         let mut ys: Vec<f64> = Vec::new();
-        for row in &data.rows {
-            if !resolved.is_noop() && !resolved.keeps(row) {
+        for r in 0..data.n_rows() {
+            if !resolved.is_noop() && !resolved.keeps(data, r) {
                 continue;
             }
-            let c = match row.values.get(ic).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
-            if !range.contains(c) {
+            let c = cc[r];
+            if !c.is_finite() || !range.contains(c) {
                 continue;
             }
-            let x = match row.values.get(i1).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
-            let y = match row.values.get(i2).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
+            let x = c1[r];
+            if !x.is_finite() {
+                continue;
+            }
+            let y = c2[r];
+            if !y.is_finite() {
+                continue;
+            }
             xs.push(x);
             ys.push(y);
         }
@@ -1333,19 +1199,22 @@ fn train_clustering_model(
         let i2 = data.headers.iter().position(|h| h == &second_sensor).unwrap();
 
         let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
-        let mut min_dt: Option<chrono::NaiveDateTime> = None;
-        let mut max_dt: Option<chrono::NaiveDateTime> = None;
-        for row in &data.rows {
-            if !resolved.is_noop() && !resolved.keeps(row) { continue; }
-            let ok1 = row.values.get(i1).and_then(|v| *v).map(|v| v.is_finite()).unwrap_or(false);
-            let ok2 = row.values.get(i2).and_then(|v| *v).map(|v| v.is_finite()).unwrap_or(false);
-            if !(ok1 && ok2) { continue; }
-            if let Some(ts) = row.timestamp.as_deref().and_then(parse_timestamp) {
-                min_dt = Some(min_dt.map_or(ts, |m| m.min(ts)));
-                max_dt = Some(max_dt.map_or(ts, |m| m.max(ts)));
-            }
+        let c1 = &data.columns[i1];
+        let c2 = &data.columns[i2];
+        let mut min_us: Option<i64> = None;
+        let mut max_us: Option<i64> = None;
+        for r in 0..data.n_rows() {
+            if !resolved.is_noop() && !resolved.keeps(data, r) { continue; }
+            if !(c1[r].is_finite() && c2[r].is_finite()) { continue; }
+            let us = data.ts_parsed[r];
+            if us == TS_MISSING { continue; }
+            min_us = Some(min_us.map_or(us, |m| m.min(us)));
+            max_us = Some(max_us.map_or(us, |m| m.max(us)));
         }
-        match (min_dt, max_dt) {
+        match (
+            min_us.and_then(micros_to_naive),
+            max_us.and_then(micros_to_naive),
+        ) {
             (Some(a), Some(b)) => (
                 a.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 b.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -1527,40 +1396,53 @@ async fn train_relationship_model(
 
         let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
 
-        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.rows.len());
-        let mut y_vector: Vec<f64> = Vec::with_capacity(data.rows.len());
-        let mut row_timestamps: Vec<Option<String>> = Vec::with_capacity(data.rows.len());
-        let mut min_dt: Option<chrono::NaiveDateTime> = None;
-        let mut max_dt: Option<chrono::NaiveDateTime> = None;
-        for row in &data.rows {
-            if !resolved.is_noop() && !resolved.keeps(row) {
+        let pred_cols: Vec<&[f64]> = predictor_indices
+            .iter()
+            .map(|&i| data.columns[i].as_slice())
+            .collect();
+        let target_col: &[f64] = &data.columns[target_idx];
+
+        let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.n_rows());
+        let mut y_vector: Vec<f64> = Vec::with_capacity(data.n_rows());
+        let mut row_timestamps: Vec<Option<String>> = Vec::with_capacity(data.n_rows());
+        let mut min_us: Option<i64> = None;
+        let mut max_us: Option<i64> = None;
+        for r in 0..data.n_rows() {
+            if !resolved.is_noop() && !resolved.keeps(data, r) {
                 continue;
             }
-            let mut x_row: Vec<f64> = Vec::with_capacity(predictor_indices.len());
+            let mut x_row: Vec<f64> = Vec::with_capacity(pred_cols.len());
             let mut ok = true;
-            for &i in &predictor_indices {
-                match row.values.get(i).and_then(|v| *v) {
-                    Some(v) if v.is_finite() => x_row.push(v),
-                    _ => { ok = false; break; }
+            for col in &pred_cols {
+                let v = col[r];
+                if v.is_finite() {
+                    x_row.push(v);
+                } else {
+                    ok = false;
+                    break;
                 }
             }
             if !ok { continue; }
-            let y_val = match row.values.get(target_idx).and_then(|v| *v) {
-                Some(v) if v.is_finite() => v,
-                _ => continue,
-            };
+            let y_val = target_col[r];
+            if !y_val.is_finite() {
+                continue;
+            }
             x_matrix.push(x_row);
             y_vector.push(y_val);
-            row_timestamps.push(row.timestamp.clone());
-            if let Some(ts) = row.timestamp.as_deref().and_then(parse_timestamp) {
-                min_dt = Some(min_dt.map_or(ts, |m| m.min(ts)));
-                max_dt = Some(max_dt.map_or(ts, |m| m.max(ts)));
+            row_timestamps.push(data.timestamps[r].clone());
+            let us = data.ts_parsed[r];
+            if us != TS_MISSING {
+                min_us = Some(min_us.map_or(us, |m| m.min(us)));
+                max_us = Some(max_us.map_or(us, |m| m.max(us)));
             }
         }
         if x_matrix.is_empty() {
             return Err("No rows remain after dropping nulls.".into());
         }
-        let bounds = match (min_dt, max_dt) {
+        let bounds = match (
+            min_us.and_then(micros_to_naive),
+            max_us.and_then(micros_to_naive),
+        ) {
             (Some(a), Some(b)) => (
                 a.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 b.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -1837,6 +1719,11 @@ fn calculate_new_sensor(
         }
     }
 
+    // Build the new column fully before touching `data`, so an operation
+    // error mid-way can't leave the dataset half-mutated (the old row-wise
+    // code pushed onto each row as it went).
+    let n = data.n_rows();
+    let mut new_col: Vec<f64> = Vec::with_capacity(n);
     let mut new_sensor_name;
 
     if config.mode == "single" {
@@ -1847,38 +1734,36 @@ fn calculate_new_sensor(
         let op_symbol = operation_registry::single_op_symbol(&op.op_type)?;
         new_sensor_name = format!("{} {} {}", sensors[0], op_symbol, op.value);
 
-        for row in &mut data.rows {
-            let val = row.values[indices[0]];
-            let new_val = match val {
-                Some(v) => operation_registry::execute_single_op(&op.op_type, v, op.value)
-                    .map_err(|e| e.to_string())?,
-                None => None,
+        let src = &data.columns[indices[0]];
+        for &v in src.iter() {
+            let new_val = if v.is_nan() {
+                None
+            } else {
+                operation_registry::execute_single_op(&op.op_type, v, op.value)
+                    .map_err(|e| e.to_string())?
             };
-            row.values.push(new_val);
+            new_col.push(new_val.unwrap_or(f64::NAN));
         }
     } else if config.mode == "multi" {
         let op = config.multi_op.ok_or("Missing multiOp config")?;
         let op_name = operation_registry::multi_op_name(&op.op_type)?;
 
+        let src_cols: Vec<&[f64]> = indices.iter().map(|&i| data.columns[i].as_slice()).collect();
+
         if operation_registry::is_base_op(&op.op_type) {
-            let base = op
+            let base_sensor = op
                 .base_sensor
                 .as_ref()
                 .ok_or("Missing base sensor for subtract/divide")?;
-            new_sensor_name = format!("{}({}, others)", op_name, base);
-        } else {
-            new_sensor_name = format!("{}({:?})", op_name, sensors);
-        }
+            new_sensor_name = format!("{}({}, others)", op_name, base_sensor);
 
-        for row in &mut data.rows {
-            if operation_registry::is_base_op(&op.op_type) {
-                let base_sensor = op.base_sensor.as_ref().ok_or("Missing base sensor")?;
+            for r in 0..n {
                 let mut base_val = None;
                 let mut others_sum = 0.0;
 
-                for (i, sensor_name) in sensors.iter().enumerate() {
-                    let val_opt = row.values[indices[i]];
-                    if let Some(v) = val_opt {
+                for (sensor_name, col) in sensors.iter().zip(&src_cols) {
+                    let v = col[r];
+                    if !v.is_nan() {
                         if sensor_name == base_sensor {
                             base_val = Some(v);
                         } else {
@@ -1891,11 +1776,16 @@ fn calculate_new_sensor(
                     Some(b) => operation_registry::execute_base_op(&op.op_type, b, others_sum)?,
                     None => None,
                 };
-                row.values.push(new_val);
-            } else {
+                new_col.push(new_val.unwrap_or(f64::NAN));
+            }
+        } else {
+            new_sensor_name = format!("{}({:?})", op_name, sensors);
+
+            for r in 0..n {
                 let mut valid_values = Vec::new();
-                for &idx in &indices {
-                    if let Some(v) = row.values[idx] {
+                for col in &src_cols {
+                    let v = col[r];
+                    if !v.is_nan() {
                         valid_values.push(v);
                     }
                 }
@@ -1905,7 +1795,7 @@ fn calculate_new_sensor(
                 } else {
                     operation_registry::execute_multi_op(&op.op_type, &valid_values)?
                 };
-                row.values.push(new_val);
+                new_col.push(new_val.unwrap_or(f64::NAN));
             }
         }
     } else {
@@ -1918,6 +1808,7 @@ fn calculate_new_sensor(
         }
     }
 
+    data.columns.push(new_col);
     data.headers.push(new_sensor_name.clone());
 
     Ok(new_sensor_name)
@@ -2144,22 +2035,13 @@ fn evaluate_formula(
         return Err("Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.".to_string());
     }
 
-    // 2. Resolve sensor names to column indices
-    let mut sensor_indices: Vec<(String, String, usize)> = Vec::new(); // (token, sensor_name, col_index)
+    // 2. Check all referenced sensors exist in the loaded data
     let unique_sensors: std::collections::HashSet<String> =
         sensor_refs.iter().map(|(_, name)| name.clone()).collect();
 
     for sensor_name in &unique_sensors {
-        match data.headers.iter().position(|h| h == sensor_name) {
-            Some(idx) => {
-                // Find all tokens for this sensor
-                for (token, name) in &sensor_refs {
-                    if name == sensor_name {
-                        sensor_indices.push((token.clone(), name.clone(), idx));
-                    }
-                }
-            }
-            None => return Err(format!("Sensor not found: {}", sensor_name)),
+        if !data.headers.iter().any(|h| h == sensor_name) {
+            return Err(format!("Sensor not found: {}", sensor_name));
         }
     }
 
@@ -2184,47 +2066,37 @@ fn evaluate_formula(
         .parse(&expr, &mut slab.ps)
         .map_err(|e| format!("Formula parse error: {}", e))?;
 
-    // 5. Evaluate for each row
-    let mut new_values: Vec<Option<f64>> = Vec::with_capacity(data.rows.len());
-
-    for row in &data.rows {
-        // Check if any referenced sensor is None for this row
-        let mut has_none = false;
-        for (_, idx) in &safe_name_to_idx {
-            if *idx >= row.values.len() || row.values[*idx].is_none() {
-                has_none = true;
-                break;
-            }
-        }
-
-        if has_none {
-            new_values.push(None);
-            continue;
-        }
-
-        // Build the namespace with actual sensor values for this row
-        let row_values: BTreeMap<String, f64> = safe_name_to_idx
+    // 5. Evaluate for each row (NaN in `new_col` = missing result)
+    let n = data.n_rows();
+    let mut new_col: Vec<f64> = Vec::with_capacity(n);
+    {
+        let src_cols: Vec<(&str, &[f64])> = safe_name_to_idx
             .iter()
-            .filter_map(|(safe_name, idx)| {
-                row.values.get(*idx).and_then(|v| v.map(|val| (safe_name.clone(), val)))
-            })
+            .map(|(safe_name, idx)| (safe_name.as_str(), data.columns[*idx].as_slice()))
             .collect();
 
-        let mut ns = |name: &str, _args: Vec<f64>| -> Option<f64> {
-            row_values.get(name).copied()
-        };
-
-        let expr_ref = slab.ps.get_expr(expr_i);
-        match expr_ref.eval(&slab, &mut ns) {
-            Ok(result) => {
-                if result.is_finite() {
-                    new_values.push(Some(result));
-                } else {
-                    new_values.push(None); // NaN or Infinity -> None
-                }
+        for r in 0..n {
+            // A missing (NaN) input on any referenced sensor → missing result.
+            if src_cols.iter().any(|(_, col)| col[r].is_nan()) {
+                new_col.push(f64::NAN);
+                continue;
             }
-            Err(_) => {
-                new_values.push(None);
+
+            // Build the namespace with actual sensor values for this row
+            let row_values: BTreeMap<&str, f64> = src_cols
+                .iter()
+                .map(|(safe_name, col)| (*safe_name, col[r]))
+                .collect();
+
+            let mut ns = |name: &str, _args: Vec<f64>| -> Option<f64> {
+                row_values.get(name).copied()
+            };
+
+            let expr_ref = slab.ps.get_expr(expr_i);
+            match expr_ref.eval(&slab, &mut ns) {
+                Ok(result) if result.is_finite() => new_col.push(result),
+                // NaN / Infinity / eval error → missing
+                _ => new_col.push(f64::NAN),
             }
         }
     }
@@ -2235,11 +2107,8 @@ fn evaluate_formula(
         _ => format!("f({})", formula),
     };
 
-    // 7. Append new column to each row
-    for (i, row) in data.rows.iter_mut().enumerate() {
-        row.values.push(new_values[i]);
-    }
-
+    // 7. Append the new column
+    data.columns.push(new_col);
     data.headers.push(new_sensor_name.clone());
 
     Ok(new_sensor_name)
@@ -2276,6 +2145,28 @@ struct DataFilter {
     value_filters: Vec<ValueFilter>,
 }
 
+impl DataFilter {
+    /// Bridge to the `PreviewFilter` shape so `get_filtered_data` and
+    /// `get_scatter_sample` share `ResolvedFilter` with every other
+    /// data-reading command (identical gate semantics, one implementation).
+    fn to_preview(&self) -> PreviewFilter {
+        PreviewFilter {
+            timestamp_start: self.timestamp_start.clone(),
+            timestamp_end: self.timestamp_end.clone(),
+            value_filters: self
+                .value_filters
+                .iter()
+                .map(|vf| PreviewValueFilter {
+                    sensor: vf.sensor.clone(),
+                    operation: vf.operation.clone(),
+                    value1: vf.value1,
+                    value2: vf.value2,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[tauri::command]
 fn get_filtered_data(
     filter: DataFilter,
@@ -2293,131 +2184,28 @@ fn get_filtered_data(
         .filter_map(|s| data.headers.iter().position(|h| h == s))
         .collect();
 
-    // Parse timestamp bounds once
-    let ts_start = filter
-        .timestamp_start
-        .as_deref()
-        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok());
-    let ts_end = filter
-        .timestamp_end
-        .as_deref()
-        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok());
-
-    // Pre-resolve value filter indices
-    struct ResolvedFilter {
-        sensor_idx: usize,
-        operation: String,
-        value1: Option<f64>,
-        value2: Option<f64>,
-    }
-    let resolved_filters: Vec<ResolvedFilter> = filter
-        .value_filters
-        .iter()
-        .filter_map(|vf| {
-            data.headers
-                .iter()
-                .position(|h| h == &vf.sensor)
-                .map(|idx| ResolvedFilter {
-                    sensor_idx: idx,
-                    operation: vf.operation.clone(),
-                    value1: vf.value1,
-                    value2: vf.value2,
-                })
-        })
-        .collect();
+    // Same gate semantics as every other data-reading command: bounds are
+    // parsed once, rows compare via the load-time `ts_parsed` integers —
+    // no per-row timestamp parsing.
+    let preview = filter.to_preview();
+    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers);
 
     const CHUNK_SIZE: usize = 5000;
-    let mut chunk_buf: Vec<csv_processor::CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
+    let mut chunk_buf: Vec<CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
 
-    for row in &data.rows {
-        // Timestamp filter
-        if ts_start.is_some() || ts_end.is_some() {
-            if let Some(ref ts_str) = row.timestamp {
-                // Try multiple common formats (NaiveDateTime first, then timezone-aware)
-                let parsed = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S"))
-                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M"))
-                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f"))
-                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S"))
-                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M"))
-                    // Timezone-aware formats (e.g. "2019-10-22 09:00:00+07:00")
-                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%:z").map(|dt| dt.naive_local()))
-                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%:z").map(|dt| dt.naive_local()))
-                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f%:z").map(|dt| dt.naive_local()))
-                    .or_else(|_| chrono::DateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S%.f%:z").map(|dt| dt.naive_local()));
-
-                if let Ok(ts) = parsed {
-                    if let Some(ref start) = ts_start {
-                        if ts < *start {
-                            continue;
-                        }
-                    }
-                    if let Some(ref end) = ts_end {
-                        if ts > *end {
-                            continue;
-                        }
-                    }
-                } else {
-                    continue; // skip rows with unparseable timestamps
-                }
-            } else {
-                continue; // skip rows without timestamp
-            }
-        }
-
-        // Value filters — all must pass (AND logic)
-        let mut pass = true;
-        for rf in &resolved_filters {
-            let val = if rf.sensor_idx < row.values.len() {
-                row.values[rf.sensor_idx]
-            } else {
-                None
-            };
-
-            let ok = match val {
-                None => false,
-                Some(v) => match rf.operation.as_str() {
-                    "greater_than" => rf.value1.map_or(true, |v1| v > v1),
-                    "less_than" => rf.value1.map_or(true, |v1| v < v1),
-                    "equals" => rf.value1.map_or(true, |v1| (v - v1).abs() < f64::EPSILON),
-                    "between" => match (rf.value1, rf.value2) {
-                        (Some(v1), Some(v2)) => v >= v1 && v <= v2,
-                        _ => true,
-                    },
-                    _ => true,
-                },
-            };
-            if !ok {
-                pass = false;
-                break;
-            }
-        }
-        if !pass {
+    for r in 0..data.n_rows() {
+        if !resolved.is_noop() && !resolved.keeps(data, r) {
             continue;
         }
 
-        // Build projected row (only requested sensor columns)
-        let new_values: Vec<Option<f64>> = sensor_indices
-            .iter()
-            .map(|&idx| {
-                if idx < row.values.len() {
-                    row.values[idx]
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        chunk_buf.push(csv_processor::CsvRecord {
-            timestamp: row.timestamp.clone(),
-            values: new_values,
-        });
+        // Projected row (only requested sensor columns)
+        chunk_buf.push(data.wire_record(r, &sensor_indices));
 
         if chunk_buf.len() >= CHUNK_SIZE {
             window
                 .emit(
                     "data-stream-chunk",
-                    ProcessedData {
+                    DataChunk {
                         headers: filter.sensors.clone(),
                         rows: std::mem::replace(
                             &mut chunk_buf,
@@ -2434,7 +2222,7 @@ fn get_filtered_data(
         window
             .emit(
                 "data-stream-chunk",
-                ProcessedData {
+                DataChunk {
                     headers: filter.sensors.clone(),
                     rows: chunk_buf,
                 },
@@ -2447,6 +2235,234 @@ fn get_filtered_data(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
+/// Seeded with a fixed constant so the same dataset + filter yields the SAME
+/// sample on every call — important so the scatter doesn't visibly reshuffle
+/// when the chart refetches (e.g. after a workspace reopen).
+struct Xorshift64 {
+    state: u64,
+}
+impl Xorshift64 {
+    fn new(seed: u64) -> Self {
+        // Avoid the all-zero state (xorshift's fixed point).
+        Xorshift64 { state: seed | 1 }
+    }
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+    /// Uniform integer in `[0, bound)`. Modulo bias is negligible at our scale.
+    fn next_bounded(&mut self, bound: u64) -> u64 {
+        if bound == 0 {
+            0
+        } else {
+            self.next_u64() % bound
+        }
+    }
+}
+
+/// Bounded sample of the (filtered) dataset for scatter / pair-plot rendering.
+/// `rows.len()` never exceeds the requested `max_points`, so the IPC payload,
+/// the JS heap, and the WebGL vertex buffers all stay bounded no matter how
+/// large the underlying dataset is (the whole point: a 2 GB CSV must not blow
+/// up the renderer or the GPU).
+#[derive(serde::Serialize)]
+struct ScatterSample {
+    /// Resolved sensor names, in the SAME column order as each row's `values`.
+    /// Only sensors that actually exist in the dataset are included, so
+    /// `headers.len() == rows[i].values.len()` always holds.
+    headers: Vec<String>,
+    rows: Vec<CsvRecord>,
+    /// Total rows that passed the filter (the population we sampled from).
+    total: usize,
+    /// Number of rows actually returned (`== rows.len()`, `<= max_points`).
+    sampled: usize,
+}
+
+/// Return a uniform random sample of at most `max_points` rows from the
+/// in-memory dataset, projected to the requested sensors and respecting the
+/// dashboard's timestamp / value filters.
+///
+/// Uses single-pass reservoir sampling (Algorithm R): O(n) time over the
+/// rows, O(max_points) memory, one timestamp parse per row at most (skipped
+/// entirely when no filter is active — the common "just loaded, hit Scatter"
+/// path). A row is only cloned/projected when it's actually kept, so huge
+/// datasets don't pay an allocation per row.
+// `rename_all = "snake_case"` is REQUIRED here: the frontend sends
+// `max_points` verbatim, but without the attribute the macro expects the
+// camelCased key `maxPoints` and every invoke fails with "missing required
+// key" before the command body ever runs.
+#[tauri::command(rename_all = "snake_case")]
+fn get_scatter_sample(
+    filter: DataFilter,
+    max_points: usize,
+    state: State<AppState>,
+) -> Result<ScatterSample, String> {
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    Ok(sample_dataset(&session.data, &filter, max_points))
+}
+
+/// Pure core of [`get_scatter_sample`] (no Tauri state) so it's unit-testable.
+/// Reservoir-samples up to `max_points` rows from `data`, projected to
+/// `filter.sensors` and respecting the timestamp / value filters.
+fn sample_dataset(data: &ColumnarData, filter: &DataFilter, max_points: usize) -> ScatterSample {
+    // Clamp to a sane band: at least 1, and a hard ceiling so a bad caller
+    // can't ask for a 100M-row "sample" and reintroduce the OOM we're fixing.
+    let cap = max_points.clamp(1, 2_000_000);
+
+    // Resolve requested sensors → column indices. Drop any that don't exist
+    // and keep `resolved_headers` aligned with `sensor_indices` so the
+    // returned headers always match the projected value columns 1:1.
+    let mut sensor_indices: Vec<usize> = Vec::new();
+    let mut resolved_headers: Vec<String> = Vec::new();
+    for s in &filter.sensors {
+        if let Some(idx) = data.headers.iter().position(|h| h == s) {
+            sensor_indices.push(idx);
+            resolved_headers.push(s.clone());
+        }
+    }
+
+    // Same gate semantics as get_filtered_data — one shared implementation,
+    // comparing load-time-parsed timestamps (no per-row parsing).
+    let preview = filter.to_preview();
+    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers);
+
+    // The reservoir holds ROW INDICES; rows are materialized to the wire
+    // shape only once at the end, so evicted candidates never pay a
+    // projection/clone.
+    let mut reservoir: Vec<usize> = Vec::with_capacity(cap.min(data.n_rows()));
+    let mut seen: usize = 0;
+    let mut rng = Xorshift64::new(0x9E3779B97F4A7C15);
+
+    for r in 0..data.n_rows() {
+        if !resolved.is_noop() && !resolved.keeps(data, r) {
+            continue;
+        }
+
+        if reservoir.len() < cap {
+            reservoir.push(r); // still filling → append
+        } else {
+            let j = rng.next_bounded((seen + 1) as u64) as usize;
+            if j < cap {
+                reservoir[j] = r; // replace an existing reservoir slot
+            }
+        }
+        seen += 1;
+    }
+
+    let rows: Vec<CsvRecord> = reservoir
+        .iter()
+        .map(|&r| data.wire_record(r, &sensor_indices))
+        .collect();
+    let sampled = rows.len();
+    ScatterSample {
+        headers: resolved_headers,
+        rows,
+        total: seen,
+        sampled,
+    }
+}
+
+#[cfg(test)]
+mod scatter_sample_tests {
+    use super::*;
+
+    fn dataset() -> ColumnarData {
+        let timestamps: Vec<Option<String>> = (0..10)
+            .map(|i| Some(format!("2020-01-01T00:{:02}", i)))
+            .collect();
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into(), "B".into()],
+            timestamps,
+            vec![
+                vec![f64::NAN; 10],
+                (0..10).map(|i| i as f64).collect(),
+                (0..10).map(|i| (i * 2) as f64).collect(),
+            ],
+        )
+    }
+
+    fn filter(sensors: &[&str]) -> DataFilter {
+        DataFilter {
+            sensors: sensors.iter().map(|s| s.to_string()).collect(),
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![],
+        }
+    }
+
+    #[test]
+    fn returns_all_rows_projected_when_under_cap() {
+        let s = sample_dataset(&dataset(), &filter(&["A", "B"]), 1000);
+        assert_eq!(s.headers, vec!["A", "B"]);
+        assert_eq!(s.total, 10);
+        assert_eq!(s.sampled, 10);
+        assert_eq!(s.rows.len(), 10);
+        // Values are projected to [A, B] (2 columns), not the raw 3.
+        assert!(s.rows.iter().all(|r| r.values.len() == 2));
+    }
+
+    #[test]
+    fn caps_row_count_at_max_points() {
+        let s = sample_dataset(&dataset(), &filter(&["A"]), 3);
+        assert_eq!(s.total, 10); // population unchanged
+        assert_eq!(s.sampled, 3); // sample bounded
+        assert_eq!(s.rows.len(), 3);
+        assert_eq!(s.headers, vec!["A"]);
+        assert!(s.rows.iter().all(|r| r.values.len() == 1));
+    }
+
+    #[test]
+    fn drops_unknown_sensors_from_headers_and_values() {
+        let s = sample_dataset(&dataset(), &filter(&["A", "DOES_NOT_EXIST"]), 100);
+        assert_eq!(s.headers, vec!["A"]); // unknown sensor dropped
+        assert!(s.rows.iter().all(|r| r.values.len() == 1));
+    }
+
+    #[test]
+    fn value_filter_shrinks_population() {
+        let mut f = filter(&["A"]);
+        f.value_filters = vec![ValueFilter {
+            sensor: "A".into(),
+            operation: "greater_than".into(),
+            value1: Some(5.0),
+            value2: None,
+        }];
+        let s = sample_dataset(&dataset(), &f, 100);
+        // A > 5 → i ∈ {6,7,8,9} → 4 rows.
+        assert_eq!(s.total, 4);
+        assert_eq!(s.sampled, 4);
+    }
+
+    #[test]
+    fn empty_dataset_yields_empty_sample() {
+        let empty = ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            vec![],
+            vec![vec![], vec![]],
+        );
+        let s = sample_dataset(&empty, &filter(&["A"]), 100);
+        assert_eq!(s.total, 0);
+        assert_eq!(s.sampled, 0);
+        assert!(s.rows.is_empty());
+    }
+
+    #[test]
+    fn timestamp_filter_gates_population_via_ts_parsed() {
+        let mut f = filter(&["A"]);
+        f.timestamp_start = Some("2020-01-01T00:05".into());
+        let s = sample_dataset(&dataset(), &f, 100);
+        // Minutes 05..09 pass the parsed-timestamp gate → 5 rows.
+        assert_eq!(s.total, 5);
+        assert_eq!(s.rows[0].values, vec![Some(5.0)]);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2488,7 +2504,8 @@ pub fn run() {
             compute_clustering_preview,
             train_clustering_model,
             train_relationship_model,
-            write_user_file
+            write_user_file,
+            get_scatter_sample
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

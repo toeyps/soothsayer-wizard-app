@@ -457,6 +457,16 @@ body {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
+/* The :disabled:hover variant outranks every later .chart-type-btn:hover
+   rule, so a disabled button never lights up under the cursor. */
+.chart-type-btn:disabled,
+.chart-type-btn:disabled:hover {
+    opacity: 0.35;
+    cursor: not-allowed;
+    background: transparent;
+    color: var(--text-secondary);
+}
+
 /* Save & Continue Section */
 .save-continue-section {
     flex: 0 0 auto;

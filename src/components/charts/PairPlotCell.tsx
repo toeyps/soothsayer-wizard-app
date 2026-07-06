@@ -259,9 +259,16 @@ function PairPlotCell({
         const xs: number[] = [];
         const ys: number[] = [];
         const orig: number[] = [];
+        // Defensive cap: the Dashboard already feeds each cell a bounded sample,
+        // but if raw data ever reaches here, stride it down so no single cell
+        // pushes a GPU-unsafe point count (would lose the WebGL context →
+        // black cell). `orig` keeps the TRUE row index, so cluster colouring
+        // (valueA) + hover still map back correctly.
+        const RENDER_CAP = 100_000;
+        const step = data.length > RENDER_CAP ? Math.ceil(data.length / RENDER_CAP) : 1;
         let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
 
-        for (let i = 0; i < data.length; i++) {
+        for (let i = 0; i < data.length; i += step) {
             const row = data[i];
             const yVal = row.values[yIdx];
             if (yVal == null || isNaN(yVal)) continue;

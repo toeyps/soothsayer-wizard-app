@@ -15,6 +15,7 @@ import DataTable from './DataTable';
 import { Chart } from '../charts';
 import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
+import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -388,6 +389,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [filters, setFilters] = useState<FilterState>(initialState?.filters ?? { timestampStart: '', timestampEnd: '', sensorFilters: [] });
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
+
+    // Scatter / pair plots are meaningless with fewer than two sensors, so
+    // below that the two buttons are disabled — and if the selection drops
+    // under two WHILE such a chart is active (unticking down to one), we
+    // bounce back to the line chart instead of showing an empty canvas.
+    // Also covers workspace restores that persisted a scatter view whose
+    // sensor selection no longer qualifies.
+    const canScatter = selectedSensors.length >= 2;
+    useEffect(() => {
+        if (!canScatter && chartType !== 'line') {
+            setChartType('line');
+        }
+    }, [canScatter, chartType]);
 
 
     // Filter logic (Client side filtering of the fetched subset)
@@ -786,6 +800,79 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }));
     }, [filteredData, chartData, visibleSensors, operationConfig]);
 
+    // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
+    // A 2 GB CSV is millions of rows; pushing every point to WebGL exhausts
+    // GPU memory and blanks the canvas, and holding them all as JS objects
+    // can OOM the renderer. So the scatter & pair-plot charts render a bounded
+    // reservoir sample fetched from Rust instead of the full `chartData` — the
+    // payload, heap, and GPU buffers stay constant regardless of dataset size.
+    // The line chart + data table keep using the full streamed data.
+    const scatterActive = chartType === 'scatter' || chartType === 'pair';
+    // Pair plot redraws the sample once PER cell across many WebGL contexts,
+    // so it gets a tighter point budget than the single-canvas scatter.
+    const scatterMaxPoints = chartType === 'pair' ? 50_000 : 200_000;
+
+    const scatterFilter = useMemo<ScatterSampleFilter | null>(() => {
+        if (!scatterActive || visibleSensors.length === 0) return null;
+        return {
+            sensors: visibleSensors,
+            timestamp_start: filters.timestampStart || null,
+            timestamp_end: filters.timestampEnd || null,
+            value_filters: filters.sensorFilters
+                .filter(sf => sf.value1 !== '')
+                .map(sf => ({
+                    sensor: sf.sensor,
+                    operation: sf.operation,
+                    value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                    value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+                })),
+        };
+    }, [scatterActive, visibleSensors, filters]);
+
+    const scatterSample = useScatterSample(
+        scatterFilter,
+        scatterMaxPoints,
+        scatterActive && !!chartData,
+    );
+
+    // Keep the sample consistent with the line/table path by applying the same
+    // single-op transform. (Multi-op collapses to one column → scatter needs
+    // ≥2, so it's left untransformed and the chart shows its own guard.)
+    const scatterFeed = useMemo<CsvRecord[]>(() => {
+        const rows = scatterSample.rows;
+        if (operationConfig?.mode === 'single' && operationConfig.singleOp) {
+            const { type, value } = operationConfig.singleOp;
+            return rows.map(r => ({
+                ...r,
+                values: r.values.map(v => {
+                    if (v === null) return null;
+                    switch (type) {
+                        case 'add': return v + value;
+                        case 'subtract': return v - value;
+                        case 'multiply': return v * value;
+                        case 'divide': return value !== 0 ? v / value : v;
+                        case 'power': return Math.pow(v, value);
+                        default: return v;
+                    }
+                }),
+            }));
+        }
+        return rows;
+    }, [scatterSample.rows, operationConfig]);
+
+    // Robustness: prefer the bounded Rust sample, but fall back to the
+    // already-loaded full data whenever the sample isn't available yet (still
+    // loading) or the backend call failed (e.g. an older build without the
+    // `get_scatter_sample` command). This guarantees scatter / pair plots
+    // always render — the chart-level stride cap keeps the GPU safe even on
+    // the full-data path. `displayHeaders` matches `visibleFilteredData`'s
+    // column order, so the fallback reproduces the pre-sampling behavior.
+    const scatterReady = scatterSample.rows.length > 0;
+    const scatterChartData = scatterReady ? scatterFeed : visibleFilteredData;
+    const scatterChartHeaders = scatterReady
+        ? (scatterSample.headers.length ? scatterSample.headers : visibleSensors)
+        : displayHeaders;
+
 
     // Calculate data range for auto-filling inputs
     const dataRange = useMemo(() => {
@@ -838,29 +925,64 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         <ArrowLeft size={18} />
                     </button>
                     <h3>Sensor Readings</h3>
-                    <span className="section-badge">{samplingMethod.toUpperCase()} (1h)</span>
-                    <span className="section-badge">{visibleFilteredData.length.toLocaleString()} Points</span>
-                    {loading && <span className="section-badge section-badge-loading">Loading...</span>}
+                    {chartType === 'line' && (
+                        <span className="section-badge">{samplingMethod.toUpperCase()} (1h)</span>
+                    )}
+                    <span className="section-badge">
+                        {chartType === 'line'
+                            ? `${visibleFilteredData.length.toLocaleString()} Points`
+                            : scatterReady
+                                ? (scatterSample.total > scatterSample.sampled
+                                    ? `${scatterSample.sampled.toLocaleString()} / ${scatterSample.total.toLocaleString()} pts (sampled)`
+                                    : `${scatterSample.sampled.toLocaleString()} Points`)
+                                : `${scatterChartData.length.toLocaleString()} Points`}
+                    </span>
+                    {(loading || (scatterActive && scatterSample.loading)) && (
+                        <span className="section-badge section-badge-loading">Loading...</span>
+                    )}
                 </div>
                 <div className="section-header-actions">
                     <div className="chart-type-group">
                         <button className={`chart-type-btn ${chartType === 'line' ? 'active' : ''}`} onClick={() => setChartType('line')}>Line</button>
-                        <button className={`chart-type-btn ${chartType === 'scatter' ? 'active' : ''}`} onClick={() => setChartType('scatter')}>Scatter</button>
-                        <button className={`chart-type-btn ${chartType === 'pair' ? 'active' : ''}`} onClick={() => setChartType('pair')}>Pair Plot</button>
+                        <button
+                            className={`chart-type-btn ${chartType === 'scatter' ? 'active' : ''}`}
+                            onClick={() => setChartType('scatter')}
+                            disabled={!canScatter}
+                            title={canScatter ? undefined : 'Select at least 2 sensors'}
+                        >Scatter</button>
+                        <button
+                            className={`chart-type-btn ${chartType === 'pair' ? 'active' : ''}`}
+                            onClick={() => setChartType('pair')}
+                            disabled={!canScatter}
+                            title={canScatter ? undefined : 'Select at least 2 sensors'}
+                        >Pair Plot</button>
                     </div>
                     <button className="collapse-btn" onClick={() => togglePanel('chart')} title="Hide panel">
                         <EyeOff size={14} />
                     </button>
                 </div>
             </div>
-            <div className="chart-wrapper" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+            <div className="chart-wrapper" style={{ opacity: (loading || (scatterActive && scatterSample.loading)) ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                 {chartData && (
-                    <Chart
-                        data={visibleFilteredData}
-                        sensors={displayHeaders}
-                        headers={displayHeaders}
-                        chartType={chartType}
-                    />
+                    chartType === 'line' ? (
+                        <Chart
+                            data={visibleFilteredData}
+                            sensors={displayHeaders}
+                            headers={displayHeaders}
+                            chartType="line"
+                        />
+                    ) : (
+                        // Scatter / pair plot prefer the bounded Rust sample so
+                        // huge datasets can't blank the WebGL canvas, but fall
+                        // back to the full data when the sample isn't ready /
+                        // failed (see scatterChartData) so they always render.
+                        <Chart
+                            data={scatterChartData}
+                            sensors={scatterChartHeaders}
+                            headers={scatterChartHeaders}
+                            chartType={chartType}
+                        />
+                    )
                 )}
             </div>
             <div className="chart-bottom-tab">
