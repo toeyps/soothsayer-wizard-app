@@ -30,6 +30,15 @@
 # Expected runtime: 8–12 minutes on M-series Mac (cold build), 2–3 minutes
 # with ccache warm. Output binary should be < 200 MB.
 #
+# Windows, MSVC dies with `C1002: compiler is out of heap space` on the
+# giant generated scipy constant-table modules (each cl.exe wants ~5-7GB
+# of free commit at /Ox): retry as
+#   NUITKA_JOBS=1 _CL_=-Od ./build_sidecar.sh
+# `_CL_` is appended by cl.exe after the command line, so -Od overrides
+# /Ox for the retry without invalidating the scons object cache. The dash
+# form matters under Git Bash: MSYS path conversion mangles values that
+# start with `/` (`/Od` → `C:/Program Files/Git/Od`).
+#
 # Verify with a smoke test:
 #   echo '{"action":"preview_relationship","payload":{"predictors":["P1"],"target":"T","X":[[1],[2],[3],[4]],"y":[2,4,6,8],"linearGAM_lambda":1}}' \
 #     | ../bin/backend-$(rustc -vV | sed -n 's/host: //p')
@@ -85,8 +94,21 @@ NUITKA_JOBS_FLAG=""
 if [[ -n "${NUITKA_JOBS:-}" ]]; then
     NUITKA_JOBS_FLAG="--jobs=${NUITKA_JOBS}"
 fi
+# NUITKA_EXTRA_FLAGS: optional space-separated extra Nuitka flags for
+# machine-specific tuning. Known use: `--low-memory` when MSVC dies with
+# `C1002: compiler is out of heap space` on the giant generated scipy
+# constant-table modules (each cl.exe needs ~5-7GB of free commit at /Ox
+# without it).
+# --disable-ccache: on Windows, Nuitka's bundled clcache passes the MSVC
+# compiler path (`C:\Program Files\Microsoft Visual Studio\...\cl.exe`)
+# unquoted, and the compile then dies with `C1083: Cannot open source
+# file: 'C:/Program'` (see nuitka-crash-report.xml from the first local
+# build attempt). The cache only speeds up REBUILDS and CI runners are
+# cold anyway, so disabling costs nothing there and unbreaks local
+# Windows builds.
 python -m nuitka \
     --assume-yes-for-downloads \
+    --disable-ccache \
     --onefile \
     --standalone \
     --enable-plugin=numpy \
@@ -94,6 +116,7 @@ python -m nuitka \
     --include-package=pygam \
     --include-package=scipy \
     ${NUITKA_JOBS_FLAG} \
+    ${NUITKA_EXTRA_FLAGS:-} \
     --lto=no \
     --output-dir=build \
     backend.py

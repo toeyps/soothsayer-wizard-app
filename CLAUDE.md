@@ -69,18 +69,27 @@ through a multi-step workflow, and managing "Workspaces."
 
 ## Interface Contract
 > Workspace management (Save/Load/List/Delete) is handled entirely on the frontend using Tauri plugins (`plugin-fs` & `plugin-store`) via `src/workspaceManager.ts`.
-> 
-> For heavy data processing, the frontend invokes Rust backend commands. The active commands are:
+>
+> For heavy data processing, the frontend invokes Rust backend commands. The
+> authoritative, fully-typed contract lives in `src/types/commands.ts`
+> (`TauriCommands`) — update it BEFORE touching either side. Key commands:
 ```typescript
 // Invoked via `invoke("command_name", args)`
 export type TauriCommands = {
-  load_csv:              { args: { paths: string[] };                                  returns: CsvMetadata }
+  load_csv:              { args: { paths: string[] };                                  returns: CsvLoadReport }
   get_loaded_paths:      { args: {};                                                   returns: string[] }
-  get_data:              { args: { sensors: string[] };                                returns: void /* Emits events */ }
   get_all_sensors:       { args: {};                                                   returns: string[] }
   load_metadata_command: { args: { path: string };                                     returns: SensorMetadata[] }
   calculate_new_sensor:  { args: { sensors: string[], config: SensorOperationConfig }; returns: string }
-  run_python_analysis:   { args: {};                                                   returns: string }
+
+  // Data views — BOUNDED payloads only. The pipeline (filter → op
+  // transform → hourly aggregation → min/max decimation) runs in Rust;
+  // the WebView must NEVER hold the full row set. The legacy full-stream
+  // `get_data` command was removed — do not reintroduce row streaming.
+  get_chart_data:        { args: { filter, sampling, operation, max_points };          returns: ChartViewData /* columnar, ≤ max_points */ }
+  get_table_page:        { args: { filter, sampling, operation, page, page_size };     returns: TablePageData }
+  export_chart_csv:      { args: { filter, sampling, operation, path };                returns: number /* rows written straight to disk */ }
+  get_scatter_sample:    { args: { filter, max_points };                               returns: ScatterSample /* reservoir sample */ }
 }
 ```
 

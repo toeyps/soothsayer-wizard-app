@@ -2,11 +2,12 @@ import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, use
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import Split from 'split.js';
-import { saveWorkspaceData, writeUserTextFile } from '../../workspaceManager';
+import { saveWorkspaceData } from '../../workspaceManager';
 import {
-    ProcessedData, CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
+    CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
 } from '../../types';
+import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
 // swap was removed) but we still use the type internally to describe the
 // constant slot→panel mapping below.
@@ -16,6 +17,9 @@ import { Chart } from '../charts';
 import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
+import { reportError } from '../../errorReporter';
+import { useChartData } from '../../hooks/useChartData';
+import { useTablePage } from '../../hooks/useTablePage';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -56,6 +60,17 @@ const SLOT_LAYOUT: DashboardSlotMap = {
 // drag-target visibility and for building the JSX of the two columns.
 const LEFT_SLOTS: DashboardSlot[] = ['left-top', 'left-bottom'];
 const RIGHT_SLOTS: DashboardSlot[] = ['right-top', 'right-bottom'];
+
+// Point budget for the line chart. The Rust `get_chart_data` command
+// min/max-decimates the filtered rows down to at most this many x-positions,
+// so the IPC payload, JS heap, and ECharts buffers stay bounded no matter
+// how many rows the dataset holds. ~4k points ≈ 2 output points per pixel
+// on a typical panel width — visually indistinguishable from raw.
+const LINE_MAX_POINTS = 4000;
+const TABLE_PAGE_SIZE = 50;
+// Stable empty array for the line chart's unused row-based `data` prop
+// (the chart consumes the bounded `columnar` feed instead).
+const EMPTY_RECORDS: CsvRecord[] = [];
 
 // Build the gutter element split.js inserts between panels. We use a wider
 // hit-target (12px) with a thin centered line so the resize handle is easy
@@ -170,8 +185,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [localName, initialState]);
 
     const deferredSensors = useDeferredValue(selectedSensors);
-    const [chartData, setChartData] = useState<ProcessedData | null>(null);
-    const [loading, setLoading] = useState(false);
 
     // Sync visibleSensors with selectedSensors when selectedSensors changes
     useEffect(() => {
@@ -404,112 +417,121 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [canScatter, chartType]);
 
 
-    // Filter logic (Client side filtering of the fetched subset)
-    const displayHeaders = useMemo(() => {
-        if (!chartData) return [];
-        if (operationConfig?.mode === 'multi' && operationConfig?.multiOp) {
-            return [`Result (${operationConfig.multiOp.type})`];
-        }
-        // Filter by visibleSensors
-        return chartData.headers.filter(h => visibleSensors.includes(h));
-    }, [chartData, operationConfig, visibleSensors]);
-
-    // Fetch filtered data from Rust backend
-    // Abort mechanism: cancel stale requests when a new one starts
-    const fetchIdRef = useRef(0);
-    const activeListenersRef = useRef<{ chunk?: UnlistenFn; end?: UnlistenFn }>({});
-    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const fetchFilteredData = useCallback(async (appliedFilters: FilterState) => {
-        if (selectedSensors.length === 0) return;
-
-        // Cancel previous fetch's listeners
-        if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
-        if (activeListenersRef.current.end) activeListenersRef.current.end();
-        activeListenersRef.current = {};
-
-        const myFetchId = ++fetchIdRef.current;
-        setLoading(true);
-
-        const accumRows: CsvRecord[] = [];
-        let headers: string[] = [];
-
-        try {
-            let resolveStreamDone: () => void;
-            const streamDone = new Promise<void>((resolve) => {
-                resolveStreamDone = resolve;
-            });
-
-            const unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
-                if (fetchIdRef.current !== myFetchId) return; // stale
-                const chunk = event.payload;
-                if (headers.length === 0) headers = chunk.headers;
-                accumRows.push(...chunk.rows);
-            });
-            const unlistenEnd = await listen('data-stream-end', () => {
-                // Only resolve if this is still the active fetch
-                if (fetchIdRef.current === myFetchId) {
-                    resolveStreamDone();
-                }
-            });
-
-            // Store for cleanup by next call
-            activeListenersRef.current = { chunk: unlistenChunk, end: unlistenEnd };
-
-            await invoke("get_filtered_data", {
-                filter: {
-                    sensors: selectedSensors,
-                    timestamp_start: appliedFilters.timestampStart || null,
-                    timestamp_end: appliedFilters.timestampEnd || null,
-                    value_filters: appliedFilters.sensorFilters
-                        .filter(sf => sf.value1 !== '')
-                        .map(sf => ({
-                            sensor: sf.sensor,
-                            operation: sf.operation,
-                            value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
-                            value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
-                        })),
-                },
-            });
-
-            await streamDone;
-
-            // Only apply if this is still the latest request
-            if (fetchIdRef.current !== myFetchId) return;
-
-            setChartData({
-                headers: headers.length > 0 ? headers : selectedSensors,
-                rows: accumRows,
-            });
-            setLoading(false);
-        } catch (err) {
-            if (fetchIdRef.current === myFetchId) {
-                console.error("Failed to fetch filtered data:", err);
-                setLoading(false);
-            }
-        } finally {
-            // Clean up only if we're still the active fetch
-            if (fetchIdRef.current === myFetchId) {
-                if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
-                if (activeListenersRef.current.end) activeListenersRef.current.end();
-                activeListenersRef.current = {};
-            }
-        }
-    }, [selectedSensors]);
-
-    // Debounced filter change handler — prevents rapid backend calls when typing in datetime inputs
+    // ── Bounded data-view queries ────────────────────────────────────
+    // The full pipeline (dashboard filter → operation transform → hourly
+    // aggregation → min/max decimation) runs in Rust. The WebView only
+    // ever receives O(LINE_MAX_POINTS) chart arrays and one table page —
+    // selecting millions of rows no longer copies the dataset into the JS
+    // heap or blocks the main thread. (Previously `get_data` streamed
+    // every row over IPC and every transform re-ran in useMemos here.)
     const handleFiltersChange = useCallback((newFilters: FilterState) => {
+        // The query hooks debounce backend calls themselves, so rapid
+        // datetime-input edits don't queue full-dataset passes.
         setFilters(newFilters);
+    }, []);
 
-        // Cancel any pending debounced fetch
-        if (debounceTimerRef.current) {
-            clearTimeout(debounceTimerRef.current);
-        }
+    // Wire-format value filters, shared by the chart/table/export/scatter
+    // queries below.
+    const wireValueFilters = useMemo(() =>
+        filters.sensorFilters
+            .filter(sf => sf.value1 !== '')
+            .map(sf => ({
+                sensor: sf.sensor,
+                operation: sf.operation,
+                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+            })),
+        [filters.sensorFilters]);
 
-        debounceTimerRef.current = setTimeout(() => {
-            fetchFilteredData(newFilters);
-        }, 300);
-    }, [fetchFilteredData]);
+    // All SELECTED sensors are fetched (bounded, so cheap); the visibility
+    // eye-toggles pick columns client-side without refetching.
+    const dataFilter = useMemo<DashboardDataFilter | null>(() => {
+        if (deferredSensors.length === 0) return null;
+        return {
+            sensors: deferredSensors,
+            timestamp_start: filters.timestampStart || null,
+            timestamp_end: filters.timestampEnd || null,
+            value_filters: wireValueFilters,
+        };
+    }, [deferredSensors, filters.timestampStart, filters.timestampEnd, wireValueFilters]);
+
+    const { view, loading: viewLoading, error: viewError } = useChartData(
+        dataFilter
+            ? {
+                filter: dataFilter,
+                sampling: samplingMethod,
+                operation: operationConfig,
+                maxPoints: LINE_MAX_POINTS,
+            }
+            : null
+    );
+    // Both data hooks swallow backend failures into state; in a production
+    // build there's no console, so route them to the global reporter
+    // (toast + persistent log file) or they die invisible.
+    useEffect(() => {
+        if (viewError) reportError('chart-data', viewError);
+    }, [viewError]);
+
+    // Table pages through the same (post-op / post-aggregation) row set in
+    // the backend; only the visible 50 rows ever reach the WebView.
+    const [tablePageIndex, setTablePageIndex] = useState(0);
+    const tableQueryKey = useMemo(
+        () => (dataFilter ? JSON.stringify({ dataFilter, samplingMethod, operationConfig }) : ''),
+        [dataFilter, samplingMethod, operationConfig]
+    );
+    useEffect(() => {
+        setTablePageIndex(0);
+    }, [tableQueryKey]);
+
+    const { page: tablePage, loading: tableLoading } = useTablePage(
+        dataFilter
+            ? {
+                filter: dataFilter,
+                sampling: samplingMethod,
+                operation: operationConfig,
+                page: tablePageIndex,
+                pageSize: TABLE_PAGE_SIZE,
+            }
+            : null
+    );
+
+    const loading = viewLoading || tableLoading;
+
+    const isMultiOp = operationConfig?.mode === 'multi' && !!operationConfig?.multiOp;
+
+    // Headers actually shown (chart + table). In multi-op mode the backend
+    // collapses everything into one "Result (op)" column; otherwise show
+    // the visible subset of the resolved sensors.
+    const displayHeaders = useMemo(() => {
+        if (!view) return [];
+        if (isMultiOp) return view.headers;
+        return view.headers.filter(h => visibleSensors.includes(h));
+    }, [view, isMultiOp, visibleSensors]);
+
+    // Columnar line-chart feed projected to the visible sensors — array
+    // picks over ≤LINE_MAX_POINTS values, no per-row objects.
+    const lineColumnar = useMemo(() => {
+        if (!view) return { timestamps: [] as string[], series: [] as (number | null)[][] };
+        if (isMultiOp) return { timestamps: view.timestamps, series: view.series };
+        const picks = displayHeaders.map(h => view.headers.indexOf(h));
+        return {
+            timestamps: view.timestamps,
+            series: picks.map(i => (i >= 0 ? view.series[i] : [])),
+        };
+    }, [view, isMultiOp, displayHeaders]);
+
+    // Current table page projected to the visible sensors (50 rows max).
+    const tableRows = useMemo<CsvRecord[]>(() => {
+        if (!tablePage) return [];
+        if (isMultiOp) return tablePage.rows;
+        const picks = displayHeaders.map(h => tablePage.headers.indexOf(h));
+        return tablePage.rows.map(r => ({
+            timestamp: r.timestamp,
+            values: picks.map(i => (i >= 0 ? r.values[i] : null)),
+        }));
+    }, [tablePage, isMultiOp, displayHeaders]);
+
+    const tableTotalRows = tablePage?.total_rows ?? 0;
 
     // Build workspace state helper for saving
     const buildWorkspaceState = useCallback((overrides?: Partial<WorkspaceState>): WorkspaceState => ({
@@ -537,276 +559,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     }, [buildWorkspaceState, initialState]);
 
-    // Fetch data when sensors change — use filtered fetch if filters are active
-    const filtersRef = useRef(filters);
-    filtersRef.current = filters;
-
-    useEffect(() => {
-        const fetchData = async () => {
-            if (deferredSensors.length === 0) {
-                setChartData({ headers: [], rows: [] });
-                return;
-            }
-
-            const currentFilters = filtersRef.current;
-            const hasFilters = currentFilters.timestampStart || currentFilters.timestampEnd || currentFilters.sensorFilters.length > 0;
-
-            // If filters are active (e.g. restored from workspace), use filtered fetch
-            if (hasFilters) {
-                fetchFilteredData(currentFilters);
-                return;
-            }
-
-            // Cancel any previous fetch listeners (from either path)
-            if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
-            if (activeListenersRef.current.end) activeListenersRef.current.end();
-            activeListenersRef.current = {};
-
-            const myFetchId = ++fetchIdRef.current;
-            setLoading(true);
-            const accumRows: CsvRecord[] = [];
-            let headers: string[] = [];
-
-            try {
-                let resolveStreamDone: () => void;
-                const streamDone = new Promise<void>((resolve) => {
-                    resolveStreamDone = resolve;
-                });
-
-                const unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
-                    if (fetchIdRef.current !== myFetchId) return;
-                    const chunk = event.payload;
-                    if (headers.length === 0) {
-                        headers = chunk.headers;
-                    }
-                    accumRows.push(...chunk.rows);
-                });
-
-                const unlistenEnd = await listen('data-stream-end', () => {
-                    if (fetchIdRef.current === myFetchId) {
-                        resolveStreamDone();
-                    }
-                });
-
-                activeListenersRef.current = { chunk: unlistenChunk, end: unlistenEnd };
-
-                await invoke("get_data", { sensors: deferredSensors });
-                await streamDone;
-
-                if (fetchIdRef.current !== myFetchId) return;
-
-                setChartData({
-                    headers: headers.length > 0 ? headers : deferredSensors,
-                    rows: accumRows
-                });
-                setLoading(false);
-            } catch (err) {
-                if (fetchIdRef.current === myFetchId) {
-                    console.error("Failed to fetch data:", err);
-                    setLoading(false);
-                }
-            } finally {
-                if (fetchIdRef.current === myFetchId) {
-                    if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
-                    if (activeListenersRef.current.end) activeListenersRef.current.end();
-                    activeListenersRef.current = {};
-                }
-            }
-        };
-
-        fetchData();
-
-        return () => {
-            // Cancel any active listeners on cleanup
-            if (activeListenersRef.current.chunk) activeListenersRef.current.chunk();
-            if (activeListenersRef.current.end) activeListenersRef.current.end();
-            activeListenersRef.current = {};
-            // Cancel any pending debounced fetch
-            if (debounceTimerRef.current) {
-                clearTimeout(debounceTimerRef.current);
-            }
-            // Invalidate current fetch
-            fetchIdRef.current++;
-        };
-    }, [deferredSensors, fetchFilteredData]);
-
-    const filteredData = useMemo(() => {
-        if (!chartData) return [];
-
-        let rows = chartData.rows.filter(r => r.timestamp !== null);
-        let processedRows = rows;
-
-        if (operationConfig) {
-            if (operationConfig.mode === 'single' && operationConfig.singleOp) {
-                const { type, value } = operationConfig.singleOp;
-                processedRows = rows.map(r => ({
-                    ...r,
-                    values: r.values.map(v => {
-                        if (v === null) return null;
-                        switch (type) {
-                            case 'add': return v + value;
-                            case 'subtract': return v - value;
-                            case 'multiply': return v * value;
-                            case 'divide': return value !== 0 ? v / value : v;
-                            case 'power': return Math.pow(v, value);
-                            default: return v;
-                        }
-                    })
-                }));
-            } else if (operationConfig.mode === 'multi' && operationConfig.multiOp) {
-                const { type, baseSensor } = operationConfig.multiOp;
-                // We need to know indices of selected sensors in the `chartData.headers`
-                // `chartData.headers` contains ALL sensors loaded? Or just the ones requested?
-                // `get_data` returns only requested sensors usually?
-                // Let's assume chartData.headers matches the columns in r.values
-
-                processedRows = rows.map(r => {
-                    let result: number | null = null;
-
-                    // Get values for the selected sensors
-                    // Note: chartData.headers should match r.values
-                    const valuesToProcess = r.values;
-
-                    // Filter out nulls
-                    const validValues = valuesToProcess.filter((v): v is number => v !== null);
-
-                    if (validValues.length > 0) {
-                        switch (type) {
-                            case 'sum':
-                                result = validValues.reduce((a, b) => a + b, 0);
-                                break;
-                            case 'mean':
-                                result = validValues.reduce((a, b) => a + b, 0) / validValues.length;
-                                break;
-                            case 'median':
-                                const sorted = [...validValues].sort((a, b) => a - b);
-                                const mid = Math.floor(sorted.length / 2);
-                                result = sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-                                break;
-                            case 'product':
-                                result = validValues.reduce((a, b) => a * b, 1);
-                                break;
-                            case 'subtract':
-                            case 'divide':
-                                if (baseSensor) {
-                                    // Find base index
-                                    const baseIndex = chartData.headers.indexOf(baseSensor);
-                                    if (baseIndex !== -1) {
-                                        const baseVal = r.values[baseIndex];
-                                        if (baseVal !== null) {
-                                            // Actors are everyone else
-                                            const actors = r.values.filter((_, i) => i !== baseIndex && r.values[i] !== null) as number[];
-                                            // Logic: Base - Sum(Actors) or Base / Sum(Actors)?
-                                            // Or sequential? Base - A - B?
-                                            // Let's do Base - Sum(Rest) for now as a reasonable default for "Combine".
-                                            // Or if strict sequential is needed, we need order.
-                                            const actorSum = actors.reduce((a, b) => a + b, 0);
-
-                                            if (type === 'subtract') {
-                                                result = baseVal - actorSum;
-                                            } else {
-                                                result = actorSum !== 0 ? baseVal / actorSum : null;
-                                            }
-                                        }
-                                    }
-                                }
-                                break;
-                        }
-                    }
-                    return { ...r, values: [result] };
-                });
-            }
-        }
-
-
-        if (samplingMethod === 'raw') {
-            return processedRows;
-        }
-
-        // Sampling Logic (Updated to use processedRows)
-        const getHourKey = (ts: string) => {
-            const d = new Date(ts);
-            d.setMinutes(0, 0, 0); // round down to hour
-            return d.toISOString();
-        };
-
-        const grouped = new Map<string, CsvRecord[]>();
-
-        processedRows.forEach(r => {
-            if (!r.timestamp) return;
-            const key = getHourKey(r.timestamp);
-            if (!grouped.has(key)) {
-                grouped.set(key, []);
-            }
-            grouped.get(key)!.push(r);
-        });
-
-        const aggregated: CsvRecord[] = [];
-
-        for (const [timestamp, groupRows] of grouped) {
-            const newValues: (number | null)[] = [];
-            // Determine num columns from first row (might change if Multi Op)
-            const numCols = groupRows[0].values.length;
-
-            // For each sensor column
-            for (let i = 0; i < numCols; i++) {
-                const validValues = groupRows
-                    .map(r => r.values[i])
-                    .filter((v): v is number => v !== null);
-
-                let val: number | null = null;
-
-                if (validValues.length > 0) {
-                    if (samplingMethod === 'avg') {
-                        const sum = validValues.reduce((a, b) => a + b, 0);
-                        val = sum / validValues.length;
-                    } else if (samplingMethod === 'max') {
-                        val = Math.max(...validValues);
-                    } else if (samplingMethod === 'min') {
-                        val = Math.min(...validValues);
-                    } else if (samplingMethod === 'first') {
-                        val = validValues[0];
-                    } else if (samplingMethod === 'last') {
-                        val = validValues[validValues.length - 1];
-                    }
-                }
-                newValues.push(val);
-            }
-            aggregated.push({ timestamp, values: newValues });
-        }
-
-        // If aggregation happened, we might want to ensure it's sorted by time again
-        aggregated.sort((a, b) => new Date(a.timestamp!).getTime() - new Date(b.timestamp!).getTime());
-
-        return aggregated;
-    }, [chartData, samplingMethod, operationConfig]);
-
-    // Filter data values by visible sensors
-    const visibleFilteredData = useMemo(() => {
-        if (!chartData || operationConfig?.mode === 'multi') {
-            // If multi-op mode, data only has 1 column, no filtering needed
-            return filteredData;
-        }
-
-        // Get indices of visible sensors in chartData.headers
-        const visibleIndices = chartData.headers
-            .map((h, i) => visibleSensors.includes(h) ? i : -1)
-            .filter(i => i !== -1);
-
-        // Map rows to only include visible sensor values
-        return filteredData.map(row => ({
-            ...row,
-            values: visibleIndices.map(i => row.values[i])
-        }));
-    }, [filteredData, chartData, visibleSensors, operationConfig]);
-
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
     // A 2 GB CSV is millions of rows; pushing every point to WebGL exhausts
     // GPU memory and blanks the canvas, and holding them all as JS objects
     // can OOM the renderer. So the scatter & pair-plot charts render a bounded
-    // reservoir sample fetched from Rust instead of the full `chartData` — the
-    // payload, heap, and GPU buffers stay constant regardless of dataset size.
-    // The line chart + data table keep using the full streamed data.
+    // reservoir sample fetched from Rust — the payload, heap, and GPU buffers
+    // stay constant regardless of dataset size. (The line chart / table use
+    // the equally-bounded `get_chart_data` / `get_table_page` path above.)
     const scatterActive = chartType === 'scatter' || chartType === 'pair';
     // Pair plot redraws the sample once PER cell across many WebGL contexts,
     // so it gets a tighter point budget than the single-canvas scatter.
@@ -818,22 +577,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             sensors: visibleSensors,
             timestamp_start: filters.timestampStart || null,
             timestamp_end: filters.timestampEnd || null,
-            value_filters: filters.sensorFilters
-                .filter(sf => sf.value1 !== '')
-                .map(sf => ({
-                    sensor: sf.sensor,
-                    operation: sf.operation,
-                    value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
-                    value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
-                })),
+            value_filters: wireValueFilters,
         };
-    }, [scatterActive, visibleSensors, filters]);
+    }, [scatterActive, visibleSensors, filters.timestampStart, filters.timestampEnd, wireValueFilters]);
 
     const scatterSample = useScatterSample(
         scatterFilter,
         scatterMaxPoints,
-        scatterActive && !!chartData,
+        scatterActive,
     );
+    useEffect(() => {
+        if (scatterSample.error) reportError('scatter-sample', scatterSample.error);
+    }, [scatterSample.error]);
 
     // Keep the sample consistent with the line/table path by applying the same
     // single-op transform. (Multi-op collapses to one column → scatter needs
@@ -860,32 +615,23 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return rows;
     }, [scatterSample.rows, operationConfig]);
 
-    // Robustness: prefer the bounded Rust sample, but fall back to the
-    // already-loaded full data whenever the sample isn't available yet (still
-    // loading) or the backend call failed (e.g. an older build without the
-    // `get_scatter_sample` command). This guarantees scatter / pair plots
-    // always render — the chart-level stride cap keeps the GPU safe even on
-    // the full-data path. `displayHeaders` matches `visibleFilteredData`'s
-    // column order, so the fallback reproduces the pre-sampling behavior.
+    // The dashboard no longer holds the full dataset, so there is no
+    // full-data fallback: the scatter / pair charts render the bounded
+    // sample (empty while the first fetch is in flight — the Loading badge
+    // covers that window).
     const scatterReady = scatterSample.rows.length > 0;
-    const scatterChartData = scatterReady ? scatterFeed : visibleFilteredData;
-    const scatterChartHeaders = scatterReady
-        ? (scatterSample.headers.length ? scatterSample.headers : visibleSensors)
-        : displayHeaders;
+    const scatterChartData = scatterFeed;
+    const scatterChartHeaders = scatterSample.headers.length > 0 ? scatterSample.headers : visibleSensors;
 
 
-    // Calculate data range for auto-filling inputs
+    // Data range for auto-filling the time inputs — first/last timestamp of
+    // the filtered population, computed backend-side.
     const dataRange = useMemo(() => {
-        if (!chartData || chartData.rows.length === 0) return undefined;
-
-        const first = chartData.rows[0].timestamp;
-        const last = chartData.rows[chartData.rows.length - 1].timestamp;
-
-        if (first && last) {
-            return { min: first, max: last };
+        if (view?.ts_min && view?.ts_max) {
+            return { min: view.ts_min, max: view.ts_max };
         }
         return undefined;
-    }, [chartData]);
+    }, [view]);
 
     // Format timestamp for datetime-local input
     const formatForInput = useCallback((dateStr: string) => {
@@ -930,7 +676,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     )}
                     <span className="section-badge">
                         {chartType === 'line'
-                            ? `${visibleFilteredData.length.toLocaleString()} Points`
+                            ? (view && view.timestamps.length < view.total_rows
+                                ? `${view.timestamps.length.toLocaleString()} / ${view.total_rows.toLocaleString()} pts (downsampled)`
+                                : `${(view?.total_rows ?? 0).toLocaleString()} Points`)
                             : scatterReady
                                 ? (scatterSample.total > scatterSample.sampled
                                     ? `${scatterSample.sampled.toLocaleString()} / ${scatterSample.total.toLocaleString()} pts (sampled)`
@@ -963,26 +711,25 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
             </div>
             <div className="chart-wrapper" style={{ opacity: (loading || (scatterActive && scatterSample.loading)) ? 0.6 : 1, transition: 'opacity 0.2s' }}>
-                {chartData && (
-                    chartType === 'line' ? (
-                        <Chart
-                            data={visibleFilteredData}
-                            sensors={displayHeaders}
-                            headers={displayHeaders}
-                            chartType="line"
-                        />
-                    ) : (
-                        // Scatter / pair plot prefer the bounded Rust sample so
-                        // huge datasets can't blank the WebGL canvas, but fall
-                        // back to the full data when the sample isn't ready /
-                        // failed (see scatterChartData) so they always render.
-                        <Chart
-                            data={scatterChartData}
-                            sensors={scatterChartHeaders}
-                            headers={scatterChartHeaders}
-                            chartType={chartType}
-                        />
-                    )
+                {chartType === 'line' ? (
+                    // Bounded columnar feed from Rust — the chart never sees
+                    // (or allocates) more than LINE_MAX_POINTS positions.
+                    <Chart
+                        data={EMPTY_RECORDS}
+                        columnar={lineColumnar}
+                        sensors={displayHeaders}
+                        headers={displayHeaders}
+                        chartType="line"
+                    />
+                ) : (
+                    // Scatter / pair plot render the bounded Rust sample so
+                    // huge datasets can't blank the WebGL canvas.
+                    <Chart
+                        data={scatterChartData}
+                        sensors={scatterChartHeaders}
+                        headers={scatterChartHeaders}
+                        chartType={chartType}
+                    />
                 )}
             </div>
             <div className="chart-bottom-tab">
@@ -1055,45 +802,49 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         </div>
     );
 
+    const exportDisabled = !dataFilter || tableTotalRows === 0 || displayHeaders.length === 0;
+
     const renderDataContent = () => (
         <div className="widget-section data-widget">
             <div className="section-header collapsible-header">
                 <div className="section-header-left">
 <h3>Data Insight</h3>
-                    <span className="section-badge">{visibleFilteredData.length} Rows</span>
+                    <span className="section-badge">{tableTotalRows.toLocaleString()} Rows</span>
                 </div>
                 <div className="section-header-actions">
                     <button
                         className="export-btn-header"
                         onClick={async () => {
-                            if (visibleFilteredData.length === 0) return;
+                            if (exportDisabled || !dataFilter) return;
                             try {
                                 const filePath = await save({
                                     filters: [{ name: 'CSV Files', extensions: ['csv'] }],
                                     defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
                                 });
                                 if (!filePath) return;
-                                const csvHeaders = ['Timestamp', ...displayHeaders].join(',');
-                                const csvRows = visibleFilteredData.map(row => {
-                                    const values = [
-                                        row.timestamp || '',
-                                        ...row.values.map(v => v !== null ? v.toString() : '')
-                                    ];
-                                    return values.map(val => {
-                                        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-                                            return `"${val.replace(/"/g, '""')}"`;
-                                        }
-                                        return val;
-                                    }).join(',');
+                                // Rust streams the full post-op/post-aggregation
+                                // row set straight to disk — the rows never
+                                // enter the WebView (the old exporter built the
+                                // whole CSV as one JS string and froze/OOMed on
+                                // multi-million-row datasets).
+                                await invoke<number>('export_chart_csv', {
+                                    filter: {
+                                        ...dataFilter,
+                                        // Export what the table shows: visible
+                                        // columns (multi-op uses all selected
+                                        // sensors to compute its Result column).
+                                        sensors: isMultiOp ? dataFilter.sensors : displayHeaders,
+                                    },
+                                    sampling: samplingMethod,
+                                    operation: operationConfig,
+                                    path: filePath,
                                 });
-                                const csvContent = [csvHeaders, ...csvRows].join('\n');
-                                await writeUserTextFile(filePath, csvContent);
                             } catch (err) {
                                 console.error('Export failed:', err);
                             }
                         }}
                         title="Export to CSV"
-                        disabled={visibleFilteredData.length === 0}
+                        disabled={exportDisabled}
                     >
                         <Download size={14} />
                         Export dataset
@@ -1108,7 +859,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
             </div>
             <div className="widget-content">
-                {chartData && <DataTable headers={displayHeaders} data={visibleFilteredData} />}
+                <DataTable
+                    headers={displayHeaders}
+                    rows={tableRows}
+                    totalRows={tableTotalRows}
+                    page={tablePageIndex}
+                    pageSize={TABLE_PAGE_SIZE}
+                    onPageChange={setTablePageIndex}
+                />
             </div>
         </div>
     );

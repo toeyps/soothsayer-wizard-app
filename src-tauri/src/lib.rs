@@ -1,16 +1,17 @@
+mod chart_query;
 pub mod clustering;
 pub mod csv_processor;
 pub mod metrics;
 pub mod operation_registry;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
-    CsvRecord, DataChunk, MappingData, MappingResult, SensorMetadata, TS_MISSING,
+    CsvRecord, MappingData, MappingResult, SensorMetadata, TS_MISSING,
 };
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use tauri::{Emitter, State};
+use tauri::State;
 
 // ---------------------------------------------------------------------------
 // Security / path-validation helpers
@@ -114,11 +115,12 @@ fn validate_save_dir(p: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Bridge command for frontend `save()` dialog → arbitrary-path file write.
+/// Shared validation for frontend-supplied write destinations picked via
+/// the OS-native save dialog (`write_user_file`, `export_chart_csv`).
 ///
 /// The user picks the destination via the OS-native save dialog, so the
-/// path itself is trusted to the extent the OS dialog vetted it. This
-/// command exists because the `tauri-plugin-fs` scope (which Phase 2 will
+/// path itself is trusted to the extent the OS dialog vetted it. These
+/// commands exist because the `tauri-plugin-fs` scope (which Phase 2 will
 /// lock down to `$APPDATA/**`) would otherwise reject writes outside the
 /// scoped directories. Validation here defends against frontend bugs that
 /// might pass through a malicious string without dialog confirmation.
@@ -134,15 +136,14 @@ fn validate_save_dir(p: &str) -> Result<(), String> {
 ///     file may not exist yet.
 ///   - if parent doesn't exist, error out — we don't auto-mkdir because
 ///     the user selected a path via dialog, so its parent should exist.
-#[tauri::command]
-fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
+fn validate_user_write_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("path is empty".into());
     }
     if path.contains('\0') {
         return Err("path contains NUL byte".into());
     }
-    let p = std::path::Path::new(&path);
+    let p = std::path::Path::new(path);
     for component in p.components() {
         if matches!(component, std::path::Component::ParentDir) {
             return Err("path contains '..' component".into());
@@ -191,6 +192,14 @@ fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
             ));
         }
     }
+    Ok(())
+}
+
+/// Bridge command for frontend `save()` dialog → arbitrary-path file write.
+/// See [`validate_user_write_path`] for the trust model.
+#[tauri::command]
+fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
+    validate_user_write_path(&path)?;
     std::fs::write(&path, &contents)
         .map_err(|e| format!("Failed to write {}: {}", path, e))
 }
@@ -229,72 +238,6 @@ fn get_loaded_paths(state: State<AppState>) -> Result<Vec<String>, String> {
         Some(session) => Ok(session.paths.clone()),
         None => Ok(Vec::new()),
     }
-}
-
-#[tauri::command]
-fn get_data(
-    sensors: Vec<String>,
-    // Optional dashboard filter (timestamp + value bounds). When `None` —
-    // legacy behavior, all rows streamed. When present, only rows passing
-    // the filter are emitted. Sensors not present in the dataset are
-    // skipped (matching the legacy projection behavior).
-    filter: Option<PreviewFilter>,
-    window: tauri::Window,
-    state: State<AppState>,
-) -> Result<(), String> {
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    let data = &session.data;
-
-    // Find indices of requested sensors
-    let mut indices = Vec::new();
-    for sensor in &sensors {
-        if let Some(idx) = data.headers.iter().position(|h| h == sensor) {
-            indices.push(idx);
-        }
-    }
-
-    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
-
-    const CHUNK_SIZE: usize = 5000;
-    let mut chunk_buf: Vec<CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
-
-    for r in 0..data.n_rows() {
-        if !resolved.is_noop() && !resolved.keeps(data, r) {
-            continue;
-        }
-        chunk_buf.push(data.wire_record(r, &indices));
-
-        if chunk_buf.len() >= CHUNK_SIZE {
-            window
-                .emit(
-                    "data-stream-chunk",
-                    DataChunk {
-                        headers: sensors.clone(),
-                        rows: std::mem::replace(&mut chunk_buf, Vec::with_capacity(CHUNK_SIZE)),
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    if !chunk_buf.is_empty() {
-        window
-            .emit(
-                "data-stream-chunk",
-                DataChunk {
-                    headers: sensors.clone(),
-                    rows: chunk_buf,
-                },
-            )
-            .map_err(|e| e.to_string())?;
-    }
-
-    window
-        .emit("data-stream-end", {})
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
 }
 
 #[tauri::command]
@@ -411,6 +354,47 @@ fn compute_sensor_stats(
 
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+
+/// Spawn the Python ML sidecar (`bin/backend-<target-triple>`), translating
+/// the classic fresh-checkout failures into an actionable error.
+///
+/// The sidecar binary is gitignored and built separately; `cargo check`
+/// only needs a 0-byte stub to satisfy tauri-build's existence check, but
+/// actually LAUNCHING that stub fails with `%1 is not a valid Win32
+/// application. (os error 193)` on Windows (`Exec format error` on unix).
+/// Without this mapping the raw OS error reaches the UI and reads like a
+/// crash instead of a missing build step.
+fn spawn_sidecar(
+    app: &tauri::AppHandle,
+) -> Result<
+    (
+        tauri::async_runtime::Receiver<CommandEvent>,
+        tauri_plugin_shell::process::CommandChild,
+    ),
+    String,
+> {
+    const BUILD_HINT: &str = "The Python ML sidecar (src-tauri/bin/backend-<target>) is missing or is \
+         an empty stub. Build it with src-tauri/python/build_sidecar.sh (or \
+         scripts/build-installer-windows.ps1 step 3), then retry.";
+    let sidecar = app
+        .shell()
+        .sidecar("backend")
+        .map_err(|e| format!("Sidecar setup failed: {}. {}", e, BUILD_HINT))?;
+    sidecar.spawn().map_err(|e| {
+        let msg = e.to_string();
+        let lower = msg.to_lowercase();
+        let looks_like_missing_build = lower.contains("os error 193")
+            || lower.contains("not a valid win32 application")
+            || lower.contains("exec format error")
+            || lower.contains("os error 2") // file not found
+            || lower.contains("not found");
+        if looks_like_missing_build {
+            format!("Failed to launch the Python ML sidecar ({}). {}", msg, BUILD_HINT)
+        } else {
+            format!("Failed to launch the Python ML sidecar: {}", msg)
+        }
+    })
+}
 
 /// Optional value-filter passed alongside `preview_relationship_model`.
 /// Mirrors the JSON shape produced by the dashboard's FilterPanel, so the
@@ -664,8 +648,7 @@ async fn preview_relationship_model(
     payload_line.push('\n');
 
     // ── Spawn sidecar and pipe payload over stdin. ──
-    let sidecar = app.shell().sidecar("backend").map_err(|e| e.to_string())?;
-    let (mut rx, mut child) = sidecar.spawn().map_err(|e| e.to_string())?;
+    let (mut rx, mut child) = spawn_sidecar(&app)?;
     child
         .write(payload_line.as_bytes())
         .map_err(|e| e.to_string())?;
@@ -1469,8 +1452,7 @@ async fn train_relationship_model(
     let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     payload_line.push('\n');
 
-    let sidecar = app.shell().sidecar("backend").map_err(|e| e.to_string())?;
-    let (mut rx, mut child) = sidecar.spawn().map_err(|e| e.to_string())?;
+    let (mut rx, mut child) = spawn_sidecar(&app)?;
     child
         .write(payload_line.as_bytes())
         .map_err(|e| e.to_string())?;
@@ -2167,74 +2149,87 @@ impl DataFilter {
     }
 }
 
-#[tauri::command]
-fn get_filtered_data(
+/// Bounded chart payload for the dashboard line chart.
+///
+/// The full pipeline (dashboard filter → operation transform → optional
+/// hourly aggregation → min/max decimation to `max_points`) runs Rust-side
+/// over the columnar store; the WebView receives O(max_points) columnar
+/// arrays instead of the entire dataset. Replaces the dashboard's use of
+/// the old full-stream `get_filtered_data` command, which duplicated the
+/// whole dataset into the JS heap and froze the UI on large CSVs.
+// `rename_all = "snake_case"`: the frontend sends `max_points` verbatim
+// (same convention as `get_scatter_sample`).
+#[tauri::command(rename_all = "snake_case")]
+fn get_chart_data(
     filter: DataFilter,
-    window: tauri::Window,
+    sampling: String,
+    operation: Option<chart_query::OperationConfig>,
+    max_points: usize,
     state: State<AppState>,
-) -> Result<(), String> {
+) -> Result<chart_query::ChartView, String> {
     let state_lock = state.0.lock().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
-    let data = &session.data;
+    Ok(chart_query::build_chart_view(
+        &session.data,
+        &filter,
+        operation.as_ref(),
+        &sampling,
+        max_points,
+    ))
+}
 
-    // Resolve sensor indices
-    let sensor_indices: Vec<usize> = filter
-        .sensors
-        .iter()
-        .filter_map(|s| data.headers.iter().position(|h| h == s))
-        .collect();
+/// One page of the post-op / post-aggregation row set for the dashboard
+/// data table. Same pipeline as `get_chart_data` minus the decimation —
+/// the table pages through the true row set 50 rows at a time.
+#[tauri::command(rename_all = "snake_case")]
+fn get_table_page(
+    filter: DataFilter,
+    sampling: String,
+    operation: Option<chart_query::OperationConfig>,
+    page: usize,
+    page_size: usize,
+    state: State<AppState>,
+) -> Result<chart_query::TablePage, String> {
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    Ok(chart_query::build_table_page(
+        &session.data,
+        &filter,
+        operation.as_ref(),
+        &sampling,
+        page,
+        page_size,
+    ))
+}
 
-    // Same gate semantics as every other data-reading command: bounds are
-    // parsed once, rows compare via the load-time `ts_parsed` integers —
-    // no per-row timestamp parsing.
-    let preview = filter.to_preview();
-    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers);
-
-    const CHUNK_SIZE: usize = 5000;
-    let mut chunk_buf: Vec<CsvRecord> = Vec::with_capacity(CHUNK_SIZE);
-
-    for r in 0..data.n_rows() {
-        if !resolved.is_noop() && !resolved.keeps(data, r) {
-            continue;
-        }
-
-        // Projected row (only requested sensor columns)
-        chunk_buf.push(data.wire_record(r, &sensor_indices));
-
-        if chunk_buf.len() >= CHUNK_SIZE {
-            window
-                .emit(
-                    "data-stream-chunk",
-                    DataChunk {
-                        headers: filter.sensors.clone(),
-                        rows: std::mem::replace(
-                            &mut chunk_buf,
-                            Vec::with_capacity(CHUNK_SIZE),
-                        ),
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    // Flush remaining
-    if !chunk_buf.is_empty() {
-        window
-            .emit(
-                "data-stream-chunk",
-                DataChunk {
-                    headers: filter.sensors.clone(),
-                    rows: chunk_buf,
-                },
-            )
-            .map_err(|e| e.to_string())?;
-    }
-
-    window
-        .emit("data-stream-end", {})
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+/// Export the full post-op / post-aggregation row set as CSV, streamed
+/// straight to the user-picked path. Returns the number of data rows
+/// written. Replaces the old frontend exporter, which built the entire
+/// CSV as one JS string (an OOM/freeze on multi-million-row datasets).
+#[tauri::command(rename_all = "snake_case")]
+fn export_chart_csv(
+    filter: DataFilter,
+    sampling: String,
+    operation: Option<chart_query::OperationConfig>,
+    path: String,
+    state: State<AppState>,
+) -> Result<usize, String> {
+    validate_user_write_path(&path)?;
+    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let file = std::fs::File::create(&path)
+        .map_err(|e| format!("Failed to create {}: {}", path, e))?;
+    let mut writer = std::io::BufWriter::new(file);
+    let written = chart_query::export_csv(
+        &session.data,
+        &filter,
+        operation.as_ref(),
+        &sampling,
+        &mut writer,
+    )?;
+    use std::io::Write;
+    writer.flush().map_err(|e| e.to_string())?;
+    Ok(written)
 }
 
 /// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
@@ -2463,6 +2458,75 @@ mod scatter_sample_tests {
         assert_eq!(s.total, 5);
         assert_eq!(s.rows[0].values, vec![Some(5.0)]);
     }
+
+    #[test]
+    fn append_error_line_writes_entry_detail_and_appends() {
+        let dir = std::env::temp_dir().join(format!("wizard-errlog-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("frontend-errors.log");
+
+        append_error_line(&path, "frontend", "boom happened", Some("stack line 1\nstack line 2"));
+        append_error_line(&path, "rust-panic", "second entry", None);
+        // Whitespace-only detail must not add noise lines.
+        append_error_line(&path, "frontend", "third", Some("   "));
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[frontend] boom happened"));
+        assert!(content.contains("stack line 2"));
+        assert!(content.contains("[rust-panic] second entry"));
+        // Appending (not truncating): all three entries coexist, in order.
+        let first = content.find("boom happened").unwrap();
+        let third = content.find("third").unwrap();
+        assert!(first < third);
+        assert_eq!(content.matches("[frontend] third").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Resolve (and create) the persistent error-log location:
+/// `<app-log-dir>/frontend-errors.log` — `%LOCALAPPDATA%/<identifier>/logs`
+/// on Windows. Lives outside the install dir so it never needs elevated
+/// writes and survives reinstalls.
+fn error_log_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("cannot resolve app log dir: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create log dir {dir:?}: {e}"))?;
+    Ok(dir.join("frontend-errors.log"))
+}
+
+/// Best-effort append — the error logger must never become an error source
+/// itself, so every failure here is deliberately swallowed.
+fn append_error_line(path: &std::path::Path, source: &str, message: &str, detail: Option<&str>) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(f, "[{ts}] [{source}] {message}");
+        if let Some(d) = detail {
+            if !d.trim().is_empty() {
+                let _ = writeln!(f, "{d}");
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn log_frontend_error(
+    app: tauri::AppHandle,
+    message: String,
+    detail: Option<String>,
+) -> Result<String, String> {
+    let path = error_log_path(&app)?;
+    append_error_line(&path, "frontend", &message, detail.as_deref());
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn get_error_log_path(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(error_log_path(&app)?.to_string_lossy().into_owned())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2474,6 +2538,19 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|_app| {
+            // Persist Rust panics to the same error log the frontend reporter
+            // writes to — an installed build has no console, so without this a
+            // panicked command/thread vanishes without a trace.
+            {
+                let handle = _app.handle().clone();
+                let default_hook = std::panic::take_hook();
+                std::panic::set_hook(Box::new(move |info| {
+                    if let Ok(path) = error_log_path(&handle) {
+                        append_error_line(&path, "rust-panic", &info.to_string(), None);
+                    }
+                    default_hook(info);
+                }));
+            }
             // On non-macOS platforms, disable native decorations so we use the custom titlebar.
             // macOS uses native decorations with Overlay titlebar style (traffic lights).
             #[cfg(not(target_os = "macos"))]
@@ -2488,7 +2565,6 @@ pub fn run() {
         .manage(AppState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             load_csv,
-            get_data,
             get_all_sensors,
             load_metadata_command,
             compute_sensor_stats,
@@ -2497,7 +2573,9 @@ pub fn run() {
             calculate_new_sensor,
             load_mapping_csv,
             apply_sensor_mapping,
-            get_filtered_data,
+            get_chart_data,
+            get_table_page,
+            export_chart_csv,
             evaluate_formula,
             validate_formula,
             train_individual_model,
@@ -2505,7 +2583,9 @@ pub fn run() {
             train_clustering_model,
             train_relationship_model,
             write_user_file,
-            get_scatter_sample
+            get_scatter_sample,
+            log_frontend_error,
+            get_error_log_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -8,14 +8,14 @@ interface MainChartProps extends ChartProps {
     chartType?: 'line' | 'scatter' | 'pair';
 }
 
-function Chart({ data, sensors, headers, chartType = 'line' }: MainChartProps) {
+function Chart({ data, columnar, sensors, headers, chartType = 'line' }: MainChartProps) {
 
     if (!sensors || sensors.length === 0) {
         return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select sensors to view data</div>;
     }
 
     if (chartType === 'line') {
-        return <LineChart data={data} sensors={sensors} headers={headers} />;
+        return <LineChart data={data} columnar={columnar} sensors={sensors} headers={headers} />;
     }
 
     if (chartType === 'pair') {

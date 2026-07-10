@@ -118,6 +118,54 @@ export interface RelationshipTrainResult {
 }
 
 /**
+ * Shared dashboard filter shape (sensor projection + timestamp window +
+ * value gates) accepted by `get_chart_data`, `get_table_page`,
+ * `export_chart_csv`, and `get_scatter_sample`.
+ */
+export interface DashboardDataFilter {
+  sensors: string[];
+  timestamp_start: string | null;
+  timestamp_end: string | null;
+  value_filters: {
+    sensor: string;
+    operation: string;
+    value1: number | null;
+    value2: number | null;
+  }[];
+}
+
+/** Hourly-bucket aggregation mode for the dashboard's "Sampling (1 hr)" select. */
+export type ChartSamplingMethod = 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';
+
+/**
+ * Bounded, columnar chart payload from `get_chart_data`. The Rust side runs
+ * the whole pipeline (filter → operation transform → optional hourly
+ * aggregation → min/max decimation), so `timestamps.length <= max_points`
+ * no matter how many rows the dataset holds — the WebView never receives or
+ * retains the full dataset.
+ */
+export interface ChartViewData {
+  /** Output column names; `["Result (op)"]` in multi-op mode. */
+  headers: string[];
+  /** Shared x-axis values, aligned with every `series[s]`. */
+  timestamps: string[];
+  /** `series[s][k]` = value of `headers[s]` at `timestamps[k]`; null = missing. */
+  series: (number | null)[][];
+  /** Rows in the filtered (post-aggregation) population — the badge count. */
+  total_rows: number;
+  /** First/last timestamp of the filtered population (time-range inputs). */
+  ts_min: string | null;
+  ts_max: string | null;
+}
+
+/** One page of the post-op/post-aggregation row set (`get_table_page`). */
+export interface TablePageData {
+  headers: string[];
+  rows: { timestamp: string | null; values: (number | null)[] }[];
+  total_rows: number;
+}
+
+/**
  * Bounded sample of the (filtered) dataset for scatter / pair-plot rendering,
  * returned by `get_scatter_sample`. `rows.length <= max_points`, so the IPC
  * payload, JS heap, and WebGL buffers stay bounded regardless of how large
@@ -161,25 +209,45 @@ export type TauriCommands = {
     args: Record<string, never>;
     returns: string[];
   };
-  get_data: {
-    args: { sensors: string[] };
-    returns: void; // Emits events
-  };
-  get_filtered_data: {
+  /**
+   * Bounded columnar chart payload: filter → operation transform → optional
+   * hourly aggregation → min/max decimation, all in Rust. The response never
+   * exceeds `max_points` x-positions, so chart rendering stays O(max_points)
+   * regardless of dataset size.
+   */
+  get_chart_data: {
     args: {
-      filter: {
-        sensors: string[];
-        timestamp_start: string | null;
-        timestamp_end: string | null;
-        value_filters: {
-          sensor: string;
-          operation: string;
-          value1: number | null;
-          value2: number | null;
-        }[];
-      };
+      filter: DashboardDataFilter;
+      sampling: ChartSamplingMethod;
+      operation: SensorOperationConfig | null;
+      max_points: number;
     };
-    returns: void; // Emits events
+    returns: ChartViewData;
+  };
+  /** One page of the post-op/post-aggregation row set for the data table. */
+  get_table_page: {
+    args: {
+      filter: DashboardDataFilter;
+      sampling: ChartSamplingMethod;
+      operation: SensorOperationConfig | null;
+      page: number;
+      page_size: number;
+    };
+    returns: TablePageData;
+  };
+  /**
+   * Stream the full post-op/post-aggregation row set to a CSV file at the
+   * user-picked path (Rust-side write — the rows never enter the WebView).
+   * Returns the number of data rows written.
+   */
+  export_chart_csv: {
+    args: {
+      filter: DashboardDataFilter;
+      sampling: ChartSamplingMethod;
+      operation: SensorOperationConfig | null;
+      path: string;
+    };
+    returns: number;
   };
   get_all_sensors: {
     args: Record<string, never>;
@@ -322,5 +390,22 @@ export type TauriCommands = {
   write_user_file: {
     args: { path: string; contents: number[] };
     returns: void;
+  };
+  /**
+   * Append one error entry to the persistent error log
+   * (`<app-log-dir>/frontend-errors.log`, e.g. `%LOCALAPPDATA%/<identifier>/logs`
+   * on Windows). Called by the global error reporter (window.onerror,
+   * unhandledrejection, React ErrorBoundary) so production failures — where
+   * DevTools don't exist — leave a trail the user can inspect or send back.
+   * Returns the log file's absolute path so the UI can point at it.
+   */
+  log_frontend_error: {
+    args: { message: string; detail: string | null };
+    returns: string;
+  };
+  /** Absolute path of the error log file (for display next to error toasts). */
+  get_error_log_path: {
+    args: {};
+    returns: string;
   };
 };

@@ -3,9 +3,17 @@ import { DataUploadPage } from "./components/upload";
 import { Dashboard, DashboardRef } from "./components/dashboard";
 import { CsvMetadata, SensorMetadata, WorkspaceState } from "./types";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { message } from "@tauri-apps/plugin-dialog";
 import TitleBar from "./components/TitleBar";
 import { useAppMenu } from "./hooks/useAppMenu";
+import ErrorBoundary from "./components/ErrorBoundary";
+import ErrorToasts from "./components/ErrorToasts";
+import { initErrorReporter } from "./errorReporter";
+
+// Install window.onerror / unhandledrejection hooks before the first render
+// so even a crash during initial mount is captured and shown.
+initErrorReporter();
 
 function App() {
   const [metadata, setMetadata] = useState<CsvMetadata | null>(null);
@@ -77,48 +85,59 @@ function App() {
     onRename: () => setRenameTrigger(t => t + 1),
     onToggleTheme: toggleTheme,
     onAbout: async () => {
+        // Version comes from tauri.conf.json at runtime so this dialog can
+        // never drift from the shipped bundle version again.
+        let version = '';
+        try {
+            version = await getVersion();
+        } catch { /* non-Tauri context (plain browser) — omit the number */ }
+        const title = `Wizard${version ? `\nVersion ${version}` : ''}`;
         try {
             await message(
-                'Wizard\nVersion 0.1.0\n\nA desktop tool for CSV sensor data exploration and predictive modeling.',
+                `${title}\n\nA desktop tool for CSV sensor data exploration and predictive modeling.`,
                 { title: 'About', kind: 'info' }
             );
         } catch {
-            alert('Wizard v0.1.0');
+            alert(`Wizard${version ? ` v${version}` : ''}`);
         }
     },
   });
 
   return (
     <>
-      <TitleBar
-        theme={theme}
-        toggleTheme={toggleTheme}
-        onSave={metadata ? handleManualSave : undefined}
-        onSaveAs={metadata ? handleManualSaveAs : undefined}
-        workspaceName={metadata ? workspaceName : undefined}
-        onRename={handleRename}
-        renameTrigger={renameTrigger}
-      />
-      <main className="app-container">
-        {!metadata ? (
-          <DataUploadPage
-            onDataReady={(data, workspaceState, sm) => {
-              setMetadata(data);
-              setSensorMetadata(sm ?? null);
-              setInitialWorkspaceState(workspaceState);
-              setWorkspaceName(workspaceState.name);
-            }}
-          />
-        ) : (
-          <Dashboard
-            ref={dashboardRef}
-            metadata={metadata}
-            sensorMetadata={sensorMetadata}
-            onBack={handleBackToImport}
-            initialState={initialWorkspaceState}
-          />
-        )}
-      </main>
+      <ErrorBoundary>
+        <TitleBar
+          theme={theme}
+          toggleTheme={toggleTheme}
+          onSave={metadata ? handleManualSave : undefined}
+          onSaveAs={metadata ? handleManualSaveAs : undefined}
+          workspaceName={metadata ? workspaceName : undefined}
+          onRename={handleRename}
+          renameTrigger={renameTrigger}
+        />
+        <main className="app-container">
+          {!metadata ? (
+            <DataUploadPage
+              onDataReady={(data, workspaceState, sm) => {
+                setMetadata(data);
+                setSensorMetadata(sm ?? null);
+                setInitialWorkspaceState(workspaceState);
+                setWorkspaceName(workspaceState.name);
+              }}
+            />
+          ) : (
+            <Dashboard
+              ref={dashboardRef}
+              metadata={metadata}
+              sensorMetadata={sensorMetadata}
+              onBack={handleBackToImport}
+              initialState={initialWorkspaceState}
+            />
+          )}
+        </main>
+      </ErrorBoundary>
+      {/* Outside the boundary so alerts survive even a full React-tree crash. */}
+      <ErrorToasts />
     </>
   );
 }

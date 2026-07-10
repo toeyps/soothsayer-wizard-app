@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CsvMetadata, CsvRecord, ProcessedData, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
+import { CsvMetadata, CsvRecord, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -23,6 +23,15 @@ import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
+import { useChartData } from "../../hooks/useChartData";
+
+// Point budget for the target-sensor time series. Rust's `get_chart_data`
+// min/max-decimates the filtered rows down to at most this many x-positions,
+// so the chart payload stays bounded no matter how many rows the CSV holds.
+const TARGET_CHART_MAX_POINTS = 4000;
+// Stable empty array for LineChart's unused row-based `data` prop (the
+// chart consumes the bounded `columnar` feed instead).
+const EMPTY_RECORDS: CsvRecord[] = [];
 
 interface SensorStats {
     mean: number;
@@ -391,9 +400,41 @@ export default function PredictiveModelBuild() {
     const [outputDir, setOutputDir] = useState<string | null>(null);
 
     // ── Target sensor time-series (for Individual plot) ────────────────
-    const [targetChartData, setTargetChartData] = useState<{ headers: string[]; rows: CsvRecord[] }>({ headers: [], rows: [] });
-    const [targetChartLoading, setTargetChartLoading] = useState(false);
-    const targetFetchIdRef = useRef(0);
+    // Bounded columnar fetch via `get_chart_data` (same path as Dashboard):
+    // filter + min/max decimation run in Rust, so the WebView receives at
+    // most TARGET_CHART_MAX_POINTS positions instead of the full row stream
+    // the old `get_data` accumulation copied into the JS heap.
+    const targetChartQuery = useMemo(() => {
+        if (!targetSensor) return null;
+        return {
+            filter: {
+                sensors: [targetSensor],
+                timestamp_start: dashboardFilterPayload?.timestamp_start ?? null,
+                timestamp_end: dashboardFilterPayload?.timestamp_end ?? null,
+                value_filters: dashboardFilterPayload?.value_filters ?? [],
+            },
+            sampling: 'raw' as const,
+            operation: null,
+            maxPoints: TARGET_CHART_MAX_POINTS,
+        };
+    }, [targetSensor, dashboardFilterPayload]);
+
+    const { view: targetChartView, loading: targetChartLoading } = useChartData(targetChartQuery);
+
+    const targetHasData = (targetChartView?.timestamps.length ?? 0) > 0;
+    const targetChartColumnar = useMemo(
+        () => targetChartView
+            ? { timestamps: targetChartView.timestamps, series: targetChartView.series }
+            : { timestamps: [] as string[], series: [] as (number | null)[][] },
+        [targetChartView]
+    );
+    // Resolved header fallback mirrors the old stream path: if the sensor
+    // is unknown to the dataset the chart still renders (empty) axes.
+    const targetChartHeaders = useMemo(
+        () => (targetChartView && targetChartView.headers.length > 0 ? targetChartView.headers : [targetSensor]),
+        [targetChartView, targetSensor]
+    );
+    const targetChartSensors = useMemo(() => [targetSensor], [targetSensor]);
 
     // ── Expandable chart modal ────────────────────────────────────────
     // `'individual'`  → Standard time-series (LineChart)
@@ -633,71 +674,6 @@ export default function PredictiveModelBuild() {
         clusterRanges, filterTimeStart, filterTimeEnd, pmSensorFilters,
     ]);
 
-    // Fetch target-sensor time-series whenever targetSensor changes.
-    // Uses the same invoke/event-stream pattern as Dashboard.
-    useEffect(() => {
-        if (!targetSensor) {
-            setTargetChartData({ headers: [], rows: [] });
-            setTargetChartLoading(false);
-            return;
-        }
-
-        const myFetchId = ++targetFetchIdRef.current;
-        let unlistenChunk: (() => void) | undefined;
-        let unlistenEnd: (() => void) | undefined;
-        let cancelled = false;
-
-        const run = async () => {
-            setTargetChartLoading(true);
-            const accumRows: CsvRecord[] = [];
-            let headers: string[] = [];
-
-            try {
-                let resolveDone: () => void;
-                const streamDone = new Promise<void>((r) => { resolveDone = r; });
-
-                unlistenChunk = await listen<ProcessedData>('data-stream-chunk', (event) => {
-                    if (targetFetchIdRef.current !== myFetchId) return;
-                    const chunk = event.payload;
-                    if (headers.length === 0) headers = chunk.headers;
-                    accumRows.push(...chunk.rows);
-                });
-
-                unlistenEnd = await listen('data-stream-end', () => {
-                    if (targetFetchIdRef.current === myFetchId) resolveDone();
-                });
-
-                await invoke("get_data", { sensors: [targetSensor], filter: dashboardFilterPayload });
-                await streamDone;
-
-                if (cancelled || targetFetchIdRef.current !== myFetchId) return;
-                setTargetChartData({
-                    headers: headers.length > 0 ? headers : [targetSensor],
-                    rows: accumRows,
-                });
-            } catch (err) {
-                if (targetFetchIdRef.current === myFetchId) {
-                    console.error("Failed to fetch target sensor data:", err);
-                }
-            } finally {
-                if (targetFetchIdRef.current === myFetchId) {
-                    setTargetChartLoading(false);
-                }
-            }
-        };
-
-        run();
-
-        return () => {
-            cancelled = true;
-            if (unlistenChunk) unlistenChunk();
-            if (unlistenEnd) unlistenEnd();
-        };
-        // dashboardFilterKey: re-fetch the chart when the dashboard filter
-        // changes — otherwise the target series would still show the
-        // pre-filter data even though we already trained on the slice.
-    }, [targetSensor, dashboardFilterKey]);
-
     // Auto-divide cluster ranges across the criteria sensor's [min, max]
     // whenever the user picks a different criteria sensor OR steps the
     // cluster count. We compute a "division key" (sensor + N) and reset
@@ -833,23 +809,16 @@ export default function PredictiveModelBuild() {
         }
     }, []);
 
-    // Min / max timestamp of the loaded target-sensor series. Used as the
-    // default value (and as the picker's `min` / `max` constraint) for the
-    // Data-filter date pickers, so the user starts on a valid range.
+    // Min / max timestamp of the target-sensor series (computed backend-side
+    // over the full filtered population, not the decimated sample). Used as
+    // the default value (and as the picker's `min` / `max` constraint) for
+    // the Data-filter date pickers, so the user starts on a valid range.
     const targetDataRange = useMemo<{ min: string; max: string } | null>(() => {
-        const rows = targetChartData.rows;
-        if (rows.length === 0) return null;
-        let minTs: string | null = null;
-        let maxTs: string | null = null;
-        for (const r of rows) {
-            const ts = r.timestamp;
-            if (!ts) continue;
-            if (minTs === null || ts < minTs) minTs = ts;
-            if (maxTs === null || ts > maxTs) maxTs = ts;
+        if (targetChartView?.ts_min && targetChartView?.ts_max) {
+            return { min: targetChartView.ts_min, max: targetChartView.ts_max };
         }
-        if (!minTs || !maxTs) return null;
-        return { min: minTs, max: maxTs };
-    }, [targetChartData]);
+        return null;
+    }, [targetChartView]);
 
     const targetMinForInput = useMemo(
         () => targetDataRange ? formatTimestampForInput(targetDataRange.min) : '',
@@ -2622,21 +2591,22 @@ export default function PredictiveModelBuild() {
                                             <p>No target sensor selected</p>
                                             <p className="plot-placeholder-sub">Pick a target sensor on the previous page</p>
                                         </div>
-                                    ) : targetChartLoading && targetChartData.rows.length === 0 ? (
+                                    ) : targetChartLoading && !targetHasData ? (
                                         <div className="plot-placeholder pm-chart-placeholder">
                                             <Loader2 size={36} style={{ opacity: 0.45 }} className="pm-spin" />
                                             <p>Loading {targetSensor}…</p>
                                         </div>
-                                    ) : targetChartData.rows.length === 0 ? (
+                                    ) : !targetHasData ? (
                                         <div className="plot-placeholder pm-chart-placeholder">
                                             <Activity size={48} style={{ opacity: 0.2 }} />
                                             <p>No data available for {targetSensor}</p>
                                         </div>
                                     ) : (
                                         <LineChart
-                                            data={targetChartData.rows}
-                                            sensors={[targetSensor]}
-                                            headers={targetChartData.headers}
+                                            data={EMPTY_RECORDS}
+                                            columnar={targetChartColumnar}
+                                            sensors={targetChartSensors}
+                                            headers={targetChartHeaders}
                                             markLines={targetMarkLines}
                                             hideYSplitLine
                                         />
@@ -3268,11 +3238,12 @@ export default function PredictiveModelBuild() {
                             </button>
                         </div>
                         <div className="pm-chart-modal-body">
-                            {expandedChart === 'individual' && targetSensor && targetChartData.rows.length > 0 ? (
+                            {expandedChart === 'individual' && targetSensor && targetHasData ? (
                                 <LineChart
-                                    data={targetChartData.rows}
-                                    sensors={[targetSensor]}
-                                    headers={targetChartData.headers}
+                                    data={EMPTY_RECORDS}
+                                    columnar={targetChartColumnar}
+                                    sensors={targetChartSensors}
+                                    headers={targetChartHeaders}
                                     markLines={targetMarkLines}
                                     hideYSplitLine
                                 />

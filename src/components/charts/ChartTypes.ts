@@ -15,8 +15,25 @@ export interface ChartMarkLine {
     width?: number;
 }
 
+/**
+ * Columnar line-chart feed: one shared x-axis plus one value array per
+ * header. Produced by the Rust `get_chart_data` command; already bounded
+ * and in ECharts' native shape, so the chart consumes it with zero
+ * per-row object allocation.
+ */
+export interface ColumnarSeries {
+    timestamps: string[];
+    /** `series[i]` aligns with `headers[i]`; null = missing. */
+    series: (number | null)[][];
+}
+
 export interface ChartProps {
     data: CsvRecord[];
+    /**
+     * Preferred data source for the line chart when provided — `data` is
+     * then ignored by LineChart. Scatter / pair plots ignore this field.
+     */
+    columnar?: ColumnarSeries;
     sensors: string[];
     headers: string[];
     /** Optional horizontal reference lines (e.g. mean, ±1σ, ±3σ). */

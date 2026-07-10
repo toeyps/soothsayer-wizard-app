@@ -4,7 +4,7 @@ import { ChartProps } from './ChartTypes';
 
 const colors = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
 
-function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartProps) {
+function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
@@ -12,11 +12,26 @@ function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartP
     useEffect(() => {
         const el = wrapperRef.current;
         if (!el) return;
-        const update = () => setContainerH(el.clientHeight);
+        // Quantize to 8px steps + rAF-coalesce: every containerH change
+        // rebuilds the whole option (and setOption(notMerge) re-inits the
+        // chart), so per-pixel updates while dragging the Split.js divider
+        // meant a full chart teardown per pixel. 8px granularity is invisible
+        // in the layout math but cuts rebuilds ~8×.
+        let raf: number | null = null;
+        const update = () => {
+            raf = null;
+            setContainerH(Math.round(el.clientHeight / 8) * 8);
+        };
         update();
-        const ro = new ResizeObserver(update);
+        const ro = new ResizeObserver(() => {
+            if (raf !== null) cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(update);
+        });
         ro.observe(el);
-        return () => ro.disconnect();
+        return () => {
+            ro.disconnect();
+            if (raf !== null) cancelAnimationFrame(raf);
+        };
     }, []);
 
     // Track current theme (data-theme attribute on <html>) so text colors adapt.
@@ -40,8 +55,21 @@ function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartP
     const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
 
     const option = useMemo(() => {
-        const dataCount = data.length;
-        const isLargeData = dataCount > 10000;
+        // Columnar feed (from Rust's `get_chart_data`) is preferred: arrays
+        // drop straight into ECharts with no per-row mapping. The row-based
+        // `data` path remains for callers that stream full rows (e.g.
+        // PredictiveModelBuild's target chart).
+        const xData = columnar ? columnar.timestamps : data.map(d => d.timestamp);
+        const dataCount = xData.length;
+        // Threshold for the "heavy" rendering profile (no smoothing / no
+        // animation / hairline stroke / LTTB). The columnar dashboard feed is
+        // capped at 4 000 rows backend-side, so the old 10 000 cutoff never
+        // fired there — every refetch replayed a ~1 s entrance animation and
+        // stroked catmull-rom splines across every series, which is exactly
+        // the interaction jank on big datasets. Above ~2 000 points a smooth
+        // spline is visually identical to straight segments anyway (<1 px per
+        // segment), so the pretty profile is reserved for genuinely small data.
+        const isLargeData = dataCount > 2000;
 
         // ── Dynamic horizontal padding ────────────────────────────
         const AXIS_OFFSET = 60;
@@ -88,6 +116,17 @@ function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartP
                 backgroundColor: tooltipBg,
                 borderColor: tooltipBorder,
                 textStyle: { color: txtPrimary },
+                // Kill the pointer-chasing animations: by default the tooltip
+                // box eases toward the cursor and the axis crosshair animates
+                // per mousemove, keeping a redraw loop alive the whole time
+                // the user hovers the chart.
+                transitionDuration: 0,
+                axisPointer: { animation: false },
+                // Tooltip is display-only here — not letting the pointer
+                // enter it skips the enter/leave tracking ECharts otherwise
+                // does on every move near the box.
+                enterable: false,
+                hideDelay: 0,
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
                     const pList = Array.isArray(params) ? params : [params];
@@ -111,15 +150,31 @@ function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartP
                 bottom: gridBottom,
                 containLabel: false,
             },
+            // Entrance/update transitions only for small data — and even then
+            // fast ones. The dashboard refetches on every (debounced) filter
+            // edit, so a slow default 1 s animation replays constantly.
             animation: !isLargeData,
+            animationDuration: 250,
+            animationDurationUpdate: 150,
             dataZoom: [
                 { type: 'inside', xAxisIndex: [0], filterMode: 'filter' },
-                { type: 'slider', xAxisIndex: [0], filterMode: 'filter', bottom: sliderBottom, height: sliderH }
+                {
+                    type: 'slider', xAxisIndex: [0], filterMode: 'filter',
+                    bottom: sliderBottom, height: sliderH,
+                    // Heavy-data mode: the slider's mini preview (data shadow)
+                    // re-renders every series into the track on each data
+                    // change, and realtime dragging re-filters + re-lays-out
+                    // all series and axes on every mousemove of the handle.
+                    // Drop both above the threshold — the window then applies
+                    // on release, which keeps the drag itself at 60 fps.
+                    showDataShadow: !isLargeData,
+                    realtime: !isLargeData,
+                }
             ],
             xAxis: {
                 type: 'category',
                 boundaryGap: false,
-                data: data.map(d => d.timestamp),
+                data: xData,
                 axisLabel: { formatter: (val: string) => new Date(val).toLocaleTimeString(), color: txtSecondary },
                 axisLine: { lineStyle: { color: gridLine } }
             },
@@ -177,20 +232,42 @@ function LineChart({ data, sensors, headers, markLines, hideYSplitLine }: ChartP
                     name: sensor,
                     type: 'line',
                     yAxisIndex: index,
-                    data: data.map(d => d.values[sensorIdx] ?? null),
+                    data: columnar
+                        ? (columnar.series[sensorIdx] ?? [])
+                        : data.map(d => d.values[sensorIdx] ?? null),
                     smooth: !isLargeData,
                     showSymbol: false,
                     itemStyle: { color: color },
-                    lineStyle: { width: isLargeData ? 1 : 2 },
+                    // Hairline strokes for dense data: cheaper to rasterize
+                    // and the trace reads better when segments are sub-pixel.
+                    lineStyle: { width: isLargeData ? 0.8 : 2 },
+                    // The axis-trigger tooltip doesn't need the polylines to
+                    // be mouse-interactive, but ECharts still hit-tests every
+                    // vertex-dense line on each mousemove and runs emphasis
+                    // state transitions on hover. Cut both for heavy data —
+                    // markLine hover/labels (small-data screens) keep working.
+                    silent: isLargeData,
+                    emphasis: { disabled: isLargeData },
+                    // Hovering a legend entry otherwise re-renders the linked
+                    // series into its highlight state — pure cost, low value.
+                    legendHoverLink: false,
+                    // Belt-and-suspenders for the row-based path: when a
+                    // caller still feeds raw points past the threshold, let
+                    // ECharts LTTB-downsample instead of rasterizing every
+                    // vertex.
+                    ...(isLargeData ? { sampling: 'lttb' as const } : {}),
                     ...(markLine ? { markLine } : {}),
                 };
             })
         };
-    }, [data, sensors, headers, containerH, markLines, hideYSplitLine, theme]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>
-            <ResponsiveECharts option={option} style={{ minHeight: '200px' }} />
+            {/* lazyUpdate batches consecutive setOption calls into one frame
+                (resize + data + theme changes coalesce instead of each
+                triggering its own full notMerge re-init). */}
+            <ResponsiveECharts option={option} lazyUpdate style={{ minHeight: '200px' }} />
         </div>
     );
 }

@@ -13,23 +13,15 @@ const MAX_CSV_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// matching the legacy per-query parse behavior.
 pub const TS_MISSING: i64 = i64::MIN;
 
-/// Wire-format row for `data-stream-chunk` events and sampled scatter
-/// payloads. NOT the in-RAM store — the loaded dataset lives in
-/// [`ColumnarData`]; records of this shape are materialized only at the
-/// IPC boundary (see [`ColumnarData::wire_record`]).
+/// Wire-format row for sampled scatter payloads and table pages. NOT the
+/// in-RAM store — the loaded dataset lives in [`ColumnarData`]; records of
+/// this shape are materialized only at the IPC boundary (see
+/// [`ColumnarData::wire_record`]), and every command that emits them is
+/// bounded (`get_scatter_sample`, `get_table_page`).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CsvRecord {
     pub timestamp: Option<String>,
     pub values: Vec<Option<f64>>,
-}
-
-/// Wire-format chunk payload (`headers` + row records) emitted to the
-/// frontend by `get_data` / `get_filtered_data`. Field names are part of
-/// the frontend contract — do not rename them.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DataChunk {
-    pub headers: Vec<String>,
-    pub rows: Vec<CsvRecord>,
 }
 
 /// In-RAM store for the loaded dataset — column-major.

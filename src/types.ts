@@ -3,11 +3,6 @@ export interface CsvRecord {
     values: (number | null)[];
 }
 
-export interface ProcessedData {
-    headers: string[];
-    rows: CsvRecord[];
-}
-
 export interface CsvMetadata {
     headers: string[];
     total_rows: number;

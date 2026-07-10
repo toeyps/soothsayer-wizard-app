@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.0"
+version = "0.2.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -34,4 +34,14 @@ nalgebra = "0.33"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Keep `tauri dev` interactive on multi-million-row CSVs: the dashboard's
+# data pipeline (filter/aggregate/decimate in chart_query.rs) is hot Rust
+# code that runs 10-50x slower at opt-level 0. Light optimization for our
+# crate, full optimization for dependencies (compiled once, then cached).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
 

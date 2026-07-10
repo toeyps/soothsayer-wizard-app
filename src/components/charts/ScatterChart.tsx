@@ -3,6 +3,8 @@ import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import { Download, Eraser, Move, Lasso, RotateCcw } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
+import { reportError } from '../../errorReporter';
+import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 
 type ToolMode = 'pan' | 'lasso';
 
@@ -63,6 +65,16 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
      *  rebuild via Retry (bumps `rebuildNonce` → the create effect re-runs). */
     const [contextLost, setContextLost] = useState(false);
     const [rebuildNonce, setRebuildNonce] = useState(0);
+    /** WebGL init failure (context creation refused — GPU blocklist, remote
+     *  desktop, CSP blocking regl's codegen, …). Unlike a mid-session context
+     *  loss this happens synchronously inside createScatterplot(); without
+     *  the guard the throw escapes the effect and unmounts the WHOLE app
+     *  (the production black-screen). */
+    const [initError, setInitError] = useState<string | null>(null);
+    /** Serialized draw queue — regl-scatterplot silently drops a draw()
+     *  issued while one is in flight, so back-to-back data/axis updates
+     *  could leave the canvas showing stale points. */
+    const { requestDraw, resetDraw } = useCoalescedDraw();
 
     // Default X/Y to the first two sensors, like the previous ECharts version.
     useEffect(() => {
@@ -110,21 +122,29 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
     useEffect(() => {
         if (!canvasRef.current || innerDims.width === 0 || innerDims.height === 0) return;
 
-        const inst = createScatterplot({
-            canvas: canvasRef.current,
-            width: innerDims.width,
-            height: innerDims.height,
-            pointSize: 3,
-            // Indigo at low alpha — density emerges via WebGL alpha blending.
-            pointColor: [0.39, 0.58, 0.98, 0.55],
-            // Amber for lasso-selected (matches palette used in other charts).
-            pointColorActive: [0.99, 0.75, 0.18, 1.0],
-            pointColorHover: [1.0, 1.0, 1.0, 1.0],
-            opacity: 0.6,
-            // Match dashboard's slate-900 background.
-            backgroundColor: [0.058, 0.094, 0.165, 1.0],
-            lassoColor: [0.65, 0.73, 0.97, 0.8],
-        });
+        let inst: ReturnType<typeof createScatterplot>;
+        try {
+            inst = createScatterplot({
+                canvas: canvasRef.current,
+                width: innerDims.width,
+                height: innerDims.height,
+                pointSize: 3,
+                // Indigo at low alpha — density emerges via WebGL alpha blending.
+                pointColor: [0.39, 0.58, 0.98, 0.55],
+                // Amber for lasso-selected (matches palette used in other charts).
+                pointColorActive: [0.99, 0.75, 0.18, 1.0],
+                pointColorHover: [1.0, 1.0, 1.0, 1.0],
+                opacity: 0.6,
+                // Match dashboard's slate-900 background.
+                backgroundColor: [0.058, 0.094, 0.165, 1.0],
+                lassoColor: [0.65, 0.73, 0.97, 0.8],
+            });
+        } catch (err) {
+            reportError('scatter-init', err);
+            setInitError(err instanceof Error ? err.message : String(err));
+            return;
+        }
+        setInitError(null);
 
         inst.subscribe('select', ({ points }: { points: number[] }) => {
             setSelectedIndices(points);
@@ -175,6 +195,9 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
         return () => {
             canvas.removeEventListener('webglcontextlost', onContextLost as EventListener);
             canvas.removeEventListener('webglcontextrestored', onContextRestored as EventListener);
+            // Clear the draw queue FIRST: a draw interrupted by destroy() may
+            // never settle, which would leave the queue stuck busy.
+            resetDraw();
             inst.destroy();
             setSc(null);
             setSelectedIndices([]);
@@ -238,18 +261,19 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
         // Fresh data → reset the visible window to the full extent. The next
         // `view` event (after a zoom or pan) will narrow it again.
         setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
-        sc.draw({ x: xArr, y: yArr });
         // Register d3 scales so the `view` event payload's xScale/yScale
         // expose the CURRENT visible domain in real data values. Without
         // this they stay `null` and the axis sync silently no-ops.
         // domain = real range; range = the normalised [-1, 1] coords we
         // actually pushed via draw(). The library mutates the scales as
-        // the camera moves.
+        // the camera moves. set() is synchronous config, so it's safe to
+        // apply before the (possibly queued) draw.
         sc.set({
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
         });
-    }, [sc, data, scatterX, scatterY, headers]);
+        requestDraw(sc, { x: xArr, y: yArr });
+    }, [sc, data, scatterX, scatterY, headers, requestDraw]);
 
     // Push the active tool to regl-scatterplot. 'panZoom' is the library
     // default; 'lasso' makes a plain drag draw a polygon selection (no need
@@ -436,6 +460,34 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                         {tooltip.timestamp && (
                             <div className="scatter-regl-tooltip-ts">{tooltip.timestamp}</div>
                         )}
+                    </div>
+                )}
+                {initError && (
+                    <div style={{
+                        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: 10,
+                        background: 'rgba(15,23,42,0.95)', color: '#e2e8f0', textAlign: 'center',
+                        padding: 16, zIndex: 5,
+                    }}>
+                        <span style={{ fontSize: 13, maxWidth: 340, lineHeight: 1.5 }}>
+                            Scatter engine failed to start (WebGL unavailable).
+                        </span>
+                        <code style={{
+                            fontSize: 11, maxWidth: 340, maxHeight: 80, overflow: 'auto',
+                            color: '#fca5a5', background: '#0f172a', padding: '6px 10px',
+                            borderRadius: 6, wordBreak: 'break-word',
+                        }}>
+                            {initError}
+                        </code>
+                        <button
+                            onClick={() => { setInitError(null); setRebuildNonce(n => n + 1); }}
+                            style={{
+                                padding: '4px 14px', fontSize: 12, cursor: 'pointer', borderRadius: 6,
+                                border: '1px solid #475569', background: '#1e293b', color: '#e2e8f0',
+                            }}
+                        >
+                            Retry
+                        </button>
                     </div>
                 )}
                 {contextLost && (

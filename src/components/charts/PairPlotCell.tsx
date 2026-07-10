@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo, memo } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import type { CsvRecord } from '../../types';
+import { reportError } from '../../errorReporter';
+import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 
 /**
  * One scatter / time × value cell of the pair plot. Wraps a single
@@ -132,6 +134,17 @@ function PairPlotCell({
         xMin: 0, xMax: 1, yMin: 0, yMax: 1,
     });
     const [sc, setSc] = useState<any>(null);
+    /** WebGL init failure — same guard as ScatterChart: createScatterplot()
+     *  throws synchronously when a context can't be created, and an escaped
+     *  throw here would unmount the entire app (production black-screen).
+     *  The reporter dedupes, so a whole matrix of failing cells surfaces as
+     *  ONE toast instead of N. */
+    const [initError, setInitError] = useState<string | null>(null);
+    /** The data effect and the clusters effect both draw in the same commit
+     *  (every mount!), and regl-scatterplot DROPS a draw issued while one is
+     *  in flight ("Ignoring draw call…"). Coalescing keeps only the latest
+     *  requested state and flushes it once the current draw settles. */
+    const { requestDraw, resetDraw } = useCoalescedDraw();
 
     // Track wrapper size + carve out an inner plot area for the canvas.
     // Padding is CONSTANT — see AXIS_PAD docstring. Conditional rendering
@@ -161,19 +174,27 @@ function PairPlotCell({
     useEffect(() => {
         if (!canvasRef.current || innerDims.width === 0 || innerDims.height === 0) return;
 
-        const inst = createScatterplot({
-            canvas: canvasRef.current,
-            width: innerDims.width,
-            height: innerDims.height,
-            pointSize: 2,
-            pointColor,
-            pointColorActive: [0.99, 0.75, 0.18, 1.0],
-            pointColorHover: [1.0, 1.0, 1.0, 1.0],
-            opacity: 0.55,
-            // Pure black plot background
-            backgroundColor: [0, 0, 0, 1],
-            lassoColor: [0.65, 0.73, 0.97, 0.8],
-        });
+        let inst: ReturnType<typeof createScatterplot>;
+        try {
+            inst = createScatterplot({
+                canvas: canvasRef.current,
+                width: innerDims.width,
+                height: innerDims.height,
+                pointSize: 2,
+                pointColor,
+                pointColorActive: [0.99, 0.75, 0.18, 1.0],
+                pointColorHover: [1.0, 1.0, 1.0, 1.0],
+                opacity: 0.55,
+                // Pure black plot background
+                backgroundColor: [0, 0, 0, 1],
+                lassoColor: [0.65, 0.73, 0.97, 0.8],
+            });
+        } catch (err) {
+            reportError('pairplot-init', err);
+            setInitError(err instanceof Error ? err.message : String(err));
+            return;
+        }
+        setInitError(null);
 
         inst.subscribe('select', ({ points }: { points: number[] }) => {
             if (points.length === 0) return;
@@ -236,6 +257,9 @@ function PairPlotCell({
         setSc(inst);
 
         return () => {
+            // Clear the draw queue FIRST: a draw interrupted by destroy() may
+            // never settle, which would leave the queue stuck busy.
+            resetDraw();
             inst.destroy();
             setSc(null);
         };
@@ -328,13 +352,15 @@ function PairPlotCell({
         valueARef.current = valueA;
         setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
 
-        sc.draw({ x: xArr, y: yArr, valueA });
+        // set() before draw: it's synchronous instance config, so the queued
+        // draw (which may run a tick later) picks it up either way.
         sc.set({
             pointColor: [pointColor, ...clusters.map(c => c.color)],
             colorBy: 'valueA',
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
         });
+        requestDraw(sc, { x: xArr, y: yArr, valueA });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sc, data, sensorX, sensorY, isTimeAxis, headers]);
 
@@ -355,12 +381,12 @@ function PairPlotCell({
             }
         }
         valueARef.current = valueA;
-        sc.draw({ x: draw.x, y: draw.y, valueA });
         sc.set({
             pointColor: [pointColor, ...clusters.map(c => c.color)],
             colorBy: 'valueA',
         });
-    }, [sc, clusters, pointColor]);
+        requestDraw(sc, { x: draw.x, y: draw.y, valueA });
+    }, [sc, clusters, pointColor, requestDraw]);
 
     // Push tool changes (pan ↔ lasso) into the instance.
     useEffect(() => {
@@ -405,6 +431,16 @@ function PairPlotCell({
                     ref={canvasRef}
                     style={{ display: 'block', width: innerDims.width, height: innerDims.height }}
                 />
+                {initError && (
+                    <div style={{
+                        position: 'absolute', inset: 0, display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(15,23,42,0.92)', color: '#fca5a5',
+                        fontSize: 9, textAlign: 'center', padding: 4, zIndex: 5,
+                    }}>
+                        WebGL unavailable
+                    </div>
+                )}
             </div>
 
             <svg

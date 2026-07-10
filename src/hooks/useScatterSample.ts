@@ -5,7 +5,7 @@ import type { ScatterSample } from '../types/commands';
 
 /**
  * Filter payload for `get_scatter_sample` — mirrors the dashboard's
- * `get_filtered_data` filter shape so the same value-filter format is reused.
+ * `get_chart_data` filter shape so the same value-filter format is reused.
  */
 export interface ScatterSampleFilter {
     sensors: string[];
