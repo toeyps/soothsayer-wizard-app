@@ -1,107 +1,90 @@
-# Project Context: Workspace Manager
+# CLAUDE.md
 
-## Overview
-This project is a desktop application built with **Tauri v2** and **React 19**. 
-The core functionality involves importing CSV files, exploring and processing data
-through a multi-step workflow, and managing "Workspaces."
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Tech Stack
-- **Frontend (UI)**: React 19, TypeScript, Vite, Tailwind CSS (v4), Echarts (for
-  data visualization), `lucide-react`.
-- **Backend (Desktop/OS)**: Rust, Tauri v2, `rayon` (for parallel processing),
-  `csv` (for fast parsing), `serde`.
-- **Tauri Plugins**: `@tauri-apps/plugin-store`, `@tauri-apps/plugin-fs`,
-  `@tauri-apps/plugin-dialog`, `@tauri-apps/plugin-shell`.
+## Project Overview
 
-## Core Mechanisms & Requirements
-1. **Workspace System**: 
-   - Workspaces hold the current state of a user's data exploration.
-   - Heavy Workspace data must be saved to local JSON files via the file system
-     so users can reopen it later.
-2. **Auto-Resume (Crash/Exit Recovery)**: 
-   - If the app closes, it must reopen exactly where the user left off
-     (Last Route + Current State).
-3. **Workspace Selection UI**: 
-   - The initial landing page should list local workspaces (similar to the
-     Microsoft Word start page, e.g., in the `ImportCsv` component).
+**Wizard** (repo: Soothsayer-wizard-app) is a Tauri v2 desktop app for importing sensor CSV data, exploring it (dashboard with table/line/scatter/pair-plot), building failure groups, and training predictive models. Three tiers:
 
-## Persistence Strategy
-- **Lightweight State (Settings, Last Session)**: Use `tauri-plugin-store`.
-- **Heavy Data (CSV rows, large JSONs)**: Write directly to the local file system.
-- **Rule of Thumb**: Ensure React State is synchronized with a Local Storage or
-  Tauri Store frequently to prevent data loss.
+- **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS v4. ECharts for line charts; `regl-scatterplot` (WebGL) for scatter and pair-plot cells; `split.js` for resizable panes; `lucide-react` icons.
+- **Rust core** (`src-tauri/`): Tauri v2 commands — CSV parse/merge (`csv` + `rayon`), in-RAM columnar store, filtering/stats, clustering (`nalgebra` GMM ellipse fits), formula engine (`fasteval`).
+- **Python sidecar** (`src-tauri/bin/backend-<target-triple>`, Nuitka-compiled from `src-tauri/python/backend.py`): LinearGAM relationship-model fit/predict. Spawned via the shell plugin's sidecar API; JSON over stdin/stdout. The sidecar binary must exist before `tauri dev`/`tauri build` — see README for the Nuitka compile command (output filename must carry the target triple).
 
-## UI/UX & Coding Patterns
-- **Step-based UI Pattern**: Implement workflows tracking progress via state
-  machines or explicit steps.
-- **Component Architecture**: Keep components modular (e.g., `DataTable`,
-  `Dashboard`, `FailureGroupCreation`).
-- **Styling**: Always use Tailwind CSS utility classes.
-- **Rust Backend**: Offload heavy computations (like parsing massive CSVs or
-  aggregating data) to Rust commands, utilizing `rayon` for multi-threading
-  where applicable.
+## Commands
 
-## Instructions for AI Assistants
-- Follow the above persistence rules strictly: state must be recoverable!
-- Use Tauri v2 API syntax (which differs slightly from v1).
-- Prefer functional React components with hooks.
-- Write clean and strictly typed TypeScript code.
-
----
-
-## Agent Roles & File Ownership
-> Each agent must ONLY read and modify files within its own zone.
-> Architectural decisions must be approved by the PM Agent.
-
-| Agent              | Zone                        | Responsibility                              |
-|--------------------|-----------------------------|---------------------------------------------|
-| `pm-agent`         | `docs/`, `task.md`          | Take requirements, plan (Task Breakdown), coordinate |
-| `fe-ui-agent`      | `src/components/`, `src/App.tsx` | React UI components, Tailwind styling, Charts |
-| `fe-logic-agent`   | `src/hooks/`, `src/types/`  | React Hooks, API/Tauri bindings, State Management |
-| `rust-agent`       | `src-tauri/src/`            | Tauri commands, CSV parsing, file I/O       |
-| `qa-agent`         | `src/__tests__/`, `src-tauri/tests/` | Write and run tests upon completion         |
-
-## PM & Workflow Process
-1. **Planning Phase**: `pm-agent` receives the user requirement and creates/updates `task.md` (the checklist of work statuses).
-2. **Execution Phase**: `pm-agent` assigns goals to Worker Agents (`fe-ui`, `fe-logic`, `rust`) to implement phase by phase based on `task.md`.
-3. **Contract First**: If a new feature requires backend integration, `pm-agent` MUST instruct `fe-logic-agent` and `rust-agent` to update `src/types/commands.ts` (TauriCommands) **before** writing the UI.
-4. **Review Phase**: Once Workers complete their task, they notify `pm-agent` to review coverage of the initial plan before handing it off to the user.
-
-## Interface Contract
-> Workspace management (Save/Load/List/Delete) is handled entirely on the frontend using Tauri plugins (`plugin-fs` & `plugin-store`) via `src/workspaceManager.ts`.
->
-> For heavy data processing, the frontend invokes Rust backend commands. The
-> authoritative, fully-typed contract lives in `src/types/commands.ts`
-> (`TauriCommands`) — update it BEFORE touching either side. Key commands:
-```typescript
-// Invoked via `invoke("command_name", args)`
-export type TauriCommands = {
-  load_csv:              { args: { paths: string[] };                                  returns: CsvLoadReport }
-  get_loaded_paths:      { args: {};                                                   returns: string[] }
-  get_all_sensors:       { args: {};                                                   returns: string[] }
-  load_metadata_command: { args: { path: string };                                     returns: SensorMetadata[] }
-  calculate_new_sensor:  { args: { sensors: string[], config: SensorOperationConfig }; returns: string }
-
-  // Data views — BOUNDED payloads only. The pipeline (filter → op
-  // transform → hourly aggregation → min/max decimation) runs in Rust;
-  // the WebView must NEVER hold the full row set. The legacy full-stream
-  // `get_data` command was removed — do not reintroduce row streaming.
-  get_chart_data:        { args: { filter, sampling, operation, max_points };          returns: ChartViewData /* columnar, ≤ max_points */ }
-  get_table_page:        { args: { filter, sampling, operation, page, page_size };     returns: TablePageData }
-  export_chart_csv:      { args: { filter, sampling, operation, path };                returns: number /* rows written straight to disk */ }
-  get_scatter_sample:    { args: { filter, max_points };                               returns: ScatterSample /* reservoir sample */ }
-}
+```bash
+npm run tauri dev                 # full app (compiles Rust, needs sidecar binary)
+npm run dev                       # frontend only (Vite, port 1420)
+npm run build                     # tsc type-check + vite build — run before handing off
+npx vitest run                    # frontend tests (jsdom, src/__tests__/)
+npx vitest run src/__tests__/useScatterSample.test.ts   # single test file
+cd src-tauri && cargo test        # Rust unit tests (in-module) + integration
+cd src-tauri && cargo test --test predictive_model_tests # integration only
+npm run tauri:build               # release bundle; per-target + installer scripts in scripts/
 ```
 
-## Context Guard (Cost Control)
-> Load only files needed for your current task. Do not scan the full repo.
+## Architecture
 
-- `frontend-agent` → load only the target component + `src/types/`
-- `rust-agent`     → load only the relevant `.rs` module + `Cargo.toml`
-- `qa-agent`       → load only the file under test + its type definitions
+### Data path (the core of the app)
 
-## Task Handoff
+1. `load_csv` (Rust) parses one or more CSVs in parallel with rayon (**2 GB/file hard cap** — `MAX_CSV_BYTES` in `csv_processor.rs`), merges multi-file datasets by timestamp (later-non-null-wins on duplicate timestamps; single-file loads take a fast path that skips the merge), and stores the result in Tauri managed state.
+2. The in-RAM store is **`ColumnarData`** (`csv_processor.rs`) — column-major on purpose: one contiguous `Vec<f64>` per sensor, **NaN = missing**; `timestamps` keeps the verbatim CSV text; `ts_parsed` holds epoch-microseconds parsed **once at load** (`TS_MISSING` when absent). `headers[0]` is the canonical timestamp column. Filters must compare against `ts_parsed` — never re-parse timestamp strings per query. New aggregations should walk columns, not rows.
+3. **The frontend never receives the full dataset** (since v0.2.1). Display queries run Rust-side in `chart_query.rs` — filter → operation transform → optional hourly aggregation → min/max downsample — so the WebView only ever gets O(max_points) rows:
+   - `get_chart_data` (hard ceiling 100k points) via `useChartData` — line chart; `get_table_page` (page size ≤ 1000) via `useTablePage` — data table.
+   - `get_scatter_sample` (reservoir sampling, `max_points` cap) via `useScatterSample` — scatter + pair plot.
+   - `export_chart_csv` writes CSV exports straight to disk from Rust instead of round-tripping rows through JS.
+4. Chart-level GPU guards: `ScatterChart` and `PairPlotCell` handle WebGL context loss (retry overlay) and apply defensive stride caps (500k / 100k points) as a last line of defense.
+
+### IPC contract — conventions that break silently if violated
+
+- `src/types/commands.ts` (`TauriCommands`) is the **single source of truth** for command signatures. Every command registered in `lib.rs`'s `invoke_handler` must be typed there **before** UI work begins (contract-first).
+- **Arg-key casing (the #1 silent-failure trap)**: this codebase sends **snake_case keys from TS** matching the Rust parameter names (`max_points`, `first_sensor`, `save_path`). But Tauri v2's command macro expects **camelCase keys by default**, so every command with a multi-word parameter MUST carry `#[tauri::command(rename_all = "snake_case")]`. Missing it → invoke rejects with `missing required key maxPoints`-style errors, which hooks may swallow, so the feature just silently does nothing.
+- Never call `invoke()` without an explicit TypeScript return type.
+
+### Windows & capabilities
+
+Multi-window app: `main` (upload → dashboard) plus sub-windows `failure-group`, `predictive-model`, `save-as` (full capability, `src-tauri/capabilities/default.json`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths (CSV/PDF/PNG exports) must go through the Rust `write_user_file` command, via `writeUserTextFile` / `writeUserBinaryFile` in `workspaceManager.ts`.
+
+### Workspace persistence & auto-resume
+
+- `src/workspaceManager.ts` owns save/load/list/delete/duplicate/rename — frontend-only, via plugin-fs + plugin-store.
+- Lightweight state (recent-workspace list, settings) → plugin-store `settings.json`. Heavy `WorkspaceState` → JSON files under `$APPDATA`.
+- **Auto-resume is a hard requirement**: if the app closes, it reopens exactly where the user left off (`lastRoute` + state). Keep React state synced to storage frequently; never reset full state on reload.
+
+### Predictive models (`PredictiveModelBuild.tsx`)
+
+- **Individual**: Rust — per-sensor stats/boundaries → `INDV_INFO_*.json`.
+- **Clustering**: Rust — GMM ellipse fits (nalgebra), 1..N clusters split by criteria-sensor ranges → `CLUS_INFO_*.json`.
+- **Relationship**: Python sidecar (LinearGAM) — Rust pre-cleans/projects rows and ships small arrays over stdin; sidecar returns JSON; the sidecar writes the `.pkl`, Rust writes `REL_INFO_*.json` alongside. Output layout matches the legacy `wizard.py` (`{save_path}/output/{target}/`).
+- **Naming rule: the UI must say "Relation model" — the LinearGAM algorithm name is confidential and must never appear in user-facing UI** (code comments are fine).
+
+### Report export (PM page)
+
+`usePMReport` exports PNG (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) and PDF (`@react-pdf/renderer` with `PMReportTemplate.tsx`). Note: react-pdf's yoga-layout engine compiles **WebAssembly at runtime** — the production `script-src` in `tauri.conf.json` includes `'unsafe-eval'` for this reason (the narrower `'wasm-unsafe-eval'` also satisfies it if the CSP is ever tightened). Dev mode uses the looser `devCsp`, so CSP regressions in PDF export only surface in **installed builds** — always test export from a real installer build after touching CSP or report code.
+
+## Security constraints
+
+- 2 GB per-file CSV cap (`MAX_CSV_BYTES`).
+- Any new file-I/O command must use the existing helpers in `lib.rs`: `validate_read_path` (frontend-supplied read paths) and `sanitize_filename_component` (model names → filenames).
+- Dataset CSV exports escape Excel formula injection; the formula engine enforces expression length + nesting-depth limits.
+- Don't widen the CSP or fs scope without explicit approval.
+
+## Agent Roles & File Ownership
+
+> Each agent must ONLY read and modify files within its own zone. Architectural decisions must be approved by the PM Agent.
+
+| Agent            | Zone                                             | Responsibility                                  |
+|------------------|--------------------------------------------------|-------------------------------------------------|
+| `pm-agent`       | `docs/` (incl. `docs/task.md`)                   | Requirements, task breakdown, coordination      |
+| `fe-ui-agent`    | `src/components/`, `src/App.tsx`                 | React UI, Tailwind styling, charts              |
+| `fe-logic-agent` | `src/hooks/`, `src/types/`, `src/workspaceManager.ts` | Hooks, Tauri bindings, state management    |
+| `rust-agent`     | `src-tauri/src/`, `src-tauri/Cargo.toml`         | Tauri commands, CSV parsing, file I/O           |
+| `qa-agent`       | `src/__tests__/`, `src-tauri/tests/`             | Write and run tests upon completion             |
+
+**Workflow**: pm-agent plans in `docs/task.md` → workers implement phase by phase → **contract-first**: backend-facing features update `src/types/commands.ts` before UI → workers report back for review. Load only files needed for the current task; do not scan the full repo.
+
 When your task is complete, output this block before stopping:
+
 ```
 ## HANDOFF
 - Completed: [what was built]
@@ -112,8 +95,19 @@ When your task is complete, output this block before stopping:
 ```
 
 ## Anti-patterns
-- ❌ `invoke()` without a TypeScript return type
-- ❌ Storing large data in `plugin-store` (use filesystem)
+
+- ❌ `invoke()` without a TypeScript return type, or with camelCase arg keys
+- ❌ A new command with multi-word args but no `#[tauri::command(rename_all = "snake_case")]`
+- ❌ Storing large data in `plugin-store` (use the filesystem)
 - ❌ Resetting full state on reload (breaks Auto-Resume)
+- ❌ Re-parsing timestamp strings per query, or row-major loops over `ColumnarData`
+- ❌ Shipping unbounded row counts to the frontend (use the bounded `chart_query` commands / `get_scatter_sample`)
+- ❌ Exposing "LinearGAM" in user-facing UI (say "Relation model")
 - ❌ Using Tauri v1 API syntax
-- ❌ Agent modifying files outside its zone
+- ❌ An agent modifying files outside its zone
+
+## Repo state snapshot (2026-07-14 — verify with `git log` before trusting)
+
+- `main` @ v0.2.1 (`6ed6559`) is canonical. It contains the full RAM-optimization work: **step 1** (columnar store, ~52% RSS reduction, merged via PR #1) and **step 2** (bounded chart pipeline `chart_query.rs` + error reporting `log_frontend_error`/`get_error_log_path` + chart perf + sidecar fixes, `3620eb6`).
+- **Step 3** (disk-backed store, e.g. DuckDB / mmap Arrow) is planned only if RAM is still insufficient after step 2.
+- Branches `feat/columnar-ram-opt` and `claude/gifted-kepler-*` are superseded by main — don't base new work on them.
