@@ -1,13 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Sun, Moon, Save } from "lucide-react";
+import { Minus, Square, X, Sun, Moon } from "lucide-react";
 import { useIsMacOS } from "../hooks/useIsMacOS";
 
 interface TitleBarProps {
   theme: "light" | "dark";
   toggleTheme: () => void;
-  onSave?: () => void;
-  onSaveAs?: () => void;
   workspaceName?: string;
   onRename?: (newName: string) => void;
   // Increments when the app menu's "Rename Workspace" is invoked; entering edit mode here.
@@ -17,8 +15,6 @@ interface TitleBarProps {
 export default function TitleBar({
   theme,
   toggleTheme,
-  onSave,
-  onSaveAs,
   workspaceName,
   onRename,
   renameTrigger,
@@ -27,8 +23,6 @@ export default function TitleBar({
   const isMacOS = useIsMacOS();
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(workspaceName || "");
-  const [showSaveMenu, setShowSaveMenu] = useState(false);
-  const saveMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setTempName(workspaceName || "");
@@ -37,20 +31,6 @@ export default function TitleBar({
   useEffect(() => {
     if (renameTrigger && workspaceName !== undefined) setIsEditing(true);
   }, [renameTrigger, workspaceName]);
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        saveMenuRef.current &&
-        !saveMenuRef.current.contains(event.target as Node)
-      ) {
-        setShowSaveMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   const handleBlur = () => {
     setIsEditing(false);
@@ -131,87 +111,6 @@ export default function TitleBar({
         )}
       </div>
       <div className="titlebar-actions">
-        {onSave && (
-          <div style={{ position: "relative" }} ref={saveMenuRef}>
-            <button
-              className="titlebar-button"
-              onClick={() => setShowSaveMenu(!showSaveMenu)}
-              title="Workspace Options"
-              style={{ color: "var(--accent-color)" }}
-            >
-              <Save size={16} />
-            </button>
-            {showSaveMenu && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "100%",
-                  right: 0,
-                  background: "var(--card-bg)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "8px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-                  padding: "4px",
-                  minWidth: "120px",
-                  zIndex: 1000,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                <button
-                  className="menu-item"
-                  onClick={() => {
-                    onSave();
-                    setShowSaveMenu(false);
-                  }}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--text-primary)",
-                    padding: "8px 12px",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontSize: "0.85rem",
-                    borderRadius: "4px",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = "var(--hover-bg)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "transparent")
-                  }
-                >
-                  1. Save
-                </button>
-                <button
-                  className="menu-item"
-                  onClick={() => {
-                    if (onSaveAs) onSaveAs();
-                    setShowSaveMenu(false);
-                  }}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--text-primary)",
-                    padding: "8px 12px",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontSize: "0.85rem",
-                    borderRadius: "4px",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = "var(--hover-bg)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "transparent")
-                  }
-                >
-                  2. Save As...
-                </button>
-              </div>
-            )}
-          </div>
-        )}
         <button
           className="titlebar-button"
           onClick={toggleTheme}

@@ -2,10 +2,11 @@ import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, use
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import Split from 'split.js';
-import { saveWorkspaceData } from '../../workspaceManager';
+import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
+    FailureGroup, FailureSensorRow, AlarmLevel,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -13,26 +14,35 @@ import type { DashboardDataFilter } from '../../types/commands';
 // constant slot→panel mapping below.
 
 import DataTable from './DataTable';
-import { Chart } from '../charts';
+import { Chart, defaultSensorColor, LINE_CHART_COLORS, type ChartMarkLine } from '../charts';
+import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
 import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
+import FailureGroupsPanel from './FailureGroupsPanel';
+import ColorPlatePicker from './ColorPlatePicker';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
 import { useChartData } from '../../hooks/useChartData';
 import { useTablePage } from '../../hooks/useTablePage';
+import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { save } from '@tauri-apps/plugin-dialog';
-import { Plus, EyeOff, BarChart3, Radio, Table, Download, Filter, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Plus, EyeOff, BarChart3, Radio, Download, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
 
 // Panel configuration
 const PANELS = {
     chart: { id: 'chart', label: 'Chart', icon: BarChart3 },
-    filter: { id: 'filter', label: 'Filter', icon: Filter },
     sensors: { id: 'sensors', label: 'Sensors', icon: Radio },
-    data: { id: 'data', label: 'Data', icon: Table }
+    data: { id: 'data', label: 'Control Chart', icon: LineChartIcon }
 } as const;
+
+// Mirrors `getGroupColor`/`GROUP_PALETTE` in FailureGroupCreation.tsx exactly
+// (duplicated, not imported, since the two windows don't share a components
+// module) so a group assigned from either window renders the same color.
+const FG_GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
+const getFgGroupColor = (no: number): string =>
+    no === 0 ? 'slate' : FG_GROUP_PALETTE[(no - 1) % FG_GROUP_PALETTE.length];
 
 type PanelId = keyof typeof PANELS;
 
@@ -41,25 +51,23 @@ type PanelId = keyof typeof PANELS;
 const DEFAULT_LAYOUT_SIZES: DashboardLayoutSizes = {
     columns: [66.67, 33.33],
     leftRows: [60, 40],
-    rightRows: [50, 50],
 };
 
 // Fixed panel-to-slot layout. Was previously a stateful `slotMap` that the
 // user could rearrange via drag-and-drop, but the swap UI was removed so
 // this is now just a constant. Mirrors the original Dashboard layout:
-// chart at top-left, the data table just under it, sensors at top-right,
-// filter controls at bottom-right.
+// chart at top-left, the data table just under it, sensors filling the
+// right column. Filter lives as a tab inside the data panel, not its own slot.
 const SLOT_LAYOUT: DashboardSlotMap = {
     'left-top': 'chart',
     'left-bottom': 'data',
     'right-top': 'sensors',
-    'right-bottom': 'filter',
 };
 
 // Static list of all slots in render order — used to iterate when computing
 // drag-target visibility and for building the JSX of the two columns.
 const LEFT_SLOTS: DashboardSlot[] = ['left-top', 'left-bottom'];
-const RIGHT_SLOTS: DashboardSlot[] = ['right-top', 'right-bottom'];
+const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 
 // Point budget for the line chart. The Rust `get_chart_data` command
 // min/max-decimates the filtered rows down to at most this many x-positions,
@@ -68,6 +76,10 @@ const RIGHT_SLOTS: DashboardSlot[] = ['right-top', 'right-bottom'];
 // on a typical panel width — visually indistinguishable from raw.
 const LINE_MAX_POINTS = 4000;
 const TABLE_PAGE_SIZE = 50;
+
+// Alarm-level constants/helpers live in ../../utils/alarmLevels — shared
+// with SensorSelection.tsx, which is where the setpoint checkboxes actually
+// render (see the 2026-08-05 handover entry for why they moved there).
 // Stable empty array for the line chart's unused row-based `data` prop
 // (the chart consumes the bounded `columnar` feed instead).
 const EMPTY_RECORDS: CsvRecord[] = [];
@@ -103,8 +115,6 @@ interface DashboardProps {
 }
 
 export interface DashboardRef {
-    saveWorkspace: () => Promise<void>;
-    saveWorkspaceAs: () => Promise<void>;
     renameWorkspace: (newName: string) => void;
 }
 
@@ -122,78 +132,396 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(initialState?.operationConfig || null);
 
-    // Ref to access buildWorkspaceState from imperative handle and early effects
-    const buildStateRef = useRef<(overrides?: Partial<WorkspaceState>) => WorkspaceState>(() => initialState!);
-
+    // "Save As" (duplicate workspace under a new name) was removed entirely
+    // per user request — button, File menu items, and this window's own
+    // request-save-as-data/save-as-submit handshake are all gone. Only
+    // plain in-place rename remains (below), which never spawned a window
+    // or touched workspace IDs.
     useImperativeHandle(ref, () => ({
-        saveWorkspace: async () => {
-            if (initialState) {
-                await saveWorkspaceData(buildStateRef.current());
-                alert(`Workspace "${localName}" Saved Successfully!`);
-            }
-        },
-        saveWorkspaceAs: async () => {
-            // Open new window instead of prompt
-            const webview = new WebviewWindow('save-as', {
-                url: '/?window=save-as',
-                title: 'Save Workspace As',
-                width: 450,
-                height: 350,
-                center: true,
-                alwaysOnTop: true,
-                decorations: false,
-                resizable: false,
-                skipTaskbar: true
-            });
-
-            await webview.once('tauri://error', (e) => {
-                console.error('Failed to create Save As window:', e);
-            });
-        },
         renameWorkspace: (newName: string) => {
             setLocalName(newName);
         }
     }));
 
-    // Listen for Save As window requests and submissions
-    useEffect(() => {
-        let unlistenReq: (() => void) | undefined;
-        let unlistenSubmit: (() => void) | undefined;
-
-        const setupSaveAsListeners = async () => {
-            unlistenReq = await listen('request-save-as-data', async () => {
-                await emit('request-save-as-data-response', { currentName: localName });
-            });
-
-            unlistenSubmit = await listen<{ newName: string }>('save-as-submit', async (event) => {
-                if (initialState) {
-                    const newId = `ws_${Date.now()}`;
-                    const newState = buildStateRef.current({ id: newId, name: event.payload.newName });
-                    await saveWorkspaceData(newState);
-                    setLocalName(event.payload.newName);
-                    await emit('workspace-renamed-internal', { newName: event.payload.newName });
-                    alert(`New workspace "${event.payload.newName}" created!`);
-                }
-            });
-        };
-
-        setupSaveAsListeners();
-        return () => {
-            if (unlistenReq) unlistenReq();
-            if (unlistenSubmit) unlistenSubmit();
-        };
-    }, [localName, initialState]);
-
     const deferredSensors = useDeferredValue(selectedSensors);
 
-    // Sync visibleSensors with selectedSensors when selectedSensors changes
+    // Keep visibleSensors in lockstep with selectedSensors WITHOUT clobbering
+    // hide/show state: newly-selected sensors default to visible, sensors
+    // that get deselected drop out, but a sensor the user hid via the
+    // "Selected Sensor" tab (see toggleSensorVisibility) stays hidden across
+    // unrelated selection changes instead of being forced visible again.
     useEffect(() => {
-        setVisibleSensors(selectedSensors);
+        setVisibleSensors(prev => {
+            const stillSelected = prev.filter(s => selectedSensors.includes(s));
+            const newlySelected = selectedSensors.filter(s => !prev.includes(s));
+            return [...stillSelected, ...newlySelected];
+        });
     }, [selectedSensors]);
 
-    // Collapsed panels state
+    // Toggle a plotted sensor's visibility on the chart without deselecting
+    // it (i.e. without removing it from selectedSensors / the sensor list's
+    // checkboxes).
+    const toggleSensorVisibility = useCallback((sensor: string) => {
+        setVisibleSensors(prev =>
+            prev.includes(sensor) ? prev.filter(s => s !== sensor) : [...prev, sensor]
+        );
+    }, []);
+
+    // Fully removes a sensor from the plot — same effect as unchecking it in
+    // the Sensor panel. visibleSensors drops it too via the sync effect above.
+    const removeSensor = useCallback((sensor: string) => {
+        setSelectedSensors(prev => prev.filter(s => s !== sensor));
+    }, []);
+
+    // Bulk equivalent of removeSensor — drops every plotted sensor at once
+    // (the "Clear all" action in the Selected Sensor tab header).
+    const clearAllSensors = useCallback(() => {
+        setSelectedSensors([]);
+    }, []);
+
+    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    const getSensorMeta = useCallback(
+        (sensor: string) => sensorMetaMap.get(normalizeSensorTag(sensor)) ?? null,
+        [sensorMetaMap]
+    );
+
+    // ── Failure group assignment (Sensor tab quick-assign + Failure Groups
+    //    tab manage view) ────────────────────────────────────────────────
+    // Owns WorkspaceState.failureGroupState in full — the standalone
+    // FailureGroupCreation.tsx window that used to own this slice has been
+    // deleted; everything failure-group-related lives here now, split
+    // across two views in the same Sensor panel: SensorSelection.tsx's
+    // per-sensor quick-assign (FolderPlus icon) and FailureGroupsPanel.tsx's
+    // group-centric manage tab. Persisted via `updateWorkspaceData`
+    // (read-modify-write) rather than Dashboard's own full-overwrite
+    // autosave so a burst of quick edits can't race each other.
+    //
+    // A sensor can belong to multiple groups at once, so membership is
+    // "does a row exist for (tag, groupNo)" rather than one row per tag.
+    // toggleSensorGroup below adds/removes the specific row for a
+    // (tag, groupNo) pair without touching the sensor's rows in any other
+    // group; FailureGroupsPanel's addBlankRowToGroup/updateFgRow (further
+    // down) cover the group-first editing path.
+    const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
+        initialState?.failureGroupState?.groups ?? [{ no: 0, name: 'Not in Group', isCollapsed: false }]
+    );
+    const [fgRows, setFgRows] = useState<FailureSensorRow[]>(
+        initialState?.failureGroupState?.rows ?? []
+    );
+
+    const persistFailureGroupState = useCallback((groups: FailureGroup[], rows: FailureSensorRow[]) => {
+        if (!initialState) return;
+        updateWorkspaceData(initialState.id, prev => ({
+            ...prev,
+            failureGroupState: { groups, rows },
+        })).catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
+    }, [initialState]);
+
+    const toggleSensorGroup = useCallback((tag: string, groupNo: number) => {
+        const isMember = fgRows.some(r => r.mappedSensorTag.toLowerCase() === tag.toLowerCase() && r.groupNo === groupNo);
+        const nextRows = isMember
+            ? fgRows.filter(r => !(r.mappedSensorTag.toLowerCase() === tag.toLowerCase() && r.groupNo === groupNo))
+            : [...fgRows, {
+                id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                groupNo,
+                conceptSensor: '',
+                mappedSensorTag: tag,
+                mappedSensorName: getSensorMeta(tag)?.description ?? tag,
+                modelType: '',
+                modelNotes: '',
+                additionalNotes: '',
+                status: false,
+            }];
+        setFgRows(nextRows);
+        persistFailureGroupState(fgGroups, nextRows);
+    }, [fgRows, fgGroups, getSensorMeta, persistFailureGroupState]);
+
+    const createGroupForSensor = useCallback((tag: string, name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
+        const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed, isCollapsed: false }];
+        const newRows = [...fgRows, {
+            id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            groupNo: maxNo + 1,
+            conceptSensor: '',
+            mappedSensorTag: tag,
+            mappedSensorName: getSensorMeta(tag)?.description ?? tag,
+            modelType: '',
+            modelNotes: '',
+            additionalNotes: '',
+            status: false,
+        }];
+        setFgGroups(newGroups);
+        setFgRows(newRows);
+        persistFailureGroupState(newGroups, newRows);
+    }, [fgGroups, fgRows, getSensorMeta, persistFailureGroupState]);
+
+    // Renaming/deleting a group is global (not tied to one sensor's row), so
+    // these operate on fgGroups/fgRows directly rather than through
+    // toggleSensorGroup. Deleting removes every row across every sensor that
+    // belonged to that group — mirrors FailureGroupCreation.tsx's own
+    // `removeGroup`, which also has no confirmation step.
+    const renameGroup = useCallback((groupNo: number, name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        const newGroups = fgGroups.map(g => g.no === groupNo ? { ...g, name: trimmed } : g);
+        setFgGroups(newGroups);
+        persistFailureGroupState(newGroups, fgRows);
+    }, [fgGroups, fgRows, persistFailureGroupState]);
+
+    const deleteGroup = useCallback((groupNo: number) => {
+        if (groupNo === 0) return;
+        const newGroups = fgGroups.filter(g => g.no !== groupNo);
+        const newRows = fgRows.filter(r => r.groupNo !== groupNo);
+        setFgGroups(newGroups);
+        setFgRows(newRows);
+        persistFailureGroupState(newGroups, newRows);
+    }, [fgGroups, fgRows, persistFailureGroupState]);
+
+    // ── Failure Groups tab (group-centric manage view) ──────────────────
+    // Everything below supports FailureGroupsPanel.tsx, the Dashboard-native
+    // replacement for the standalone FailureGroupCreation.tsx window (deleted
+    // — see PROJECT_HANDOVER.md). Reuses fgGroups/fgRows/
+    // persistFailureGroupState above; toggleSensorGroup/createGroupForSensor
+    // (also above) remain the entry points used by SensorSelection.tsx's
+    // per-sensor quick-assign, unchanged.
+    const [activeSensorTab, setActiveSensorTab] = useState<'sensor' | 'failure-groups'>(
+        initialState?.lastRoute === 'failure-group' ? 'failure-groups' : 'sensor'
+    );
+
+    const toggleGroupCollapse = useCallback((groupNo: number) => {
+        setFgGroups(prev => prev.map(g => g.no === groupNo ? { ...g, isCollapsed: !g.isCollapsed } : g));
+        // Collapse state is cosmetic (not worth a disk write on its own), but
+        // persisting keeps it consistent with everything else in this slice —
+        // cheap given updateWorkspaceData's read-modify-write already runs on
+        // every other mutation here.
+        persistFailureGroupState(
+            fgGroups.map(g => g.no === groupNo ? { ...g, isCollapsed: !g.isCollapsed } : g),
+            fgRows,
+        );
+    }, [fgGroups, fgRows, persistFailureGroupState]);
+
+    const createEmptyGroup = useCallback((name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
+        const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed, isCollapsed: false }];
+        setFgGroups(newGroups);
+        persistFailureGroupState(newGroups, fgRows);
+    }, [fgGroups, fgRows, persistFailureGroupState]);
+
+    // Creates a row with no sensor tag yet — the panel immediately expands
+    // it into a tag picker. Id is computed and returned synchronously (not
+    // read back from state) so the caller can expand it in the same tick.
+    const addBlankRowToGroup = useCallback((groupNo: number): string => {
+        const id = `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const newRows = [...fgRows, {
+            id, groupNo, conceptSensor: '', mappedSensorTag: '', mappedSensorName: '',
+            modelType: '', modelNotes: '', additionalNotes: '', status: false,
+        }];
+        setFgRows(newRows);
+        persistFailureGroupState(fgGroups, newRows);
+        return id;
+    }, [fgGroups, fgRows, persistFailureGroupState]);
+
+    const updateFgRow = useCallback((
+        rowId: string,
+        field: 'mappedSensorTag' | 'conceptSensor' | 'modelType' | 'modelNotes' | 'status',
+        value: string | boolean,
+    ) => {
+        const newRows = fgRows.map(r => {
+            if (r.id !== rowId) return r;
+            const updated = { ...r, [field]: value };
+            if (field === 'mappedSensorTag') updated.mappedSensorName = getSensorMeta(value as string)?.description ?? (value as string);
+            return updated;
+        });
+        setFgRows(newRows);
+        persistFailureGroupState(fgGroups, newRows);
+    }, [fgGroups, fgRows, getSensorMeta, persistFailureGroupState]);
+
+    const removeFgRowById = useCallback((rowId: string) => {
+        const newRows = fgRows.filter(r => r.id !== rowId);
+        setFgRows(newRows);
+        persistFailureGroupState(fgGroups, newRows);
+    }, [fgGroups, fgRows, persistFailureGroupState]);
+
+    // Per-sensor line-color override and pinned Y-axis bounds, set from the
+    // "Selected Sensor" tab. Display-only tweaks — session state, not part
+    // of the persisted WorkspaceState.
+    const [sensorColors, setSensorColors] = useState<Record<string, string>>({});
+    // min/max are independently optional — pinning just one side (e.g. a
+    // floor with no ceiling) is valid; the unset side keeps auto-fitting.
+    const [sensorAxisRange, setSensorAxisRange] = useState<Record<string, { min?: number; max?: number }>>({});
+
+    // Scatter chart's X/Y sensor pair — owned here (not local to
+    // ScatterChart) because Chart.tsx unmounts ScatterChart entirely
+    // whenever chartType leaves 'scatter'; without lifting this up, the
+    // pair reset to the first two sensors every time the user switched
+    // chart type and back.
+    const [scatterAxes, setScatterAxes] = useState<{ x: string; y: string } | null>(initialState?.scatterAxes ?? null);
+    const handleScatterAxesChange = useCallback((x: string, y: string) => {
+        setScatterAxes(prev => (prev?.x === x && prev?.y === y) ? prev : { x, y });
+    }, []);
+
+    const setSensorColor = useCallback((sensor: string, color: string) => {
+        setSensorColors(prev => ({ ...prev, [sensor]: color }));
+    }, []);
+
+    // Fills in a default for every selected sensor that doesn't have an
+    // explicit override, keyed by position in `selectedSensors` (stable —
+    // only appended/filtered, never reordered by hide/show) rather than
+    // hashing the tag. Hashing let unrelated sensors collide onto the same
+    // palette slot, or land on adjacent blue/indigo/violet entries that
+    // read as "basically the same color" on a thin line trace — the report
+    // that prompted this. Index-based assignment guarantees every
+    // simultaneously-selected sensor (up to the 6-color palette) gets a
+    // visually distinct color instead of leaving it to chance.
+    const resolvedSensorColors = useMemo(() => {
+        const map: Record<string, string> = {};
+        selectedSensors.forEach((sensor, i) => {
+            map[sensor] = sensorColors[sensor] ?? LINE_CHART_COLORS[i % LINE_CHART_COLORS.length];
+        });
+        return map;
+    }, [selectedSensors, sensorColors]);
+
+    const setSensorFixedRange = useCallback((sensor: string, min: number | undefined, max: number | undefined) => {
+        setSensorAxisRange(prev => ({ ...prev, [sensor]: { min, max } }));
+    }, []);
+
+    const clearSensorFixedRange = useCallback((sensor: string) => {
+        setSensorAxisRange(prev => {
+            if (!(sensor in prev)) return prev;
+            const next = { ...prev };
+            delete next[sensor];
+            return next;
+        });
+    }, []);
+
+    // Themed color plate (see ColorPlatePicker) — replaces the browser/OS-
+    // native <input type="color"> dialog, unreachable by CSS. Same
+    // one-open-at-a-time toggle pattern as the axis editor below.
+    const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
+    const toggleColorPicker = useCallback((sensor: string) => {
+        setColorPickerFor(prev => (prev === sensor ? null : sensor));
+    }, []);
+
+    // Inline "pin Y-axis scale" editor — one sensor's min/max fields open at
+    // a time, directly under its row in the Selected Sensor tab.
+    const [axisEditorFor, setAxisEditorFor] = useState<string | null>(null);
+    const [axisDraftMin, setAxisDraftMin] = useState('');
+    const [axisDraftMax, setAxisDraftMax] = useState('');
+
+    const [axisEditorError, setAxisEditorError] = useState<string | null>(null);
+
+    const openAxisEditor = useCallback((sensor: string) => {
+        const existing = sensorAxisRange[sensor];
+        setAxisDraftMin(existing?.min !== undefined ? String(existing.min) : '');
+        setAxisDraftMax(existing?.max !== undefined ? String(existing.max) : '');
+        setAxisEditorError(null);
+        setAxisEditorFor(sensor);
+    }, [sensorAxisRange]);
+
+    const closeAxisEditor = useCallback(() => {
+        setAxisEditorFor(null);
+        setAxisEditorError(null);
+    }, []);
+
+    // The pin icon is the only way in — clicking it again while its own
+    // editor is already open closes it, instead of a separate Cancel button.
+    const toggleAxisEditor = useCallback((sensor: string) => {
+        if (axisEditorFor === sensor) closeAxisEditor();
+        else openAxisEditor(sensor);
+    }, [axisEditorFor, closeAxisEditor, openAxisEditor]);
+
+    // Validates before applying instead of silently closing on bad input —
+    // a mistyped min/max used to just no-op with no sign anything was
+    // rejected, leaving the user unsure whether their edit "took". Either
+    // field may be left blank — pinning only a min (or only a max) is valid,
+    // the blank side keeps auto-fitting to the data.
+    const applyAxisEditor = useCallback(() => {
+        if (!axisEditorFor) return;
+        const minText = axisDraftMin.trim();
+        const maxText = axisDraftMax.trim();
+        const min = minText === '' ? undefined : parseFloat(minText);
+        const max = maxText === '' ? undefined : parseFloat(maxText);
+        if ((min !== undefined && isNaN(min)) || (max !== undefined && isNaN(max))) {
+            setAxisEditorError('Enter a valid number');
+            return;
+        }
+        if (min === undefined && max === undefined) {
+            setAxisEditorError('Enter at least a min or a max');
+            return;
+        }
+        if (min !== undefined && max !== undefined && min >= max) {
+            setAxisEditorError('Min must be less than max');
+            return;
+        }
+        setSensorFixedRange(axisEditorFor, min, max);
+        closeAxisEditor();
+    }, [axisEditorFor, axisDraftMin, axisDraftMax, setSensorFixedRange, closeAxisEditor]);
+
+    // Which alarm setpoint lines are toggled on, per sensor tag — e.g.
+    // `{ '11FQ1603.PV': ['H'] }`. Unlike sensorColors/sensorAxisRange above,
+    // this DOES persist to WorkspaceState (see buildWorkspaceState below):
+    // re-checking the same alarms every time a workspace reopens would be
+    // exactly the kind of re-selection tedium the FG assignment feature
+    // exists to avoid elsewhere in this file.
+    const [alarmLinesEnabled, setAlarmLinesEnabled] = useState<Record<string, AlarmLevel[]>>(
+        initialState?.alarmLinesEnabled ?? {}
+    );
+
+    const toggleAlarmLine = useCallback((tag: string, level: AlarmLevel) => {
+        setAlarmLinesEnabled(prev => {
+            const current = prev[tag] ?? [];
+            const isOn = current.includes(level);
+            const nextLevels = isOn ? current.filter(l => l !== level) : [...current, level];
+            const next = { ...prev };
+            if (nextLevels.length === 0) delete next[tag];
+            else next[tag] = nextLevels;
+            return next;
+        });
+    }, []);
+
+    // Prune per-sensor color/axis-range/alarm-line overrides (and close the
+    // inline axis/alarm editors) once a sensor is deselected — via the trash
+    // button, unchecking it in the Sensor panel, or "Clear selection".
+    // Without this, re-adding the same tag later silently resurrects a stale
+    // color/pinned range/checked alarms with no indication anything carried
+    // over from the earlier session.
+    useEffect(() => {
+        const selectedSet = new Set(selectedSensors);
+        setSensorColors(prev => {
+            const stale = Object.keys(prev).filter(s => !selectedSet.has(s));
+            if (stale.length === 0) return prev;
+            const next = { ...prev };
+            for (const s of stale) delete next[s];
+            return next;
+        });
+        setSensorAxisRange(prev => {
+            const stale = Object.keys(prev).filter(s => !selectedSet.has(s));
+            if (stale.length === 0) return prev;
+            const next = { ...prev };
+            for (const s of stale) delete next[s];
+            return next;
+        });
+        setAlarmLinesEnabled(prev => {
+            const stale = Object.keys(prev).filter(s => !selectedSet.has(s));
+            if (stale.length === 0) return prev;
+            const next = { ...prev };
+            for (const s of stale) delete next[s];
+            return next;
+        });
+        setAxisEditorFor(prev => (prev && !selectedSet.has(prev) ? null : prev));
+    }, [selectedSensors]);
+
+    // Collapsed panels state. Filters out ids that no longer exist in PANELS
+    // (e.g. a workspace saved before Filter moved from its own panel into a
+    // data-panel tab) so a stale entry can't crash the collapsed-tabs sidebar.
     const [collapsedPanels, setCollapsedPanels] = useState<Set<PanelId>>(
-        new Set((initialState?.collapsedPanels ?? []) as PanelId[])
+        new Set((initialState?.collapsedPanels ?? []).filter(
+            (id): id is PanelId => id in PANELS
+        ))
     );
 
     // Resizable layout sizes (split.js percentages). Initialized from the
@@ -213,12 +541,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const slotLTRef = useRef<HTMLDivElement>(null);
     const slotLBRef = useRef<HTMLDivElement>(null);
     const slotRTRef = useRef<HTMLDivElement>(null);
-    const slotRBRef = useRef<HTMLDivElement>(null);
     const slotRefs: Record<DashboardSlot, React.RefObject<HTMLDivElement | null>> = {
         'left-top': slotLTRef,
         'left-bottom': slotLBRef,
         'right-top': slotRTRef,
-        'right-bottom': slotRBRef,
     };
 
     // Read-only ref mirror of `layoutSizes` so the useEffects can pull the
@@ -234,9 +560,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const ltCollapsed = collapsedPanels.has(SLOT_LAYOUT['left-top']);
     const lbCollapsed = collapsedPanels.has(SLOT_LAYOUT['left-bottom']);
     const rtCollapsed = collapsedPanels.has(SLOT_LAYOUT['right-top']);
-    const rbCollapsed = collapsedPanels.has(SLOT_LAYOUT['right-bottom']);
     const allLeftCollapsed = ltCollapsed && lbCollapsed;
-    const allRightCollapsed = rtCollapsed && rbCollapsed;
+    // Right column is a single slot (Sensors) now that Filter moved into a
+    // data-panel tab, so "all collapsed" just mirrors that one slot.
+    const allRightCollapsed = rtCollapsed;
 
     // ── split.js: horizontal split between left and right columns ──
     // Tears down when an entire column has no visible panels so the surviving
@@ -284,28 +611,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => { try { inst.destroy(); } catch { /* ignore */ } };
     }, [ltCollapsed, lbCollapsed]);
 
-    // ── split.js: vertical split inside right column (RT ↔ RB) ──
-    // Save & Continue lives OUTSIDE the .right-column-splits wrapper so it
-    // isn't resized along with the panels.
-    useEffect(() => {
-        if (rtCollapsed || rbCollapsed) return;
-        const rt = slotRTRef.current;
-        const rb = slotRBRef.current;
-        if (!rt || !rb) return;
-        const inst = Split([rt, rb], {
-            sizes: layoutSizesRef.current.rightRows,
-            minSize: [120, 120],
-            gutterSize: 12,
-            direction: 'vertical',
-            gutter: createGutter,
-            elementStyle: flexElementStyle,
-            gutterStyle: flexGutterStyle,
-            onDragEnd: (sizes) => {
-                setLayoutSizes(prev => ({ ...prev, rightRows: [sizes[0], sizes[1]] as [number, number] }));
-            },
-        });
-        return () => { try { inst.destroy(); } catch { /* ignore */ } };
-    }, [rtCollapsed, rbCollapsed]);
+    // Right column is a single slot (Sensors) — no split.js instance needed
+    // there anymore; it fills 100% of the column via CSS flex, same as any
+    // lone surviving panel elsewhere in this layout.
 
     const togglePanel = (panelId: PanelId) => {
         setCollapsedPanels(prev => {
@@ -402,6 +710,138 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [filters, setFilters] = useState<FilterState>(initialState?.filters ?? { timestampStart: '', timestampEnd: '', sensorFilters: [] });
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
+
+    // ── Build Model — spawns the Predictive Model window directly ───────
+    // Previously FailureGroupCreation.tsx's job (its `spawnPMHelper` +
+    // `request-predictive-data` responder); reproduced here verbatim since
+    // that window no longer exists. PM itself has no idea who spawned it —
+    // it just broadcasts `request-predictive-data` on mount and consumes
+    // whatever answers on `predictive-model-data` (see PredictiveModelBuild.tsx).
+    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[] } | null>(null);
+    const autoResumedPmRef = useRef(false);
+
+    const buildDashboardSnapshot = useCallback(() => ({
+        selectedSensors, visibleSensors, operationConfig, filters, samplingMethod,
+    }), [selectedSensors, visibleSensors, operationConfig, filters, samplingMethod]);
+
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen('request-predictive-data', async () => {
+                if (!pendingModelDataRef.current || !initialState) return;
+                await emit('predictive-model-data', {
+                    workspaceId: initialState.id,
+                    targetSensor: pendingModelDataRef.current.targetSensor,
+                    predictorSensors: pendingModelDataRef.current.predictorSensors,
+                    sensorHeaders,
+                    sensorMetadata,
+                    metadata,
+                    dashboardSnapshot: buildDashboardSnapshot(),
+                });
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
+    }, [initialState, sensorHeaders, sensorMetadata, metadata, buildDashboardSnapshot]);
+
+    const spawnPredictiveModel = useCallback(async (target: string, predictors: string[]) => {
+        if (!initialState) return;
+        pendingModelDataRef.current = { targetSensor: target, predictorSensors: predictors };
+
+        await updateWorkspaceData(initialState.id, prev => ({
+            ...prev,
+            lastRoute: 'predictive-model',
+            predictiveModelState: {
+                ...(prev.predictiveModelState ?? {
+                    individualChecked: true,
+                    rcMode: null,
+                    scatterXSensor: '',
+                    relModelName: '',
+                    // Default λ corresponds to the "Standard" stiffness preset
+                    // in PredictiveModelBuild — kept in sync with the
+                    // STIFFNESS_OPTIONS set there (copied from
+                    // FailureGroupCreation.tsx's own default, now deleted).
+                    relStiffness: 100_000,
+                    clusterModelName: '',
+                    numClusters: 3,
+                    criteriaSensor: '',
+                    clusterRanges: [
+                        { min: 0, max: 33 },
+                        { min: 33, max: 66 },
+                        { min: 66, max: 100 },
+                    ],
+                    filterTimeStart: '',
+                    filterTimeEnd: '',
+                    pmSensorFilters: [],
+                }),
+                targetSensor: target,
+                predictorSensors: predictors,
+            },
+        }));
+
+        try {
+            // Idempotency: focus instead of respawning if PM is already open.
+            const existingPM = await WebviewWindow.getByLabel('predictive-model');
+            if (existingPM) {
+                try { await existingPM.setFocus(); } catch { /* ignore */ }
+                return;
+            }
+            const screenW = window.screen.width;
+            const screenH = window.screen.height;
+            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
+            const webview = new WebviewWindow('predictive-model', {
+                url: '/?window=predictive-model',
+                title: `Predictive Model — ${target}`,
+                width: Math.round(screenW * 0.75),
+                height: Math.round(screenH * 0.85),
+                center: true,
+                maximized: true,
+                decorations: isMac,
+            });
+            webview.once('tauri://error', (e) => console.error('Failed to open predictive model window:', e));
+            // Reset lastRoute so reopening this workspace from Recent lands
+            // back on Dashboard's Failure Groups tab, not stuck pointing at
+            // PM. Dual listeners (destroyed + the explicit close event)
+            // mirror the robustness FailureGroupCreation.tsx used to
+            // provide — PM emits both regardless of who spawned it.
+            webview.once('tauri://destroyed', () => {
+                updateWorkspaceData(initialState.id, prev => ({ ...prev, lastRoute: 'failure-group' })).catch(() => { /* ignore */ });
+            });
+            const unlistenClose = await listen('predictive-model-closed', () => {
+                updateWorkspaceData(initialState.id, prev => ({ ...prev, lastRoute: 'failure-group' })).catch(() => { /* ignore */ });
+                unlistenClose();
+            });
+        } catch (err) {
+            console.error('Error opening predictive model window:', err);
+        }
+    }, [initialState]);
+
+    const handleBuildModel = useCallback(async (row: FailureSensorRow) => {
+        if (!row.mappedSensorTag || !initialState) return;
+        // Preserve previously chosen predictors when reopening Build Model on
+        // the same target — only reset when the target changes.
+        const prevState = (await loadWorkspaceData(initialState.id))?.predictiveModelState;
+        const sameTarget = prevState?.targetSensor === row.mappedSensorTag;
+        const carriedPredictors = sameTarget ? (prevState?.predictorSensors ?? []) : [];
+        await spawnPredictiveModel(row.mappedSensorTag, carriedPredictors);
+    }, [initialState, spawnPredictiveModel]);
+
+    // Recent-workspace resume: if this workspace's lastRoute is
+    // 'predictive-model' (set the last time Build Model was clicked),
+    // auto-reopen PM once on mount instead of leaving the user stranded on
+    // Dashboard with no visible link to the model they were configuring.
+    // DataUploadPage.tsx used to hand this off to FailureGroupCreation.tsx's
+    // own cascade; now Dashboard does it directly since FG no longer exists.
+    useEffect(() => {
+        if (autoResumedPmRef.current) return;
+        if (initialState?.lastRoute !== 'predictive-model') return;
+        const target = initialState.predictiveModelState?.targetSensor;
+        if (!target) return;
+        autoResumedPmRef.current = true;
+        spawnPredictiveModel(target, initialState.predictiveModelState?.predictorSensors ?? []);
+        // Intentionally run once on mount only — initialState is a stable
+        // prop for this window's lifetime.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Scatter / pair plots are meaningless with fewer than two sensors, so
     // below that the two buttons are disabled — and if the selection drops
@@ -508,6 +948,33 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return view.headers.filter(h => visibleSensors.includes(h));
     }, [view, isMultiOp, visibleSensors]);
 
+    // Alarm setpoint lines for the currently-visible sensors. Skipped
+    // entirely in multi-op mode — `displayHeaders` there is a single
+    // synthesized "Result (op)" column, not a real sensor tag, so there's no
+    // metadata to look an alarm value up against. Colored by SEVERITY
+    // (`alarmLevelColor`: amber for L/H, red for LL/HH), not by the sensor's
+    // own line color — an earlier version matched the sensor's color instead,
+    // but that made a setpoint line blend into its own sensor's trace and
+    // become hard to spot at a glance, which defeats the point of it being
+    // a warning line at all.
+    const markLines = useMemo<ChartMarkLine[]>(() => {
+        if (isMultiOp) return [];
+        const lines: ChartMarkLine[] = [];
+        for (const sensor of displayHeaders) {
+            const enabled = alarmLinesEnabled[sensor];
+            if (!enabled || enabled.length === 0) continue;
+            const meta = getSensorMeta(sensor);
+            if (!meta) continue;
+            for (const { level, metaKey } of ALARM_LEVELS) {
+                if (!enabled.includes(level)) continue;
+                const y = meta[metaKey];
+                if (y === undefined) continue;
+                lines.push({ sensor, y, label: level, lineStyle: 'dashed', color: alarmLevelColor(level) });
+            }
+        }
+        return lines;
+    }, [isMultiOp, displayHeaders, alarmLinesEnabled, getSensorMeta]);
+
     // Columnar line-chart feed projected to the visible sensors — array
     // picks over ≤LINE_MAX_POINTS values, no per-row objects.
     const lineColumnar = useMemo(() => {
@@ -546,11 +1013,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         samplingMethod,
         collapsedPanels: Array.from(collapsedPanels),
         layoutSizes,
+        // Carry the LATEST fgGroups/fgRows (kept current by toggleSensorGroup/
+        // createGroupForSensor), not the stale failureGroupState captured in
+        // `initialState` at mount — otherwise this full-overwrite autosave
+        // would silently erase what was just written via their own
+        // read-modify-write persistence.
+        failureGroupState: { groups: fgGroups, rows: fgRows },
+        alarmLinesEnabled,
+        scatterAxes: scatterAxes ?? undefined,
         ...overrides,
-    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels, layoutSizes]);
-
-    // Keep ref in sync for imperative handle usage
-    buildStateRef.current = buildWorkspaceState;
+    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes]);
 
     // Auto-save state changes
     useEffect(() => {
@@ -571,15 +1043,23 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // so it gets a tighter point budget than the single-canvas scatter.
     const scatterMaxPoints = chartType === 'pair' ? 50_000 : 200_000;
 
+    // Deliberately `selectedSensors`, not `visibleSensors`: the "hide from
+    // chart" toggle in the Selected Sensor tab is a line-chart-only display
+    // tweak. Scatter/Pair Plot have no per-sensor visibility concept of
+    // their own, so they should always see the full selection — otherwise
+    // hiding one line silently drops that sensor from the scatter/pair
+    // sample too, and (worse) the Pair Plot tab can stay enabled on
+    // selectedSensors.length >= 2 while the actual fetch below 2 sensors,
+    // landing the user on a "Select at least 2 sensors" dead end.
     const scatterFilter = useMemo<ScatterSampleFilter | null>(() => {
-        if (!scatterActive || visibleSensors.length === 0) return null;
+        if (!scatterActive || selectedSensors.length === 0) return null;
         return {
-            sensors: visibleSensors,
+            sensors: selectedSensors,
             timestamp_start: filters.timestampStart || null,
             timestamp_end: filters.timestampEnd || null,
             value_filters: wireValueFilters,
         };
-    }, [scatterActive, visibleSensors, filters.timestampStart, filters.timestampEnd, wireValueFilters]);
+    }, [scatterActive, selectedSensors, filters.timestampStart, filters.timestampEnd, wireValueFilters]);
 
     const scatterSample = useScatterSample(
         scatterFilter,
@@ -621,7 +1101,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // covers that window).
     const scatterReady = scatterSample.rows.length > 0;
     const scatterChartData = scatterFeed;
-    const scatterChartHeaders = scatterSample.headers.length > 0 ? scatterSample.headers : visibleSensors;
+    // Matches scatterFilter above — falls back to the full selection, not
+    // the line-chart-only visible subset.
+    const scatterChartHeaders = scatterSample.headers.length > 0 ? scatterSample.headers : selectedSensors;
 
 
     // Data range for auto-filling the time inputs — first/last timestamp of
@@ -648,6 +1130,54 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Display values: show data range when filter is empty
     const displayTimestampStart = filters.timestampStart || (dataRange ? formatForInput(dataRange.min) : '');
     const displayTimestampEnd = filters.timestampEnd || (dataRange ? formatForInput(dataRange.max) : '');
+
+    // Quick relative time range (e.g. "last 2 D") — an alternative to
+    // manually picking absolute start/end dates. Y/M use calendar-accurate
+    // arithmetic (setFullYear/setMonth) since those units aren't a fixed
+    // duration; W/D/H are plain millisecond math.
+    const RANGE_UNITS = ['Y', 'M', 'W', 'D', 'H'] as const;
+    type RangeUnit = typeof RANGE_UNITS[number];
+    const [relativeAmount, setRelativeAmount] = useState('1');
+    const [relativeUnit, setRelativeUnit] = useState<RangeUnit>('D');
+
+    const applyRelativeRange = useCallback(() => {
+        const n = parseFloat(relativeAmount);
+        if (!n || n <= 0) return;
+        const end = new Date();
+        const start = new Date(end);
+        switch (relativeUnit) {
+            case 'Y': {
+                // Y/M aren't a fixed duration, so fractional amounts (e.g.
+                // "0.5") can't be applied precisely — truncate to whole
+                // units rather than Math.round(), which would silently
+                // double a "0.5" input by rounding it up to a full unit.
+                const day = start.getDate();
+                start.setFullYear(start.getFullYear() - Math.trunc(n));
+                // setFullYear can overflow into the next month on leap-day
+                // edges (e.g. Feb 29 in a non-leap target year rolls to
+                // Mar 1) — clamp back to the last valid day of the
+                // intended month instead of silently drifting forward.
+                if (start.getDate() !== day) start.setDate(0);
+                break;
+            }
+            case 'M': {
+                const day = start.getDate();
+                start.setMonth(start.getMonth() - Math.trunc(n));
+                // Same overflow guard for month-end dates (e.g. Mar 31 minus
+                // 1 month naively lands on Mar 3, not Feb 28/29).
+                if (start.getDate() !== day) start.setDate(0);
+                break;
+            }
+            case 'W': start.setTime(start.getTime() - n * 7 * 24 * 60 * 60 * 1000); break;
+            case 'D': start.setTime(start.getTime() - n * 24 * 60 * 60 * 1000); break;
+            case 'H': start.setTime(start.getTime() - n * 60 * 60 * 1000); break;
+        }
+        handleFiltersChange({
+            ...filters,
+            timestampStart: formatForInput(start.toISOString()),
+            timestampEnd: formatForInput(end.toISOString()),
+        });
+    }, [relativeAmount, relativeUnit, filters, handleFiltersChange, formatForInput]);
 
     // Drag-and-drop swap was removed in favor of a fixed layout (see
     // SLOT_LAYOUT at the top of this file). Resize via split.js remains.
@@ -720,6 +1250,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensors={displayHeaders}
                         headers={displayHeaders}
                         chartType="line"
+                        markLines={markLines}
+                        sensorColors={resolvedSensorColors}
+                        sensorAxisRange={sensorAxisRange}
                     />
                 ) : (
                     // Scatter / pair plot render the bounded Rust sample so
@@ -729,6 +1262,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensors={scatterChartHeaders}
                         headers={scatterChartHeaders}
                         chartType={chartType}
+                        scatterX={scatterAxes?.x}
+                        scatterY={scatterAxes?.y}
+                        onScatterAxesChange={handleScatterAxesChange}
                     />
                 )}
             </div>
@@ -756,10 +1292,64 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     placeholder="End Date"
                                 />
                             </div>
+                            <span className="separator">·</span>
+                            {RANGE_UNITS.map(u => (
+                                <button
+                                    key={u}
+                                    type="button"
+                                    onClick={() => setRelativeUnit(u)}
+                                    style={{
+                                        width: '22px', height: '22px', padding: 0,
+                                        background: relativeUnit === u ? 'var(--accent-color)' : 'transparent',
+                                        border: '1px solid var(--border)',
+                                        borderRadius: '4px',
+                                        color: relativeUnit === u ? '#fff' : 'var(--text-secondary)',
+                                        fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                                    }}
+                                    title={{ Y: 'Years', M: 'Months', W: 'Weeks', D: 'Days', H: 'Hours' }[u]}
+                                >
+                                    {u}
+                                </button>
+                            ))}
+                            <input
+                                type="number"
+                                min="0"
+                                // Y/M are calendar units, not a fixed duration — the spinner
+                                // (and applyRelativeRange's truncation) only make sense on
+                                // whole units for those two; W/D/H stay fractional-friendly.
+                                step={relativeUnit === 'Y' || relativeUnit === 'M' ? '1' : 'any'}
+                                value={relativeAmount}
+                                onChange={(e) => setRelativeAmount(e.target.value)}
+                                style={{
+                                    width: '68px', padding: '2px 4px',
+                                    background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                    borderRadius: '4px', color: 'var(--text-primary)',
+                                    fontSize: '0.75rem', outline: 'none',
+                                    // Native spin-button arrows otherwise render in the
+                                    // browser's light-mode chrome (white), clashing with
+                                    // the app's dark theme — this makes Chromium/WebView2
+                                    // draw all native form-control chrome for this input
+                                    // (just the spinner here) in its dark variant.
+                                    colorScheme: 'dark',
+                                }}
+                            />
+                            <button
+                                type="button"
+                                onClick={applyRelativeRange}
+                                title="Apply relative range"
+                                style={{
+                                    width: '22px', height: '22px', padding: 0,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    background: 'var(--accent-color)', border: 'none',
+                                    borderRadius: '4px', color: '#fff', cursor: 'pointer',
+                                }}
+                            >
+                                <Check size={13} />
+                            </button>
                         </div>
                     </div>
                     <div className="time-range-tab-group">
-                        <label>SAMPLING (1 HR)</label>
+                        <label>AGGREGATION (1 HR)</label>
                         <div className="date-input-wrapper">
                             <select
                                 value={samplingMethod}
@@ -804,51 +1394,90 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     const exportDisabled = !dataFilter || tableTotalRows === 0 || displayHeaders.length === 0;
 
+    // Which tab the Data Insight panel shows — the raw/aggregated table, or
+    // the "Selected Sensor" list (per-sensor show/hide + remove controls;
+    // replaces the old in-chart ECharts legend).
+    const [activeDataTab, setActiveDataTab] = useState<'insight' | 'selected' | 'filter'>('selected');
+
     const renderDataContent = () => (
         <div className="widget-section data-widget">
             <div className="section-header collapsible-header">
-                <div className="section-header-left">
-<h3>Data Insight</h3>
-                    <span className="section-badge">{tableTotalRows.toLocaleString()} Rows</span>
+                <div className="section-header-left" style={{ gap: '4px' }}>
+                    {(['selected', 'insight', 'filter'] as const).map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveDataTab(tab)}
+                            style={{
+                                background: 'none', border: 'none',
+                                borderBottom: activeDataTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
+                                color: activeDataTab === tab ? '#3b82f6' : 'var(--text-secondary)',
+                                fontSize: '0.85rem', fontWeight: 600,
+                                padding: '4px 6px', marginBottom: '-1px', cursor: 'pointer',
+                            }}
+                        >
+                            {tab === 'insight'
+                                ? 'Data Insight'
+                                : tab === 'filter'
+                                    ? 'Filter'
+                                    : `Selected Sensor${selectedSensors.length > 0 ? ` (${selectedSensors.length})` : ''}`}
+                        </button>
+                    ))}
                 </div>
                 <div className="section-header-actions">
-                    <button
-                        className="export-btn-header"
-                        onClick={async () => {
-                            if (exportDisabled || !dataFilter) return;
-                            try {
-                                const filePath = await save({
-                                    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
-                                    defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
-                                });
-                                if (!filePath) return;
-                                // Rust streams the full post-op/post-aggregation
-                                // row set straight to disk — the rows never
-                                // enter the WebView (the old exporter built the
-                                // whole CSV as one JS string and froze/OOMed on
-                                // multi-million-row datasets).
-                                await invoke<number>('export_chart_csv', {
-                                    filter: {
-                                        ...dataFilter,
-                                        // Export what the table shows: visible
-                                        // columns (multi-op uses all selected
-                                        // sensors to compute its Result column).
-                                        sensors: isMultiOp ? dataFilter.sensors : displayHeaders,
-                                    },
-                                    sampling: samplingMethod,
-                                    operation: operationConfig,
-                                    path: filePath,
-                                });
-                            } catch (err) {
-                                console.error('Export failed:', err);
-                            }
-                        }}
-                        title="Export to CSV"
-                        disabled={exportDisabled}
-                    >
-                        <Download size={14} />
-                        Export dataset
-                    </button>
+                    {/* Always visible regardless of which tab is active — previously
+                        this lived in the (now-removed) single-tab header and updated
+                        live as a filter sanity-check; keeping it tab-independent means
+                        a filter edit is still visible without leaving "Selected Sensor". */}
+                    <span className="section-badge">{tableTotalRows.toLocaleString()} Rows</span>
+                    {activeDataTab === 'selected' && selectedSensors.length > 0 && (
+                        <button
+                            className="export-btn-header"
+                            onClick={clearAllSensors}
+                            title="Remove every sensor from the plot"
+                        >
+                            <X size={14} />
+                            Clear all
+                        </button>
+                    )}
+                    {activeDataTab === 'insight' && (
+                        <button
+                            className="export-btn-header"
+                            onClick={async () => {
+                                if (exportDisabled || !dataFilter) return;
+                                try {
+                                    const filePath = await save({
+                                        filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+                                        defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
+                                    });
+                                    if (!filePath) return;
+                                    // Rust streams the full post-op/post-aggregation
+                                    // row set straight to disk — the rows never
+                                    // enter the WebView (the old exporter built the
+                                    // whole CSV as one JS string and froze/OOMed on
+                                    // multi-million-row datasets).
+                                    await invoke<number>('export_chart_csv', {
+                                        filter: {
+                                            ...dataFilter,
+                                            // Export what the table shows: visible
+                                            // columns (multi-op uses all selected
+                                            // sensors to compute its Result column).
+                                            sensors: isMultiOp ? dataFilter.sensors : displayHeaders,
+                                        },
+                                        sampling: samplingMethod,
+                                        operation: operationConfig,
+                                        path: filePath,
+                                    });
+                                } catch (err) {
+                                    console.error('Export failed:', err);
+                                }
+                            }}
+                            title="Export to CSV"
+                            disabled={exportDisabled}
+                        >
+                            <Download size={14} />
+                            Export dataset
+                        </button>
+                    )}
                     <button
                         className="collapse-btn"
                         onClick={() => togglePanel('data')}
@@ -859,14 +1488,203 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
             </div>
             <div className="widget-content">
-                <DataTable
-                    headers={displayHeaders}
-                    rows={tableRows}
-                    totalRows={tableTotalRows}
-                    page={tablePageIndex}
-                    pageSize={TABLE_PAGE_SIZE}
-                    onPageChange={setTablePageIndex}
-                />
+                {activeDataTab === 'insight' ? (
+                    <DataTable
+                        headers={displayHeaders}
+                        rows={tableRows}
+                        totalRows={tableTotalRows}
+                        page={tablePageIndex}
+                        pageSize={TABLE_PAGE_SIZE}
+                        onPageChange={setTablePageIndex}
+                    />
+                ) : activeDataTab === 'filter' ? (
+                    <div className="filter-content">
+                        <FilterPanel
+                            selectedSensors={selectedSensors}
+                            filters={filters}
+                            onFiltersChange={handleFiltersChange}
+                            sensorMetadata={sensorMetadata}
+                        />
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+                        {selectedSensors.length === 0 && (
+                            <div style={{ padding: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
+                                No sensors plotted yet — pick some from the Sensor panel.
+                            </div>
+                        )}
+                        {/* Line's per-sensor visibility/color/Y-axis-pin only ever reach
+                            LineChart (Chart.tsx forwards sensorColors/sensorAxisRange to
+                            'line' only, and scatterChartHeaders always uses the FULL
+                            selectedSensors regardless of visibleSensors) — showing those
+                            controls for Scatter/Pair Plot let the user "edit" something
+                            with zero effect. Scatter and Pair Plot already carry their own
+                            appropriate controls inside the chart canvas itself, so this
+                            tab just points there instead of faking shared controls. */}
+                        {chartType !== 'line' && selectedSensors.length > 0 && (
+                            <div style={{
+                                margin: '8px 10px', padding: '8px 10px',
+                                background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)',
+                                borderRadius: '6px', fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.5,
+                            }}>
+                                {chartType === 'scatter'
+                                    ? 'Scatter Plot: pick the X/Y sensor pair from the dropdowns above the chart. Pan/zoom, lasso-select points, and export the selection using the toolbar in the chart.'
+                                    : 'Pair Plot: lasso-select points in any cell to brush a colored cluster — recolor or delete clusters from the panel under the chart, or click the magnifier to inspect one cell in detail.'}
+                            </div>
+                        )}
+                        {selectedSensors.map((sensor) => {
+                            const meta = getSensorMeta(sensor);
+                            const visible = visibleSensors.includes(sensor);
+                            const isPinned = !!sensorAxisRange[sensor];
+                            const isLine = chartType === 'line';
+                            // Tag-keyed, not index-keyed — must match LineChart's own
+                            // default exactly so the swatch always agrees with the
+                            // sensor's actual on-chart color, even after another
+                            // sensor is hidden/shown and shifts positional indices.
+                            // Only meaningful for Line — Scatter/Pair Plot have no
+                            // per-sensor color concept, so they always show neutral text.
+                            const currentColor = isLine ? (resolvedSensorColors[sensor] ?? defaultSensorColor(sensor)) : 'var(--text-primary)';
+                            return (
+                                <div key={sensor} style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <div
+                                        style={{
+                                            display: 'flex', alignItems: 'center', gap: '10px',
+                                            padding: '8px 10px',
+                                            opacity: isLine && !visible ? 0.5 : 1,
+                                        }}
+                                    >
+                                        {isLine && (
+                                            <input
+                                                type="checkbox"
+                                                checked={visible}
+                                                onChange={() => toggleSensorVisibility(sensor)}
+                                                title={visible ? 'Hide from chart' : 'Show on chart'}
+                                            />
+                                        )}
+                                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                                            <span style={{ fontWeight: 500, fontSize: '0.8rem', color: currentColor }}>
+                                                {meta ? meta.description : sensor}
+                                            </span>
+                                            {meta && (
+                                                <span style={{ fontSize: '0.7rem', color: currentColor, opacity: 0.75 }}>
+                                                    {meta.tag} • {meta.unit}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {/* Action cluster — kept together (not scattered) so the row reads as
+                                            one group of controls on the right, same as the reference layout. */}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+                                            {isLine && (
+                                                <>
+                                                    <button
+                                                        onClick={() => toggleColorPicker(sensor)}
+                                                        title="Change line color"
+                                                        style={{
+                                                            background: colorPickerFor === sensor ? `${currentColor}33` : 'none',
+                                                            border: 'none', borderRadius: '4px',
+                                                            color: currentColor,
+                                                            cursor: 'pointer', padding: '4px', display: 'flex',
+                                                        }}
+                                                    >
+                                                        <Pipette size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => toggleAxisEditor(sensor)}
+                                                        title={isPinned ? 'Y-axis scale pinned to a fixed range — click to edit, click again to close' : 'Pin the Y-axis to a fixed min/max range'}
+                                                        style={{
+                                                            background: isPinned ? `${currentColor}33` : 'none',
+                                                            border: 'none', borderRadius: '4px',
+                                                            color: currentColor,
+                                                            cursor: 'pointer', padding: '4px', display: 'flex',
+                                                        }}
+                                                    >
+                                                        <LineChartIcon size={14} />
+                                                    </button>
+                                                </>
+                                            )}
+                                            <button
+                                                onClick={() => removeSensor(sensor)}
+                                                title="Remove from plot"
+                                                style={{
+                                                    background: 'none', border: 'none', color: currentColor,
+                                                    cursor: 'pointer', padding: '4px', display: 'flex',
+                                                }}
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {isLine && colorPickerFor === sensor && (
+                                        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 10px 8px' }}>
+                                            <div style={{
+                                                padding: '10px',
+                                                background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                                borderRadius: '6px', width: '160px',
+                                            }}>
+                                                <ColorPlatePicker
+                                                    color={currentColor}
+                                                    onChange={(hex) => setSensorColor(sensor, hex)}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                    {isLine && axisEditorFor === sensor && (
+                                        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 10px 8px' }}>
+                                            <div style={{
+                                                padding: '8px 10px',
+                                                background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                                borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px',
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
+                                                    <span style={{ color: 'var(--text-secondary)' }}>Y-axis:</span>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="min"
+                                                        value={axisDraftMin}
+                                                        onChange={(e) => setAxisDraftMin(e.target.value)}
+                                                        style={{
+                                                            width: '64px', padding: '2px 4px',
+                                                            background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                                            borderRadius: '4px', color: 'var(--text-primary)',
+                                                            fontSize: '0.75rem', outline: 'none', colorScheme: 'dark',
+                                                        }}
+                                                    />
+                                                    <span style={{ color: 'var(--text-secondary)' }}>–</span>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="max"
+                                                        value={axisDraftMax}
+                                                        onChange={(e) => setAxisDraftMax(e.target.value)}
+                                                        style={{
+                                                            width: '64px', padding: '2px 4px',
+                                                            background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                                            borderRadius: '4px', color: 'var(--text-primary)',
+                                                            fontSize: '0.75rem', outline: 'none', colorScheme: 'dark',
+                                                        }}
+                                                    />
+                                                    <button className="text-btn" onClick={applyAxisEditor}>Apply</button>
+                                                    {isPinned && (
+                                                        <button
+                                                            className="text-btn"
+                                                            onClick={() => { clearSensorFixedRange(sensor); closeAxisEditor(); }}
+                                                        >
+                                                            Unpin
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {axisEditorError && (
+                                                    <span style={{ fontSize: '0.7rem', color: 'var(--danger, #ef4444)' }}>
+                                                        {axisEditorError}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -874,9 +1692,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const renderSensorsContent = () => (
         <div className="widget-section">
             <div className="section-header collapsible-header">
-                <div className="section-header-left">
-<h3>Recent Sensor Data</h3>
-                    <span className="section-badge">{sensorHeaders.length} Sensors</span>
+                <div className="section-header-left" style={{ gap: '4px' }}>
+                    {(['sensor', 'failure-groups'] as const).map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveSensorTab(tab)}
+                            style={{
+                                background: 'none', border: 'none',
+                                borderBottom: activeSensorTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
+                                color: activeSensorTab === tab ? '#3b82f6' : 'var(--text-secondary)',
+                                fontSize: '0.85rem', fontWeight: 600,
+                                padding: '4px 6px', marginBottom: '-1px', cursor: 'pointer',
+                            }}
+                        >
+                            {tab === 'sensor' ? `Sensor (${sensorHeaders.length})` : 'Failure Groups'}
+                        </button>
+                    ))}
                 </div>
                 <button
                     className="collapse-btn"
@@ -887,58 +1718,63 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </button>
             </div>
             <div className="widget-content">
-                <SensorSelection
-                    sensors={sensorHeaders}
-                    selectedSensors={selectedSensors}
-                    onSensorChange={setSelectedSensors}
-                    sensorMetadata={sensorMetadata}
-                />
+                {activeSensorTab === 'sensor' ? (
+                    <SensorSelection
+                        sensors={sensorHeaders}
+                        selectedSensors={selectedSensors}
+                        onSensorChange={setSelectedSensors}
+                        sensorMetadata={sensorMetadata}
+                        fgGroups={fgGroups}
+                        fgRows={fgRows}
+                        getGroupColor={getFgGroupColor}
+                        onToggleSensorGroup={toggleSensorGroup}
+                        onCreateGroupForSensor={createGroupForSensor}
+                        onRenameGroup={renameGroup}
+                        onDeleteGroup={deleteGroup}
+                        alarmLinesEnabled={alarmLinesEnabled}
+                        onToggleAlarmLine={toggleAlarmLine}
+                    />
+                ) : (
+                    <FailureGroupsPanel
+                        allSensors={sensorHeaders}
+                        sensorMetadata={sensorMetadata}
+                        fgGroups={fgGroups}
+                        fgRows={fgRows}
+                        getGroupColor={getFgGroupColor}
+                        onToggleGroupCollapse={toggleGroupCollapse}
+                        onRenameGroup={renameGroup}
+                        onDeleteGroup={deleteGroup}
+                        onCreateEmptyGroup={createEmptyGroup}
+                        onAddBlankRow={addBlankRowToGroup}
+                        onUpdateRow={updateFgRow}
+                        onRemoveRow={removeFgRowById}
+                        onBuildModel={handleBuildModel}
+                    />
+                )}
             </div>
-            <div className="widget-footer">
-                <button
-                    className="add-sensor-btn"
-                    onClick={async () => {
-                        const webview = new WebviewWindow('add-sensor', {
-                            url: '/?window=add-sensor',
-                            title: 'Add Special Sensor',
-                            width: 800,
-                            height: 700,
-                            center: true,
-                            alwaysOnTop: false,
-                            decorations: false
-                        });
-                        await webview.once('tauri://created', function () { });
-                        await webview.once('tauri://error', function (e) { console.error(e); });
-                    }}
-                >
-                    <Plus size={16} />
-                    Add Special Sensor
-                </button>
-            </div>
-        </div>
-    );
-
-    const renderFilterContent = () => (
-        <div className="widget-section filter-widget">
-            <div className="section-header collapsible-header">
-                <div className="section-header-left">
-<h3>Filter & Controls</h3>
+            {activeSensorTab === 'sensor' && (
+                <div className="widget-footer">
+                    <button
+                        className="add-sensor-btn"
+                        onClick={async () => {
+                            const webview = new WebviewWindow('add-sensor', {
+                                url: '/?window=add-sensor',
+                                title: 'Add Special Sensor',
+                                width: 800,
+                                height: 700,
+                                center: true,
+                                alwaysOnTop: false,
+                                decorations: false
+                            });
+                            await webview.once('tauri://created', function () { });
+                            await webview.once('tauri://error', function (e) { console.error(e); });
+                        }}
+                    >
+                        <Plus size={16} />
+                        Add Special Sensor
+                    </button>
                 </div>
-                <button
-                    className="collapse-btn"
-                    onClick={() => togglePanel('filter')}
-                    title="Hide panel"
-                >
-                    <EyeOff size={14} />
-                </button>
-            </div>
-            <div className="widget-content filter-content">
-                <FilterPanel
-                    selectedSensors={selectedSensors}
-                    filters={filters}
-                    onFiltersChange={handleFiltersChange}
-                />
-            </div>
+            )}
         </div>
     );
 
@@ -947,7 +1783,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             case 'chart': return renderChartContent();
             case 'data': return renderDataContent();
             case 'sensors': return renderSensorsContent();
-            case 'filter': return renderFilterContent();
         }
     };
 
@@ -992,7 +1827,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
 
 
-            <div className={`dashboard-grid-2x2 ${allLeftCollapsed ? 'left-fully-collapsed' : ''} ${allRightCollapsed ? 'right-fully-collapsed' : ''}`}>
+            <div className={`dashboard-grid-2x2 ${allLeftCollapsed ? 'left-fully-collapsed' : ''} ${allRightCollapsed ? 'right-fully-collapsed' : ''} ${collapsedPanels.size > 0 ? 'has-collapsed-sidebar' : ''}`}>
                 {/* Left column — slots LT (chart) and LB (data table) per
                     SLOT_LAYOUT. Slot wrappers exist so split.js has stable
                     refs to manage vertical resize. */}
@@ -1001,101 +1836,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
 
                 <div className="right-column" ref={rightColumnRef}>
-                    {/* Right column's two slots (RT/RB) per SLOT_LAYOUT live in this
-                        wrapper. Save & Continue lives OUTSIDE so resizing the
-                        panels never pushes it off-screen. */}
+                    {/* Right column's one slot (RT) per SLOT_LAYOUT lives in this
+                        wrapper. The "Create Failure Group" / "Failure Groups"
+                        jump-button that used to live below this (spawning the
+                        standalone FailureGroupCreation.tsx window, later just
+                        switching tabs) was removed entirely — the Failure
+                        Groups tab above is directly clickable, so a redundant
+                        jump-button added nothing. */}
                     <div className="right-column-splits">
                         {RIGHT_SLOTS.map(slot => renderSlot(slot))}
                     </div>
                     {/* end .right-column-splits */}
-
-                    {/* Save & Continue Section */}
-                    <div className="save-continue-section">
-                        <button
-                            className="save-continue-btn"
-                            onClick={async () => {
-                                try {
-                                    if (!initialState) return;
-                                    // Persist the dashboard snapshot + flip lastRoute BEFORE spawning the window,
-                                    // so FG can hydrate from disk and the next Recent Workspace click
-                                    // lands the user back in FG (or onward to PM via cascade).
-                                    const snapshot = {
-                                        selectedSensors,
-                                        visibleSensors,
-                                        operationConfig,
-                                        filters,
-                                        samplingMethod,
-                                    };
-                                    await saveWorkspaceData(buildWorkspaceState({
-                                        lastRoute: 'failure-group',
-                                        dashboardSnapshot: snapshot,
-                                    }));
-
-                                    // Idempotency: if FG already exists (e.g. user double-clicked Save & Continue),
-                                    // just focus it and exit — don't spawn a duplicate.
-                                    const existingFG = await WebviewWindow.getByLabel('failure-group');
-                                    if (existingFG) {
-                                        try { await existingFG.setFocus(); } catch { /* ignore */ }
-                                        try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
-                                        return;
-                                    }
-                                    const screenW = window.screen.width;
-                                    const screenH = window.screen.height;
-                                    const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-                                    // ──────────────────────────────────────────────
-                                    // Register the `request-failure-group-data`
-                                    // listener BEFORE spawning the FG webview —
-                                    // otherwise we race the FG window's mount
-                                    // emit and the request can land before we're
-                                    // listening. When that happened, the handshake
-                                    // never completed and `getCurrentWindow().destroy()`
-                                    // never ran — so the dashboard window
-                                    // appeared to "not close" after Save & Continue.
-                                    // ──────────────────────────────────────────────
-                                    const unlisten = await listen('request-failure-group-data', async () => {
-                                        await emit('failure-group-data', {
-                                            workspaceId: initialState.id,
-                                            sensorHeaders,
-                                            sensorMetadata,
-                                            metadata,
-                                            dashboardSnapshot: snapshot,
-                                            // Save & Continue always lands in FG.
-                                            // Explicit so FG won't accidentally cascade
-                                            // to PM (the cascade only fires when
-                                            // `targetRoute === 'predictive-model'`).
-                                            targetRoute: 'failure-group',
-                                        });
-                                        unlisten();
-                                        try { await getCurrentWindow().destroy(); } catch { /* ignore */ }
-                                    });
-                                    const webview = new WebviewWindow('failure-group', {
-                                        url: '/?window=failure-group',
-                                        title: 'Predictive Mode - Failure Group Creation',
-                                        width: Math.round(screenW * 0.8),
-                                        height: Math.round(screenH * 0.8),
-                                        center: true,
-                                        decorations: isMac,
-                                    });
-                                    // Hide the dashboard window as soon as FG is created (~few hundred ms)
-                                    // rather than waiting for the full handshake (~1 s). Without this,
-                                    // the user briefly sees Dashboard sitting under a loading FG.
-                                    // The destroy in the handshake listener above still runs — hide()
-                                    // is just a visual quick-cut.
-                                    webview.once('tauri://created', async () => {
-                                        try { await getCurrentWindow().hide(); } catch { /* ignore */ }
-                                    });
-                                    webview.once('tauri://error', (e) => {
-                                        console.error('Failed to create failure group window:', e);
-                                    });
-                                } catch (err) {
-                                    console.error('Error opening failure group window:', err);
-                                }
-                            }}
-                        >
-                            Save & Continue
-                            <ArrowRight size={16} />
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>

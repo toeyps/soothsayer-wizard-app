@@ -38,3 +38,11 @@ dist-ssr
 
 # Nuitka build diagnostic (machine-local, regenerated on every failed build)
 src-tauri/python/nuitka-crash-report.xml
+src-tauri/nuitka-crash-report.xml
+
+# Stray local build/debug output — not meant to be committed
+src-tauri/2
+src-tauri/check_output.txt
+
+.claude/settings.local.json
+.claude/worktrees/

@@ -40,4 +40,20 @@ export interface ChartProps {
     markLines?: ChartMarkLine[];
     /** Hide the horizontal Y-axis split lines. Defaults to false (shown). */
     hideYSplitLine?: boolean;
+    /** Per-sensor line/axis color override (any CSS color). Sensors absent
+     *  from this map fall back to the default palette. */
+    sensorColors?: Record<string, string>;
+    /** Per-sensor fixed Y-axis bounds. `min`/`max` are independent — either
+     *  may be omitted to keep that side auto-fitting (`scale: true`) while
+     *  the other stays pinned so the axis doesn't jump around as the
+     *  visible time range changes. */
+    sensorAxisRange?: Record<string, { min?: number; max?: number }>;
+    /** Scatter chart's persisted X-axis sensor (Dashboard-owned). Ignored
+     *  by Line/Pair Plot. */
+    scatterX?: string;
+    /** Scatter chart's persisted Y-axis sensor. */
+    scatterY?: string;
+    /** Fired whenever the Scatter chart's X/Y selection settles on a
+     *  value, so the parent can persist it. */
+    onScatterAxesChange?: (x: string, y: string) => void;
 }

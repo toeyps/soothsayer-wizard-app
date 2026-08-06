@@ -4,6 +4,8 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { writeUserTextFile } from '../../workspaceManager';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import { ChartProps } from './ChartTypes';
+import { useThemeMode, type ThemeMode } from '../../hooks/useThemeMode';
+import { formatDateTime } from '../../utils/dateFormat';
 
 /** Max rows rendered in the dialog table at once. Keeps the DOM cheap and
  *  the scroll responsive on huge lassos; the full set is still in memory
@@ -54,11 +56,12 @@ function rgbaToHex(c: [number, number, number, number]): string {
  *  context just to draw 20 bars. Uses the same pixel padding as PairPlotCell
  *  (CELL_PAD) so the bordered frame matches scatter cells exactly. */
 function DiagonalHistogram({
-    values, sensor, isTopRow,
+    values, sensor, isTopRow, themeMode,
 }: {
     values: number[];
     sensor: string;
     isTopRow: boolean;
+    themeMode: ThemeMode;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dims, setDims] = useState({ width: 0, height: 0 });
@@ -98,7 +101,7 @@ function DiagonalHistogram({
     const innerH = Math.max(0, dims.height - CELL_PAD.top - CELL_PAD.bottom);
 
     return (
-        <div ref={containerRef} className="pair-regl-cell" style={{ background: '#000' }}>
+        <div ref={containerRef} className="pair-regl-cell" style={{ background: themeMode === 'light' ? '#fff' : '#000' }}>
             <svg
                 width={dims.width}
                 height={dims.height}
@@ -110,7 +113,7 @@ function DiagonalHistogram({
                         y={11}
                         textAnchor="middle"
                         fontSize="10"
-                        fill="#cbd5e1"
+                        fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
                         {sensor}
@@ -142,7 +145,7 @@ function DiagonalHistogram({
                     width={innerW}
                     height={innerH}
                     fill="none"
-                    stroke="#334155"
+                    stroke="var(--border-strong, #334155)"
                     strokeWidth="1"
                 />
             </svg>
@@ -158,6 +161,7 @@ function fmt(n: number): string {
 }
 
 function PairPlotChart({ data, sensors, headers }: ChartProps) {
+    const themeMode = useThemeMode();
     /** Ordered list of brushed clusters. Each lasso pushes a new entry; the
      *  user can recolour or delete any cluster from the bottom panel. */
     const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -371,6 +375,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                         values={sensorVals[i]}
                                         sensor={sensorY}
                                         isTopRow={i === 0}
+                                        themeMode={themeMode}
                                     />
                                     {inspectMode && (
                                         <div
@@ -402,6 +407,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                         onHover={setHover}
                                         pointColor={POINT_COLOR}
                                         resetTick={resetTick}
+                                        themeMode={themeMode}
                                     />
                                     {inspectMode && (
                                         <div
@@ -440,6 +446,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                 onHover={setHover}
                                 pointColor={POINT_COLOR}
                                 resetTick={resetTick}
+                                themeMode={themeMode}
                             />
                             {inspectMode && (
                                 <div
@@ -474,7 +481,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                     <div className="scatter-regl-tooltip-row">
                         <span className="scatter-regl-tooltip-label">{hover.sensorX}</span>
                         <span className="scatter-regl-tooltip-value">
-                            {hover.isTimeAxis ? new Date(hover.xVal).toLocaleString() : fmt(hover.xVal)}
+                            {hover.isTimeAxis ? formatDateTime(new Date(hover.xVal)) : fmt(hover.xVal)}
                         </span>
                     </div>
                     <div className="scatter-regl-tooltip-row">
@@ -599,6 +606,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                     values={sensorVals[sensors.indexOf(expanded.sensorY)] ?? []}
                                     sensor={expanded.sensorY}
                                     isTopRow={true}
+                                    themeMode={themeMode}
                                 />
                             ) : (
                                 <PairPlotCell
@@ -617,6 +625,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                     onHover={setHover}
                                     pointColor={POINT_COLOR}
                                     resetTick={resetTick}
+                                    themeMode={themeMode}
                                 />
                             )}
                         </div>

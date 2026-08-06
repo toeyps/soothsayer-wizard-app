@@ -1,10 +1,35 @@
 import { useMemo, memo, useRef, useState, useEffect } from 'react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
+import { formatDate, formatDateTime } from '../../utils/dateFormat';
 
-const colors = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
+// Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
+// show/default to the same palette a sensor would get without an override.
+export const LINE_CHART_COLORS = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
 
-function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine }: ChartProps) {
+/**
+ * Deterministic default color for a sensor, keyed by its tag rather than its
+ * position in whatever array happens to be rendering it. Also exported so
+ * the "Selected Sensor" tab's color swatch always shows the same default the
+ * chart itself would use.
+ *
+ * This exists because `sensors[index % colors.length]` silently disagreed
+ * between callers: the chart only ever sees the currently-VISIBLE subset
+ * (`displayHeaders`), while the Selected Sensor tab iterates the full
+ * selection — hiding one sensor shifted every later sensor's index in the
+ * chart but not in the tab, so an unrelated sensor's swatch stopped matching
+ * its actual line color. Hashing the tag itself removes the shared "index"
+ * both sides would otherwise need to agree on.
+ */
+export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHART_COLORS): string {
+    let hash = 0;
+    for (let i = 0; i < sensor.length; i++) {
+        hash = (hash * 31 + sensor.charCodeAt(i)) | 0;
+    }
+    return palette[Math.abs(hash) % palette.length];
+}
+
+function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
@@ -81,13 +106,11 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
 
         // ── Dynamic vertical layout (pixel values, clamped to container) ──
         // Ideal full-size reservations:
-        const LEGEND_H = 28;
         const SLIDER_H = 20;
         const X_AXIS_LABEL_H = 24;
-        const GAP_ABOVE_LEGEND = 6;
         const GAP_ABOVE_SLIDER = 8;
         const GAP_ABOVE_XAXIS = 6;
-        const idealBottom = LEGEND_H + GAP_ABOVE_LEGEND + SLIDER_H + GAP_ABOVE_SLIDER + X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
+        const idealBottom = SLIDER_H + GAP_ABOVE_SLIDER + X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
 
         // Clamp bottom reservation to at most 45% of the container so the
         // plotting area is never squeezed to zero (or negative) when the
@@ -96,17 +119,37 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
         const maxBottom = Math.max(60, Math.floor(h * 0.45));
         const scale = Math.min(1, maxBottom / idealBottom);
 
-        const legendH = Math.round(LEGEND_H * scale);
         const sliderH = Math.max(12, Math.round(SLIDER_H * scale));
-        const gapLegend = Math.round(GAP_ABOVE_LEGEND * scale);
         const gapSlider = Math.round(GAP_ABOVE_SLIDER * scale);
         const gapXAxis = Math.round(GAP_ABOVE_XAXIS * scale);
         const xAxisLabelH = Math.round(X_AXIS_LABEL_H * scale);
 
-        const legendBottom = 0;
-        const sliderBottom = legendBottom + legendH + gapLegend;
+        const sliderBottom = 0;
         const gridBottom = sliderBottom + sliderH + gapSlider + xAxisLabelH + gapXAxis;
         const gridTop = Math.max(20, Math.round(30 * scale));
+
+        // `scale: true` only auto-fits the Y axis to each series' own data
+        // points — it does NOT account for markLine reference values (this is
+        // an ECharts limitation, not a bug in how we call it: markLine data
+        // lives outside the axis's own extent calculation). A checked alarm
+        // setpoint far outside the sensor's actual data range (e.g. a "high"
+        // setpoint of 90 when the trace only ever reaches 80) would silently
+        // draw the line off-screen with no visible sign it exists. Only
+        // step in when a markLine value actually falls outside the data's
+        // own range — untouched sensors, and markLines already comfortably
+        // inside the trace, keep ECharts' own auto-fit exactly as before.
+        const seriesMinMax = (sensor: string): { min: number; max: number } | null => {
+            const sensorIdx = headers.indexOf(sensor);
+            if (sensorIdx < 0) return null;
+            const values = columnar ? columnar.series[sensorIdx] : data.map(d => d.values[sensorIdx]);
+            let min = Infinity, max = -Infinity;
+            for (const v of values) {
+                if (v === null || v === undefined || Number.isNaN(v)) continue;
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+            return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+        };
 
         return {
             backgroundColor: 'transparent',
@@ -130,19 +173,23 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
                     const pList = Array.isArray(params) ? params : [params];
-                    const dateStr = new Date(pList[0].axisValueLabel).toLocaleString();
+                    const dateStr = formatDateTime(new Date(pList[0].axisValueLabel));
                     let content = `<div style="font-weight:bold; margin-bottom:5px;">${dateStr}</div>`;
                     const maxItems = 10;
                     pList.slice(0, maxItems).forEach((p: any) => {
+                        // Aggregated values (Avg etc.) are raw floating-point
+                        // divisions with no rounding applied upstream — fix
+                        // the tooltip display to 3 decimals regardless of
+                        // sensor or aggregation method.
+                        const displayValue = typeof p.value === 'number' ? p.value.toFixed(3) : p.value;
                         content += `<div style="display:flex; align-items:center; gap:5px;">
                             <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${p.color};"></span>
-                            <span>${p.seriesName}: ${p.value}</span>
+                            <span>${p.seriesName}: ${displayValue}</span>
                         </div>`;
                     });
                     return content;
                 }
             },
-            legend: { data: sensors, textStyle: { color: txtSecondary }, bottom: legendBottom, height: legendH },
             grid: {
                 left: gridLeft,
                 right: gridRight,
@@ -175,20 +222,51 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                 type: 'category',
                 boundaryGap: false,
                 data: xData,
-                axisLabel: { formatter: (val: string) => new Date(val).toLocaleTimeString(), color: txtSecondary },
+                axisLabel: { formatter: (val: string) => formatDate(new Date(val)), color: txtSecondary },
                 axisLine: { lineStyle: { color: gridLine } }
             },
             yAxis: sensors.map((sensor, index) => {
-                const color = colors[index % colors.length];
+                const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
+                const fixedRange = sensorAxisRange?.[sensor];
+                let autoMin = fixedRange?.min;
+                let autoMax = fixedRange?.max;
+                const sensorMarkYs = (markLines ?? []).filter(m => m.sensor === sensor).map(m => m.y);
+                if (sensorMarkYs.length > 0) {
+                    const dataRange = seriesMinMax(sensor);
+                    const naturalMin = dataRange?.min ?? Math.min(...sensorMarkYs);
+                    const naturalMax = dataRange?.max ?? Math.max(...sensorMarkYs);
+                    const neededMin = Math.min(naturalMin, ...sensorMarkYs);
+                    const neededMax = Math.max(naturalMax, ...sensorMarkYs);
+                    // Only step in when a setpoint actually falls outside the
+                    // trace's own range — otherwise leave scale:true's normal
+                    // auto-fit alone.
+                    if (neededMin < naturalMin || neededMax > naturalMax) {
+                        const span = (neededMax - neededMin) || 1;
+                        const pad = span * 0.08;
+                        if (autoMin === undefined) autoMin = neededMin - pad;
+                        if (autoMax === undefined) autoMax = neededMax + pad;
+                    }
+                }
                 return {
                     type: 'value',
-                    name: sensor,
+                    // No axis `name` — the sensor label already lives in the
+                    // legend below the chart; showing it a second time above
+                    // the axis was redundant clutter.
                     // `scale: true` lets ECharts auto-fit the Y range to the
                     // actual data instead of forcing the axis to include 0.
                     // Time-series with a non-zero baseline (e.g. a sensor
                     // that hovers around 50–80) reads much better this way,
                     // and the ±1σ / ±3σ markLines stay close to the trace.
+                    // A user-pinned min/max (sensorAxisRange) overrides this on
+                    // whichever side is actually set — `scale: true` stays on
+                    // as the baseline so a pinned-min-only (or max-only) sensor
+                    // still auto-fits its other side instead of defaulting to
+                    // "always include zero". `autoMin`/`autoMax` additionally
+                    // widen that baseline (see `seriesMinMax` above) whenever
+                    // an active markLine would otherwise land off-screen.
                     scale: true,
+                    ...(autoMin !== undefined ? { min: autoMin } : {}),
+                    ...(autoMax !== undefined ? { max: autoMax } : {}),
                     position: index % 2 === 0 ? 'left' : 'right',
                     offset: Math.floor(index / 2) * 60,
                     axisLine: { show: true, lineStyle: { color: color } },
@@ -198,7 +276,7 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
             }),
             series: sensors.map((sensor, index) => {
                 const sensorIdx = headers.indexOf(sensor);
-                const color = colors[index % colors.length];
+                const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
                 const sensorMarks = (markLines ?? []).filter(m => m.sensor === sensor);
                 const markLine = sensorMarks.length > 0
                     ? {
@@ -225,6 +303,11 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                                 type: m.lineStyle ?? 'solid',
                                 width: m.width ?? 1,
                             },
+                            // Per-entry override merges with the shared
+                            // `markLine.label` above — without this every
+                            // label in the group would render in the same
+                            // `txtPrimary` regardless of that line's own color.
+                            label: { color: m.color ?? txtPrimary },
                         })),
                     }
                     : undefined;
@@ -260,7 +343,7 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                 };
             })
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>

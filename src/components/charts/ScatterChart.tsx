@@ -1,12 +1,25 @@
 import { useState, useEffect, useMemo, memo, useRef } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
-import { Download, Eraser, Move, Lasso, RotateCcw } from 'lucide-react';
+import { Download, Eraser, Move, Lasso, RotateCcw, Ruler } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
+import { useThemeMode } from '../../hooks/useThemeMode';
 
 type ToolMode = 'pan' | 'lasso';
+
+/** WebGL can't read CSS custom properties, so the canvas clear color is
+ *  recomputed per theme here (dark slate-900 / light white, matching
+ *  `--card-bg`). `pointColorHover` was pure white — invisible once the
+ *  canvas itself goes light — so it's a fixed magenta instead of switching
+ *  by theme: strong contrast against both a dark and a light background,
+ *  no need to also react to `themeMode`. */
+const CANVAS_BG: Record<ReturnType<typeof useThemeMode>, [number, number, number, number]> = {
+    dark: [0.058, 0.094, 0.165, 1.0],
+    light: [1.0, 1.0, 1.0, 1.0],
+};
+const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
 /**
  * Pixel padding around the WebGL canvas for the SVG axis overlay.
@@ -27,16 +40,30 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
     return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
 }
 
-function ScatterChart({ data, sensors, headers }: ChartProps) {
+function ScatterChart({ data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange }: ChartProps) {
+    const themeMode = useThemeMode();
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     /** Scatter-point index → original CSV row index. lasso `select` gives us
      *  point indices into the array we passed to `.draw()`; this maps back
      *  to the row inside `data[]`. */
     const origIndicesRef = useRef<number[]>([]);
-
-    const [scatterX, setScatterX] = useState<string>('');
-    const [scatterY, setScatterY] = useState<string>('');
+    /** Last `sc` instance the data-push effect ran against. Lets that effect
+     *  tell "sensors/pins changed on an existing instance" (should reset the
+     *  camera) apart from "this instance was JUST created" (already at its
+     *  default camera state — resetting it again is redundant, and was
+     *  observed to crash: regl-scatterplot's internal camera setup isn't
+     *  always synchronously ready right after construction, which rapid
+     *  resize-driven recreates — e.g. dragging the window across monitors
+     *  with different DPI — can hit). */
+    const prevScForResetRef = useRef<any>(null);
+    // Seeded from the persisted prop on mount — this component is fully
+    // unmounted/remounted by Chart.tsx whenever chartType leaves 'scatter'
+    // (LineChart/PairPlotChart/ScatterChart are mutually exclusive
+    // branches), so without this the X/Y pair reset to the first two
+    // sensors every time the user switched chart type and back.
+    const [scatterX, setScatterX] = useState<string>(() => persistedX ?? '');
+    const [scatterY, setScatterY] = useState<string>(() => persistedY ?? '');
     const [innerDims, setInnerDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     const [wrapperDims, setWrapperDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     /** Full data extent — never changes while the chart is on a given (x, y).
@@ -76,6 +103,87 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
      *  could leave the canvas showing stale points. */
     const { requestDraw, resetDraw } = useCoalescedDraw();
 
+    /** Pinned X/Y axis bounds — like Line Plot's per-sensor Y-axis pin, but
+     *  scoped to the axis ROLE (X vs Y) since Scatter only ever plots one
+     *  X/Y pair at a time, not one series per selected sensor. Each pin
+     *  records WHICH sensor it was set against; swapping the X (or Y)
+     *  dropdown to a different sensor makes it inapplicable automatically
+     *  (see effectiveXRange/effectiveYRange below) rather than via a
+     *  follow-up effect, so there's no render where a stale scale from an
+     *  unrelated sensor (e.g. a 0–100 pin from a temperature reused for a
+     *  0–5000 pressure reading) briefly applies to the new one. Either side
+     *  of either axis may be left unset to keep auto-fitting to the data. */
+    const [xPin, setXPin] = useState<{ sensor: string; min?: number; max?: number } | null>(null);
+    const [yPin, setYPin] = useState<{ sensor: string; min?: number; max?: number } | null>(null);
+    const [axisEditorOpen, setAxisEditorOpen] = useState(false);
+    const [draftXMin, setDraftXMin] = useState('');
+    const [draftXMax, setDraftXMax] = useState('');
+    const [draftYMin, setDraftYMin] = useState('');
+    const [draftYMax, setDraftYMax] = useState('');
+    const [axisEditorError, setAxisEditorError] = useState<string | null>(null);
+
+    // Derived, not stateful — a pin only counts while its sensor is still
+    // the one plotted on that axis. Computed inline during render (not a
+    // useEffect reacting to scatterX/scatterY changes) so there is never a
+    // frame where a stale pin from the previous sensor is still in effect.
+    const effectiveXRange = xPin && xPin.sensor === scatterX ? xPin : undefined;
+    const effectiveYRange = yPin && yPin.sensor === scatterY ? yPin : undefined;
+    const isAxisPinned = !!effectiveXRange || !!effectiveYRange;
+
+    // Keeps the draft fields in sync with whichever sensor is CURRENTLY on
+    // each axis — both on open, and if the X/Y dropdown is swapped while the
+    // editor is already open. Without the latter, Apply would pin the newly
+    // selected sensor using text left over from the sensor that was showing
+    // when the panel opened (e.g. silently overwriting an existing pin on
+    // the new sensor with stale numbers that belonged to the old one).
+    useEffect(() => {
+        if (!axisEditorOpen) return;
+        setDraftXMin(effectiveXRange?.min !== undefined ? String(effectiveXRange.min) : '');
+        setDraftXMax(effectiveXRange?.max !== undefined ? String(effectiveXRange.max) : '');
+        setDraftYMin(effectiveYRange?.min !== undefined ? String(effectiveYRange.min) : '');
+        setDraftYMax(effectiveYRange?.max !== undefined ? String(effectiveYRange.max) : '');
+        // effectiveXRange/effectiveYRange deliberately excluded: they only
+        // change via applyAxisRange/clearAxisRange, which already close the
+        // editor themselves, so re-deriving off scatterX/scatterY alone is
+        // sufficient and avoids re-syncing (and clobbering active typing)
+        // on every keystroke-driven state change elsewhere in the app.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scatterX, scatterY, axisEditorOpen]);
+
+    const toggleAxisEditor = () => {
+        setAxisEditorError(null);
+        setAxisEditorOpen(o => !o);
+    };
+
+    const applyAxisRange = () => {
+        const parse = (s: string) => s.trim() === '' ? undefined : parseFloat(s.trim());
+        const xMin = parse(draftXMin), xMax = parse(draftXMax);
+        const yMin = parse(draftYMin), yMax = parse(draftYMax);
+        // isFinite (not isNaN) — parseFloat("1e400") overflows to Infinity,
+        // which passes isNaN but would corrupt every normalised point into
+        // NaN once it reaches the (x - lo) / range math below.
+        for (const v of [xMin, xMax, yMin, yMax]) {
+            if (v !== undefined && !isFinite(v)) { setAxisEditorError('Enter valid numbers'); return; }
+        }
+        if (xMin === undefined && xMax === undefined && yMin === undefined && yMax === undefined) {
+            setAxisEditorError('Enter at least one bound');
+            return;
+        }
+        if (xMin !== undefined && xMax !== undefined && xMin >= xMax) { setAxisEditorError('X min must be less than X max'); return; }
+        if (yMin !== undefined && yMax !== undefined && yMin >= yMax) { setAxisEditorError('Y min must be less than Y max'); return; }
+        setXPin(xMin !== undefined || xMax !== undefined ? { sensor: scatterX, min: xMin, max: xMax } : null);
+        setYPin(yMin !== undefined || yMax !== undefined ? { sensor: scatterY, min: yMin, max: yMax } : null);
+        setAxisEditorOpen(false);
+        setAxisEditorError(null);
+    };
+
+    const clearAxisRange = () => {
+        setXPin(null);
+        setYPin(null);
+        setAxisEditorOpen(false);
+        setAxisEditorError(null);
+    };
+
     // Default X/Y to the first two sensors, like the previous ECharts version.
     useEffect(() => {
         if (sensors.length >= 2) {
@@ -96,6 +204,12 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
             setScatterY('');
         }
     }, [sensors, scatterX, scatterY]);
+
+    // Push the settled X/Y pair up to the parent (Dashboard) so it survives
+    // this component being unmounted — see the seeding comment above.
+    useEffect(() => {
+        if (scatterX && scatterY) onScatterAxesChange?.(scatterX, scatterY);
+    }, [scatterX, scatterY, onScatterAxesChange]);
 
     // Track wrapper size + derive the inner plot area (canvas size).
     useEffect(() => {
@@ -133,10 +247,9 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                 pointColor: [0.39, 0.58, 0.98, 0.55],
                 // Amber for lasso-selected (matches palette used in other charts).
                 pointColorActive: [0.99, 0.75, 0.18, 1.0],
-                pointColorHover: [1.0, 1.0, 1.0, 1.0],
+                pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.6,
-                // Match dashboard's slate-900 background.
-                backgroundColor: [0.058, 0.094, 0.165, 1.0],
+                backgroundColor: CANVAS_BG[themeMode],
                 lassoColor: [0.65, 0.73, 0.97, 0.8],
             });
         } catch (err) {
@@ -202,7 +315,14 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
             setSc(null);
             setSelectedIndices([]);
         };
-    }, [innerDims.width, innerDims.height, rebuildNonce]);
+        // `themeMode` is included so a theme toggle rebuilds the instance.
+        // regl-scatterplot bakes `backgroundColor` into a WebGL color
+        // texture at construction time — calling `.set({backgroundColor})`
+        // on a live instance updates internal bookkeeping (lasso cursor
+        // colors) but never rebuilds that texture, so the canvas keeps
+        // showing its original background regardless of any later `.draw()`
+        // call. Recreating is the only way that's been confirmed to work.
+    }, [innerDims.width, innerDims.height, rebuildNonce, themeMode]);
 
     // Build points + normalise to [-1, 1] and push to the instance.
     // Runs whenever data / chosen sensors / the instance itself changes.
@@ -236,10 +356,20 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
             if (y > yMax) yMax = y;
         }
 
-        const xLo = isFinite(xMin) ? xMin : 0;
-        const xHi = isFinite(xMax) ? xMax : 1;
-        const yLo = isFinite(yMin) ? yMin : 0;
-        const yHi = isFinite(yMax) ? yMax : 1;
+        // Pinned bounds win over the auto-computed data extent on whichever
+        // side is set; the unset side keeps auto-fitting — same "partial
+        // pin" semantics as Line Plot's per-sensor Y-axis pin.
+        let xLo = effectiveXRange?.min !== undefined ? effectiveXRange.min : (isFinite(xMin) ? xMin : 0);
+        let xHi = effectiveXRange?.max !== undefined ? effectiveXRange.max : (isFinite(xMax) ? xMax : 1);
+        let yLo = effectiveYRange?.min !== undefined ? effectiveYRange.min : (isFinite(yMin) ? yMin : 0);
+        let yHi = effectiveYRange?.max !== undefined ? effectiveYRange.max : (isFinite(yMax) ? yMax : 1);
+        // A partial pin (only min or only max) can cross the auto-fitted
+        // value on the OTHER side — e.g. pinning X min above the actual data
+        // max — which would otherwise render a mirrored/inverted axis with
+        // no warning. Canonicalize instead of validating at input time,
+        // since the auto side isn't known until this render.
+        if (xLo > xHi) { const t = xLo; xLo = xHi; xHi = t; }
+        if (yLo > yHi) { const t = yLo; yLo = yHi; yHi = t; }
         const xRange = (xHi - xLo) || 1;
         const yRange = (yHi - yLo) || 1;
 
@@ -272,8 +402,23 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
         });
+        // Without this, changing sensors or applying/editing a pin while
+        // zoomed/panned left the camera showing whatever fraction of the
+        // OLD [-1,1] mapping it was on — a region that means something
+        // different under the NEW xScale/yScale — while visibleBounds below
+        // claims the full (new) range is in view. Resetting the camera here
+        // keeps what's actually on screen honest with the axis ticks — but
+        // only when `sc` is the SAME instance as last run. A freshly
+        // (re)created instance (this run triggered by `sc` itself changing,
+        // e.g. after a resize) is already at its default camera state, so
+        // resetting it again is both unnecessary and, per the crash this
+        // guards against, unsafe.
+        if (prevScForResetRef.current === sc) {
+            sc.reset();
+        }
+        prevScForResetRef.current = sc;
         requestDraw(sc, { x: xArr, y: yArr });
-    }, [sc, data, scatterX, scatterY, headers, requestDraw]);
+    }, [sc, data, scatterX, scatterY, headers, requestDraw, effectiveXRange, effectiveYRange]);
 
     // Push the active tool to regl-scatterplot. 'panZoom' is the library
     // default; 'lasso' makes a plain drag draw a polygon selection (no need
@@ -421,6 +566,13 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                     <RotateCcw size={13} />
                 </button>
                 <button
+                    onClick={toggleAxisEditor}
+                    className={`scatter-regl-tool${axisEditorOpen || isAxisPinned ? ' active' : ''}`}
+                    title={isAxisPinned ? 'Axis scale pinned — click to edit, click again to close' : 'Pin the X/Y axis to a fixed scale'}
+                >
+                    <Ruler size={13} />
+                </button>
+                <button
                     onClick={handleClear}
                     className="scatter-regl-tool"
                     title="Clear selection"
@@ -429,6 +581,59 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                     <Eraser size={13} />
                 </button>
             </div>
+
+            {/* Axis-scale editor — pins X and/or Y to a fixed range instead of
+                auto-fitting to the data extent. Toggled by the same Ruler icon,
+                mirroring the Selected Sensor tab's pin-editor UX. */}
+            {axisEditorOpen && (
+                <div className="scatter-regl-axis-editor">
+                    <div className="scatter-regl-axis-editor-row">
+                        <span className="scatter-regl-axis-editor-label">X</span>
+                        <input
+                            type="number"
+                            placeholder="min"
+                            value={draftXMin}
+                            onChange={e => setDraftXMin(e.target.value)}
+                            className="scatter-regl-axis-editor-input"
+                        />
+                        <span className="scatter-regl-axis-editor-label" style={{ width: 'auto' }}>–</span>
+                        <input
+                            type="number"
+                            placeholder="max"
+                            value={draftXMax}
+                            onChange={e => setDraftXMax(e.target.value)}
+                            className="scatter-regl-axis-editor-input"
+                        />
+                    </div>
+                    <div className="scatter-regl-axis-editor-row">
+                        <span className="scatter-regl-axis-editor-label">Y</span>
+                        <input
+                            type="number"
+                            placeholder="min"
+                            value={draftYMin}
+                            onChange={e => setDraftYMin(e.target.value)}
+                            className="scatter-regl-axis-editor-input"
+                        />
+                        <span className="scatter-regl-axis-editor-label" style={{ width: 'auto' }}>–</span>
+                        <input
+                            type="number"
+                            placeholder="max"
+                            value={draftYMax}
+                            onChange={e => setDraftYMax(e.target.value)}
+                            className="scatter-regl-axis-editor-input"
+                        />
+                    </div>
+                    {axisEditorError && (
+                        <span className="scatter-regl-axis-editor-error">{axisEditorError}</span>
+                    )}
+                    <div className="scatter-regl-axis-editor-actions">
+                        <button onClick={applyAxisRange} className="scatter-regl-btn">Apply</button>
+                        {isAxisPinned && (
+                            <button onClick={clearAxisRange} className="scatter-regl-btn scatter-regl-btn-icon">Unpin</button>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* WebGL canvas — only points, no axes. */}
             <div className="scatter-regl-canvas-wrap" style={{
@@ -525,14 +730,14 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                 {/* Y axis line */}
                 <line x1={AXIS_PADDING.left} y1={AXIS_PADDING.top}
                       x2={AXIS_PADDING.left} y2={AXIS_PADDING.top + innerDims.height}
-                      stroke="#475569" />
+                      stroke="var(--border-strong, #475569)" />
                 {yTicks.map((v, i, arr) => {
                     const y = AXIS_PADDING.top + innerDims.height * (1 - i / (arr.length - 1));
                     return (
                         <g key={`y${i}`}>
-                            <line x1={AXIS_PADDING.left - 4} y1={y} x2={AXIS_PADDING.left} y2={y} stroke="#94a3b8" />
+                            <line x1={AXIS_PADDING.left - 4} y1={y} x2={AXIS_PADDING.left} y2={y} stroke="var(--text-secondary)" />
                             <text x={AXIS_PADDING.left - 8} y={y + 3} textAnchor="end"
-                                  fontSize="10" fill="#94a3b8" fontFamily="Inter, system-ui">{fmt(v)}</text>
+                                  fontSize="10" fill="var(--text-secondary)" fontFamily="Inter, system-ui">{fmt(v)}</text>
                         </g>
                     );
                 })}
@@ -540,27 +745,27 @@ function ScatterChart({ data, sensors, headers }: ChartProps) {
                 {/* X axis line */}
                 <line x1={AXIS_PADDING.left} y1={AXIS_PADDING.top + innerDims.height}
                       x2={AXIS_PADDING.left + innerDims.width} y2={AXIS_PADDING.top + innerDims.height}
-                      stroke="#475569" />
+                      stroke="var(--border-strong, #475569)" />
                 {xTicks.map((v, i, arr) => {
                     const x = AXIS_PADDING.left + innerDims.width * (i / (arr.length - 1));
                     return (
                         <g key={`x${i}`}>
                             <line x1={x} y1={AXIS_PADDING.top + innerDims.height}
-                                  x2={x} y2={AXIS_PADDING.top + innerDims.height + 4} stroke="#94a3b8" />
+                                  x2={x} y2={AXIS_PADDING.top + innerDims.height + 4} stroke="var(--text-secondary)" />
                             <text x={x} y={AXIS_PADDING.top + innerDims.height + 16} textAnchor="middle"
-                                  fontSize="10" fill="#94a3b8" fontFamily="Inter, system-ui">{fmt(v)}</text>
+                                  fontSize="10" fill="var(--text-secondary)" fontFamily="Inter, system-ui">{fmt(v)}</text>
                         </g>
                     );
                 })}
 
                 {/* Axis titles */}
                 <text x={AXIS_PADDING.left + innerDims.width / 2} y={wrapperDims.height - 10}
-                      textAnchor="middle" fontSize="11" fill="#cbd5e1" fontFamily="Inter, system-ui">
+                      textAnchor="middle" fontSize="11" fill="var(--text-primary)" fontFamily="Inter, system-ui">
                     {scatterX}
                 </text>
                 <text x={14} y={AXIS_PADDING.top + innerDims.height / 2}
                       transform={`rotate(-90, 14, ${AXIS_PADDING.top + innerDims.height / 2})`}
-                      textAnchor="middle" fontSize="11" fill="#cbd5e1" fontFamily="Inter, system-ui">
+                      textAnchor="middle" fontSize="11" fill="var(--text-primary)" fontFamily="Inter, system-ui">
                     {scatterY}
                 </text>
             </svg>

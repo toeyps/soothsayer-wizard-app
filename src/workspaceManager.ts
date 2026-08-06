@@ -108,6 +108,7 @@ export async function saveWorkspaceData(state: WorkspaceState) {
         const meta: WorkspaceMetadata = {
             id: state.id,
             name: state.name,
+            description: state.description,
             lastModified: Date.now(),
             filePath
         };

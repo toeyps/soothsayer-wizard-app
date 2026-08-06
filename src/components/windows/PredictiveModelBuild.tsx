@@ -1249,7 +1249,13 @@ export default function PredictiveModelBuild() {
         };
     }, [clusteringPreview, themeMode]);
 
-    // Shake animation when FailureGroup tries to close
+    // Shake animation, triggered by a `predictive-model-shake` emit. Nothing
+    // emits this event anymore — it was FailureGroupCreation.tsx's "focus PM
+    // and shake it" affordance when the user tried to close FG while PM was
+    // still open. FG is gone (folded into the Dashboard window, which has no
+    // equivalent close-blocking need), so this listener is inert but
+    // harmless; left in place rather than half-removed without auditing
+    // every `containerRef` usage in this file.
     const containerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         let unlistenShake: (() => void) | undefined;
@@ -1268,9 +1274,10 @@ export default function PredictiveModelBuild() {
     }, []);
 
     // No `onCloseRequested` handler — let close proceed unconditionally.
-    // FG already listens for `tauri://destroyed` on the WebviewWindow handle
-    // it created when spawning PM, so destruction is signaled regardless of
-    // close path (custom button, native red-close, force-quit, crash).
+    // Whichever window spawned PM (now always Dashboard.tsx) already listens
+    // for `tauri://destroyed` on the WebviewWindow handle it created, so
+    // destruction is signaled regardless of close path (custom button,
+    // native red-close, force-quit, crash).
 
     const handleClose = async () => {
         // The custom-titlebar path (Windows / Linux). Fire-and-forget the emit

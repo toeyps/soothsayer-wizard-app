@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, memo } from 'react';
 import { Plus, X, Check } from 'lucide-react';
+import { SensorMetadata } from '../../types';
+import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 export interface SensorValueFilter {
     id: string;
@@ -19,6 +21,7 @@ interface FilterPanelProps {
     selectedSensors?: string[];
     filters: FilterState;
     onFiltersChange: (filters: FilterState) => void;
+    sensorMetadata?: SensorMetadata[] | null;
 }
 
 // ── Styles (stable refs) ────────────────────────────────────────────────
@@ -60,6 +63,9 @@ const valInputStyle: React.CSSProperties = {
     border: '1px solid var(--border)', borderRadius: '4px',
     color: 'var(--text-primary)', fontSize: '0.7rem', outline: 'none',
     flexShrink: 0,
+    // Native spin-button arrows otherwise render in the browser's
+    // light-mode chrome (white), clashing with the app's dark theme.
+    colorScheme: 'dark',
 };
 
 const removeBtnStyle: React.CSSProperties = {
@@ -96,18 +102,20 @@ const emptyStyle: React.CSSProperties = {
 const FilterRow = memo(function FilterRow({
     filter,
     selectedSensors,
+    getSensorLabel,
     onUpdate,
     onRemove,
 }: {
     filter: SensorValueFilter;
     selectedSensors: string[];
+    getSensorLabel: (sensor: string) => string;
     onUpdate: (id: string, field: keyof SensorValueFilter, value: string) => void;
     onRemove: (id: string) => void;
 }) {
     return (
         <div style={filterRowStyle}>
             <select value={filter.sensor} onChange={(e) => onUpdate(filter.id, 'sensor', e.target.value)} style={sensorSelectStyle}>
-                {selectedSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                {selectedSensors.map(s => <option key={s} value={s}>{getSensorLabel(s)}</option>)}
             </select>
             <select value={filter.operation} onChange={(e) => onUpdate(filter.id, 'operation', e.target.value)} style={opSelectStyle}>
                 <option value="greater_than">&gt;</option>
@@ -144,9 +152,18 @@ export default function FilterPanel({
     selectedSensors = [],
     filters,
     onFiltersChange,
+    sensorMetadata,
 }: FilterPanelProps) {
     // Local draft state — edits happen here without triggering heavy recomputation
     const [draft, setDraft] = useState<FilterState>(filters);
+
+    // "<description> (<tag>)" when metadata is loaded — a bare tag like
+    // "11EI1301.PV" isn't enough to tell which sensor it is at a glance.
+    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    const getSensorLabel = useCallback((sensor: string) => {
+        const meta = sensorMetaMap.get(normalizeSensorTag(sensor));
+        return meta ? `${meta.description} (${sensor})` : sensor;
+    }, [sensorMetaMap]);
 
     // Sync from parent when parent resets
     useEffect(() => {
@@ -224,6 +241,7 @@ export default function FilterPanel({
                             key={filter.id}
                             filter={filter}
                             selectedSensors={selectedSensors}
+                            getSensorLabel={getSensorLabel}
                             onUpdate={updateSensorFilter}
                             onRemove={removeSensorFilter}
                         />

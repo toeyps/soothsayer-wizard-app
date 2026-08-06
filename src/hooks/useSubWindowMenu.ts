@@ -36,6 +36,14 @@ async function openMainAndClose() {
             await existing.setFocus();
             try { await emit('upload-page-resumed'); } catch { /* ignore */ }
         } else {
+            // `decorations` MUST be set explicitly: `tauri.windows.conf.json`
+            // only configures windows declared in the config, so a window
+            // created at runtime defaults to `decorations: true` and ends up
+            // with a native Windows frame stacked on top of the app's own
+            // custom titlebar.
+            const isMac = /mac/i.test(
+                (navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent
+            );
             new WebviewWindow('main', {
                 url: '/',
                 title: 'Wizard',
@@ -43,6 +51,7 @@ async function openMainAndClose() {
                 height: 800,
                 center: true,
                 maximized: true,
+                decorations: isMac,
             });
         }
     } catch (e) {
@@ -51,11 +60,15 @@ async function openMainAndClose() {
     try { await getCurrentWindow().close(); } catch { /* ignore */ }
 }
 
-// Cross-platform native menu for secondary windows (Failure Group / Predictive Model).
+// Cross-platform native menu for secondary windows (currently just Predictive
+// Model — the other former caller, FailureGroupCreation.tsx, was folded into
+// the Dashboard window and deleted).
 // Mirrors the main app's File/Edit/View/Help structure so behavior is consistent regardless of
-// which window the user has focus on. Workspace-level actions (New/Save/SaveAs/Close/Rename)
+// which window the user has focus on. Workspace-level actions (New/Save/Close/Rename)
 // are implemented here directly against workspaceManager since the sub-windows don't share
-// React state with the main App.
+// React state with the main App. ("Save As" — duplicate workspace under a new
+// name — was removed app-wide; only plain Rename remains, reusing SaveAsWindow.tsx
+// in `mode=rename`.)
 export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
     const ref = useRef(handlers);
     useEffect(() => { ref.current = handlers; }, [handlers]);
@@ -85,35 +98,6 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
             catch { /* ignore */ }
         };
 
-        const doSaveAs = async () => {
-            const state = await getCurrentState();
-            if (!state) return;
-            const webview = new WebviewWindow('save-as', {
-                url: '/?window=save-as&mode=save-as',
-                title: 'Save Workspace As',
-                width: 450,
-                height: 350,
-                center: true,
-                alwaysOnTop: true,
-                decorations: false,
-                resizable: false,
-                skipTaskbar: true,
-            });
-            const unlistenReq = await listen('request-save-as-data', async () => {
-                await emit('request-save-as-data-response', { currentName: state.name });
-            });
-            const unlistenSubmit = await listen<{ newName: string }>('save-as-submit', async (event) => {
-                const fresh = await getCurrentState();
-                if (!fresh) return;
-                const newState: WorkspaceState = { ...fresh, id: `ws_${Date.now()}`, name: event.payload.newName };
-                await saveWorkspaceData(newState);
-                try { await message(`New workspace "${event.payload.newName}" created.`, { title: 'Saved As', kind: 'info' }); }
-                catch { /* ignore */ }
-                unlistenReq(); unlistenSubmit();
-            });
-            webview.once('tauri://error', (e) => console.error('Failed to open save-as window:', e));
-        };
-
         const doRename = async () => {
             const state = await getCurrentState();
             if (!state) return;
@@ -135,7 +119,7 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
                 const wsId = ref.current.workspaceId;
                 if (!wsId) return;
                 await renameWorkspaceFile(wsId, event.payload.newName);
-                // Broadcast so the caller window's UI (FG / PM workspace labels)
+                // Broadcast so the caller window's UI (PM's own workspace label)
                 // updates without needing a reload. Same event name the main
                 // window's TitleBar already listens for.
                 try { await emit('workspace-renamed-internal', { newName: event.payload.newName }); }
@@ -159,11 +143,6 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
                         id: 'sub-save', text: 'Save', accelerator: 'CmdOrCtrl+S',
                         enabled: hasWorkspace,
                         action: () => { doSave(); },
-                    }),
-                    await MenuItem.new({
-                        id: 'sub-save-as', text: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S',
-                        enabled: hasWorkspace,
-                        action: () => { doSaveAs(); },
                     }),
                 ];
 

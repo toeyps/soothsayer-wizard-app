@@ -154,6 +154,52 @@ function rowFor(text: string): HTMLElement {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Onboarding navigation helpers
+//
+// The page boots into step 0 ("Get started" — new project vs. recent). The
+// dataset UI every group below asserts against lives on step 2, reached via:
+//   step 0 ──"Create new project"──▶ step 1 ──name + Continue──▶ step 2
+// so the groups that only care about the upload/mapping surface walk the flow
+// first and then assert exactly as before. The step 0 / step 1 screens have
+// their own coverage in group J.
+// ─────────────────────────────────────────────────────────────────────────
+
+const NAME_PLACEHOLDER = /Compressor Line 3/;
+const DESC_PLACEHOLDER = 'What is this workspace for?';
+const PROJECT_NAME = 'Test project';
+
+const renderPage = () => render(<DataUploadPage onDataReady={onDataReady} />);
+
+const continueButton = () =>
+  screen.getByText('Continue').closest('button') as HTMLButtonElement;
+
+/** Render and advance to step 1 ("Create your project"). */
+function renderAtStep1() {
+  const utils = renderPage();
+  fireEvent.click(screen.getByText('Create new project'));
+  return utils;
+}
+
+/** Render and advance to step 2 ("Prepare your dataset"), naming the project
+ *  on the way through since step 1's Continue is gated on a non-empty name. */
+function renderAtStep2({
+  name = PROJECT_NAME,
+  description,
+}: { name?: string; description?: string } = {}) {
+  const utils = renderAtStep1();
+  fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
+    target: { value: name },
+  });
+  if (description !== undefined) {
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
+      target: { value: description },
+    });
+  }
+  fireEvent.click(continueButton());
+  return utils;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Default setup — each test overrides only what it needs
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -208,9 +254,11 @@ describe('A. Workspace sidebar', () => {
     });
   });
 
+  // The sidebar is suppressed on step 0 (the choice screen lists recents
+  // itself); it reappears from step 1 onwards, so its own tests start there.
   it('A2. shows "No workspaces yet" when list is empty', async () => {
     mockGetRecent.mockResolvedValue([]);
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep1();
     await waitFor(() => {
       expect(screen.getByText('No workspaces yet')).toBeTruthy();
     });
@@ -218,7 +266,7 @@ describe('A. Workspace sidebar', () => {
 
   it('A3. search filters workspaces case-insensitively', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep1();
     await waitFor(() => screen.getByText('Engine pressure run'));
 
     const input = screen.getByPlaceholderText('Find workspace…');
@@ -230,7 +278,7 @@ describe('A. Workspace sidebar', () => {
 
   it('A4. shows "No matches" when search has no hits', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep1();
     await waitFor(() => screen.getByText('Engine pressure run'));
 
     fireEvent.change(screen.getByPlaceholderText('Find workspace…'), {
@@ -312,7 +360,7 @@ describe('B. File selection', () => {
     const hook = makeDataUpload();
     useDataUploadMock.mockReturnValue(hook);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     fireEvent.click(screen.getByText('browse').closest('button')!);
     expect(hook.selectFiles).toHaveBeenCalledTimes(1);
@@ -323,7 +371,7 @@ describe('B. File selection', () => {
       makeDataUpload({ selectedFiles: ['/path/to/run-01.csv', '/other/run-02.csv'] })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('run-01.csv')).toBeTruthy();
     expect(screen.getByText('run-02.csv')).toBeTruthy();
@@ -335,7 +383,7 @@ describe('B. File selection', () => {
     const hook = makeDataUpload({ selectedFiles: ['/path/to/run-01.csv'] });
     useDataUploadMock.mockReturnValue(hook);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     const row = rowFor('run-01.csv');
     fireEvent.click(within(row).getByRole('button'));
@@ -346,7 +394,7 @@ describe('B. File selection', () => {
   it('B12. browse button is disabled while isLoading', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ isLoading: true }));
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     const browseBtn = screen.getByText('browse').closest('button') as HTMLButtonElement;
     expect(browseBtn.disabled).toBe(true);
@@ -362,7 +410,7 @@ describe('C. Dataset parse', () => {
     const hook = makeDataUpload({ selectedFiles: ['/x.csv'] });
     useDataUploadMock.mockReturnValue(hook);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     fireEvent.click(screen.getByText('Parse files'));
     expect(hook.uploadDataset).toHaveBeenCalledTimes(1);
@@ -373,7 +421,7 @@ describe('C. Dataset parse', () => {
       makeDataUpload({ selectedFiles: ['/x.csv'], isLoading: true })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Parsing…')).toBeTruthy();
     const parsingBtn = screen.getByText('Parsing…').closest('button') as HTMLButtonElement;
@@ -385,7 +433,7 @@ describe('C. Dataset parse', () => {
       makeDataUpload({ selectedFiles: ['/x.csv'], error: 'CSV parse failed at row 42' })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('CSV parse failed at row 42')).toBeTruthy();
   });
@@ -395,7 +443,7 @@ describe('C. Dataset parse', () => {
       makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Ready · 1,234 rows')).toBeTruthy();
   });
@@ -409,7 +457,7 @@ describe('D. Mapping card', () => {
   it('D17. mapping is locked with placeholder when dataset is not parsed', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload());
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Parse dataset first')).toBeTruthy();
     expect(screen.queryByText('Select mapping CSV')).toBeNull();
@@ -425,7 +473,7 @@ describe('D. Mapping card', () => {
     const m = makeMapping();
     useMappingDataMock.mockReturnValue(m);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     fireEvent.click(screen.getByText('Select mapping CSV').closest('button')!);
     expect(m.selectMappingFile).toHaveBeenCalledTimes(1);
@@ -440,7 +488,7 @@ describe('D. Mapping card', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('sensors.csv')).toBeTruthy();
     expect(screen.getByText('3 rows')).toBeTruthy();
@@ -456,7 +504,7 @@ describe('D. Mapping card', () => {
     });
     useMappingDataMock.mockReturnValue(m);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     const row = rowFor('sensors.csv');
     fireEvent.click(within(row).getByRole('button'));
@@ -473,7 +521,7 @@ describe('D. Mapping card', () => {
     });
     useMappingDataMock.mockReturnValue(m);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     fireEvent.click(screen.getByText('tag'));
     expect(m.setKeyColumn).toHaveBeenCalledWith('tag');
@@ -490,7 +538,7 @@ describe('D. Mapping card', () => {
     });
     useMappingDataMock.mockReturnValue(m);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     await waitFor(() => {
       expect(m.applyMapping).toHaveBeenCalledWith(FAKE_REPORT.headers);
@@ -507,7 +555,7 @@ describe('D. Mapping card', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Mapping file missing key column')).toBeTruthy();
   });
@@ -521,9 +569,9 @@ describe('E. Continue button', () => {
   it('E24. Continue is disabled until dataset is ready', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'] }));
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
-    const btn = screen.getByText('Continue').closest('button') as HTMLButtonElement;
+    const btn = continueButton();
     expect(btn.disabled).toBe(true);
   });
 
@@ -536,8 +584,10 @@ describe('E. Continue button', () => {
     );
     mockSaveWorkspace.mockResolvedValue(undefined);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
-    fireEvent.click(screen.getByText('Continue').closest('button')!);
+    // Name + description come from step 1 and are persisted by step 2's
+    // Continue — this is the only place they get written to disk.
+    renderAtStep2({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
+    fireEvent.click(continueButton());
 
     await waitFor(() => expect(mockSaveWorkspace).toHaveBeenCalledTimes(1));
     const saved = mockSaveWorkspace.mock.calls[0][0] as WorkspaceState;
@@ -550,9 +600,16 @@ describe('E. Continue button', () => {
       selectedSensors: [],
       visibleSensors: [],
       operationConfig: null,
+      name: 'Line 3 baseline',
+      description: 'Q3 compressor run',
     });
     expect(saved.id).toMatch(/^ws_\d+$/);
-    expect(saved.name).toContain('Workspace');
+
+    // Drain the rest of handleContinue before finishing. Its 500 ms
+    // MIN_TRANSITION_MS floor outlives the save, so bailing out here would
+    // fire onDataReady during the NEXT test (after beforeEach cleared the
+    // mocks) and be miscounted as that test's own call.
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
   });
 
   it('E26. after save, onDataReady is called with metadata + state + sensorMetadata', async () => {
@@ -565,10 +622,11 @@ describe('E. Continue button', () => {
     useMappingDataMock.mockReturnValue(makeMapping({ sensorMetadata: sm }));
     mockSaveWorkspace.mockResolvedValue(undefined);
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
-    fireEvent.click(screen.getByText('Continue').closest('button')!);
+    renderAtStep2();
+    fireEvent.click(continueButton());
 
-    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    // handleContinue holds a 500 ms MIN_TRANSITION_MS floor before handing off.
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
     const [metaArg, stateArg, smArg] = onDataReady.mock.calls[0];
     expect(metaArg).toEqual<CsvMetadata>({
       headers: FAKE_REPORT.headers,
@@ -713,14 +771,14 @@ describe('F. Load workspace flow', () => {
 
 describe('G. Empty-state hint + status bar', () => {
   it('G32. no files → "Add at least one CSV file to continue."', () => {
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
     expect(screen.getByText('Add at least one CSV file to continue.')).toBeTruthy();
     expect(screen.getByText('Awaiting data')).toBeTruthy();
   });
 
   it('G33. files present but unparsed → "Click Parse files to validate and continue."', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'] }));
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
     expect(screen.getByText('Click Parse files to validate and continue.')).toBeTruthy();
   });
 
@@ -729,7 +787,7 @@ describe('G. Empty-state hint + status bar', () => {
       makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.queryByText('Add at least one CSV file to continue.')).toBeNull();
     expect(screen.queryByText('Click Parse files to validate and continue.')).toBeNull();
@@ -788,7 +846,7 @@ describe('I. Stale-report state', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Parse files')).toBeTruthy();
   });
@@ -802,9 +860,9 @@ describe('I. Stale-report state', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
-    const btn = screen.getByText('Continue').closest('button') as HTMLButtonElement;
+    const btn = continueButton();
     expect(btn.disabled).toBe(true);
   });
 
@@ -817,7 +875,7 @@ describe('I. Stale-report state', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(
       screen.getByText('File selection changed — click Parse files to re-validate.')
@@ -836,7 +894,7 @@ describe('I. Stale-report state', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Selection changed · re-parse required')).toBeTruthy();
     expect(screen.queryByText(/^Ready ·/)).toBeNull();
@@ -860,7 +918,7 @@ describe('I. Stale-report state', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
     expect(screen.getByText('Parse dataset first')).toBeTruthy();
     expect(screen.queryByText('sensors.csv')).toBeNull();
@@ -886,8 +944,8 @@ describe('I. Stale-report state', () => {
     fireEvent.click(screen.getByText('Stuck workspace'));
     await waitFor(() => expect(screen.getByText('Loading workspace…')).toBeTruthy());
 
-    // Locate the `upload-page-resumed` listener (page also registers a
-    // `request-failure-group-data` listener inside handleLoadWorkspace).
+    // Locate the `upload-page-resumed` listener specifically — `mockListen`
+    // may have other registrations too, so find() disambiguates by event name.
     const resumeCall = mockListen.mock.calls.find((c) => c[0] === 'upload-page-resumed');
     expect(resumeCall).toBeDefined();
     const handler = resumeCall![1] as (e: { event: string; payload: undefined; id: number }) => void;
@@ -949,13 +1007,161 @@ describe('I. Stale-report state', () => {
       })
     );
 
-    render(<DataUploadPage onDataReady={onDataReady} />);
+    renderAtStep2();
 
-    const continueBtn = screen.getByText('Continue').closest('button') as HTMLButtonElement;
+    const continueBtn = continueButton();
     expect(continueBtn.disabled).toBe(true);
     // hasFiles=false → Parse button can't show even though stale
     expect(screen.queryByText('Parse files')).toBeNull();
     // Hint falls back to "Add at least one CSV file…" because !hasFiles
     expect(screen.getByText('Add at least one CSV file to continue.')).toBeTruthy();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// J. Onboarding flow (step 0 → 1 → 2)
+//   The page no longer boots straight into the upload UI. Step 0 is the
+//   new-project-vs-recent branch point, step 1 names the project, step 2 is
+//   the dataset surface every other group above asserts against. These tests
+//   cover the two screens the helpers walk through.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('J. Onboarding flow', () => {
+  it('J45. boots into step 0 with both start choices and no dataset UI', async () => {
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+
+    renderPage();
+
+    expect(screen.getByText('Get started')).toBeTruthy();
+    expect(screen.getByText('Create new project')).toBeTruthy();
+    expect(screen.getByText('Open recent project')).toBeTruthy();
+    expect(screen.getByText('Pick an option above to get started')).toBeTruthy();
+    // Step 2's surface must not be mounted yet…
+    expect(screen.queryByText('Dataset files')).toBeNull();
+    expect(screen.queryByText('browse')).toBeNull();
+    expect(screen.queryByText('Continue')).toBeNull();
+    // …nor the sidebar, which would duplicate the recents list on this step.
+    expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
+
+    await waitFor(() => expect(screen.getByText('Engine pressure run')).toBeTruthy());
+  });
+
+  it('J46. step 0 with no saved workspaces shows the empty-recents copy', async () => {
+    mockGetRecent.mockResolvedValue([]);
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('No saved projects yet')).toBeTruthy());
+    // The sidebar's differently-worded empty state belongs to step 1+
+    expect(screen.queryByText('No workspaces yet')).toBeNull();
+  });
+
+  it('J47. step 0 previews 3 recents and expands the rest via "Show all"', async () => {
+    const many: WorkspaceMetadata[] = [1, 2, 3, 4, 5].map((n) => ({
+      id: `ws_${n}`,
+      name: `Project ${n}`,
+      lastModified: 1_700_000_000_000 + n,
+      filePath: `/ws/ws_${n}.json`,
+    }));
+    mockGetRecent.mockResolvedValue(many);
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('Project 1')).toBeTruthy());
+    expect(screen.getByText('Project 3')).toBeTruthy();
+    expect(screen.queryByText('Project 4')).toBeNull();
+
+    fireEvent.click(screen.getByText('Show all 5 projects…'));
+
+    expect(screen.getByText('Project 4')).toBeTruthy();
+    expect(screen.getByText('Project 5')).toBeTruthy();
+  });
+
+  it('J48. "Create new project" advances to step 1 and reveals the sidebar', () => {
+    renderPage();
+
+    fireEvent.click(screen.getByText('Create new project'));
+
+    expect(screen.getByText('Create your project')).toBeTruthy();
+    expect(screen.getByPlaceholderText(NAME_PLACEHOLDER)).toBeTruthy();
+    expect(screen.getByPlaceholderText(DESC_PLACEHOLDER)).toBeTruthy();
+    // Step indicator only exists from step 1 onwards
+    expect(screen.getByText('Create project')).toBeTruthy();
+    expect(screen.getByText('Prepare dataset')).toBeTruthy();
+    // Sidebar comes back so the user can still switch workspaces mid-flow
+    expect(screen.getByPlaceholderText('Find workspace…')).toBeTruthy();
+  });
+
+  it('J49. step 1 Continue stays disabled until a non-blank project name is entered', () => {
+    renderAtStep1();
+
+    expect(continueButton().disabled).toBe(true);
+    expect(screen.getByText('Enter a project name to continue')).toBeTruthy();
+
+    // Whitespace-only is still "empty" — canCreateProject trims.
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
+      target: { value: '   ' },
+    });
+    expect(continueButton().disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
+      target: { value: 'Line 3 baseline' },
+    });
+    expect(continueButton().disabled).toBe(false);
+    expect(screen.getByText('Ready to continue')).toBeTruthy();
+  });
+
+  it('J50. clicking the disabled Continue on step 1 does not advance', () => {
+    renderAtStep1();
+
+    fireEvent.click(continueButton());
+
+    expect(screen.getByText('Create your project')).toBeTruthy();
+    expect(screen.queryByText('Prepare your dataset')).toBeNull();
+  });
+
+  it('J51. a named project + Continue advances to step 2', () => {
+    renderAtStep1();
+
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), {
+      target: { value: 'Line 3 baseline' },
+    });
+    fireEvent.click(continueButton());
+
+    expect(screen.getByText('Prepare your dataset')).toBeTruthy();
+    expect(screen.getByText('Dataset files')).toBeTruthy();
+    expect(screen.getByText('browse')).toBeTruthy();
+  });
+
+  it('J52. Back walks step 2 → 1 → 0, preserving what was typed', () => {
+    renderAtStep2({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
+
+    fireEvent.click(screen.getByText('‹ Back'));
+
+    expect(screen.getByText('Create your project')).toBeTruthy();
+    expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value)
+      .toBe('Line 3 baseline');
+    expect((screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value)
+      .toBe('Q3 compressor run');
+
+    fireEvent.click(screen.getByText('‹ Back'));
+
+    expect(screen.getByText('Get started')).toBeTruthy();
+    expect(screen.getByText('Create new project')).toBeTruthy();
+    expect(screen.queryByText('Continue')).toBeNull();
+  });
+
+  it('J53. step-indicator bubbles navigate backward only', () => {
+    renderAtStep2();
+
+    // step 2 → 1 by clicking the completed "Create project" bubble
+    fireEvent.click(screen.getByText('Create project'));
+    expect(screen.getByText('Create your project')).toBeTruthy();
+
+    // …but the step-2 bubble is not a shortcut forward; that path has to go
+    // through Continue so the project-name validation always runs.
+    fireEvent.click(screen.getByText('Prepare dataset'));
+    expect(screen.getByText('Create your project')).toBeTruthy();
+    expect(screen.queryByText('Prepare your dataset')).toBeNull();
   });
 });

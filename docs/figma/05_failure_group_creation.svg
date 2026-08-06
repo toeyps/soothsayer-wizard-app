@@ -1,0 +1,166 @@
+<svg width="1280" height="800" viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" font-family="Inter, 'Segoe UI', sans-serif">
+  <g id="Background">
+    <rect x="0" y="0" width="1280" height="800" fill="#09090b"/>
+  </g>
+
+  <g id="TitleBar">
+    <rect x="0" y="0" width="1280" height="32" fill="#18181b"/>
+    <rect x="0" y="31" width="1280" height="1" fill="#27272a"/>
+    <text x="16" y="20" font-size="11" fill="#a1a1aa" opacity="0.7">Failure Group Creation</text>
+    <g id="WindowControls">
+      <rect x="1194" y="10" width="12" height="12" fill="none" stroke="#a1a1aa" stroke-width="1"/>
+      <rect x="1222" y="10" width="12" height="12" fill="none" stroke="#a1a1aa" stroke-width="1"/>
+      <path d="M1250 10 L1262 22 M1262 10 L1250 22" stroke="#a1a1aa" stroke-width="1.2" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <g id="FGToolbar">
+    <rect x="0" y="32" width="1280" height="56" fill="#18181b"/>
+    <rect x="0" y="87" width="1280" height="1" fill="#27272a"/>
+    <g id="BackBtn">
+      <rect x="16" y="48" width="80" height="24" rx="6" fill="none" stroke="#27272a" stroke-width="1"/>
+      <text x="56" y="64" font-size="11" fill="#a1a1aa" text-anchor="middle">‹ Back</text>
+    </g>
+    <text x="112" y="55" font-size="9" font-weight="600" fill="#71717a" letter-spacing="0.05em">WORKSPACE</text>
+    <text x="112" y="70" font-size="13" font-weight="600" fill="#fafafa">test (Copy) (Copy)</text>
+
+    <g id="ToolbarRight">
+      <rect x="972" y="48" width="90" height="24" rx="6" fill="none" stroke="#27272a" stroke-width="1"/>
+      <text x="1017" y="64" font-size="11" fill="#a1a1aa" text-anchor="middle">Upload CSV</text>
+      <rect x="1070" y="48" width="100" height="24" rx="6" fill="none" stroke="#27272a" stroke-width="1"/>
+      <text x="1120" y="64" font-size="11" fill="#a1a1aa" text-anchor="middle">Download Template</text>
+      <rect x="1178" y="46" width="1" height="28" fill="#27272a"/>
+      <rect x="1194" y="48" width="70" height="24" rx="6" fill="#3b82f6"/>
+      <text x="1229" y="64" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Save</text>
+    </g>
+  </g>
+
+  <g id="ProgressStrip">
+    <rect x="0" y="88" width="1280" height="44" fill="#111113"/>
+    <rect x="0" y="131" width="1280" height="1" fill="#27272a"/>
+    <text x="20" y="106" font-size="9" fill="#71717a" letter-spacing="0.04em">TOTAL SENSORS</text>
+    <text x="20" y="122" font-size="15" font-weight="700" fill="#fafafa">132</text>
+    <rect x="90" y="98" width="1" height="24" fill="#27272a"/>
+    <text x="110" y="106" font-size="9" fill="#71717a" letter-spacing="0.04em">GROUPS</text>
+    <text x="110" y="122" font-size="15" font-weight="700" fill="#fafafa">6</text>
+    <rect x="160" y="98" width="1" height="24" fill="#27272a"/>
+    <text x="180" y="106" font-size="9" fill="#71717a" letter-spacing="0.04em">MODELS READY</text>
+    <text x="180" y="122" font-size="15" font-weight="700" fill="#4ade80">18</text>
+    <rect x="270" y="98" width="1" height="24" fill="#27272a"/>
+    <text x="290" y="106" font-size="9" fill="#71717a" letter-spacing="0.04em">PENDING</text>
+    <text x="290" y="122" font-size="15" font-weight="700" fill="#f59e0b">14</text>
+
+    <text x="980" y="106" font-size="9" fill="#71717a" letter-spacing="0.04em">COMPLETION</text>
+    <rect x="1060" y="106" width="140" height="8" rx="4" fill="#27272a"/>
+    <rect x="1060" y="106" width="77" height="8" rx="4" fill="#3b82f6"/>
+    <text x="1210" y="113" font-size="11" font-weight="700" fill="#fafafa">56%</text>
+  </g>
+
+  <g id="GroupsContainer">
+    <g id="GroupCard1">
+      <rect x="16" y="148" width="880" height="120" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+      <g id="GroupHeader1">
+        <path d="M32 172 l6 6 l6 -6" stroke="#a1a1aa" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="56" cy="174" r="4" fill="#3b82f6"/>
+        <text x="68" y="179" font-size="13" font-weight="600" fill="#fafafa">Compressor Bearing Wear</text>
+        <text x="248" y="179" font-size="10.5" fill="#71717a">3 sensors</text>
+        <rect x="800" y="164" width="24" height="24" rx="5" fill="#27272a"/>
+        <rect x="832" y="164" width="24" height="24" rx="5" fill="#27272a"/>
+        <rect x="864" y="164" width="24" height="24" rx="5" fill="#3f1d1d"/>
+      </g>
+      <g id="SensorChips">
+        <rect x="32" y="200" width="180" height="56" rx="7" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+        <path d="M40 212 v8 M36 216 h8 M36 216 h4 v4 h-4z" stroke="#71717a" stroke-width="1"/>
+        <text x="52" y="216" font-size="10.5" font-weight="600" fill="#fafafa">850T118.PV</text>
+        <text x="40" y="232" font-size="10" fill="#a1a1aa">Bearing Temp DE</text>
+        <rect x="40" y="240" width="42" height="14" rx="7" fill="rgba(74,222,128,0.15)"/>
+        <text x="61" y="250" font-size="8.5" fill="#4ade80" text-anchor="middle">Ready</text>
+
+        <rect x="224" y="200" width="180" height="56" rx="7" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+        <text x="244" y="216" font-size="10.5" font-weight="600" fill="#fafafa">850T119.PV</text>
+        <text x="232" y="232" font-size="10" fill="#a1a1aa">Bearing Temp NDE</text>
+        <rect x="232" y="240" width="42" height="14" rx="7" fill="rgba(74,222,128,0.15)"/>
+        <text x="253" y="250" font-size="8.5" fill="#4ade80" text-anchor="middle">Ready</text>
+
+        <rect x="416" y="200" width="180" height="56" rx="7" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+        <text x="436" y="216" font-size="10.5" font-weight="600" fill="#fafafa">850V201.PV</text>
+        <text x="424" y="232" font-size="10" fill="#a1a1aa">Vibration — Axial</text>
+        <rect x="424" y="240" width="52" height="14" rx="7" fill="rgba(245,158,11,0.15)"/>
+        <text x="450" y="250" font-size="8.5" fill="#f59e0b" text-anchor="middle">Pending</text>
+
+        <rect x="608" y="200" width="120" height="56" rx="7" fill="none" stroke="#3f3f46" stroke-width="1.3" stroke-dasharray="4 3"/>
+        <path d="M668 222 v12 M662 228 h12" stroke="#71717a" stroke-width="1.3" stroke-linecap="round"/>
+        <text x="668" y="246" font-size="9.5" fill="#71717a" text-anchor="middle">Add sensor</text>
+      </g>
+    </g>
+
+    <g id="GroupCard2">
+      <rect x="16" y="280" width="880" height="76" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+      <path d="M32 300 l6 6 l6 -6" stroke="#a1a1aa" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="56" cy="302" r="4" fill="#10b981"/>
+      <text x="68" y="307" font-size="13" font-weight="600" fill="#fafafa">Suction Line Instability</text>
+      <text x="228" y="307" font-size="10.5" fill="#71717a">2 sensors</text>
+      <rect x="800" y="292" width="24" height="24" rx="5" fill="#27272a"/>
+      <rect x="832" y="292" width="24" height="24" rx="5" fill="#27272a"/>
+      <rect x="864" y="292" width="24" height="24" rx="5" fill="#3f1d1d"/>
+    </g>
+
+    <g id="GroupCard3">
+      <rect x="16" y="368" width="880" height="76" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+      <path d="M32 388 l6 6 l6 -6" stroke="#a1a1aa" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="56" cy="390" r="4" fill="#f59e0b"/>
+      <text x="68" y="395" font-size="13" font-weight="600" fill="#fafafa">Not in Group</text>
+      <text x="180" y="395" font-size="10.5" fill="#71717a">127 sensors</text>
+      <rect x="800" y="380" width="24" height="24" rx="5" fill="#27272a"/>
+    </g>
+
+    <g id="AddNewGroupBtn">
+      <rect x="16" y="460" width="880" height="34" rx="8" fill="none" stroke="#27272a" stroke-width="1.3" stroke-dasharray="5 4"/>
+      <path d="M636 471 v12 M630 477 h12" stroke="#a1a1aa" stroke-width="1.4" stroke-linecap="round"/>
+      <text x="654" y="481" font-size="11.5" fill="#a1a1aa">Add New Failure Group</text>
+    </g>
+  </g>
+
+  <g id="InspectorPanel">
+    <rect x="912" y="148" width="352" height="612" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="932" y="176" font-size="9.5" font-weight="600" fill="#71717a" letter-spacing="0.05em">CONFIGURE</text>
+
+    <rect x="932" y="188" width="312" height="30" rx="7" fill="#09090b" stroke="#3b82f6" stroke-width="1.3"/>
+    <text x="944" y="207" font-size="12" font-weight="600" fill="#fafafa">850V201.PV</text>
+    <path d="M1220 200 l5 5 l5 -5" stroke="#71717a" stroke-width="1.3" fill="none"/>
+
+    <text x="932" y="242" font-size="10" fill="#71717a">Sensor Name</text>
+    <rect x="932" y="250" width="312" height="28" rx="6" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+    <text x="944" y="268" font-size="11" fill="#fafafa">Vibration — Axial</text>
+
+    <g id="ConceptModelRow">
+      <text x="932" y="304" font-size="10" fill="#71717a">Concept Sensor</text>
+      <rect x="932" y="312" width="150" height="28" rx="6" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+      <text x="944" y="330" font-size="10.5" fill="#a1a1aa">Vibration</text>
+
+      <text x="1094" y="304" font-size="10" fill="#71717a">Model Type</text>
+      <rect x="1094" y="312" width="150" height="28" rx="6" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+      <text x="1106" y="330" font-size="10.5" fill="#a1a1aa">Individual</text>
+    </g>
+
+    <text x="932" y="366" font-size="10" fill="#71717a">Model Notes</text>
+    <rect x="932" y="374" width="312" height="56" rx="6" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+    <text x="944" y="392" font-size="10.5" fill="#52525b">Trend vs. mean; alert above 3σ</text>
+
+    <text x="932" y="452" font-size="10" fill="#71717a">Additional Notes</text>
+    <rect x="932" y="460" width="312" height="56" rx="6" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+
+    <g id="StatusRow">
+      <text x="932" y="540" font-size="10" fill="#71717a">Status</text>
+      <rect x="1000" y="528" width="36" height="18" rx="9" fill="#3f3f46"/>
+      <circle cx="1010" cy="537" r="7" fill="#fafafa"/>
+      <text x="1044" y="540" font-size="10.5" fill="#f59e0b">Pending</text>
+    </g>
+
+    <g id="BuildModelBtn">
+      <rect x="932" y="566" width="312" height="34" rx="8" fill="#3b82f6"/>
+      <path d="M1076 578 l6 5 l-6 5 z" fill="#ffffff"/>
+      <text x="1094" y="587" font-size="12" font-weight="600" fill="#ffffff">Build Model</text>
+    </g>
+  </g>
+</svg>

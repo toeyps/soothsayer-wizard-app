@@ -9,6 +9,14 @@ export default function SaveAsWindow() {
 
     // Read mode from URL; 'rename' repurposes this same dialog for renaming the current workspace
     // (different default name prefill, different title/button/submit-event).
+    //
+    // The plain 'save-as' mode (duplicate workspace under a new name) is
+    // dead code as of the app-wide removal of the "Save As" feature — every
+    // remaining caller of this component (useSubWindowMenu.ts's `doRename`)
+    // always passes `mode=rename`. Left in place rather than stripped out,
+    // since untangling the isRename branches below isn't necessary to
+    // satisfy the removal and risks a regression in the rename path this
+    // component still needs to serve correctly.
     const mode = new URLSearchParams(window.location.search).get('mode') === 'rename' ? 'rename' : 'save-as';
     const isRename = mode === 'rename';
 

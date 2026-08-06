@@ -5,8 +5,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 export interface AppMenuHandlers {
     hasWorkspace: boolean;
     onNew: () => void;
-    onSave: () => void;
-    onSaveAs: () => void;
     onCloseWorkspace: () => void;
     onRename: () => void;
     onToggleTheme: () => void;
@@ -28,7 +26,6 @@ export function useAppMenu(handlers: AppMenuHandlers) {
         const build = async () => {
             try {
                 const sepFile1 = await PredefinedMenuItem.new({ item: 'Separator' });
-                const sepFile2 = await PredefinedMenuItem.new({ item: 'Separator' });
                 const quit = await PredefinedMenuItem.new({ item: 'Quit' });
 
                 const fileItems = [
@@ -37,17 +34,6 @@ export function useAppMenu(handlers: AppMenuHandlers) {
                         action: () => handlersRef.current.onNew(),
                     }),
                     sepFile1,
-                    await MenuItem.new({
-                        id: 'menu-save', text: 'Save', accelerator: 'CmdOrCtrl+S',
-                        enabled: hasWorkspace,
-                        action: () => handlersRef.current.onSave(),
-                    }),
-                    await MenuItem.new({
-                        id: 'menu-save-as', text: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S',
-                        enabled: hasWorkspace,
-                        action: () => handlersRef.current.onSaveAs(),
-                    }),
-                    sepFile2,
                     await MenuItem.new({
                         id: 'menu-close-ws', text: 'Close Workspace',
                         enabled: hasWorkspace,

@@ -1,0 +1,538 @@
+# Wizard (Soothsayer-Wizard) — Project Handover Summary
+
+> อัปเดตล่าสุด: 2026-07-16 — เอกสารนี้เขียนจากการสำรวจโค้ดจริง + งาน UI/UX รอบใหญ่ที่ทำต่อเนื่องในเซสชันนี้
+> (เริ่มจาก branch `main` @ v0.2.1, commit `cb6d105`) เพื่อใช้เป็นจุดเริ่มต้นสำหรับ developer คนใหม่หรือ session ใหม่ที่รับช่วงงานต่อ
+>
+> ⚠️ **โปรเจกต์ย้าย path แล้ว**: จากเดิม `C:\00_DATA\OneDrive - P-DICTOR\repo\Soothsayer-wizard-app` (อยู่ใน OneDrive sync) ➜ ปัจจุบันอยู่ที่ **`C:\00_DATA\Soothsayer-wizard-app`** (โฟลเดอร์ปกติ นอก OneDrive) — ดูเหตุผลใน §9
+>
+> 📌 **เอกสารนี้อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ 1 อย่าง** (ผู้ใช้ทำงานสลับ 2 เครื่อง และ Claude Code ไม่มี session history sync ข้ามเครื่อง — เอกสารนี้คือตัวแทนความต่อเนื่องแทน chat history) ถ้าจะให้เอกสารนี้ตามไปเครื่องที่ 2 ได้จริง **ต้อง commit + push ไฟล์นี้ด้วย** เพราะตอนนี้ยังเป็น untracked file อยู่ (ดู §7/§10)
+
+---
+
+## 1. ภาพรวมโปรเจกต์
+
+**Wizard** เป็น desktop app (Tauri v2) สำหรับ:
+1. Import CSV ข้อมูลเซนเซอร์
+2. สำรวจข้อมูล (dashboard: table / line chart / scatter / pair-plot)
+3. สร้าง Failure Group
+4. เทรน Predictive Model (3 แบบ: Individual, Clustering, Relationship)
+
+สถาปัตยกรรมแบ่งเป็น 3 tier: **React frontend** ↔ **Rust core (Tauri)** ↔ **Python sidecar** (เฉพาะโมเดล Relationship)
+
+---
+
+## 2. Stack ที่ใช้จริง (ตรวจสอบจาก `package.json` / `Cargo.toml`)
+
+### Frontend (`src/`)
+| หมวด | Library | หมายเหตุ |
+|---|---|---|
+| Framework | React 19.1 + TypeScript 5.8 | strict, ไม่มี React Router — เปลี่ยนหน้าด้วย local state |
+| Build | Vite 5, dev port `1420` | |
+| Styling | Tailwind CSS v4 (`@tailwindcss/postcss`) | |
+| Line chart | `echarts` 6 + `echarts-for-react` + `echarts-gl` | |
+| Scatter / pair-plot | `regl-scatterplot` (WebGL) | มี context-loss guard ในตัว |
+| Layout | `split.js` (resizable panes) | |
+| Icons | `lucide-react` | |
+| PDF export | `@react-pdf/renderer` (ใช้ yoga-layout WASM runtime) | ดูข้อควรระวัง §8 |
+| PNG export | `html-to-image` + ECharts canvas compositing | |
+| Formula UI | `d3-scale` | ใช้ร่วมกับ formula engine ฝั่ง Rust |
+| Test | Vitest 4 + jsdom + @testing-library/react | `src/__tests__/` — ดูหนี้ test ค้างใน §8 |
+
+### Rust core (`src-tauri/src/`, Tauri v2)
+| Crate | ใช้ทำอะไร |
+|---|---|
+| `csv` + `rayon` | parse CSV แบบ parallel |
+| `chrono` | timestamp parsing |
+| `nalgebra` | GMM ellipse fit (clustering) |
+| `fasteval` | formula engine (calculated sensors) |
+| `tauri-plugin-{dialog,fs,store,shell,opener}` | native dialogs, scoped FS, persisted settings, sidecar spawn |
+| dev-dep `tempfile` | Rust unit/integration tests |
+
+`Cargo.toml` ตั้ง `opt-level = 1` สำหรับ crate เราเองใน dev profile (เจตนา — เพื่อให้ `chart_query.rs` เร็วพอตอน dev บนข้อมูลหลายล้านแถว) และ `opt-level = 2` สำหรับ dependency ทั้งหมด
+
+### Python sidecar (`src-tauri/python/backend.py`, 486 บรรทัด)
+- Compile ด้วย **Nuitka `--onefile`** เป็น native binary — ห้าม ship เป็น `.py` ตรงๆ
+- สื่อสารกับ Rust ผ่าน stdin/stdout เป็น JSON เท่านั้น
+- ใช้ LinearGAM fit ความสัมพันธ์ระหว่างเซนเซอร์ — **ชื่ออัลกอริทึมนี้ห้ามโผล่ใน UI** (ดู §8)
+- ทดสอบแล้วว่า compile ได้ด้วย **Python 3.14** (numpy 2.5.1 / scipy 1.16.3 / pygam 0.12.0 / nuitka 4.1.3) แม้ Nuitka จะเตือนว่า 3.14 ยัง "experimental" — ใช้งานได้จริง สอบผ่าน smoke test ของ `build_sidecar.sh`
+
+---
+
+## 3. โครงสร้างโปรเจกต์ (ย่อ)
+
+```
+Soothsayer-wizard-app/
+├─ src/                        # React frontend
+│  ├─ main.tsx                 # entry — เลือก root component ตาม ?window= query param
+│  ├─ App.tsx                  # entry ของหน้าต่างหลัก (main window)
+│  ├─ components/
+│  │  ├─ upload/                DataUploadPage (ตอนนี้เป็น 3-step wizard — ดู §6) + ลูกๆ
+│  │  ├─ dashboard/              Dashboard, DataTable, FilterPanel, SensorSelection
+│  │  ├─ charts/                 LineChart, ScatterChart, PairPlotCell/Chart, ResponsiveECharts
+│  │  ├─ windows/                4 sub-window: AddSensor / FailureGroup / PredictiveModelBuild / SaveAs
+│  │  └─ reports/                PM PDF report template (react-pdf)
+│  ├─ hooks/                    useDataUpload, useMappingData, useChartData, useScatterSample,
+│  │                             useTablePage, useCalculationEngine, useFormulaEditor,
+│  │                             useAppMenu, useSubWindowMenu, usePMReport, useCoalescedDraw
+│  ├─ types/commands.ts         # ⭐ single source of truth ของทุก Tauri command signature
+│  ├─ workspaceManager.ts       # save/load/list/delete/duplicate/rename workspace
+│  └─ errorReporter.ts          # window.onerror / unhandledrejection → log ไฟล์ผ่าน Rust
+│
+├─ src-tauri/
+│  ├─ src/
+│  │  ├─ lib.rs (2647 บรรทัด)   # entry จริง — invoke_handler รวม 22 command, window management
+│  │  ├─ csv_processor.rs (1098) # parse/merge CSV → ColumnarData (in-RAM store)
+│  │  ├─ chart_query.rs (1001)  # bounded pipeline: filter → transform → aggregate → downsample
+│  │  ├─ clustering.rs (166)     # GMM ellipse fit
+│  │  ├─ operation_registry.rs  # calculated-sensor operation catalog
+│  │  ├─ metrics.rs (295)        # สถิติต่อเซนเซอร์
+│  │  └─ main.rs (6)             # เรียก tauri_app_lib::run()
+│  ├─ python/backend.py          # LinearGAM sidecar source
+│  ├─ bin/backend-x86_64-pc-windows-msvc.exe  # compiled sidecar (gitignored, ต้อง build เองทุกเครื่อง)
+│  ├─ tests/predictive_model_tests.rs
+│  ├─ capabilities/{default,add-sensor}.json
+│  └─ tauri.conf.json            # CSP, window config, externalBin, bundle targets
+│
+├─ docs/                        # requirements, task breakdown (zone ของ pm-agent), เอกสารนี้
+├─ scripts/                     # installer build script ต่อแพลตฟอร์ม
+├─ .github/workflows/release.yml # CI: build ทั้ง sidecar + Tauri bundle, publish GitHub Release
+└─ .claude/agents/               # นิยาม sub-agent 5 ตัว + zone การเขียนไฟล์ (ดู CLAUDE.md)
+```
+
+---
+
+## 4. วิธีรันโปรแกรม (บนเครื่องที่ตั้งค่าไว้แล้ว)
+
+```bash
+cd C:\00_DATA\Soothsayer-wizard-app   # path ใหม่ — ไม่ใช่ OneDrive แล้ว
+npm install
+
+npm run tauri dev        # รันแอปเต็ม (compile Rust + เปิดหน้าต่าง) — sidecar ต้องมีอยู่แล้วที่ src-tauri/bin/
+npm run dev               # frontend อย่างเดียว (Vite, port 1420) — ไม่มี Tauri backend
+npm run build              # tsc type-check + vite build (รันก่อน handoff เสมอ)
+npm run tauri:build        # release bundle (ต้องมี sidecar binary พร้อมแล้ว)
+
+npx vitest run                                          # frontend test ทั้งหมด (มีหนี้ค้าง — ดู §8)
+npx vitest run src/__tests__/useScatterSample.test.ts    # ไฟล์เดียว
+cd src-tauri && cargo test                               # Rust unit + integration test
+cd src-tauri && cargo test --test predictive_model_tests # integration เท่านั้น
+```
+
+**CI** (`.github/workflows/release.yml`): push tag `v*` → build sidecar (Nuitka) + Tauri bundle บน macOS arm64 และ Windows x64 → สร้าง draft GitHub Release พร้อม `.dmg` / `.exe` (NSIS) / `.msi`
+
+### ตั้งเครื่อง dev ใหม่จากศูนย์ (checklist)
+ถ้าเป็นเครื่องใหม่ที่ยังไม่เคย build เลย ให้ทำตามลำดับนี้ — ดูรายละเอียด/สาเหตุปัญหาที่เจอจริงใน §9:
+1. ติดตั้ง Rust (`rustup`) + Visual Studio Build Tools (C++ workload)
+2. ติดตั้ง Python 3.11+ (หรือ 3.13/3.14 ก็ใช้ได้ — ทดสอบแล้ว)
+3. **ถ้าเครื่องมี Kaspersky**: เพิ่ม exclusion ให้ Intrusion Prevention ครอบคลุมโฟลเดอร์โปรเจกต์ทั้งหมด + `%USERPROFILE%\.cargo` + `%USERPROFILE%\.rustup` (ไม่งั้น build จะพังด้วย error "Application Control policy has blocked this file")
+4. **อย่า clone/วางโปรเจกต์ไว้ใน path ที่ OneDrive sync อยู่** — ทำให้ cargo build ล้มด้วย "output path is not a writable directory" แบบสุ่มๆ (ดู §9)
+5. compile Python sidecar: `cd src-tauri/python && python -m venv .venv && .venv\Scripts\pip install -r requirements.txt && bash build_sidecar.sh` (ต้องมี Git Bash) แล้ว copy ผลลัพธ์ไปที่ `src-tauri/bin/backend-<target-triple>.exe`
+6. `npm install && npm run tauri dev`
+
+---
+
+## 5. Entry point
+
+- **Rust**: `src-tauri/src/main.rs` → `tauri_app_lib::run()` ใน `lib.rs` — ตั้งค่า plugin, register 22 command ผ่าน `invoke_handler`, และ handle window-lifecycle (ปิดแอปเมื่อไม่มีหน้าต่าง *visible* เหลือ — มี logic เฉพาะกันเคส race ตอนสลับไป sub-window)
+- **Frontend**: `src/main.tsx` อ่าน query param `?window=` เพื่อเลือก root component:
+  - ไม่มี param → `App.tsx` (main window: upload → dashboard)
+  - `add-sensor` → `AddSensorWindow`
+  - `predictive-model` → `PredictiveModelBuild`
+  - `failure-group` → `FailureGroupCreation`
+  - `save-as` → `SaveAsWindow`
+
+  แต่ละ sub-window คือ Tauri window แยก คนละ capability file (`default.json` เต็ม, `add-sensor.json` แคบกว่า)
+
+---
+
+## 6. Data flow หลัก (หัวใจของแอป)
+
+1. **Load**: `load_csv` (Rust) parse หลายไฟล์แบบ parallel ด้วย rayon (cap **2 GB/ไฟล์**), merge ตาม timestamp (ค่าใหม่ non-null ชนะเมื่อ timestamp ซ้ำ; โหลดไฟล์เดียวจะข้าม merge) → เก็บใน Tauri managed state
+2. **In-RAM store = `ColumnarData`** (`csv_processor.rs`): column-major โดยเจตนา — แต่ละเซนเซอร์เป็น `Vec<f64>` ต่อเนื่อง, **NaN = missing**; `ts_parsed` เก็บ epoch-microseconds ที่ parse ครั้งเดียวตอน load (`TS_MISSING` ถ้าไม่มี); `headers[0]` คือ timestamp column เสมอ
+3. **Frontend ไม่เคยได้ dataset เต็ม** (ตั้งแต่ v0.2.1) — query แสดงผลทำฝั่ง Rust ใน `chart_query.rs`: filter → operation transform → hourly aggregation (ถ้ามี) → min/max downsample → ส่งกลับแค่ O(max_points) แถว
+   - `get_chart_data` (ceiling 100k จุด) ผ่าน `useChartData` — line chart
+   - `get_table_page` (page ≤ 1000) ผ่าน `useTablePage` — data table
+   - `get_scatter_sample` (reservoir sampling) ผ่าน `useScatterSample` — scatter + pair-plot
+   - `export_chart_csv` เขียนไฟล์ลง disk ตรงจาก Rust (ไม่ผ่าน JS)
+4. **GPU guard ชั้นสุดท้าย**: `ScatterChart` / `PairPlotCell` จับ WebGL context-loss (retry overlay) + จำกัด stride สูงสุด (500k / 100k จุด)
+
+**Predictive model 3 แบบ**:
+- Individual → Rust คำนวณสถิติ/ขอบเขตต่อเซนเซอร์ → `INDV_INFO_*.json`
+- Clustering → Rust GMM ellipse fit (nalgebra) → `CLUS_INFO_*.json`
+- Relationship → Rust preprocess/project ข้อมูล → ส่ง array เล็กๆ ผ่าน stdin ไปยัง Python sidecar (LinearGAM) → sidecar เขียน `.pkl` และคืน JSON → Rust เขียน `REL_INFO_*.json`
+
+**Report export** (`usePMReport`): PNG ผ่าน html-to-image + ECharts canvas compositing, PDF ผ่าน `@react-pdf/renderer` (คอมไพล์ WASM runtime — ต้อง test บน installed build จริงเวลาแก้ CSP/report)
+
+### 6.1 การเปลี่ยนแปลง UI รอบล่าสุด (ยังไม่ commit — ดู §8)
+
+**หน้า Data Upload** (`DataUploadPage.tsx`) เปลี่ยนจากหน้าเดียวเป็น **3 step**:
+- **Step 0** (`StartChoiceStep`) — จุดตัดสินใจแรกสุด: การ์ด "Create new project" กับการ์ด "Open recent project" (โชว์ preview 3 workspace ล่าสุด, "Show all" ถ้ามีมากกว่านั้น) — sidebar รายชื่อ workspace เดิมถูก**ซ่อนไว้เฉพาะ step นี้**เพื่อไม่ให้ list ซ้ำกับการ์ด (เคยมีบั๊ก "Found multiple elements" จาก test เพราะ list โผล่ 2 ที่พร้อมกัน)
+- **Step 1** (`CreateProjectStep`) — ตั้งชื่อ + คำอธิบาย project (มี "‹ Back" กลับไป step 0)
+- **Step 2** — เนื้อหาเดิม (upload CSV + mapping) sidebar โผล่กลับมา
+
+**Dashboard** (`Dashboard.tsx` + ลูกๆ):
+- **`SensorSelection.tsx`** (แผง "Sensor" ทางขวา) — ปรับใหม่ทั้งหมด: sensor **group by component** อัตโนมัติ ปิดไว้ทั้งหมดโดย default (ต้องกดขยายทีละ component) มีช่องค้นหาที่ auto-expand กลุ่มที่มีผลลัพธ์ตรง ไม่มี filter panel/component-multiselect แบบเดิมแล้ว
+- **Data Insight panel** (`renderDataContent` ใน Dashboard.tsx) — ตอนนี้เป็น **2 tab**: **"Selected Sensor"** (default) แสดง sensor ที่ plot อยู่ทุกตัว พร้อม checkbox hide/unhide บนกราฟ, ไอคอน pipette เปลี่ยนสีเส้น, ไอคอน line-chart เปิดช่อง pin Y-axis scale (min/max คงที่), ปุ่มลบออกจาก plot — กับ **"Data Insight"** (ตารางข้อมูลเดิม)
+- **Legend ของกราฟ** (`LineChart.tsx`) ยังอยู่เหมือนเดิม (เคยลองเอาออกแล้วเอากลับมา) แต่ **เอาชื่อ sensor ที่เคยโผล่ซ้ำเหนือแกน Y ออกแล้ว** (ซ้ำกับ legend)
+- **TIME RANGE** เพิ่มปุ่ม quick-select แบบ relative (`Y`/`M`/`W`/`D`/`H` + เลขที่กรอก + ✓) นอกเหนือจาก date picker เดิม
+- **สี/Y-axis scale ต่อ sensor เป็น session state เท่านั้น** (`sensorColors`, `sensorAxisRange` ใน Dashboard.tsx) — **ยังไม่ persist ลง `WorkspaceState`** ปิดแอปแล้วค่าหาย ถ้าต้องการ persist ต้องเพิ่มเข้า `WorkspaceState` + `buildWorkspaceState` เอง
+- โฟลเดอร์ "collapsed panels" sidebar (ไอคอน DATA/FILTER ตอนซ่อน panel) — label "Data" เปลี่ยนเป็น **"Pickup Sensor"** แล้ว, ตำแหน่งแก้ไม่ให้ทับ Y-axis ของกราฟแล้ว (เพิ่ม `padding-left` แบบมีเงื่อนไขใน `App.css`)
+- **`FilterPanel.tsx`** — dropdown เลือก sensor สำหรับ value filter ตอนนี้โชว์ `description (tag)` แทน tag ดิบๆ (ต้องมี `sensorMetadata` prop ส่งเข้าไป)
+
+**🆕 Selected Sensor tab แยกตาม chart type แล้ว** (`Dashboard.tsx`, `renderDataContent`) — เดิม checkbox/pipette/pin-Y-axis โชว์เหมือนกันทุก chart type แต่จริงๆ มีผลแค่ Line Plot เท่านั้น (`sensorColors`/`sensorAxisRange` ส่งให้ `LineChart` อย่างเดียว, Scatter/Pair ใช้ `selectedSensors` เต็มชุดเสมอไม่สนใจ `visibleSensors`) ตอนนี้แก้เป็น:
+- **Line**: เหมือนเดิมทุกอย่าง (checkbox hide/unhide, pipette สี, pin Y-axis, ลบ)
+- **Scatter/Pair Plot**: เหลือแค่ปุ่มลบ + กล่องคำอธิบายสั้นๆ ชี้ไปที่ controls จริงของ chart แต่ละแบบ (Scatter มี X/Y dropdown + toolbox ในตัวกราฟเอง, Pair Plot มี lasso-cluster coloring ในตัวกราฟเอง) — สีตัวหนังสือ fallback เป็น `var(--text-primary)` แทนสีต่อเซนเซอร์
+
+**🆕 "Clear all" ปุ่มใหม่ใน Selected Sensor tab** (`Dashboard.tsx`) — เดิมลบ sensor ออกจากกราฟได้ทีละตัวผ่านไอคอนถังขยะต่อแถวเท่านั้น ตอนนี้เพิ่มปุ่ม "Clear all" (ไอคอน X) ที่ header ของ panel โผล่เฉพาะตอน tab เป็น "Selected Sensor" และมี sensor เลือกอยู่อย่างน้อย 1 ตัว — เรียก `clearAllSensors()` (เพิ่มใหม่คู่กับ `removeSensor` เดิม, แค่ `setSelectedSensors([])`) `visibleSensors` จะตามไปว่างเองผ่าน sync effect ที่มีอยู่แล้ว — ยึดตามดีไซน์อ้างอิงจาก platform เดิม (ปุ่ม X ข้าง "ALL PICKED") ที่ผู้ใช้ส่ง screenshot มา — `tsc --noEmit` ผ่านแล้ว **ยังไม่ได้ทดสอบบนหน้าต่างแอปจริงเพราะ browser preview ใช้ไม่ได้กับแอปนี้ (ดูด้านล่าง) — ต้องรอผู้ใช้ยืนยันผ่าน `npm run tauri dev`**
+
+**🆕 Color picker: สร้าง `ColorPlatePicker.tsx` เอง (ไม่พึ่ง library) แทน native `<input type="color">` แล้ว — รอบที่ 3, สำเร็จ** (`src/components/dashboard/ColorPlatePicker.tsx` ใหม่ + `Dashboard.tsx`) — สรุปเส้นทางที่ลองมา: รอบ 1 custom popover แบบ preset-swatch + hex input ล้วนๆ (ไม่มีจานสีลาก) → ผู้ใช้ไม่ชอบ revert; รอบ 2 ลอง `npm install react-colorful` แต่ Vite error `Missing "./dist/color-picker.css" specifier` (เวอร์ชันที่ดึงมา export path ไม่ตรง) → uninstall + revert กลับ native ทั้งหมด; **รอบ 3 (ปัจจุบัน)** เขียน HSV picker เองล้วนๆ ไม่มี dependency ใหม่เลย กันปัญหา import path ซ้ำ — ประกอบด้วยแค่ **saturation/value square (ลากได้) + hue slider** เท่านั้น ตามที่ผู้ใช้ขอชัดเจนว่า "เหลือแค่ plate สีด้านบนพอ" (ไม่มี RGB number field, ไม่มี hex input, ไม่มี preset swatch — ตัดออกหมดจากรอบ 1 เพราะไม่ได้ขอ) hue คงที่ระหว่างลากบน square (กันปัญหา hue หายตอนลากเข้าโซน grayscale) ไฟล์มี helper hex↔rgb↔hsv ในตัวเอง (`hexToRgb`, `rgbToHex`, `rgbToHsv`, `hsvToRgb`) ลาก/คลิกผ่าน Pointer Events (`setPointerCapture`) ไม่ใช้ global mousemove listener — toggle เปิด/ปิดทีละ sensor แบบเดียวกับ Y-axis pin editor (state `colorPickerFor` ใน `Dashboard.tsx`) — `tsc --noEmit` ผ่าน **ยังไม่ได้ทดสอบบนแอปจริง รอ `npm run tauri dev`** (ไม่ต้อง reinstall/restart พิเศษรอบนี้เพราะไม่มี dependency ใหม่ hot-reload ควรพอ) — ยังไม่มีการเทสต์ pointer-drag ทั้ง 2 แกน (square) และ 1 แกน (hue) ด้วยตาจริงเลย ควรลองลากดูให้ทั่วก่อน commit
+
+**🆕 แก้บั๊ก: เข้า Failure Group แล้วกลับ Dashboard ไม่ได้เลย (dead-end)** — Dashboard set `lastRoute: 'failure-group'` ค้างไว้ตอนเปิด FG ([Dashboard.tsx:1509](src/components/dashboard/Dashboard.tsx:1509)) และไม่มีจุดไหนเคย reset กลับเป็น `'dashboard'` เลย ("Back to Upload" ก็ตั้งใจไม่ auto-resume อยู่แล้วตาม design เดิม — [useSubWindowMenu.ts:24](src/hooks/useSubWindowMenu.ts:24)) ผลคือ workspace ไหนที่เคยเปิด FG จะ**เข้า Dashboard/analyze ไม่ได้อีกเลย**ไม่ว่าจะลองทางไหน (ผู้ใช้เจอเองแล้วรายงาน) แก้โดยเพิ่มปุ่ม **"Back to Dashboard"** ใหม่แยกจาก "Back to Upload" เดิม (คงไว้ทั้งคู่ เจตนาต่างกัน): `handleBackToDashboard` ใน [FailureGroupCreation.tsx](src/components/windows/FailureGroupCreation.tsx) patch `lastRoute` กลับเป็น `dashboard` ก่อน reopen/focus main window ผ่าน URL param `?resume=<id>` (fresh spawn) หรือ event `resume-workspace` (reuse) — ฝั่งรับใน [DataUploadPage.tsx](src/components/upload/DataUploadPage.tsx) เพิ่ม effect เรียก `handleLoadWorkspace()` เดิมที่มีอยู่แล้วให้ auto-resume ตรงเข้า Dashboard — `tsc --noEmit` ผ่าน **ยังไม่ได้ทดสอบบนแอปจริง** (flow: Dashboard → Create Failure Group → กด "Back to Dashboard" ใหม่ → ควรกลับเข้า Dashboard เดิมพร้อม sensor ที่เลือกไว้ครบ ไม่ใช่หน้า Import) — 🆕 ผู้ใช้ให้ลบปุ่ม "Back to Upload" เดิมออกจาก FG toolbar ทั้งหมดแล้ว (รู้สึกว่าข้าม sequence ที่วางไว้) เหลือแค่ "Back to Dashboard" ปุ่มเดียว — ลบ `handleBackToUpload` + `ask` import ที่ไม่ใช้แล้วออกด้วย (`useSubWindowMenu.ts`'s File-menu "New Workspace"/"Close Workspace" ยังคงพฤติกรรมเดิม ไม่ auto-resume — จงใจไม่แตะ เพราะเจตนาต่างจากปุ่ม toolbar)
+
+🆕 **แก้บั๊กรอบ 2**: ผู้ใช้ทดสอบแล้ว "Back to Dashboard" ไม่ได้พาเข้า Dashboard ตรงๆ — พาไปหน้า Import เฉยๆ ต้องกด recent-workspace card เองอีกทีถึงจะเข้า Dashboard (auto-resume ไม่ทำงาน) สาเหตุที่คาดคือ logic เดิม "เช็คว่ามี window 'main' เดิมไหม ถ้ามีก็ reuse" ไปเจอ window ค้าง (stale, hidden แต่ไม่ถูก destroy จริง) จากการทดสอบหลายรอบในเซสชันเดียวกัน ซึ่งมี React state เก่าไม่รู้จัก resume logic เลย แก้โดยเปลี่ยนเป็น **destroy ของเก่าทิ้งเสมอแล้ว spawn ใหม่เสมอ** (ไม่มี branch "reuse" อีกต่อไป) ใน `handleBackToDashboard` ([FailureGroupCreation.tsx](src/components/windows/FailureGroupCreation.tsx)) — ลบ `resume-workspace` event listener ที่ไม่จำเป็นแล้วออกจาก [DataUploadPage.tsx](src/components/upload/DataUploadPage.tsx) เหลือแค่อ่าน `?resume=<id>` จาก URL ตอน mount ทางเดียว เช็ค exit-guard ใน [lib.rs:2592](src-tauri/src/lib.rs:2592) แล้วว่าลำดับ destroy-then-create ปลอดภัย (FG ยังเปิด/visible อยู่ตลอดจนกว่าจะปิดตัวเองท้ายสุด ไม่มีจังหวะ "0 visible windows" หลอกให้แอปปิด) — `tsc --noEmit` ผ่าน
+
+🆕 **แก้บั๊กรอบ 3 (ร้ายแรงกว่าเดิม — ปิดทั้งแอป)**: ทดสอบแล้ว "Back to Dashboard" ทำ**แอปทั้งตัวปิดตัวเอง**กลางคัน! สาเหตุคือ race condition กับ Rust exit-guard ([lib.rs:2592](src-tauri/src/lib.rs:2592)): โค้ดรอบ 2 สร้าง `main` ใหม่แบบไม่รอ event ยืนยันว่าสร้างเสร็จ แล้วรีบปิด FG ทันที — ถ้า FG ปิดเสร็จเร็วกว่า `main` ใหม่จะถูกนับเป็น "visible" (เพราะ native window creation เป็น async ฝั่ง Rust) exit-guard จะเห็น "remaining visible windows: []" ชั่วขณะแล้วสั่ง `app_handle.exit(0)` ฆ่าทั้งแอปทันที ตัดตอน `handleLoadWorkspace` ที่กำลังโหลดอยู่กลางทาง (เห็นจาก log "Total read_csv took: 307ms" ที่ทำเสร็จแต่ไปไม่ถึง Dashboard) — แก้โดยเพิ่ม `await new Promise(...)` รอ event `tauri://created` ของ `main` ใหม่ก่อน แล้วค่อยปิด FG (เลียนแบบ pattern เดียวกับที่ Dashboard→FG ใช้อยู่แล้วสำเร็จ ซึ่งพลาดไม่ได้ใส่ไว้ตอนแก้รอบ 2) — ทดสอบแล้วยัง**ปิดแอปตัวเองเหมือนเดิม** ผู้ใช้ให้ **revert ทิ้งทั้งหมด** ใช้ "Back to Upload" แบบเดิมไปก่อน — revert แล้ว: `FailureGroupCreation.tsx` กลับไปมี `handleBackToUpload` + ปุ่ม + import `ask` เหมือนก่อนเริ่มทำ feature นี้ 100%, `DataUploadPage.tsx` ลบ auto-resume effect (`?resume=` param) ออกหมด — grep ยืนยันไม่มีเศษโค้ด `handleBackToDashboard`/`resume-workspace`/`?resume=` เหลือเลย `tsc --noEmit` ผ่าน — **ถ้าจะลองทำ "กลับไป Dashboard ตรงๆ" อีกในอนาคต ต้องระวัง Rust exit-guard ([lib.rs:2592](src-tauri/src/lib.rs:2592)) ให้ดี**: การ destroy/create window หลายตัวพร้อมกันเสี่ยงชนกับ "0 visible windows → exit" มาก แม้จะรอ `tauri://created` แล้วก็ยังพังในการทดสอบจริง (อาจต้องรอ event ที่บ่งบอกว่า window "visible" จริงๆ ไม่ใช่แค่ "created" หรือต้อง debug ฝั่ง Rust โดยตรงว่า `is_visible()` คืนค่าถูกจังหวะไหน) — ยังไม่มีวิธีแก้ที่ยืนยันว่าใช้ได้จริง
+
+**🆕 Label "SAMPLING (1 HR)" เปลี่ยนเป็น "AGGREGATION (1 HR)"** ([Dashboard.tsx:1025](src/components/dashboard/Dashboard.tsx:1025)) — ผู้ใช้เข้าใจผิดว่า dropdown นี้ (Raw/Avg/Max/Min/First/Last) ซ้ำซ้อนกับ automatic min/max decimation ที่มีอยู่แล้ว เกือบขอให้ลบทิ้ง หลังอธิบายว่าเป็นคนละกลไก (aggregation ทำงาน**ก่อน** decimation เสมอ ดู [chart_query.rs:548-565](src-tauri/src/chart_query.rs:548) — ไม่ใช่หลังตามที่เข้าใจ) จึงตกลงแค่เปลี่ยนชื่อ label ให้สื่อความหมายชัดขึ้นแทนการลบฟีเจอร์ — แก้แค่ text ที่โชว์ผู้ใช้ ไม่แตะชื่อตัวแปร/type ภายใน (`samplingMethod`, `ChartSamplingMethod` ยังคงชื่อเดิม) `tsc --noEmit` ผ่าน
+
+**🆕 แก้ "Save & Continue รู้สึกเหมือนเปิด window ใหม่"** — ไม่ใช่ปัญหา transition/CSS อย่างที่คิดตอนแรก แต่เป็นเพราะ `handleContinue` ([DataUploadPage.tsx:262](src/components/upload/DataUploadPage.tsx:262), flow "สร้างโปรเจกต์ใหม่ → Prepare dataset → Save & Continue") ไม่เคยเรียก `setLoadingWorkspace(true)` เลย ต่างจาก `handleLoadWorkspace` (flow "เปิด recent workspace" ที่รู้สึกลื่น) ที่เปิด full-screen loading overlay (blur backdrop + spinner "Loading workspace...") คั่นไว้เสมอ — เพิ่ม `setLoadingWorkspace(true)` + `try/catch` (reset `false` + โชว์ error ถ้า `saveWorkspaceData` fail) ให้ `handleContinue` แบบเดียวกัน — **ทดสอบแล้วยังไม่รู้สึกต่าง** เพราะ `saveWorkspaceData` เร็วมาก (<50ms) overlay กระพริบผ่านจนไม่ทันสังเกต
+
+🆕 **แก้รอบ 2**: เพิ่ม CSS fade-in (`app-page-transition` class, `App.tsx`/`App.css`, ใช้ keyframe `fadeIn` ที่มีอยู่แล้ว) ครอบการสลับ Import↔Dashboard ทั้งสองทิศทาง — **ทดสอบแล้วผู้ใช้บอกยังรู้สึกเหมือนเดิม** (ส่ง screenshot 3 ภาพเทียบ Prepare-dataset / Dashboard / Failure-Group ให้ดู) 0.2s fade เบาเกินไปจนไม่รู้สึก
+
+🆕 **แก้รอบ 3**: เพิ่ม `MIN_TRANSITION_MS = 500` ใน `handleContinue` ([DataUploadPage.tsx:262](src/components/upload/DataUploadPage.tsx:262)) — ใช้ `Promise.all([saveWorkspaceData(state), delay(500ms)])` บังคับ overlay "Loading workspace..." ให้อยู่อย่างน้อย 500ms เสมอ เลียนแบบ flow "เปิด recent workspace" ที่รู้สึกลื่นอยู่แล้วเพราะ re-parse CSV กินเวลาจริงหลักร้อย ms (ของ fade CSS รอบ 2 ยังเก็บไว้ ทำงานร่วมกันได้) — `tsc --noEmit` ผ่าน **ยังไม่ได้ทดสอบรอบนี้**
+
+**🆕🆕 ใหญ่: "Failure Group" ตอนนี้เป็น panel ที่ 5 ในตัว Dashboard เอง (ไม่ใช่แค่ window แยกอีกต่อไป)** — ผู้ใช้ประกาศแผน **redesign รอบใหญ่** (จะทยอยบอก requirement เพิ่มทีละส่วน) จุดแรกคือย้าย "Create Failure Group" เข้ามาเป็นส่วนหนึ่งของ Dashboard แบบถาวร ไม่ต้องเปิด window แยกอีก — **เฉพาะส่วน "สร้าง/จัดการ failure group" เท่านั้น ยังไม่รวม "Build Model"** (ผู้ใช้บอกจะแจ้ง requirement นั้นแยกทีหลัง) วางแผนผ่าน EnterPlanMode ก่อนเริ่ม (แผนอยู่ที่ `C:\Users\toey_\.claude\plans\vast-bubbling-phoenix.md` ถ้าต้องอ้างอิง) ผู้ใช้เลือกให้เป็น **quadrant จริงในกริด ขนาดเท่าๆ กับ Sensors panel** (ไม่ใช่ overlay/modal ลอยทับ) รายละเอียดที่แก้:
+
+- `types.ts`: `DashboardSlot` เพิ่ม `'right-mid'`, `DashboardPanel` เพิ่ม `'failure-group'`, `DashboardLayoutSizes.rightRows` ขยายจาก 2-tuple เป็น 3-tuple (`[sensors%, failure-group%, filter%]`, default `[34,33,33]`)
+- `Dashboard.tsx`: ขวาคอลัมน์ขยายจาก 2 แถวเป็น 3 แถว (Sensors / Failure Group / Filter) — `PANELS`/`SLOT_LAYOUT`/`RIGHT_SLOTS` เพิ่ม entry ใหม่, เพิ่ม `slotRMRef`/`rmCollapsed`, **split.js effect ของขวาคอลัมน์เขียนใหม่ให้ generic รองรับ 0/1/2+ collapsed** (0 collapsed → 3-way split, 1 collapsed → 2-way split เฉพาะคู่ที่ยัง visible โดย renormalize % ให้รวม ~100, 2+ collapsed → ไม่ split เลยปล่อยให้ CSS flex:1 ทำงาน) — collapsed-tabs sidebar (ปุ่มลอยฝั่งซ้ายที่โชว์ FILTER/PICKUP SENSOR ตอน panel ถูกซ่อน) **ไม่ต้องแก้อะไรเลยเพราะ generic รองรับ N panels อยู่แล้ว**
+- state ใหม่: `failureGroups`/`failureRows` (init จาก `initialState?.failureGroupState`, default `[{no:0,name:"Not in Group",...}]`) ผูกเข้า `buildWorkspaceState`/autosave effect ที่มีอยู่แล้ว (ผ่าน `failureGroupState` field ใน `WorkspaceState` ที่มีอยู่แล้วตั้งแต่เดิม ไม่ต้องแก้ schema)
+- **ไฟล์ใหม่ [`src/components/dashboard/FailureGroupPanel.tsx`](src/components/dashboard/FailureGroupPanel.tsx)** — พอร์ตมาจาก `FailureGroupCreation.tsx` (window เดิม, 1165 บรรทัด) เฉพาะส่วน group/row CRUD + CSV upload/download/save (ตัด Build Model, PM window-spawn, window-lifecycle handlers ทิ้งหมด) เป็น controlled component (`groups`/`rows`/`onGroupsChange`/`onRowsChange`/`allSensors`/`sensorMetadata` props) — Inspector panel (แก้ Concept Sensor/Model Type/Notes/Mapped Sensor Tag) ทำเป็น**แถบเลื่อนลงมาด้านล่าง** แทนการ split 70:30 แนวนอนแบบ window เดิม เพราะพื้นที่แคบเกินไป — ปุ่ม "Build Model" **ไม่มีในนี้เลย**
+- `App.css`: เพิ่ม `.fg-panel-embedded`/`.fg-inspector-embedded` (wrapper ใหม่สำหรับบริบทแคบ) ส่วน class อื่นๆ (`.fg-group-card`, `.fg-sensor-chip`, `.fg-inspector-field` ฯลฯ) **reuse ของเดิมทั้งหมด** เพราะเป็น top-level selector ไม่ได้ scope ผูกกับ window เดิม
+
+**สถานะ**: ปุ่ม "Create Failure Group" เดิมบน Dashboard ที่เปิด window แยก **ยังอยู่เหมือนเดิม ไม่ได้ลบ** (คนละเรื่องกับ panel ใหม่นี้ — ยังไม่ได้ตัดสินใจว่าจะเอาออกไหม รอผู้ใช้บอก) `tsc --noEmit` ผ่านสะอาดทุกไฟล์ **ยังไม่ได้ทดสอบบนแอปจริงเลย** — ต้องเช็ค: panel โผล่ขนาดเท่า Sensors จริงไหม, สร้าง/ลบ/rename group ได้ไหม, เพิ่ม/ลบ sensor row ได้ไหม, collapse panel แล้วโผล่ใน sidebar ซ้าย + restore ได้ไหม, ลาก gutter ทั้ง 3 เส้นในคอลัมน์ขวาแล้ว persist ข้าม reload ไหม, CSV upload/download/save round-trip ถูกไหม
+
+**🔙 REVERTED**: ผู้ใช้ลองแล้วไม่ถูกใจ ("มันไม่ถูกใจผมเท่าไหร่") ก่อนจะได้ทดสอบบนแอปจริงด้วยซ้ำ — บอกจะลอง design ใหม่เองแล้วค่อยแจ้ง requirement มาอีกที **revert กลับสู่สภาพก่อนเริ่ม feature นี้ 100%**: `types.ts` (`DashboardSlot`/`DashboardPanel`/`DashboardLayoutSizes.rightRows` กลับเป็น 4 slot/2-tuple เดิม), `Dashboard.tsx` (คอลัมน์ขวากลับเป็น 2 แถวเดิม, split.js effect กลับเป็นเวอร์ชัน 2-panel เดิม, ลบ state/import/render function ที่เกี่ยวข้องหมด), ลบไฟล์ `FailureGroupPanel.tsx` ทิ้ง, ลบ CSS block `.fg-panel-embedded`/`.fg-inspector-embedded` ออกจาก `App.css` — grep ยืนยันไม่มีเศษโค้ด (`FailureGroupPanel`/`failureGroups`/`failureRows`/`right-mid`/`rmCollapsed`) เหลือเลยสักจุด `tsc --noEmit` ผ่านสะอาด — **แผน redesign เดิมยังบันทึกไว้ที่ `C:\Users\toey_\.claude\plans\vast-bubbling-phoenix.md` เผื่ออยากเอากลับมาดูเป็น reference ตอนออกแบบใหม่** — รอ requirement ใหม่จากผู้ใช้ก่อนเริ่มงานต่อ
+
+**🆕 แก้สีกราฟซ้ำ/ใกล้เคียงกันเวลาเลือกหลาย sensor** — `defaultSensorColor` เดิม ([LineChart.tsx:23](src/components/charts/LineChart.tsx:23)) hash ชื่อ sensor tag เพื่อสุ่มสีจาก palette 6 สี ทำให้ (1) sensor หลายตัวชน hash กันได้สีซ้ำเป๊ะ และ (2) แม้ไม่ชน ก็มีโอกาสได้สีโทนน้ำเงิน-ม่วง 3 สีที่ใกล้เคียงกันมาก (`#3b82f6`/`#6366f1`/`#8b5cf6`) แยกด้วยตาบนเส้นกราฟบางๆ ยาก — ผู้ใช้ส่ง screenshot มาชี้ปัญหานี้ตรงๆ (เลือก 4 sensor เห็นแค่ 2 สีในกราฟ) แก้โดยเพิ่ม `resolvedSensorColors` (`useMemo`) ใน `Dashboard.tsx` — คำนวณ default color จาก **ตำแหน่งใน `selectedSensors`** (ลำดับนิ่ง ไม่สลับตอน hide/show) แทน hash ชื่อ รวมกับสีที่ user override ผ่าน pipette แล้วส่ง map สำเร็จรูปเดียวกันให้ทั้ง `<Chart>` และ Selected Sensor tab ใช้ตรงกัน — การันตีไม่มีสีซ้ำกันจนกว่าจะเลือกเกิน 6 sensor พร้อมกัน (ข้อจำกัดตาม palette ขนาด 6 สี) `defaultSensorColor` ยังเก็บไว้เป็น fallback สุดท้ายเผื่อกรณี edge case `tsc --noEmit` ผ่าน
+
+**🆕 ลบปุ่ม "Clear selection" ที่ซ้ำซ้อนออกจาก `SensorSelection.tsx` แล้ว** — ปุ่มนี้ (อยู่บน Sensor panel ฝั่งขวา เหนือ component tree) เรียก `onSensorChange([])` ซึ่งเคลียร์ `selectedSensors` ตัวเดียวกับปุ่ม "Clear all" ใน Selected Sensor tab (`Dashboard.tsx`) ที่เพิ่มไปก่อนหน้านี้แล้ว — ผู้ใช้สังเกตเห็นว่าซ้ำกัน เลยลบปุ่ม + handler `handleClearSelection` + import ไอคอน `X` ที่ไม่ใช้แล้วออก เหลือแค่ข้อความ "N sensors selected" แสดงจำนวนเฉยๆ ไม่มีปุ่ม — `tsc --noEmit` ผ่าน
+
+**🆕 ตำแหน่ง popup ของทั้ง color picker และ Y-axis fix-scale editor ย้ายไปชิดขวาแล้ว** (`Dashboard.tsx`) — เดิมทั้งคู่ชิดซ้าย (`padding-left: 42px` ใต้ checkbox) ไม่ตรงกับตำแหน่งไอคอนที่กดเปิด (pipette/line-chart อยู่ขวาสุดของแถว) ผู้ใช้ขอให้ทั้งสอง popup ลอยไปทางขวาใต้กลุ่มไอคอนแทน แก้ด้วย wrapper `display:flex; justifyContent:'flex-end'` ทั้งสองจุด (เดิม axis editor เคยลองสลับเป็นขวาอย่างเดียวก่อนแล้วโดนขอให้กลับซ้ายรอบนึง แต่สุดท้ายสรุปว่าให้ทั้งคู่ขวาเหมือนกัน — ผู้ใช้ยอมรับว่า diagram/ลูกศรที่ส่งมารอบแรกทำให้เข้าใจผิด) — `tsc --noEmit` ผ่าน ยังไม่ได้เทสต์บนแอปจริง
+
+**🆕 Scatter Plot มี axis-scale pin เป็นของตัวเอง** (`ScatterChart.tsx`) — ปุ่ม Ruler ในกล่อง toolbox เปิดแผงตั้ง min/max ของแกน X และ Y แยกกัน (ใส่แค่ด้านเดียวได้ ฝั่งที่ไม่ใส่ auto-fit ต่อ) เป็น state **ของ ScatterChart เอง** ไม่ยุ่งกับ `sensorColors`/`sensorAxisRange` ของ Line เลย pin ผูกกับ "เซนเซอร์ที่กำลังอยู่บนแกนนั้น" (ไม่ใช่ตำแหน่งแกนเฉยๆ) ถ้าสลับ dropdown X/Y เป็นเซนเซอร์อื่น pin จะไม่ตามไปทับผิดตัว — ผ่านการรีวิว 2 รอบ (agent คู่ขนาน + ตรวจเอง) เจอและแก้บั๊กจริง 5 จุด: flicker ตอนสลับเซนเซอร์, `Infinity` หลุดผ่านการ validate, ช่องกรอกไม่ sync ตอนสลับเซนเซอร์ระหว่างเปิดแผงค้าง, แกนกลับด้านเมื่อ pin ข้างเดียวเกินขอบเขตจริง, กล้อง zoom/pan ไม่ sync กับสเกลใหม่ (แก้ด้วย `sc.reset()` ทุกครั้งที่วาดใหม่ — แก้ปัญหานี้ให้ตอนสลับเซนเซอร์ธรรมดาด้วย)
+
+**⚠️ Browser preview ใช้ตรวจ UI ของแอปนี้ไม่ได้เลย** — เคยลองเปิด `http://localhost:1420` (Vite dev server) ผ่าน browser tab ธรรมดา แต่แอป crash ตั้งแต่ root เพราะ `TitleBar.tsx` เรียก Tauri's `getCurrentWindow()` ทันทีที่ mount โดยไม่มี Tauri IPC bridge ให้ (ไม่ใช่แค่บางฟีเจอร์ที่พังนะ — **ทั้งแอปไม่ขึ้นเลย**) ต้องทดสอบผ่านหน้าต่าง `npm run tauri dev` จริงเท่านั้น
+
+---
+
+## 7. หนี้ Rust build ปัจจุบัน (uncommitted)
+
+`git status` ตอนนี้มีไฟล์แก้ค้างอยู่ 13 ไฟล์ + เอกสารนี้ที่ยังไม่ commit (ดูรายชื่อเต็มใน §8) — **ยังไม่มีอะไร push หรือ commit เลยตั้งแต่ session UI/UX รอบนี้เริ่มต้น** ถ้าจะ commit ควรแบ่งเป็นหลาย commit ตามฟีเจอร์ (upload flow, dashboard sensor panel, chart legend/axis, filter panel) แทนที่จะ commit รวดเดียวทั้งหมด เพื่อให้ review/revert ง่ายในอนาคต
+
+---
+
+## 8. จุดที่ควรระวังตอน handover (พบจากการตรวจโค้ดจริง — อัปเดตสถานะแล้ว)
+
+1. **`README.md` ล้าสมัย** — อ้างถึง `ImportScreen` (ปัจจุบันคือ `DataUploadPage` ที่ตอนนี้กลายเป็น 3-step wizard ไปอีกชั้น) และไม่มีข้อมูล bounded chart pipeline / error reporting / step-based upload flow เลย — **ยังไม่ได้แก้** แนะนำอัปเดตหรือรวมกับเอกสารนี้
+
+2. **ข้อขัดแย้งเรื่อง auto-resume ยังไม่ได้แก้**: `CLAUDE.md` เขียนว่า auto-resume เป็น hard requirement แต่คอมเมนต์จริงใน `src/App.tsx` บอกว่า "No auto-resume" — ผู้ใช้ต้องเลือกเองจาก **step 0 "Open recent project"** (จุดใหม่ที่แทนที่ sidebar เดิมในหน้าแรก) ยังไม่ได้ยืนยันกับทีมว่าอันไหนคือพฤติกรรมที่ตั้งใจ
+
+3. **ไฟล์แปลกปลอมที่ commit เข้า git ยังอยู่**: [`src-tauri/2`](src-tauri/2) และ [`src-tauri/check_output.txt`](src-tauri/check_output.txt) ยังอยู่ในโฟลเดอร์ใหม่ด้วย (ติดมาตอน copy ย้าย path) — เป็น output หลุดจาก shell redirect เก่าจากเครื่อง/คนละ path (`D:\Github\vibe`) ยังควรลบทิ้งอยู่
+
+4. **Sidecar binary compile แล้วบนเครื่องนี้** — `src-tauri/bin/backend-x86_64-pc-windows-msvc.exe` มีอยู่แล้ว (ไม่ track ใน git ตามปกติ) แต่**เครื่องอื่นต้อง build เองใหม่** ตามขั้นตอนใน §4
+
+5. **CSP กับ PDF export**: production CSP มี `'unsafe-eval'` ใน `script-src` เพราะ react-pdf's yoga-layout compile WASM runtime — ถ้าจะ tighten CSP ในอนาคต ต้องเทสต์ export บน **installed build จริง** เพราะ dev mode ใช้ `devCsp` ที่หลวมกว่าและจะไม่เจอบั๊กนี้
+
+6. **ห้ามขยาย CSP หรือ fs scope โดยไม่ขออนุมัติ** — fs plugin scope เฉพาะ `$APPDATA`; เขียนไฟล์ path ที่ผู้ใช้เลือกเอง (CSV/PDF/PNG export) ต้องผ่าน Rust command `write_user_file` เท่านั้น
+
+7. **"LinearGAM" ห้ามโผล่ในข้อความที่ผู้ใช้เห็น** — UI ต้องเรียกว่า "Relation model" เสมอ (ชื่ออัลกอริทึมเป็นความลับทางธุรกิจ) — คอมเมนต์โค้ดพูดได้
+
+8. **IPC arg-key casing เป็นจุดพังเงียบอันดับ 1**: TS ส่ง key แบบ snake_case (`max_points`) แต่ Tauri v2 macro default เป็น camelCase → command ใหม่ที่มี multi-word parameter **ต้องมี** `#[tauri::command(rename_all = "snake_case")]` ไม่งั้น invoke จะ reject แบบเงียบๆ
+
+9. **Agent zone ownership** — sub-agent (`fe-ui-agent`, `fe-logic-agent`, `rust-agent`, `qa-agent`, `pm-agent`) นิยามไว้ใน `.claude/agents/` แต่**ใช้ไม่ได้ในเซสชันปัจจุบัน**เพราะ path ของโปรเจกต์เปลี่ยนกลางเซสชัน (harness ผูก registry กับ path ตอนเริ่ม) — ต้องเปิด session ใหม่จาก path `C:\00_DATA\Soothsayer-wizard-app` ถึงจะ scan `.claude/agents/` ใหม่และเรียกใช้ได้
+
+10. **~~หนี้ test ค้างจำนวนมาก~~ → ✅ แก้แล้ว 2026-08-05 (ดู §10)**: `src/__tests__/DataUploadPage.test.tsx` เคย fail 29/44 จากการเปลี่ยน DataUploadPage เป็น step-based flow — ตอนนี้เขียนใหม่ให้เดินผ่าน step ก่อน assert แล้ว **ผ่าน 53/53** (44 เดิม + 9 เทสต์ใหม่ของ step 0/1) — ที่ยังเหลือเป็นหนี้จริงคือ **ยังไม่มีเทสต์เลย**สำหรับ `SensorSelection.tsx`, `FilterPanel.tsx`, และ Dashboard's Selected Sensor tab ที่เพิ่มเข้ามาใหม่
+
+11. **🆕 สี/Y-axis scale ต่อ sensor ไม่ persist** — ตั้งค่าผ่าน pipette/line-chart icon ใน Selected Sensor tab แล้วหายเมื่อปิดแอปหรือ reload workspace (session state เท่านั้น ยังไม่เพิ่มเข้า `WorkspaceState`)
+
+12. **Repo มีเอกสารเก่าอื่นๆ ที่ควรอ่านคู่กัน**: `docs/requirements.md`, `docs/requirements-failure-group.md`, `docs/requirements-rust-port-hybrid.md`, `docs/task.md` (task breakdown — Feature 1 Data Upload Page Phase 1-2 เสร็จ, Phase 3 testing ยัง pending — **ไม่รวมงาน step-flow/Dashboard รอบล่าสุดที่ทำในเซสชันนี้ เพราะไม่ได้ผ่าน pm-agent**), `docs/contracts/*.md`, และ `multi_agent_orchestration_design.md` ที่ root
+
+---
+
+## 9. บันทึกปัญหาเครื่อง dev + วิธีแก้ (เจอจริงตอนตั้งเครื่องนี้ครั้งแรก)
+
+เครื่องนี้ไม่เคย build Rust ได้เลยจนกว่าจะไล่แก้ปัญหาต่อไปนี้ทีละอัน — เก็บไว้กันคนต่อไปเจอซ้ำ:
+
+1. **`cargo`/`cargo check` fail ด้วย `"An Application Control policy has blocked this file. (os error 4551)"`**
+   สาเหตุ: **Kaspersky Plus's Intrusion Prevention** จัดไฟล์ .exe ที่เพิ่ง compile ใหม่ (ไม่มีลายเซ็นดิจิทัล) เข้ากลุ่ม "Low Restricted" แล้วบล็อกการรัน
+   วิธีแก้: Kaspersky Plus → Security settings → Advanced protection → Intrusion Prevention → Manage resources → แท็บ **Exclusions** → เพิ่มโฟลเดอร์โปรเจกต์ทั้งหมด + `%USERPROFILE%\.cargo` + `%USERPROFILE%\.rustup` → **Save**
+   ข้อควรรู้: การเพิ่ม exclusion แบบนี้แก้ปัญหา "เขียนไฟล์ไม่ได้" ระหว่าง build ได้ แต่**ไม่ครอบคลุมการรัน .exe ที่ build เสร็จแล้ว** — ไฟล์ที่เคยโดนบล็อกไปแล้วยังต้องลบทิ้งให้ compile ใหม่ (fresh file ถึงจะผ่าน exclusion) ส่วนการ "รัน" ไฟล์ที่ build เสร็จ (เช่น `tauri-app.exe`) ต้องไปที่ **Manage applications** แทน ไม่ใช่ Manage resources
+
+2. **`cargo build` fail ด้วย `"output path is not a writable directory"`** (error จาก `autocfg` เวลา compile `indexmap`)
+   สาเหตุ: โปรเจกต์อยู่ใน **OneDrive-synced folder** — OneDrive ล็อกไฟล์ที่ cargo สร้าง/ลบรัวๆ ระหว่าง build
+   วิธีแก้ที่ใช้ตอนนั้น (ไม่จำเป็นแล้วหลังย้าย path): redirect `target-dir` ออกไปนอก OneDrive ผ่าน `.cargo/config.toml` (gitignored, machine-local)
+   **วิธีแก้ถาวรที่ใช้จริงตอนนี้**: ย้ายทั้งโปรเจกต์ออกจาก OneDrive ไปที่ `C:\00_DATA\Soothsayer-wizard-app` แทน — เลิกใช้ workaround ทั้งหมดแล้ว (ลบ `.cargo/config.toml` ออกแล้ว, target-dir กลับไปเป็น default `src-tauri/target`)
+
+3. **PowerShell (Windows PowerShell 5.1 ตัวเดิมของเครื่อง) รัน `npm run tauri dev` ไม่ได้**: `"running scripts is disabled on this system"`
+   สาเหตุ: PowerShell execution policy default (`Restricted`) บล็อก `.ps1` script ทุกตัวรวมถึง `npm.ps1`
+   วิธีแก้: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` (รันครั้งเดียวต่อ user account)
+
+4. **Python จริงอยู่คนละที่กับที่ `python` บน PATH ชี้ไป** — `python`/`py` บน PATH เป็นแค่ Windows Store alias (ใช้งานไม่ได้จริง) ส่วน Python ตัวจริง (ติดตั้งผ่าน Python install manager ใหม่) อยู่ที่ `%LOCALAPPDATA%\Python\bin\python.exe` — ต้องเรียก path เต็มตรงๆ หรือผ่าน `py` launcher (`py -3.14` เป็นต้น)
+
+**สรุปโครงสร้าง exclusion ของ Kaspersky ที่ตั้งไว้ตอนนี้** (Intrusion Prevention → Manage resources → Exclusions): `C:\00_DATA\Soothsayer-wizard-app`, `%USERPROFILE%\.cargo`, `%USERPROFILE%\.rustup` — path เก่าที่เคย exclude ไว้ตอนอยู่ใน OneDrive (`C:\rust-builds`, OneDrive path เดิม) ไม่จำเป็นแล้ว ปล่อยทิ้งไว้ได้ไม่มีผลเสีย
+
+---
+
+## 10. สถานะ repo ล่าสุด (อ้างอิงจาก git log + git status ณ 2026-07-16)
+
+- `main` @ v0.2.1 (`6ed6559`…`cb6d105`) คือ branch หลัก — มีงาน RAM optimization ครบ 2 ขั้น: columnar store (PR #1) + bounded chart pipeline/error reporting (`3620eb6`)
+- Step 3 (disk-backed store เช่น DuckDB/mmap Arrow) วางแผนไว้เฉพาะถ้า RAM ยังไม่พอหลัง step 2 — ยังไม่เริ่ม
+- Branch `feat/columnar-ram-opt` และ `claude/gifted-kepler-*` ถูก merge/superseded แล้ว — ไม่ควร base งานใหม่จากตรงนั้น
+- **🆕 มีงาน UI/UX รอบใหญ่ที่ทำในเซสชันนี้ยังไม่ commit เลย** (13 ไฟล์แก้ + `docs/PROJECT_HANDOVER.md` + `src/hooks/useSensorMetaMap.ts` ใหม่) ครอบคลุม: DataUploadPage 3-step flow, SensorSelection group-by-component, Dashboard Selected Sensor tab (hide/color/pin-scale/remove + ตอนนี้แยกตาม chart type แล้ว), relative time-range picker, FilterPanel sensor labels, collapsed-sidebar positioning fix, Scatter Plot axis-scale pin (`ScatterChart.tsx`) — **ควร commit เป็นชุดๆ ตามฟีเจอร์ก่อนเริ่มงานถัดไป** เพื่อไม่ให้ diff ใหญ่เกินจน review ยาก
+- **🆕 ผู้ใช้ทำงานสลับ 2 เครื่อง** — Claude Code ไม่มี session history sync ข้ามเครื่อง (เก็บ local ที่ `~/.claude/projects/...` ต่อเครื่อง) เอกสารนี้เลยถูกอัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จแทน chat history — **ต้อง commit+push ไฟล์นี้เองด้วยถ้าอยากให้เครื่องที่ 2 เห็น** (ยังเป็น untracked file อยู่ตอนนี้)
+- **🆕 2026-08-03 — App flow → Figma SVG mockups (6 ไฟล์)**: สร้าง SVG mockup จำลองหน้าจอหลักของแอปเพื่อ import เข้า Figma แล้วแก้ไขต่อได้ (ผู้ใช้ระบุ requirement: "ไฟล์อะไรก็ได้ที่ import เข้า figma แล้วแก้ไขใน figma ได้" — เลือก SVG เพราะ Figma import เป็น editable vector layer ได้ตรงๆ ไม่มี tool สร้าง `.fig` จริงหรือเรียก Figma API ในเซสชันนี้). ไฟล์ไม่ใช่ export จริงจากแอป (Browser preview render local SVG ได้แค่ static snapshot ในเซสชันนี้ ไม่สามารถ screenshot local Tauri app ได้) แต่ประกอบจาก layout/สี/ข้อความจริงที่อ่านโค้ดต้นฉบับ (`Dashboard.tsx`, `FailureGroupCreation.tsx`, `PredictiveModelBuild.tsx`, `DataUploadPage.tsx`) + screenshot ที่ผู้ใช้ส่งมาตลอด session ทั้งหมดอยู่ที่ **`docs/figma/`**:
+  - Wizard onboarding (3 steps): `wizard_step0_get_started.svg`, `wizard_step1_create_project.svg`, `wizard_step2_prepare_dataset.svg`
+  - `dashboard_analysis.svg` — หน้า Dashboard 4-panel (Chart / Control Chart / Sensors / Filter) + ปุ่ม Create Failure Group
+  - `failure_group_creation.svg` — หน้าต่าง Failure Group (toolbar, progress strip, group cards + sensor chips, inspector panel + Build Model)
+  - `predictive_model_build.svg` — หน้าต่าง Predictive Model (command bar, target/predictor/filter ซ้าย, Individual+Relationship/Clustering chart กลาง, model config ขวา)
+
+  ยังเป็น untracked ต้อง `git add`/commit เอง
+  - **🆕 2026-08-03 — Figma MCP connect + Assign sensor to Failure Group จาก Dashboard (real feature)**: ผู้ใช้ต่อ Figma MCP สำเร็จ (official Dev Mode MCP server ของ Figma เอง ผ่าน team plan ที่มี Full seat — ไม่ใช่ Free plan ธรรมดา ตอนแรกลองใช้ local community MCP (`figma-developer-mcp` + PAT) ไปด้วยแต่ลบทิ้งแล้วหลัง official ใช้ได้จริง) ใช้ดึง screenshot จริงของหน้า Dashboard/Failure Group Creation จาก Figma มาช่วยออกแบบ — ผู้ใช้ระบุปัญหาจริง: วิเคราะห์เซนเซอร์ใน Dashboard แล้วต้องมาเลือกใหม่ทั้งหมดตอนสร้าง Failure Group เพราะสองหน้าไม่คุยกัน — ออกแบบ + validate ด้วย interactive mockup ในแชทก่อน แล้ว implement จริงหลังผู้ใช้ approve (แผนอยู่ที่ `C:\Users\toey_\.claude\plans\vast-bubbling-phoenix.md` เขียนทับแผนเก่าที่ revert ไปแล้ว):
+    - **Scope ที่ confirm กับผู้ใช้**: v1 ทำแค่ per-row (ไม่ทำ bulk-select เพราะ checkbox เดิมใน Selected Sensor tab ใช้ความหมาย "แสดง/ซ่อนบนกราฟ" อยู่แล้ว ชนกัน) และเฉพาะแท็บ **Selected Sensor** เท่านั้น (ไม่ทำที่ Sensor picker 132 ตัว)
+    - **`Dashboard.tsx`**: เพิ่ม state `fgGroups`/`fgRows` (reuse `FailureGroup`/`FailureSensorRow`/`FailureGroupStateSlice` เดิมจาก types.ts ที่ `FailureGroupCreation.tsx` ใช้อยู่แล้ว ไม่ต้องเพิ่ม type ใหม่), helper `commitAssignment`/`handleAssignExisting`/`handleCreateGroup`/`handleRemoveFromGroup` เขียนผ่าน `updateWorkspaceData` (read-modify-write) ไม่ใช่ autosave เดิมของ Dashboard (full-overwrite) เพื่อไม่ให้ชนกับ FG window ที่เปิดพร้อมกัน — เพิ่มปุ่ม `FolderPlus` (คลิก + คลิกขวา) ต่อแถวใน Selected Sensor tab เปิด inline panel (สไตล์เดียวกับ color-picker/axis-editor เดิม) ให้เลือกกลุ่มที่มีอยู่/สร้างใหม่/เอาออกจากกลุ่ม พร้อม badge สีแสดงกลุ่มที่ assign ไว้แล้ว (reuse CSS class `.fg-group-color-*`/`.fg-group-dot` เดิมจาก App.css ให้สีตรงกับหน้า FG เป๊ะ)
+    - **`FailureGroupCreation.tsx`**: เพิ่ม listener `failure-group-updated` (mirror pattern เดียวกับ `workspace-renamed-internal` เดิม) reload จาก disk เมื่อ Dashboard assign ขณะ FG window เปิดค้างอยู่
+    - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual-test ผ่าน `npm run tauri dev` จริง** (Browser preview ใช้กับแอปนี้ไม่ได้) รอผู้ใช้ทดสอบเองแล้ว confirm ตาม verification steps ในแผน
+    - **🐛 บั๊กที่เจอตอน manual test รอบแรก + แก้แล้ว**: assign สำเร็จ (badge ขึ้นถูก) แต่กด "Create Failure Group" แล้วข้อมูลหาย — เช็คไฟล์ workspace จริงบนดิสก์ (`%APPDATA%\com.prompt-solution.tauri-app\workspaces\*.json`) พบว่า `failureGroupState` หายไปทั้ง key เลย สาเหตุคือ Dashboard มี autosave เดิม (`saveWorkspaceData(buildWorkspaceState())`, full-overwrite, ไม่ debounce) ที่ตอนแรกตั้งใจไม่ให้รู้จัก `fgGroups`/`fgRows` เพื่อกันชนกับ FG window แต่ผลข้างเคียงคือพอ autosave เดิมทำงานด้วยเหตุผลอื่น มันเขียนทับไฟล์ด้วยข้อมูลที่ไม่มี `failureGroupState` เลย — **แก้โดยเพิ่ม `failureGroupState: { groups: fgGroups, rows: fgRows }` เข้าไปใน `buildWorkspaceState()`'s return object ด้วย** (ใช้ค่าล่าสุดจาก state เสมอ ไม่ใช่ `initialState` ตอน mount) ทำให้ autosave ตัวไหนทำงานก็เขียนข้อมูลถูกต้องเหมือนกันหมด — เจอเคสนี้เพราะ manual test จริงเท่านั้น ไม่มีทาง unit-test/tsc จับได้ เป็นบั๊ก logic ไม่ใช่ type
+    - **⚠️ เจอ (ยัง unconfirmed ว่าเกี่ยวกับโค้ดนี้หรือเป็นของเดิม)**: กด "Back to Dashboard" ใน FG window แล้วไปหน้า "Get Started" ของ Wizard แทนที่จะกลับ Dashboard — โค้ดที่เกี่ยวข้องคือ `FailureGroupCreation.tsx:681-716` (`handleBackToDashboard`): ถ้า `WebviewWindow.getByLabel('main')` หา window ไม่เจอ จะ spawn window ใหม่ที่ `url: '/'` (หน้า Get Started) แทน — เป็น fallback ที่ตั้งใจไว้อยู่แล้ว (pre-existing code ไม่ได้แก้อะไรตรงนี้) คำถามคือทำไม `main` window หาไม่เจอ — ขอให้ผู้ใช้ restart dev server สะอาดแล้วลองใหม่ ยังไม่ได้รับ confirm ว่าแก้ไปแล้วหรือยังเป็นอยู่ — **ต้องติดตามต่อ**
+    - **🔄 Design revision รอบ 2 (หลัง review Figma mockup ของผู้ใช้เอง)**: ผู้ใช้ขอย้าย UI จาก Selected Sensor tab ไปแท็บ **Sensor** (ตัวเลือก 133 ตัว) แทน เพราะการผูกกับ "กำลัง plot กราฟอยู่" ทำให้ถ้า unplot สถานะ FG จะดูไม่ออก อีกอย่างคือ **1 เซนเซอร์ต้องอยู่ได้หลายกลุ่มพร้อมกัน** (ของเดิม 1 เซนเซอร์ = 1 กลุ่มเท่านั้น) — validate ด้วย interactive mockup แบบ multi-select checkbox toggle ก่อน แล้วจึง implement จริง:
+      - ลบปุ่ม/badge/panel ออกจาก Selected Sensor tab ทั้งหมด (revert กลับไปโค้ดเดิม)
+      - ย้าย logic ไป `SensorSelection.tsx` แทน — เพิ่ม props ใหม่ `fgGroups`, `fgRows`, `getGroupColor`, `onToggleSensorGroup`, `onCreateGroupForSensor` (state `groupMenuFor`/`newGroupDraft` ก็ย้ายไปเป็น local state ใน `SensorSelection.tsx` ด้วย เพราะ UI อยู่ที่นั่นแล้ว)
+      - `Dashboard.tsx` เปลี่ยน `commitAssignment` (หา row เดิมแล้วย้าย groupNo) → `toggleSensorGroup`/`createGroupForSensor` (เพิ่ม/ลบ row เฉพาะคู่ `(tag, groupNo)` นั้น ไม่กระทบ row ของกลุ่มอื่นที่เซนเซอร์เดียวกันเป็นสมาชิกอยู่) — รองรับ multi-group แล้ว
+      - `getFgGroupColor` ส่งเป็น prop function ลงไปแทนการ duplicate logic สีใน `SensorSelection.tsx`
+      - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test รอบใหม่** รอผู้ใช้ลองแล้ว confirm
+    - **🔄 Design revision รอบ 3**: ผู้ใช้ manual test แล้วบ่นว่า panel ที่โชว์ทุกกลุ่มพร้อม checkbox toggle (แม้จะ auto-expand ได้แล้ว) ดูสับสน แยกไม่ออกว่าติ๊กอยู่หรือเปล่าถ้าไม่มองดีๆ — validate ด้วย mockup ใหม่ก่อน แล้ว implement ใน `SensorSelection.tsx`:
+      - **Badge เอง = จุดลบ** — เพิ่มปุ่ม X เล็กๆ ต่อท้ายชื่อในแต่ละ badge กดแล้ว `onToggleSensorGroup(sensor, g.no)` ทันที ไม่ต้องเปิด panel
+      - **Panel (กด icon `FolderPlus`) = เพิ่มอย่างเดียว** — filter เหลือแค่กลุ่มที่**ยังไม่ได้เป็นสมาชิก** (`!memberGroups.some(...)`) แสดงเป็นแถวกด "+" เพิ่มได้เลย ไม่มี checkbox/สถานะ toggle ให้งงอีกต่อไป — คืน panel กลับไปเป็น "กดไอคอนถึงเปิด" (`menuOpen` เฉยๆ ไม่ auto-expand ตาม membership แล้ว เพราะตอนนี้ดู membership ผ่าน badge ได้อยู่แล้วไม่ต้องเปิด panel)
+      - Empty state แยก 2 กรณี: "No failure groups yet" (ยังไม่มีกลุ่มในระบบเลย) vs "Already in every group." (มีกลุ่มแต่เซนเซอร์ตัวนี้เข้าหมดแล้ว)
+      - เอาตัวเลขนับจำนวนเซนเซอร์ต่อกลุ่มออกจาก panel ด้วย (ผู้ใช้บอกไม่ได้อยากเห็น)
+      - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test รอบนี้** รอผู้ใช้ลองแล้ว confirm (รวมถึงประเด็น "Back to Dashboard → ไปหน้า Get Started" ที่ยังค้างจากรอบก่อนด้วย)
+    - **🔄 Design revision รอบ 4 — เพิ่ม rename/delete group**: ผู้ใช้เจอว่า group ที่สร้างไปแล้วแก้ชื่อ/ลบไม่ได้เลยจากหน้า Dashboard — validate ด้วย mockup ก่อนเหมือนเดิม แล้ว implement:
+      - `Dashboard.tsx`: เพิ่ม `renameGroup(groupNo, name)` / `deleteGroup(groupNo)` เป็น global operation (ไม่ผูกกับเซนเซอร์ตัวไหน) เขียนผ่าน `persistFailureGroupState` เดียวกับตัวอื่นๆ — `deleteGroup` ลบ row ของทุกเซนเซอร์ในกลุ่มนั้นทิ้งหมด **ไม่มี confirm dialog** (ตั้งใจให้ตรงกับ `FailureGroupCreation.tsx`'s ของเดิม `removeGroup` ซึ่งก็ไม่มี confirm เหมือนกัน — ผู้ใช้ไม่ได้ตอบคำถามเรื่อง confirm ที่ถามไปตรงๆ แต่บอก "เอาตามนี้เลย" เลยยึด precedent เดิมในโค้ด)
+      - `SensorSelection.tsx`: รวม "add-only list" กับ badge เดิมเป็น**ลิสต์เดียวที่โชว์ทุกกลุ่ม** แต่ละแถวมี: จุดสี + ชื่อ (คลิกดินสอ = แก้ไข inline), ปุ่ม "+" (โชว์เฉพาะกลุ่มที่ยังไม่ได้เป็นสมาชิก), ปุ่มดินสอ (rename ทุกกลุ่ม), ปุ่มถังขยะ (delete ทุกกลุ่ม) — เพิ่ม state `editingGroupNo`/`editGroupDraft` สำหรับโหมดแก้ไขชื่อ inline
+      - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test** รอผู้ใช้ลองแล้ว confirm
+  - **แก้ไข 2026-08-03**: ผู้ใช้ส่ง screenshot หน้า Dashboard จริงมาเทียบ พบว่า `dashboard_analysis.svg` เวอร์ชันแรกไม่ตรงกับ UI จริง (proportion ผิด, ไม่มี range slider ใต้กราฟ, ไม่มีแถว TIME RANGE/AGGREGATION ที่ถูกต้อง, Sensor panel ไม่มี group header "BOILER" + "2 sensors selected" pill, Filter panel มี section "Sampling/Operation" ที่ไม่มีอยู่จริง) — เขียนใหม่ทั้งไฟล์ให้ตรงกับ screenshot จริง (title bar มี Workspace label + save/theme icon, chart มี dual-axis + brush slider + legend, Selected Sensor list มี 3-icon action ต่อแถว, Filter panel เหลือแค่ Sensor Filters + Apply Filter ตามจริง)
+
+- **🆕 2026-08-03 — Dashboard: ย้าย Filter เข้าเป็นแท็บที่ 3 ในพาเนลล่างซ้าย (real code change, ไม่ใช่ mockup)**: ผู้ใช้ออกแบบ redesign ไว้เองใน Figma (แอปที่เข้าใจผิดว่าชื่อ "Claude Design" — จริงๆ คือ **Figma Desktop app** ที่มีฟีเจอร์ AI ในตัวชื่อ Figma Make ซึ่งใช้โมเดล Claude เป็น backend ให้เลือกได้ ไม่ใช่ product แยกของ Anthropic) แล้วเลือกแนวทาง "1c: แท็บใหม่ในพาเนลล่างซ้าย" — ย้าย Filter & Controls panel (เดิมอยู่ right-bottom slot) เข้าไปเป็นแท็บที่ 3 ชื่อ **"Filter"** ถัดจาก "Selected Sensor" / "Data Insight" ใน data widget panel, **ไม่ย้าย** ปุ่ม "Create Failure Group" (ผู้ใช้สั่งให้เก็บไว้ที่เดิม — bottom ของ right column). ผลคือ Sensor panel ขยายเต็มคอลัมน์ขวา (single slot แทนที่จะ split 2 พาเนล).
+  - **`src/types.ts`**: `DashboardSlot` เอา `'right-bottom'` ออก (เหลือ 3 slot), `DashboardPanel` เอา `'filter'` ออก (เหลือ `chart|data|sensors`), `DashboardLayoutSizes` เอา field `rightRows` ออกทั้งหมด (ไม่จำเป็นอีกต่อไปเพราะ right column เหลือพาเนลเดียว ไม่ต้อง split)
+  - **`Dashboard.tsx`**: ลบ `renderFilterContent()` ทั้งฟังก์ชัน, ลบ `case 'filter'` ใน `renderPanel`, ลบ RT↔RB split.js `useEffect` (right column ไม่ split แล้ว), ลบ `slotRBRef`/`rbCollapsed`, ลบ `Filter` icon import (ไม่ได้ใช้แล้ว), เพิ่มแท็บ `'filter'` ใน `activeDataTab` union type + ปุ่มแท็บ + branch render `<FilterPanel .../>` ในเนื้อหาแท็บ (reuse component เดิม ไม่มีการแก้ `FilterPanel.tsx`)
+  - **Backward-compat fix ที่พบระหว่างทำ**: ถ้า workspace เก่าที่ save ไว้ก่อนหน้านี้มี `collapsedPanels: ["filter", ...]` ค้างอยู่ ตอนโหลดจะ crash เพราะ `PANELS['filter']` เป็น `undefined` — แก้โดย filter เฉพาะ panel id ที่ยังมีอยู่จริงตอน hydrate initial state (`(initialState?.collapsedPanels ?? []).filter(id => id in PANELS)`)
+  - **`App.css`**: ลบ `.filter-widget` (dead — เคย wrap พาเนลแบบเดิมที่ตอนนี้ไม่มีแล้ว), เก็บ `.filter-content` ไว้ใช้ต่อกับแท็บใหม่
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด (exit 0) ทั้งก่อนและหลังใส่ backward-compat guard — **ยังไม่ได้ manual-test ผ่าน `npm run tauri dev` จริง** (Browser preview ใช้กับแอปนี้ไม่ได้ตามที่บันทึกไว้ก่อนหน้า) รอผู้ใช้ทดสอบเองแล้ว confirm
+
+- **🆕 2026-08-03 — Light theme: hardcoded white ทำ icon/scatter-dot หายตอน hover + duplicate CSS theme blocks**: ผู้ใช้เจอ 2 เคสแยกกันหลังลอง light theme จริงจัง:
+  1. **`App.css` มี `:root`/`[data-theme="light"]` block ซ้ำกัน 2 ชุด** (จาก CSS ที่ merge ทับกันในอดีต — เจอ `.fg-save-btn` ซ้ำ 3 รอบ, `.fg-group-badge`/`.fg-build-model-btn` ซ้ำ 2 รอบด้วย เป็นสัญญาณว่าไฟล์นี้ merge สกปรกมานาน) ชุดที่สอง (บรรทัดหลัง 4593+) ชนะเพราะมาทีหลังใน cascade ทำให้ชุดแรก (บรรทัด 4-26 เดิม) กลายเป็น dead code 100% — **ลบชุดแรกทิ้ง** แล้วพบว่าชุดที่ใช้จริง (ที่สอง) ลืมกำหนด light-mode ให้ `--ok`/`--warn`/`--danger` (สียังคงความสว่างแบบ dark theme แม้สลับเป็น light) — **เพิ่มค่า light ให้ 3 ตัวนี้**
+  2. **`pointColorHover: [1.0, 1.0, 1.0, 1.0]` (ขาวล้วน hardcode)** ใน `ScatterChart.tsx` และ `PairPlotCell.tsx` — จุดข้อมูลที่ hover กลายเป็นขาวเสมอไม่ว่า theme ไหน แถม `backgroundColor` ของ WebGL canvas (`regl-scatterplot`) ก็ hardcode ไม่ผูก theme เลยทั้งคู่ (Scatter = กรมท่าเข้ม, Pair Plot = ดำล้วน) เท่ากับกราฟ 2 ชนิดนี้ไม่รองรับ light theme มาตั้งแต่ต้น — ผู้ใช้เลือกให้แก้แบบเต็ม (ไม่ใช่แค่จุดเดียว):
+     - สร้าง hook ใหม่ **`src/hooks/useThemeMode.ts`** (mirror MutationObserver pattern เดิมที่ `PredictiveModelBuild.tsx` ใช้อยู่แล้ว แต่ไม่ได้ refactor ไฟล์นั้นให้มาใช้ hook นี้ด้วย — ไม่อยู่ใน scope งานนี้)
+     - `ScatterChart.tsx`: เรียก `useThemeMode()` ตรงๆ (เป็น instance เดียว ไม่ได้ mount พร้อมกันหลายตัว), `backgroundColor` สลับตาม theme ผ่าน `sc.set({backgroundColor})` ใน effect แยก (ไม่ recreate WebGL context ทั้งก้อนตอน toggle theme — จะกระพริบ/รีเซ็ตกล้อง), `pointColorHover` เปลี่ยนเป็นสี magenta คงที่ (ไม่ต้องสลับตาม theme ก็ contrast พอทั้ง 2 แบบ) + SVG axis line/tick/label เปลี่ยนจาก hex ตายตัวเป็น `var(--text-secondary)`/`var(--border-strong)`/`var(--text-primary)`
+     - `PairPlotCell.tsx`: รับ `themeMode` เป็น prop จาก parent แทนการเรียก `useThemeMode()` เอง (matrix มีได้หลายสิบ cell พร้อมกัน ไม่อยากมี MutationObserver ซ้ำเป็นสิบตัว) — logic เดียวกับ ScatterChart
+     - `PairPlotChart.tsx`: เรียก `useThemeMode()` ครั้งเดียว ส่ง `themeMode` ลงไปให้ทุก `<PairPlotCell>` (3 จุด) และ `<DiagonalHistogram>` (2 จุด) ที่อยู่ในไฟล์เดียวกัน, แก้ `DiagonalHistogram`'s hardcoded `background:'#000'`/label/border ให้ theme-aware ด้วย (แท่งกราฟ indigo คงเดิม ไม่ใช่ text ไม่ต้องเปลี่ยน)
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test** (ทั้ง theme block fix และ scatter/pair-plot fix) รอผู้ใช้ลองแล้ว confirm
+
+- **🆕 2026-08-03 — สร้าง `docs/BACKLOG.md`**: เก็บ 3 เรื่องที่เจอระหว่าง manual test แต่ user ยังไม่อยากทำตอนนี้ (ทำทีละ step ตาม workflow จริง): (1) FG↔Dashboard sync ทางเดียว [emit ขาด ฝั่ง `FailureGroupCreation.tsx`], (2) ASSIGNED GROUP panel ใน FG ยัง single-select [`updateRow(...,'groupNo',...)` คือ "ย้าย" ไม่ใช่ "toggle"], (3) "Ready/Pending" status toggle บน sensor chip ไม่สื่อความหมาย รอ redesign
+
+- **🆕 2026-08-03 — Bug: ScatterChart crash ตอนย้ายแอประหว่างจอ (multi-monitor, DPI ต่างกัน)**: user รายงาน error `Cannot read properties of undefined (reading 'addEventListener')` จาก `regl-scatterplot`'s `dom2dCamera`/`initCamera`/`reset()`, trigger จาก `ScatterChart.tsx` — root cause: resize event ยิงถี่มากตอนลากหน้าต่างข้ามจอ (โดยเฉพาะจอ DPI ไม่เท่ากัน) → effect สร้าง WebGL instance ใหม่ทุกครั้งที่ resize (`[innerDims.width, innerDims.height, rebuildNonce]`) → effect push-data (deps มี `sc`) re-fire ทันทีแล้วเรียก `sc.reset()` บน instance ที่**เพิ่งสร้างเสร็จหมาดๆ** ซึ่ง regl-scatterplot ยัง setup camera ภายในไม่เสร็จ → crash. เสนอ 2 ทาง (root-cause fix vs safety-net try/catch) ผู้ใช้เลือกทำแค่ root-cause fix:
+  - `ScatterChart.tsx`: เพิ่ม `prevScForResetRef` เก็บ instance `sc` ที่ effect รันล่าสุด — เรียก `sc.reset()` เฉพาะตอน `sc` เป็น**ตัวเดิม**กับรอบก่อน (แปลว่าเปลี่ยนเซนเซอร์/pin บน instance ที่มีอยู่แล้ว) ถ้า `sc` เพิ่งเปลี่ยน (มาจาก resize recreate) จะข้าม reset ไปเลย เพราะ instance ใหม่ reset อยู่แล้วโดยธรรมชาติ ไม่จำเป็นต้องเรียกซ้ำ (และเป็นตัวที่ทำให้ crash พอดี)
+  - **ไม่ได้ทำ**: try/catch safety net รอบ `.reset()` (ผู้ใช้บอกไม่ต้องเผื่อไว้ตอนนี้) — ถ้า regl-scatterplot มีปัญหาภายในแบบอื่นอีกในอนาคต ยังไม่มีตาข่ายกันตกตรงนี้
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test จริงบนเครื่องที่มี multi-monitor** รอผู้ใช้ลองย้ายจอแล้ว confirm
+
+- **🆕 2026-08-03 — 2 บั๊กเพิ่มเติมจาก light-theme fix รอบก่อน (ผู้ใช้เจอตอน manual test)**:
+  1. **Scatter/Pair Plot canvas พื้นหลังไม่เปลี่ยนสีจริงตอนสลับ theme** — รอบก่อนแก้ด้วย `sc.set({backgroundColor})` แต่ `.set()` แค่อัปเดต config ภายใน **ไม่ได้สั่งวาดใหม่** (ยืนยันจาก `useCoalescedDraw.ts` — ต้องเรียก `.draw()`/`requestDraw()` ถึงจะ repaint canvas จริง) แคนวาสเลยค้างภาพเดิมจนกว่าจะมี event อื่นมากระตุ้น (hover/zoom) — เห็นชัดใน Pair Plot: histogram (SVG) เปลี่ยนตาม theme ทันที แต่ cell ที่เป็น WebGL scatter ไม่เปลี่ยน
+     - `ScatterChart.tsx`: เพิ่ม `lastDrawRef` เก็บ x/y array ล่าสุดที่วาดไปแล้ว, theme-effect เรียก `requestDraw(sc, lastDrawRef.current)` ตาม `.set()` ทุกครั้ง
+     - `PairPlotCell.tsx`: reuse `drawDataRef`/`valueARef` ที่มีอยู่แล้ว (ของเดิมใช้กับ cluster-change effect) เรียก `requestDraw()` ตาม `.set()` เหมือนกัน
+  2. **ไอคอนปฏิทิน (native browser calendar picker) หายตอน light theme** — เจอ `filter: invert(1)` ที่ `.date-input-wrapper input::-webkit-calendar-picker-indicator` และ `.config-input::-webkit-calendar-picker-indicator` ใน `App.css` **ไม่มีเงื่อนไข theme เลย** — ตั้งใจกลับสีไอคอนดำเริ่มต้นของเบราว์เซอร์ให้เป็นขาวสำหรับ dark theme แต่พอสลับเป็น light theme ก็ยังกลับสีอยู่ดี (ไอคอนดำที่มองเห็นได้บนพื้นขาวอยู่แล้ว โดนกลับเป็นขาวจนหายไปกับพื้นขาว) — เพิ่ม `[data-theme="light"] ... { filter: none; }` cancel ไว้ทั้ง 2 จุด
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test** รอผู้ใช้ลองแล้ว confirm
+
+- **🆕 2026-08-04 — แก้จริงเรื่อง Scatter/Pair Plot canvas พื้นหลังไม่เปลี่ยนตาม theme (รอบก่อนแก้ไม่สำเร็จ)**: ผู้ใช้ส่ง screenshot Pair Plot คู่ dark/light ใหม่ยืนยันว่า cell scatter/time ยังดำสนิทอยู่ ("ปัญหานี้ยังไม่ถูกแก้นะ") แม้แก้ด้วย `sc.set({backgroundColor}) + requestDraw()` ไปแล้วรอบก่อน — เข้าไปอ่าน source จริงของ `node_modules/regl-scatterplot/dist/regl-scatterplot.esm.js` พบสาเหตุจริง: `backgroundColor` ถูก bake เข้า **WebGL color texture** ตอนสร้าง instance เท่านั้น (ผ่าน `createColorTexture`), ฟังก์ชัน `setBackgroundColor()` ที่ `.set()` เรียกใต้ฝาครอบ อัปเดตแค่ตัวแปร JS ภายใน + สไตล์ cursor ของ lasso เท่านั้น **ไม่ trigger การ rebuild texture หรือ repaint ใดๆ** เลย ต่อให้ตามด้วย `requestDraw()` ก็วาดด้วย texture สีเดิม — เป็นข้อจำกัดของ lib เอง แก้ด้วย `.set()` ไม่ได้จริงๆ
+  - **ทางแก้ที่ใช้**: เปลี่ยนจาก re-tint (`.set()` + replay draw) เป็น **recreate WebGL instance เมื่อ theme เปลี่ยน** (วิธีเดียวกับตอน resize ที่พิสูจน์แล้วว่าสีถูกต้องเสมอ เพราะ texture ถูกสร้างใหม่ทุกครั้ง):
+    - `ScatterChart.tsx`: เพิ่ม `themeMode` เข้า deps ของ create-effect (`[innerDims.width, innerDims.height, rebuildNonce, themeMode]`), ลบ effect re-tint แยกที่เคยเพิ่มไว้ (`sc.set({backgroundColor}) + requestDraw(lastDrawRef.current)`) ทิ้งทั้งก้อน, ลบ `lastDrawRef` ด้วยเพราะไม่มีจุดอ่านค่าเหลือแล้ว (unused var จริง — เช็คแล้วไม่มีใครใช้ต่อ)
+    - `PairPlotCell.tsx`: เพิ่ม `themeMode` เข้า deps ของ create-effect เดิม (`[innerDims.width, innerDims.height]` → เพิ่ม `themeMode`), ลบ effect re-tint แยกทิ้งเหมือนกัน — **เก็บ** `drawDataRef`/`valueARef` ไว้เหมือนเดิม เพราะ effect "cluster changes" อีกตัวยังใช้อยู่จริง
+    - `App.css`: เจอบั๊กเพิ่มอีกจุดระหว่างไล่ดู — `.pair-regl-wrap { background: #000; }` **ไม่มีเงื่อนไข theme เลยสักจุด** (ต่างจาก `.scatter-regl-wrap` ที่ไม่มี background hardcode ในตัวมันเอง เป็นปัญหาเฉพาะ Pair Plot) — แก้เป็น `background: var(--bg-primary)` (ตัวแปร token เดิมที่มีค่า light/dark อยู่แล้ว) กันไม่ให้ wrapper ใต้ WebGL canvas โผล่เป็นดำตอน light theme แม้ instance ข้างในจะ recreate ถูกต้องแล้วก็ตาม (ช่องว่าง/ขอบเล็กๆ ระหว่าง canvas กับ wrapper ยังต้องพึ่ง CSS นี้)
+  - **ทำไมไม่กลัวชนกับ crash-fix เดิม (`prevScForResetRef`)**: การ recreate instance ตอน theme toggle ไม่เกี่ยวกับ resize event ที่เป็นสาเหตุ crash เดิม — และ guard เดิมก็ยัง apply ถูกต้องอยู่ดี (ข้าม `.reset()` เมื่อ `sc` เพิ่งเปลี่ยนไม่ว่าจะเปลี่ยนเพราะ resize หรือ theme toggle ก็ตาม) ไม่ต้องแก้ guard เพิ่ม
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด (ไม่มี unused-var ค้างจากการลบ `lastDrawRef`/effect) — **ยังไม่ได้ manual test** รอผู้ใช้สลับ theme จริงบน Scatter Chart + Pair Plot แล้ว confirm ว่าพื้นหลัง canvas เปลี่ยนสีถูกต้องทั้งคู่
+
+- **🆕 2026-08-03 — เอา ECharts legend ออกจาก Line Chart (`LineChart.tsx`)**: ผู้ใช้ชี้ว่าแถบ legend ใต้กราฟ (จุดสี + ชื่อเซนเซอร์ คลิกเพื่อ toggle แสดง/ซ่อน) ซ้ำซ้อนกับ list "Selected Sensor" ด้านล่างที่มี checkbox toggle เดียวกันอยู่แล้ว — สั่งเอาออกตรงๆ ("เอาตรงนี้ออกได้เลย") ไม่ต้อง design ก่อน:
+  - ลบ key `legend: {...}` ออกจาก ECharts option object ทั้งหมด (ไม่ใช้ `show:false` เฉยๆ — เอาออกให้สะอาดไปเลย)
+  - ปรับ layout math ที่เดิม stack กัน legend→slider→x-axis-label จากล่างขึ้นบน ให้เหลือแค่ slider→x-axis-label (เอา `LEGEND_H`/`GAP_ABOVE_LEGEND`/`legendH`/`gapLegend`/`legendBottom` ออกหมด ไม่ใช่ตัวแปรค้าง) — พื้นที่ plot area เลยขยายมาแทนที่ ไม่เหลือช่องว่างจากที่ legend เคยอยู่
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด — **ยังไม่ได้ manual test** รอผู้ใช้ลองแล้ว confirm
+
+- **🆕 2026-08-04 — เปลี่ยน format วันที่ทั้งระบบเป็น `YYYY/MM/DD`**: ผู้ใช้บอกว่าแกน X ของ Line Chart ที่แสดงเป็น "เวลา" (`12:05:00 AM`) ดูไม่รู้เรื่องว่าเป็นวันไหน สั่งให้เปลี่ยนเป็นวันที่อย่างเดียว แล้วต่อมาสั่งเพิ่มว่าให้เปลี่ยน `MM/DD/YYYY` → `YYYY/MM/DD` **ทั้งระบบ ไม่ใช่แค่กราฟ**:
+  - สร้าง **`src/utils/dateFormat.ts`** (ไฟล์ใหม่) เป็น formatter กลาง: `formatDate` (`YYYY/MM/DD`), `formatDateTime` (`YYYY/MM/DD HH:mm:ss`, 24 ชม.), `formatYearMonth` (`YYYY/MM` สำหรับ tick ที่พื้นที่แคบ) — เขียนเองด้วย `getFullYear/getMonth/getDate` ไม่ใช้ `toLocaleDateString()` เพราะตัวนั้นผลลัพธ์ขึ้นกับ locale ของเครื่อง (en-US ให้ `MM/DD/YYYY` ที่กำกวม)
+  - แทนที่ทุกจุดที่แสดง timestamp จริง: `LineChart.tsx` (แกน X + tooltip), `PairPlotChart.tsx` (tooltip แกนเวลา), `PairPlotCell.tsx` (axis tick — เดิม `"Aug 26"` เป็น `"2026/08"`), `DataUploadPage.tsx` (ชื่อ workspace default ที่ auto-gen), `PMReportTemplate.tsx` (วันที่ generate ใน footer PDF)
+  - เดิม `toLocaleString()` เป็น locale-dependent + มี AM/PM — เปลี่ยนเป็น 24 ชม. fixed ไปด้วย เพราะเขียน formatter เองแล้วไม่มีเหตุผลจะคง AM/PM ที่กำกวมไว้
+  - **จุดที่จงใจไม่แก้**: ช่อง TIME RANGE ใน Dashboard เป็น native `<input type="datetime-local">` — ข้อความที่เห็นถูกวาดโดย browser/OS ตาม locale ไม่ใช่ text ที่โค้ดเราสั่งได้ ต้องเขียน custom date-picker เองทั้งตัวถึงจะบังคับ format ได้ **ผู้ใช้ตัดสินใจไม่แก้** ("รู้สึกว่าเปลี่ยนเยอะไป จะทำให้โปรแกรมหนักเกินไป") — ยอมให้จุดนี้ format ต่างจากที่อื่นแลกกับความเบาของโปรแกรม
+  - เจอ `RecentWorkspaces.tsx` ที่มี format เก่าเหมือนกัน แต่เช็คแล้ว**ไม่มีไฟล์ไหน import ไปใช้เลย** (dead code) จึงไม่แตะ
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด
+
+- **🆕 2026-08-05 — 🐛 แก้บั๊ก "กด Back แล้วกลับ Dashboard ไม่ได้" (ปิดคดีที่ค้างมาตั้งแต่ 2026-08-03)**: ผู้ใช้รายงานว่าถ้าใช้งานต่อเนื่องในรอบเดียว กด next/back ปกติดี แต่ถ้า**ปิดโปรแกรมแล้วเปิด project จาก recent** การกด Back จะทำงานผิดปกติ หลายครั้งกลับ Dashboard ไม่ได้เลย **ต้องสร้าง project ใหม่ทิ้ง** — ไล่โค้ดจนเจอสาเหตุครบทั้งวงจร (เป็นบั๊กเดียวกับที่บันทึกไว้ว่า "unconfirmed" เมื่อ 2026-08-03 ตอนนี้ยืนยันและแก้แล้ว):
+  - **ทำไมใช้งานปกติไม่พัง**: ปุ่ม "Create Failure Group" ใน Dashboard ใช้ coexisting-window pattern — เปิด FG โดย**ไม่ปิด** `main` (Dashboard ยัง mount ค้างอยู่ข้างใน) กด Back เลยหา `main` เจอ แล้วกลับมาที่ Dashboard เดิมได้
+  - **ทำไมเปิดจาก recent แล้วพัง**: `handleLoadWorkspace` ใน `DataUploadPage.tsx` ถ้า `lastRoute` เป็น `failure-group`/`predictive-model` จะสั่ง **`getCurrentWindow().destroy()` ทำลาย `main` ทิ้ง** แล้วเปิด FG แทน → กด Back หา `main` ไม่เจอ → ตกไป fallback ที่ `FailureGroupCreation.tsx` ซึ่งสร้างหน้าต่างใหม่ชี้ `url: '/'` = **หน้า Get Started** ไม่ใช่ Dashboard
+  - **ทำไมติดวนถาวร**: กด Back แล้วไม่มีใครรีเซ็ต `lastRoute` (ถูกตั้งเป็น `failure-group` ตั้งแต่ตอน FG mount) พอกด project เดิมซ้ำจาก Get Started ก็วนเข้า FG → ทำลาย main → Back → Get Started วนไม่จบ **เข้า Dashboard ของ workspace นั้นไม่ได้อีกเลย** = ตรงกับที่ผู้ใช้บอกว่าต้องสร้าง project ใหม่
+  - **แก้ที่ 1 (`FailureGroupCreation.tsx`)**: `handleBackToDashboard` อัปเดต `lastRoute` กลับเป็น `'dashboard'` ก่อนปิดหน้าต่าง — ตัดวงวน ครั้งต่อไปเปิด workspace นี้จะเข้า Dashboard ตรงๆ
+  - **แก้ที่ 2 (`DataUploadPage.tsx`)**: เอา `destroy()` + `hide()` ออก เปลี่ยนเป็นเรียก `onDataReady(...)` ให้ `main` เรนเดอร์ Dashboard ไว้ก่อน แล้วค่อยเปิด FG ทับ — สภาพหน้าต่างเหมือน flow ปกติเป๊ะ Back เลยเจอ Dashboard จริง (การ unmount `DataUploadPage` ไม่กระทบ handshake listener เพราะ listener อยู่บน Tauri event bus ไม่ใช่ React state)
+  - PM ไม่มีปัญหานี้ — ปิด PM แล้ว FG รีเซ็ต `lastRoute` กลับเป็น `failure-group` ให้ถูกต้องอยู่แล้ว
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด + **ทดสอบ `DataUploadPage.test.tsx` แล้ว: กลุ่ม F (Load workspace flow, F27–F31) ซึ่งเป็นเทสต์ที่ครอบคลุมฟังก์ชันที่แก้ ผ่านครบทั้ง 5 ตัว** — **ยังไม่ได้ manual test** รอผู้ใช้ลอง: ปิดโปรแกรม → เปิด project จาก recent ที่ค้างอยู่ที่ FG → กด Back → ต้องเจอ Dashboard (ไม่ใช่ Get Started)
+  - **⚠️ หมายเหตุสำคัญเรื่องเทสต์ที่ fail อยู่ (ไม่เกี่ยวกับการแก้นี้)**: รัน `DataUploadPage.test.tsx` ตอนนี้จะ fail 29/44 — **พิสูจน์แล้วว่าไม่ได้เกิดจากการแก้บั๊กนี้** โดยการ `git stash` ไฟล์ที่แก้แล้วรันเทียบ: ที่ HEAD ผ่าน 44/44 ครบ สาเหตุจริงคือ**งาน onboarding step 0/1/2 ที่ค้าง uncommitted อยู่ก่อนแล้ว** (หน้าจอ "Get started" → "Create project" → "Prepare dataset") ซึ่งทำให้ component เปิดมาที่ step 0 แต่เทสต์เก่าเขียนไว้สมัยที่หน้า upload แสดงทันที เลยหา element อย่าง `browse`/`Continue` ไม่เจอ — **เทสต์ชุดนี้ต้องเขียนใหม่ให้รองรับ step flow** → ✅ **ทำเสร็จแล้ววันเดียวกัน ผ่าน 53/53** ดูรายละเอียดที่ entry 2026-08-05 ถัดลงไป
+  - **🔎 ต้นเหตุจริงที่ผู้ใช้เจอเองทีหลัง (สำคัญ — แก้เพิ่มรอบ 2)**: ผู้ใช้สังเกตว่า **ถ้ากด "Back to Dashboard" ไม่มีปัญหา แต่ถ้ากดปุ่ม X ปิดหน้าต่างจะพังทันที** — ไล่โค้ดแล้วยืนยันว่าถูกต้อง: ปุ่ม X บน titlebar (Windows ใช้ titlebar ที่เขียนเองเพราะ `decorations: false`) เรียก `handleClose` ซึ่งทำแค่เช็คว่า PM เปิดอยู่ไหมแล้ว `close()` — **ไม่แตะ `lastRoute` เลย** ต่างจาก `handleBackToDashboard` ที่รีเซ็ตให้ ผลคือปิดด้วย X แล้ว `lastRoute` ค้างเป็น `'failure-group'` ตลอด
+    - ก่อนแก้รอบแรก: เปิดจาก recent → `main` ถูก destroy → ปิด FG ด้วย X → **ไม่เหลือหน้าต่างเลย โปรแกรมดับ** + `lastRoute` ยังผิด → เปิดใหม่วนเข้า FG อีก = อาการ "ต้องสร้าง project ใหม่"
+    - หลังแก้รอบแรก (ไม่ destroy main แล้ว): ปิดด้วย X เจอ Dashboard ก็จริง **แต่แค่บังอาการ** — `lastRoute` ยังค้างผิด ครั้งหน้าเปิดจาก recent ก็ยังเด้งเข้า FG เหมือนเดิม
+  - **แก้เพิ่มรอบ 2 — ดักการปิดจากหน้าต่างฝั่งที่ spawn FG**: ไม่ไปแปะโค้ดที่ `handleClose` เพราะมันครอบแค่ปุ่ม X ของ titlebar ตัวเอง ยังหลุด Alt+F4 / ปิดจาก taskbar / native red-close บน macOS (ซึ่งจงใจไม่มี `onCloseRequested` เพราะเคยทำให้หน้าต่างปิดไม่ลงใน Tauri 2) — ใช้ `webview.once('tauri://destroyed', ...)` แทน ซึ่งจับได้ทุกทางปิดรวมถึง crash (เป็น pattern เดียวกับที่ FG ใช้ดักการปิด PM อยู่แล้ว ไม่ใช่ของใหม่):
+    - `Dashboard.tsx` (ปุ่ม "Create Failure Group") + `DataUploadPage.tsx` (ตอน spawn FG จาก recent) → ทั้งคู่ติด observer รีเซ็ต `lastRoute` เป็น `'dashboard'`
+    - มีเงื่อนไขกันพลาด: ถ้าตอน FG ปิดแล้ว **PM ยังเปิดอยู่** จะไม่รีเซ็ต (ปล่อยให้ PM เป็นเจ้าของ route)
+    - เก็บการรีเซ็ตใน `handleBackToDashboard` ไว้เหมือนเดิมเป็นตาข่ายชั้นสอง เผื่อหน้าต่างที่ดักอยู่ตายไปก่อน
+  - **แก้คอมเมนต์ที่เขียนคลาดเคลื่อน** ใน `FailureGroupCreation.tsx` (เดิมเขียนว่า `lastRoute` ถูกจัดการตอน "window close → 'failure-group'" ซึ่งไม่จริง — ตัวที่ทำคือตอน *PM* ปิด ไม่ใช่ตอน FG ปิด) คอมเมนต์นี้เป็นเหตุผลหนึ่งที่บั๊กนี้หายากเพราะอ่านแล้วนึกว่ามีคนดูแลอยู่แล้ว — เขียนใหม่ให้ระบุครบทุก transition รวมถึงว่าเคสปิดหน้าต่างถูกจัดการจาก**ข้างนอก**ไฟล์นี้
+  - Verify รอบ 2: `npx tsc --noEmit` ผ่านสะอาด + เทสต์กลุ่ม F (Load workspace flow) ยังผ่านครบ 5/5
+
+- **🆕 2026-08-05 — ✅ เขียน `DataUploadPage.test.tsx` ใหม่ให้รองรับ 3-step onboarding flow (ปิดหนี้เทสต์ 29/44 ที่ค้างจากรายการก่อนหน้า)**: **แก้เฉพาะไฟล์เทสต์ ไม่แตะ `DataUploadPage.tsx` เลยแม้แต่บรรทัดเดียว** (step flow เป็นพฤติกรรมที่ตั้งใจ เทสต์ต่างหากที่ล้าสมัย) — ผลลัพธ์: **53/53 ผ่าน** (รัน 3 รอบติดกันเพื่อเช็ค flaky ผ่านหมดทุกรอบ)
+  - **เพิ่ม helper เดินขั้นตอนให้อัตโนมัติ** ไว้ต้นไฟล์: `renderPage()` (step 0 เฉยๆ), `renderAtStep1()` (คลิก "Create new project"), `renderAtStep2({name, description})` (ต่อด้วยกรอกชื่อ project + คลิก Continue) และ `continueButton()` — เทสต์กลุ่ม **B/C/D/E/G/I37–I42** เปลี่ยนแค่บรรทัด `render(...)` เป็น `renderAtStep2()` **assertion เดิมทั้งหมดใช้ต่อได้ไม่ต้องแก้**
+  - กลุ่ม **A2/A3/A4** (sidebar: "No workspaces yet" / ค้นหา / "No matches") ย้ายไปเริ่มที่ `renderAtStep1()` เพราะ sidebar ถูกซ่อนบน step 0 โดยตั้งใจ — ส่วน **A1/A5–A8** ปล่อยไว้ที่ step 0 ตามเดิม (StartChoiceStep แสดง recent list + ปุ่มลบเองอยู่แล้ว)
+  - **กลุ่ม F (F27–F31) ไม่ได้แตะเลย** ตามที่กำชับ — ยังผ่านครบ 5/5 (เป็นเทสต์ที่คุ้มบั๊ก Back-button ที่เพิ่งแก้ไปด้านบน) เช่นเดียวกับ H35/H36 (theme) และ I43/I44 (stuck-spinner) ที่ผ่านอยู่แล้วเพราะไม่ผูกกับ markup ของ step 2
+  - **เทสต์ใหม่ 9 ตัว กลุ่ม J (Onboarding flow)**: J45 boot มาที่ step 0 พร้อม 2 การ์ดและไม่มี UI ของ step 2 / J46 "No saved projects yet" (คนละข้อความกับ sidebar) / J47 preview 3 อัน + ปุ่ม "Show all N projects…" / J48 เข้า step 1 แล้ว sidebar + step indicator โผล่ / J49 Continue ถูก disable จนกว่าจะกรอกชื่อ (เว้นวรรคล้วนก็ยังไม่ผ่าน) / J50 กด Continue ตอน disable แล้วไม่เด้งไป step 2 / J51 กรอกชื่อแล้วไป step 2 ได้ / J52 ปุ่ม Back เดิน 2→1→0 และค่าที่พิมพ์ไว้ไม่หาย / J53 เลข step บนหัวคลิกถอยหลังได้อย่างเดียว กดไปข้างหน้าไม่ได้
+  - **E25 ปรับ assertion**: เดิมเช็ค `saved.name` มีคำว่า "Workspace" (ชื่อ auto-gen) — ตอนนี้ชื่อมาจาก step 1 เสมอ (fallback auto-gen กลายเป็น dead path เพราะ step 2 เข้าไม่ถึงถ้าไม่มีชื่อ) เลยเปลี่ยนเป็นเช็คว่าชื่อ+description ที่กรอกไว้ถูกเขียนลง `WorkspaceState` จริง
+  - **🐛 เจอบั๊ก test-isolation ระหว่างทาง (แก้แล้ว)**: E26 fail แบบงงๆ ว่า `sensorMetadata` เป็น `null` — สาเหตุคือ `MIN_TRANSITION_MS = 500` ใน `handleContinue` ทำให้ `onDataReady` ของ **E25** ยิงหลังเทสต์ E25 จบไปแล้ว ~500ms ไปตกใส่ E26 (ซึ่ง `beforeEach` เพิ่ง `clearAllMocks()` ไป) แล้วถูกนับเป็น call แรกของ E26 — แก้โดยให้ E25 `await waitFor(onDataReady)` ปิดท้ายเพื่อ drain timer ให้จบภายในเทสต์ตัวเอง (ระวังเรื่องนี้ถ้าจะเพิ่มเทสต์ที่กด Continue เพิ่มในอนาคต)
+  - Verify: `npx vitest run src/__tests__/DataUploadPage.test.tsx` → **Tests 53 passed (53)** ผ่านครบ 3 รอบติด
+  - **⛔ REVERTED (2026-08-05, ทันทีหลัง manual test) — "แก้ที่ 2" ทำโปรแกรมพัง ห้ามทำซ้ำ**: การเปลี่ยน `handleLoadWorkspace` ให้**ไม่ destroy `main`** แล้วเรียก `onDataReady(...)` ให้ main เรนเดอร์ Dashboard ไว้ข้างหลัง FG แทน — ผู้ใช้ทดสอบจริงแล้ว **เปิด project จาก recent ไม่ได้เลย เด้งกลับหน้าแรกสุด (Get Started)** จึง revert กลับไปเป็นพฤติกรรมเดิมของ HEAD ทั้งหมด (destroy main หลัง handshake + `hide()` ตอน `tauri://created`) ยืนยันว่าตรงกับ HEAD แล้วโดยเทียบจำนวน marker ทุกตัว
+    - **บทเรียนสำคัญสำหรับคนที่มาทำต่อ**: `src/__tests__/DataUploadPage.test.tsx` **mock Tauri window API ทั้งหมด** (`WebviewWindow`, `getCurrentWindow`, ฯลฯ) เทสต์กลุ่ม F ผ่านครบ 5/5 ทั้งๆ ที่โค้ดจริงพัง — **unit test ชุดนี้พิสูจน์เรื่อง window lifecycle ไม่ได้เลย** ห้ามใช้ผลเทสต์กลุ่มนี้เป็นหลักฐานว่าการแก้เรื่องหน้าต่างปลอดภัย ต้องรัน `npm run tauri dev` แล้วลองมือจริงเท่านั้น
+    - ใส่ NOTE เตือนไว้ในโค้ดตรงจุดนั้นแล้วว่าเคยลองแล้วพัง อย่าทำซ้ำโดยไม่เทสจริง
+    - เอา `tauri://destroyed` observer ฝั่ง `DataUploadPage.tsx` ออกด้วย — พอ main ถูก destroy ตามเดิม JS context ก็ตาย callback ไม่มีทางยิงอยู่แล้ว (เก็บไว้ก็เป็น dead code หลอกคนอ่าน)
+  - **ส่วนที่ยังคงไว้ (additive ล้วน ไม่แตะ window lifecycle จึงไม่ใช่ต้นเหตุที่พัง)**: (1) `handleBackToDashboard` รีเซ็ต `lastRoute` เป็น `'dashboard'`, (2) `Dashboard.tsx` ติด `tauri://destroyed` observer ตอนกดปุ่ม "Create Failure Group" (เส้นทาง in-session ซึ่ง main ยังอยู่ตามดีไซน์เดิมอยู่แล้ว), (3) คอมเมนต์ที่เขียนคลาดเคลื่อนใน `FailureGroupCreation.tsx`
+  - **⚠️ ยังไม่ได้แก้ — ปัญหาที่ผู้ใช้เจอต้นเหตุจริง**: ปิด FG ด้วยปุ่ม X ในเส้นทาง "เปิดจาก recent" ยังทำให้ `lastRoute` ค้างเป็น `'failure-group'` เพราะ `handleClose` ไม่แตะ `lastRoute` และ main ถูก destroy ไปแล้วเลยไม่มีใครดักการปิดได้ — ทางแก้ที่เล็กและปลอดภัยที่สุดคือใส่การรีเซ็ต `lastRoute` เข้าไปใน `handleClose` ของ `FailureGroupCreation.tsx` ตรงๆ (ครอบปุ่ม X ซึ่งเป็นเคสที่ผู้ใช้เจอจริง แต่ยังไม่ครอบ Alt+F4 / native close บน macOS) — **ยังไม่ได้ทำ รอตัดสินใจ**
+
+- **🆕 2026-08-05 — แยก config ตาม OS: `decorations` (โปรเจกต์เดิม dev บน macOS ผู้ใช้จริง Windows 100%)**: ตรวจทั้งโปรเจกต์ว่ามีอะไรที่เขียนเผื่อ macOS แล้วกระทบ Windows บ้าง เจอจุดที่กระทบจริง 1 จุด:
+  - **ปัญหา**: `tauri.conf.json` ตั้ง `"decorations": true` (เพื่อให้ macOS มี traffic lights ตาม `titleBarStyle: "Overlay"`) แล้ว `lib.rs` ค่อยสั่ง `set_decorations(false)` ตอน `setup()` สำหรับ non-macOS — แต่ config ตั้ง `visible: true` ไว้ด้วย แปลว่าบน Windows หน้าต่างถูกสร้าง**พร้อมกรอบ native ก่อน** แล้วค่อยถอดทีหลัง → มีโอกาสเห็นกรอบกระพริบตอนเปิดแอป
+  - **ทำไมแก้ตรงๆ ไม่ได้**: ถ้าตั้ง `decorations: false` ใน config หลักเลย macOS จะไม่มีทั้ง traffic lights และปุ่มที่เราวาดเอง (เพราะ `TitleBar.tsx` render ปุ่ม custom เฉพาะ `!isMacOS`) = ปิด/ย่อหน้าต่างไม่ได้เลยตอน dev บน mac — ผู้ใช้ทักประเด็นนี้ขึ้นมาเอง
+  - **ทางแก้ที่ใช้ — platform-specific config ของ Tauri v2** (ยืนยันว่ารองรับจริงจาก `node_modules/@tauri-apps/cli/config.schema.json` ที่มากับโปรเจกต์ ไม่ได้เดา): สร้าง **`src-tauri/tauri.windows.conf.json`** ใหม่ ใส่ window object ครบทุก field + `decorations: false` — Tauri merge ทับ `tauri.conf.json` **เฉพาะตอน build/dev บน Windows**
+    - Windows → หน้าต่างเกิดมาไม่มีกรอบตั้งแต่แรก ไม่มีทางกระพริบ
+    - macOS → อ่านแค่ `tauri.conf.json` เดิม `decorations: true` + traffic lights ครบเหมือนเดิม **ไม่ต้องแก้อะไรกลับตอนย้ายไป dev บน mac**
+    - ใส่ field ครบทุกตัว (label/title/width/height/visible/maximized) เพราะ `app.windows` เป็น array ยังไม่ชัวร์ว่า Tauri merge แบบแทนทั้งก้อนหรือราย element — ใส่ครบแล้วปลอดภัยทั้งสองแบบ
+    - **`label: "main"` ต้องตรงเป๊ะ** เพราะโค้ดทั้งโปรเจกต์หา window ด้วย `getByLabel('main')`
+  - **`lib.rs`**: เปลี่ยน `#[cfg(not(target_os = "macos"))]` → `#[cfg(target_os = "linux")]` (Linux ยังไม่มี platform config ของตัวเอง เลยยังต้องพึ่ง runtime strip อยู่ — ไม่ได้ลบทิ้งเพื่อไม่ให้ Linux เสียของ ถึงแม้ CI จะ build แค่ mac + windows)
+  - Verify: JSON valid ทั้งสองไฟล์ + **`cargo check` ผ่าน ซึ่งรวมถึง `tauri-build` อ่านและ merge `tauri.windows.conf.json` สำเร็จ** (ถ้า schema ผิดจะ fail ตรงนั้น) — **ยังไม่ได้ manual test** รอผู้ใช้รัน `npm run tauri dev` เช็ค 3 ข้อ: (1) เปิดมา maximize เต็มจอ มี custom titlebar (2) ลาก/ย่อ/ขยาย/ปิดได้ครบ (3) ไม่มีกรอบ Windows โผล่
+  - **⚠️ ไฟล์ใหม่ต้อง `git add`** — `src-tauri/tauri.windows.conf.json` ยังเป็น untracked ถ้าลืม commit ไป Windows build จะกลับไปใช้ `decorations: true` เงียบๆ
+  - **จุดอื่นที่ตรวจแล้วไม่กระทบ Windows จึงไม่แตะ**: `useIsMacOS`/branch `!isMacOS` (บน Windows เข้า branch custom titlebar ถูกอยู่แล้ว), `decorations: isMac` ตอน spawn FG/PM, accelerator `CmdOrCtrl+*` (Tauri แปลงเป็น Ctrl ให้เอง), `menu.setAsWindowMenu` ใน try/catch, `bundle.macOS` + `icon.icns`, `titleBarStyle`/`hiddenTitle` (option เฉพาะ macOS Windows เพิกเฉย), CI job macos-arm64 + Apple signing, `scripts/build-installer-mac-*.sh`, สาขา `Darwin-*` ใน `build_sidecar.sh`
+  - **✅ ผู้ใช้ manual test แล้ว (2026-08-05): หน้าต่างเปิดมาปกติทุกอย่าง ไม่มีกรอบ Windows โผล่** — ยืนยันว่า Tauri merge `tauri.windows.conf.json` ถูกต้อง (window ยัง maximize + custom titlebar ครบ) การแยก config ตาม OS ใช้งานได้จริง
+
+- **🆕 2026-08-05 — แก้บั๊ก "ปิด FG ด้วย X แล้ว `lastRoute` ค้าง" ด้วย `onCloseRequested` (ทางเลือก B — ครอบทุกทางปิด)**: ผู้ใช้เลือกทำทีเดียวให้ครบแทนที่จะแก้เฉพาะปุ่ม X:
+  - **`FailureGroupCreation.tsx`**: เพิ่ม `onCloseRequested` handler ที่รีเซ็ต `lastRoute` เป็น `'dashboard'` แล้ว `destroy()` — ครอบ**ทุกทางปิด**ในที่เดียว (ปุ่ม X ของ custom titlebar, Alt+F4, ปิดจาก taskbar, native red-close บน macOS) เพราะทุกทางล้วนยิง `CloseRequested` รวมถึง `close()` ที่ `handleClose` เรียก (ต่างจาก `destroy()` ที่ข้าม chain นี้)
+  - **เพิ่ม `workspaceIdRef`** — handler ลงทะเบียนครั้งเดียวตอน mount ซึ่งตอนนั้น `workspaceId` ยังเป็น `null` (FG hydrate แบบ async จาก handshake) ถ้าอ่าน state ตรงๆ จะได้ `null` ตลอดกาล = บั๊กเดิมกลับมาแบบเงียบๆ (ใช้ pattern เดียวกับ `isBuildModelOpenRef` ที่มีอยู่แล้ว)
+  - **กันไม่ให้ประวัติศาสตร์ซ้ำรอย**: handler ตัวเดิมเคยถูกถอดออกเพราะทำให้**หน้าต่างปิดไม่ลง** — สาเหตุคือมีสาขาที่ `preventDefault()` แล้ว return โดยไม่ปิดต่อ กฎ 2 ข้อที่ห้ามแก้: (1) `destroy()` อยู่ใน `finally` เสมอ ไม่มีทางไหนที่ไม่ปิดหน้าต่าง (2) handler นี้**ไม่บล็อกการปิด** — ตรรกะ "เขย่า PM แทนการปิดตอน PM เปิดอยู่" ยังอยู่ใน `handleClose` ซึ่ง return ก่อนเรียก `close()` ทำให้ handler นี้ไม่ถูกเรียกเลยในเคสนั้น (พฤติกรรมเดิมไม่เปลี่ยน) + `closingRef` กัน event ซ้ำ
+  - ถ้า PM ยังเปิดอยู่ตอน FG ถูกปิด → ไม่รีเซ็ต route (PM เป็นเจ้าของ `'predictive-model'` อยู่) เช็คผ่าน `isBuildModelOpenRef`
+  - **เทสต์ใหม่ `src/__tests__/FailureGroupCloseHandling.test.tsx` (6 เคส)**: ลงทะเบียน handler ตอน mount / รีเซ็ต route + destroy / **destroy ต้องทำงานแม้ตอน save reject** (regression guard ของอาการปิดไม่ลง) / ยังไม่ hydrate → ไม่ save แต่ต้องปิดได้ / ใช้ id จาก handshake ไม่ใช่ค่าตอน mount / กด 2 ครั้งไม่ destroy ซ้ำ
+  - **ตรวจว่าเทสต์จับบั๊กได้จริงด้วย mutation testing**: ลองย้าย `destroy()` ออกจาก `finally` แล้วรัน → เคส "destroy แม้ save reject" แดงทันที (1 failed / 5 passed) แล้วคืนโค้ดกลับ ยืนยันว่าเทสต์ไม่ได้ผ่านลอยๆ
+  - Verify: `tsc` ผ่าน + **เทสต์ทั้งโปรเจกต์ 103/103 ผ่าน** (เดิม 97 + ใหม่ 6) — **แต่ย้ำอีกครั้ง: Tauri window API ถูก mock ทั้งหมด เทสต์ชุดนี้พิสูจน์ได้แค่ตรรกะของ handler ไม่ได้พิสูจน์พฤติกรรมหน้าต่างจริง** ต้อง `npm run tauri dev` แล้วลองมือ: ปิด FG ด้วย X / Alt+F4 → เปิด project เดิมจาก recent ต้องเข้า Dashboard ไม่ใช่เด้งเข้า FG
+  - **⛔ REVERTED ทันทีวันเดียวกัน — `onCloseRequested` ทำหน้าต่างปิดไม่ได้ (ครั้งที่ 2)**: ผู้ใช้ manual test แล้ว **กด X ปิดไม่ได้เลย ต้อง force-quit ทั้งโปรแกรม** + แอปค้างที่ "Loading workspace…" ตอนเปิดใหม่ + กด Back ไปหน้าแรกแทน Dashboard
+    - **บทเรียนที่แพงที่สุดของ session นี้**: คอมเมนต์เดิมในไฟล์เขียนเตือนไว้ตรงๆ ว่า "async handler awaited indefinitely by Tauri 2" แต่ผมตีความเองว่าสาเหตุจริงคือ "มีสาขาที่ preventDefault แล้วไม่ปิดต่อ" แล้วเขียนใหม่โดยบังคับ `destroy()` ใน `finally` — **ตีความผิด** ตัว async callback ใน `onCloseRequested` เองคือปัญหาใน Tauri 2 ไม่ใช่เรื่องสาขาที่ลืมปิด
+    - **เทสต์ 6 เคส (รวม mutation test) ผ่านหมดทั้งที่ของจริงพังสนิท** เพราะ `onCloseRequested` เป็น mock — ย้ำอีกครั้งว่า mocked test พิสูจน์ window lifecycle ไม่ได้เลย ลบไฟล์เทสต์นั้นทิ้งแล้ว (เทสต์ handler ที่ไม่มีอยู่จริงแล้ว)
+    - ใส่คอมเมนต์ ⛔ ตัวใหญ่ไว้ในไฟล์ว่า **ห้ามใส่ `onCloseRequested` อีก — ลองมาแล้ว 2 ครั้ง พังทั้ง 2 ครั้ง** พร้อมบันทึกว่าครั้งที่ 2 พังทั้งที่ออกแบบมากันเคสของครั้งแรกโดยเฉพาะ
+  - **ทางแก้ที่ใช้แทน (ทางเลือก A ที่เคยเสนอไว้ตั้งแต่แรก)**: ใส่การรีเซ็ต `lastRoute` ไว้ใน `handleClose` ตรงๆ — เป็น click handler ธรรมดา ไม่ยุ่งกับ close chain ใช้รูปแบบ await-แล้ว-close เหมือน `handleBackToDashboard` ที่พิสูจน์แล้วว่าทำงานได้ **ครอบเฉพาะปุ่ม X** (เคสที่ผู้ใช้เจอจริง) ส่วน Alt+F4 / native close ยอมปล่อยไว้ แลกกับหน้าต่างที่ปิดได้จริง
+  - **🐛 แก้บั๊ก titlebar ซ้อนกัน 2 ชั้น (ผู้ใช้เจอใหม่)**: `new WebviewWindow('main', ...)` ที่สร้างตอน runtime ทั้ง 2 จุด (`handleBackToDashboard` ใน FG + `openMainAndClose` ใน `useSubWindowMenu.ts`) **ไม่ได้ระบุ `decorations` เลย** เลย default เป็น `true` → กรอบ native ของ Windows ซ้อนบน custom titlebar ของแอป — **`tauri.windows.conf.json` ช่วยไม่ได้เพราะ platform config มีผลเฉพาะหน้าต่างที่ประกาศไว้ใน config ไม่ใช่ที่สร้างตอน runtime** เพิ่ม `decorations: isMac` ให้ทั้ง 2 จุดแล้ว (บั๊กนี้มีมาก่อนแล้ว ไม่ได้เกิดจากการแก้รอบนี้ แต่ผู้ใช้เพิ่งเจอเพราะถูกเด้งไปเส้นทาง spawn main ใหม่บ่อยขึ้น)
+  - Verify: `tsc` ผ่าน + เทสต์ 97/97 ผ่าน (กลับมาเท่าเดิมหลังลบไฟล์เทสต์ที่ใช้ไม่ได้แล้ว) — **ต้อง manual test**: กด X ต้องปิดได้จริง
+  - **✅ ผู้ใช้ manual test ครบแล้ว (2026-08-05): ใช้งานได้ปกติทุกจุด** — กด X ปิด FG ได้จริง, กด Back ได้ Dashboard ไม่มี titlebar ซ้อน, เปิด project จาก recent หลังปิดด้วย X เข้า Dashboard ถูกต้อง ปิดเคสนี้
+
+- **🆕 2026-08-05 — เพิ่มฟีเจอร์ Alarm setpoints: mapping → Dashboard menu → เส้นบนกราฟ**: ผู้ใช้ต้องการเพิ่ม alarm setpoint (L/LL/H/HH) จาก mapping CSV เข้ามาเป็น master data แล้วโชว์เป็นเส้นอ้างอิงบนกราฟได้ ออกแบบ + validate ผ่าน mockup ในแชทและไฟล์ Figma จริง (สร้างผ่าน Figma MCP: https://www.figma.com/design/osmQeKiBaqHyELUAYyeXo8) ก่อน implement — ปรับ 2 รอบตาม ref screenshot ที่ผู้ใช้ส่งมา (format label ในเมนูให้เขียนติดกัน `"High (8.5)"` ไม่แยกคอลัมน์, สีเส้นบนกราฟให้ตามสีของ sensor นั้นๆ ไม่ใช่สีส้มคงที่) แล้วค่อย implement จริง:
+  - **`types.ts`**: เพิ่ม `alarmL/alarmLL/alarmH/alarmHH?: number` ใน `SensorMetadata`, เพิ่ม type `AlarmLevel = 'LL'|'L'|'H'|'HH'`, เพิ่ม `alarmLinesEnabled?: Record<string, AlarmLevel[]>` ใน `WorkspaceState` (persist ต่อ workspace ตามที่ผู้ใช้เลือกไว้)
+  - **`useMappingData.ts`**: เพิ่ม auto-detect คอลัมน์ `ALARM_L/ALARM_LL/ALARM_H/ALARM_HH` ใน `buildSensorMetadataFromMapping` (pattern เดียวกับ unit/component เดิม) + `parseAlarmValue()` แปลงเป็นตัวเลข ถ้า cell ว่าง/parse ไม่ได้ → `undefined` (ไม่ใช่ 0) เพื่อให้ "ไม่มีค่า = ไม่โชว์" ทำงานถูกต้อง — **ไม่ต้องแก้ Rust เลย** เพราะ `load_mapping_csv` อ่านทุกคอลัมน์แบบ raw string มาให้อยู่แล้ว
+  - **`Chart.tsx`**: เจอบั๊กระหว่างทาง — `MainChartProps` destructure ไม่ได้ดึง `markLines` ออกมาส่งต่อให้ `<LineChart>` เลย ทั้งที่ `ChartTypes.ts`/`LineChart.tsx` รองรับเต็มรูปแบบอยู่แล้ว (ใช้วาดเส้น mean/±1σ ใน Predictive Model Build) — เพิ่ม `markLines` เข้า destructure + ส่งต่อ ไม่ต้องเขียน rendering logic ใหม่เลย
+  - **`Dashboard.tsx`**:
+    - state ใหม่: `alarmLinesEnabled` (init จาก `initialState?.alarmLinesEnabled ?? {}`), `alarmPanelFor` (one-open-at-a-time เหมือน `colorPickerFor`/`axisEditorFor`)
+    - `toggleAlarmLine(tag, level)` — เพิ่ม/ลบ level ออกจาก array ของ tag นั้น ลบ key ทิ้งถ้า array ว่าง
+    - ต่อเข้า effect เดิมที่ prune `sensorColors`/`sensorAxisRange` ตอนเซนเซอร์ถูกเอาออกจากกราฟ — เพิ่ม prune `alarmLinesEnabled` + ปิด `alarmPanelFor` ด้วย ป้องกัน state ค้างจากเซนเซอร์ที่ลบไปแล้ว
+    - `buildWorkspaceState()` เพิ่ม `alarmLinesEnabled` เข้า return object + deps array (ตามรูปแบบเดียวกับที่เคยแก้บั๊ก fgGroups/fgRows หายก่อนหน้านี้)
+    - `markLines` useMemo: ไล่ `displayHeaders` × `alarmLinesEnabled` × `getSensorMeta` สร้าง `ChartMarkLine[]` — **ข้ามทั้งหมดตอน multi-op mode** (`displayHeaders` ตอนนั้นเป็นคอลัมน์ "Result" สังเคราะห์ ไม่ใช่ sensor tag จริง หา metadata ไม่ได้) — **ไม่ set `color` เอง** ปล่อยให้ `LineChart.tsx` fallback เป็นสีของ series นั้นเองตามที่ตกลงกับ ref
+    - UI: ปุ่มกระดิ่ง (Bell) ต่อจากปุ่มแกน Y ในแถว Selected Sensor — โชว์**เฉพาะ sensor ที่มี alarm อย่างน้อย 1 ค่า** (`hasAlarmSetpoints`) กันปุ่มที่กดแล้วไม่มีอะไรให้เห็น — กดแล้วกาง panel checkbox เฉพาะ level ที่มีค่าจริง format `"High (8.5)"` (เขียนติดกันตาม ref, ไม่ใช่คอลัมน์แยก)
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด + เทสต์ทั้งโปรเจกต์ **97/97 ผ่าน** (ไม่มี regression) — **ยังไม่ได้ manual test** รอผู้ใช้ลอง: อัปโหลด mapping CSV ที่มีคอลัมน์ ALARM_L/ALARM_LL/ALARM_H/ALARM_HH → เลือก sensor ที่มีค่า → กดกระดิ่งในแท็บ Selected Sensor → ติ๊ก level ใดก็ได้ → ต้องเห็นเส้นประบนกราฟสีเดียวกับเส้น sensor นั้น + label ตัวย่อ (H/L/HH/LL) กำกับ, ปิดโปรแกรมเปิดใหม่ต้องจำค่าที่ติ๊กไว้
+
+- **🆕 2026-08-05 — แก้ 2 เรื่องหลัง manual test ฟีเจอร์ Alarm setpoints (ตำแหน่ง UI ผิด ref + บั๊ก auto-scale)**:
+  - **1) ย้าย UI จากแท็บ "Selected Sensor" ไปแท็บ "Sensor" (133-picker)**: ผู้ใช้ชี้ว่า ref ภาพ 3 (Soothsayer) โชว์ checkbox alarm อยู่ใน **INSTRUMENTS list** (เทียบเท่าแท็บ "Sensor" ของ Wizard) ไม่ใช่ใน list ของ sensor ที่เลือกแล้ว (เทียบเท่าแท็บ "Selected Sensor" ที่ผมใส่ไปรอบแรก) แถม ref ไม่มีปุ่มกระดิ่งกดขยายเลย — checkbox โชว์ทันทีเมื่อ sensor ถูกติ๊กเลือกและมีค่า alarm เท่านั้น (ไม่ต้องมี step กดเปิดแยก)
+    - ย้าย logic ไป **`SensorSelection.tsx`**: เพิ่ม prop `alarmLinesEnabled`/`onToggleAlarmLine`, แสดง checkbox list (indent ใต้แถวเซนเซอร์ เหมือนกับ badge ของ failure group) เมื่อ `selectedSensors.includes(sensor) && hasAlarmSetpoints(meta)` — ไม่มีปุ่มกระดิ่ง ไม่มี state เปิด/ปิด panel แยกอีกต่อไป
+    - ย้าย `ALARM_LEVELS`/`ALARM_LABELS`/`hasAlarmSetpoints` ออกจาก Dashboard.tsx ไปเป็นไฟล์กลาง **`src/utils/alarmLevels.ts`** ใช้ร่วมกันทั้ง `Dashboard.tsx` (ต้องใช้ `ALARM_LEVELS` สร้าง `markLines`) และ `SensorSelection.tsx` (ต้องใช้ทั้งหมด) เพิ่ม `isCriticalAlarmLevel` (LL/HH) สำหรับ styling ตัวหนา+สีแดงต่างจาก L/H ปกติ ตาม ref ที่ทำ "High shutdown (HH)" เด่นกว่าอันอื่น
+    - **`Dashboard.tsx`**: เอาปุ่มกระดิ่ง + `alarmPanelFor` state + inline panel ออกจาก Selected Sensor row ทั้งหมด — `alarmLinesEnabled`/`toggleAlarmLine`/persistence/`markLines` computation ยังอยู่เหมือนเดิม (ยังจำเป็นสำหรับวาดเส้นบนกราฟ) แค่ส่ง prop ต่อให้ `<SensorSelection>` แทนที่จะ render UI เอง
+  - **2) 🐛 บั๊กจริง — แกน Y ไม่ auto-ขยายให้เห็นเส้น setpoint**: ผู้ใช้เจอว่ากราฟ scale อยู่ 20-80 (auto-fit ตามข้อมูลจริง) แต่ setpoint ที่ติ๊กไว้อยู่ที่ 90/100 → เส้นวาดไปแล้วแต่มองไม่เห็นเพราะอยู่นอกกรอบแกน — **สาเหตุ: เป็นข้อจำกัดของ ECharts เอง** `scale: true` คำนวณ auto min/max จากข้อมูลจริงของ series เท่านั้น **ไม่รวมค่า `markLine` เข้าไปด้วย** (markLine อยู่นอกการคำนวณ extent ของแกน)
+    - แก้ใน **`LineChart.tsx`**: เพิ่มฟังก์ชัน `seriesMinMax(sensor)` สแกนค่าจริงของ series หา min/max แล้วเทียบกับค่า markLine ที่ active ของ sensor นั้น **เฉพาะตอนที่ setpoint จริงๆ อยู่นอกช่วงข้อมูล** ถึงจะขยาย `min`/`max` ของแกน (บวก padding 8% ของ span ที่ขยาย) — sensor ที่ไม่มี markLine หรือ markLine อยู่ในช่วงข้อมูลอยู่แล้ว **ไม่ถูกแตะเลย** ยังคง auto-fit แบบเดิมของ ECharts เป๊ะ (ตามที่ผู้ใช้แนะนำว่า "เช็คก่อนว่าจำเป็นต้อง auto change scale ไหม")
+    - ไม่ overwrite ค่าที่ผู้ใช้ pin เอง (`sensorAxisRange`) — เช็ค `autoMin === undefined`/`autoMax === undefined` ก่อนเสมอ ฝั่งที่ pin ไว้ชนะเหมือนเดิม
+  - Verify: `tsc --noEmit` ผ่านสะอาด + เทสต์ 97/97 ผ่าน (ไม่มี regression) — **ยังไม่ได้ manual test รอบใหม่** รอผู้ใช้ลอง: ไปแท็บ "Sensor" (ไม่ใช่ Selected Sensor) ติ๊กเลือก sensor ที่มี alarm → checkbox ต้องโชว์ทันทีใต้แถวไม่ต้องกดอะไรเพิ่ม, ติ๊ก setpoint ที่อยู่นอกช่วงข้อมูลจริง (เช่น High 90 ตอนข้อมูลอยู่ 20-80) → กราฟต้องขยายแกน Y ให้เห็นเส้นได้เอง
+
+- **🆕 2026-08-05 — แก้ไข: alarm checkbox ต้องกดไอคอนถึงโชว์ ไม่ใช่ auto-โผล่ตอนติ๊ก sensor**: ผู้ใช้ manual test แล้วพบว่ารอบก่อน checkbox โชว์เองทันทีที่ติ๊ก sensor (auto-show ตาม `isSelected`) — **ผู้ใช้ไม่ต้องการแบบนั้น** สั่งกลับมาเป็นรูปแบบกดไอคอนก่อนถึงจะเห็นค่า (คล้ายของเดิมที่เคยลบไปตอนย้ายมาแท็บ Sensor รอบก่อน) พร้อมโชว์ตัวอย่าง ref เพิ่มเติมที่มีไอคอนเล็กๆ ต่อท้ายแถวเซนเซอร์ที่มี setpoint
+  - **`SensorSelection.tsx`**: เพิ่ม state `alarmPanelFor` (local, ไม่ persist — เหมือน `groupMenuFor` ที่มีอยู่แล้วในไฟล์เดียวกัน) + ปุ่มไอคอนกระดิ่ง (`Bell`) ต่อจากปุ่ม FolderPlus (failure group) เดิม
+  - **เงื่อนไขใหม่ 2 ชั้นแยกกัน**: (1) ปุ่มกระดิ่งเองโชว์ตาม `hasAlarmSetpoints(meta)` เท่านั้น **ไม่เกี่ยวกับว่า sensor ถูกติ๊กเลือกอยู่ไหม** (เรียกดู setpoint ได้แม้ยังไม่ได้เพิ่มเข้ากราฟ) — (2) checkbox list โชว์เมื่อ `hasAlarms && alarmPanelFor === sensor` เท่านั้น คือต้อง**กดไอคอนก่อนเสมอ** ไม่มี auto-show จากการติ๊ก sensor อีกต่อไป
+  - ตัด `showAlarmLevels = isSelected && hasAlarmSetpoints(meta)` (auto-show เดิม) ทิ้ง แทนที่ด้วยตรรกะข้างบน
+  - Verify: `tsc --noEmit` ผ่านสะอาด + เทสต์ 97/97 ผ่าน (ไม่มี regression) — **ยังไม่ได้ manual test รอบนี้** รอผู้ใช้ลอง: sensor ที่ไม่มี setpoint ต้องไม่มีไอคอนกระดิ่งเลย, sensor ที่มี setpoint ต้องเห็นไอคอนไม่ว่าจะติ๊กเลือกหรือไม่, checkbox ต้องไม่โผล่จนกว่าจะกดไอคอนกระดิ่ง
+
+- **🆕 2026-08-05 — เปลี่ยนสี alarm line/text จาก "ตามสี sensor" เป็น "ตาม severity" (amber/red)**: ผู้ใช้เจอปัญหาจริงตอน manual test — เส้น setpoint สีเดียวกับเส้นข้อมูลของ sensor นั้น (ตามดีไซน์ที่ตกลงไว้ก่อนหน้าว่าให้เลียนแบบ ref) ทำให้เส้น setpoint กลืนกับเส้นข้อมูลจนแยกไม่ออกจริงในการใช้งาน (เห็นชัดในภาพที่ส่งมา — ทั้งเส้นข้อมูลกับเส้น HH/H เป็นสีเขียวเหมือนกันหมด) สั่งเปลี่ยนเป็น **H/L = ส้ม, LL/HH = แดง** ตามที่เคยเสนอไว้ตอนแรกๆ (ก่อนจะเปลี่ยนไปตามสี sensor ตาม ref) — พลิกกลับการตัดสินใจก่อนหน้าเพราะเจอจริงว่าใช้งานไม่ได้จริง
+  - **`src/utils/alarmLevels.ts`**: เพิ่ม `alarmLevelColor(level)` — คืนค่า hex คงที่ (`#f59e0b` amber สำหรับ L/H, `#ef4444` แดงสำหรับ LL/HH) **ไม่ใช้ `var(--warn)`/`var(--danger)`** เพราะสีที่ป้อนเข้า ECharts (canvas-rendered) resolve CSS custom property ไม่ได้ ต้องเป็น hex ตรงๆ — ไม่ผูกกับ theme (สีอิ่มตัวแบบนี้อ่านชัดทั้ง dark/light อยู่แล้ว เหมือนที่เคยตัดสินใจกับสี hover ของจุดใน ScatterChart ก่อนหน้านี้)
+  - **`Dashboard.tsx`**: `markLines` ใส่ `color: alarmLevelColor(level)` ตรงๆ ตอนสร้างแต่ละเส้น (เดิมไม่ set สีปล่อย fallback ไปสีของ sensor)
+  - **`LineChart.tsx`**: เพิ่ม `label: { color: m.color ?? txtPrimary }` ต่อ markLine data-point แต่ละจุด (เดิม label สีเดียวกันหมดทั้งกลุ่มจาก `txtPrimary` ตัวเดียว ไม่ได้แยกสีตามเส้น) ให้ตัวอักษรกำกับ (H/L/HH/LL) บนกราฟสีตรงกับเส้นของมันเอง
+  - **`SensorSelection.tsx`**: checkbox text เปลี่ยนจาก `critical ? 'var(--danger)' : 'var(--text-primary)'` (เดิมมีแค่ LL/HH ที่มีสี ส่วน L/H เป็นสีข้อความปกติ) เป็น `alarmLevelColor(level)` ทุก level — สีตัวหนังสือใน checkbox ตรงกับสีเส้นบนกราฟเป๊ะทั้ง 4 level แล้ว
+  - Verify: `tsc --noEmit` ผ่านสะอาด + เทสต์ 97/97 ผ่าน (ไม่มี regression) — **ยังไม่ได้ manual test** รอผู้ใช้ลองดูว่าสีเส้น/ตัวอักษรบนกราฟและ checkbox ตรงกับที่ต้องการไหม (ส้ม = H/L, แดง = HH/LL)
+
+- **🆕 2026-08-05 — ลบปุ่ม "Upload Filled" / "Template" / "Save Groups" ออกจาก FailureGroupCreation.tsx ทั้งฟีเจอร์**: ผู้ใช้สั่งเอาออกตรงๆ พร้อมย้ำว่า "ไม่ได้เอาออกแค่ปุ่ม" ให้ลบ code ที่เกี่ยวข้องกับการทำงานทั้งหมดด้วย — ไล่โค้ดก่อนแล้วพบว่าเป็น**ฟีเจอร์ CSV round-trip แยกต่างหาก** (ดาวน์โหลด template ว่าง → กรอกนอกแอป → Upload Filled กลับเข้ามาแทนที่ groups/rows ทั้งหมด, Save Groups = export ตารางปัจจุบันเป็น CSV) **ไม่ใช่กลไก persist หลักของแอป** (ตัวนั้นคือ debounced `updateWorkspaceData` autosave effect ที่แยกกันอยู่แล้ว ไม่ถูกแตะ) — ลบได้อย่างปลอดภัยโดยไม่กระทบการบันทึกข้อมูลจริงของแอป
+  - **`FailureGroupCreation.tsx`**: ลบ `handleUpload`/`handleDownloadTemplate`/`handleSave` + helper `CSV_HEADERS`/`parseCsv`/`csvEscape` ทั้งหมด, ลบปุ่มทั้ง 3 + `fg-toolbar-right` wrapper div ออกจาก JSX, ลบ import ที่เหลือแต่ใช้เฉพาะ 3 ฟังก์ชันนี้ (`openDialog`, `saveDialog`, `message`, `readTextFile`, `writeUserTextFile`, ไอคอน `Upload`/`Download`/`Save`) — เช็คทีละตัวแล้วว่าไม่มีจุดอื่นในไฟล์ใช้ซ้ำก่อนลบ import
+  - **เจอจุดที่พลาดง่าย**: `handleSave` ถูกเรียกซ้ำอีกที่ผ่าน `useSubWindowMenu({ localSaveLabel: 'Export Groups as CSV', onLocalSave: () => handleSave() })` — เป็นทางเข้าที่สองของฟีเจอร์เดียวกัน (เมนู File → Export Groups as CSV) ถ้าลบแค่ปุ่ม toolbar แต่ลืมจุดนี้จะเหลือทางเข้าที่ยังใช้งานได้อยู่ ขัดกับที่ผู้ใช้สั่งไว้ — ลบสองพารามิเตอร์นี้ออกจาก `useSubWindowMenu` call ด้วย (hook เองมี `hasLocalSave = !!handlers.onLocalSave` คอยซ่อนเมนูรายการนี้ให้อัตโนมัติเมื่อไม่ส่ง prop มา ไม่ต้องแก้ hook)
+  - **`App.css`**: เจอ CSS ของปุ่มทั้ง 3 ซ้ำกันสูงถึง **4 บล็อก** (`.fg-toolbar-right`/`.fg-upload-btn`/`.fg-download-btn`/`.fg-save-btn`/`.fg-toolbar-divider` รวม responsive media query อีก 2 จุด) ตรงกับรูปแบบ "CSS merge ซ้อนทับประวัติศาสตร์" ที่เจอมาก่อนหน้านี้ในเซสชันนี้ (เช่น `.fg-save-btn` เคยพบว่าซ้ำ 3 รอบ) — ลบทุกบล็อกที่เกี่ยวกับปุ่มที่หายไปแล้วออก **แต่เก็บ `.fg-toolbar-left` ไว้ทุกจุดที่เจอ ไม่แตะเลย** (ยังใช้งานจริงอยู่ ปุ่ม Back to Dashboard + workspace label ยังอยู่ในนั้น) แยก selector แบบ `.fg-toolbar-left, .fg-toolbar-right { ... }` ที่เจอ 2 จุดออกจากกันแทนที่จะลบทั้งคู่
+  - Verify: `tsc --noEmit` ผ่านสะอาด + เทสต์ 97/97 ผ่าน (ไม่มี regression) + grep ทั้ง `src/` ยืนยันไม่มี reference เหลือของ class/function ที่ลบไปเลย — **ยังไม่ได้ manual test** รอผู้ใช้ลองเปิดหน้า Failure Group Creation แล้วดูว่า toolbar ขวาบนหายไปแล้ว, เมนู File ไม่มี "Export Groups as CSV" ค้างอยู่, และปุ่ม/แถบอื่นๆ (Back to Dashboard, workspace label, progress strip) ยังทำงานปกติไม่กระทบ
+
+- **🆕 2026-08-05 — 🐛 บั๊ก: ColorPlatePicker hue slider เด้งกลับซ้ายสุดตอนลากไปขวาสุด**: ผู้ใช้ส่งภาพให้ดู — ลาก hue slider (แถบสีรุ้งด้านล่างของ color picker) ไปสุดขวา แล้ว thumb เด้งกลับไปซ้ายสุดทันที
+  - **สาเหตุ (ยืนยันด้วยการรันเลขจริง)**: [`ColorPlatePicker.tsx`](src/components/dashboard/ColorPlatePicker.tsx) เดิม derive ค่า `h` (hue) จาก prop `color` (hex) ใหม่**ทุก render** ผ่าน `rgbToHsv(hexToRgb(color))` — ลากไปสุดขวา = hue 360° ซึ่งคือสีแดงล้วน (`#ff0000`) เหมือนกับ hue 0° เป๊ะ พอ re-render แล้ว derive hue กลับจาก hex อีกครั้ง `rgbToHsv` หาทางแยก 360° ออกจาก 0° ไม่ได้ (RGB เก็บข้อมูลนี้ไม่ได้ เป็นข้อจำกัดคณิตศาสตร์ของ hue wheel ที่วนกลับมาจุดเดิม) เลย normalize กลับเป็น 0° เสมอ → thumb เด้งไปซ้ายสุด
+  - **แก้**: เปลี่ยนจาก "derive h/s/v จาก prop ทุก render" เป็น **local state** ที่อัปเดตตรงจากการลากเอง ไม่ผ่าน round-trip ทาง hex — sync กลับจาก prop เฉพาะตอนที่ `color` เปลี่ยนมาจากแหล่งอื่นจริงๆ (เช่น เปิด picker ให้ sensor คนละตัว) โดยเทียบกับ `lastEmittedColor` (hex ล่าสุดที่ component เองเพิ่งส่งออกไปผ่าน `onChange`) — ถ้า prop ที่ได้รับตรงกับที่เพิ่งส่งไปเอง (แค่ React ส่ง prop เดิมกลับมาให้) จะไม่ derive ซ้ำ เก็บ hue 360° ไว้ตามเดิม
+  - Verify: `tsc --noEmit` ผ่านสะอาด + เทสต์ 97/97 ผ่าน (ไม่มี regression) + จำลองด้วย Node สคริปต์แยกยืนยัน bug จริงก่อนแก้ (hue=360 → hex `#ff0000` → derive กลับได้ hue=0) — **ยังไม่ได้ manual test** รอผู้ใช้ลองลาก hue slider ไปสุดขวาอีกครั้งว่า thumb ค้างอยู่ขวาสุดไม่เด้งกลับแล้ว
+
+- **🆕 2026-08-06 — 🐛 บั๊ก: Scatter chart ลืมคู่ sensor X/Y ที่เลือกไว้ตอนสลับไปดู chart type อื่นแล้วกลับมา**: ผู้ใช้ส่งภาพให้ดู — เลือก sensor A vs C บนแกน X/Y ของ Scatter แล้วสลับไป Line/Pair Plot แล้วกลับมา Scatter อีกครั้ง คู่ที่เลือกไว้หายไป กลายเป็น sensor 2 ตัวแรกของ list (A, B) เสมอ ขอให้หาสาเหตุก่อนแล้วค่อยแก้ ตอบแล้วผู้ใช้สั่งให้ persist ลง workspace file ด้วย (ไม่ใช่แค่จำระหว่างสลับแท็บในเซสชันเดียว)
+  - **สาเหตุ**: [`ScatterChart.tsx`](src/components/charts/ScatterChart.tsx) เก็บ `scatterX`/`scatterY` เป็น **local `useState` ของตัวเอง** ไม่เคยถูกยกขึ้นไปที่ `Dashboard.tsx` เลย (ต่างจาก `sensorAxisRange` ของ Line chart ที่ยกไปแล้ว) — [`Chart.tsx`](src/components/charts/Chart.tsx) เลือก render `LineChart`/`PairPlotChart`/`ScatterChart` แบบ if/else มีแค่ตัวเดียว mount อยู่ในแต่ละครั้ง สลับ chart type = React unmount `ScatterChart` ทิ้งไปเลย (คนละ component ไม่ใช่ซ่อน) state ในนั้นหายหมด พอสลับกลับมาได้ instance ใหม่ค่าเริ่มต้นเป็น `''` แล้ว effect เดิม (บรรทัด 183-201 เดิม) เซ็ต default เป็น sensor 2 ตัวแรกใน list ให้อัตโนมัติ
+  - **แก้**: ยก state ขึ้นไปที่ `Dashboard.tsx` (รูปแบบเดียวกับ `sensorAxisRange`) แล้ว persist ลง `WorkspaceState` ด้วย (ผู้ใช้ขอเพิ่มจากที่เสนอไว้แค่ระดับ session):
+    - **`types.ts`**: เพิ่ม `scatterAxes?: { x: string; y: string }` ใน `WorkspaceState`
+    - **`ChartTypes.ts`**: เพิ่ม `scatterX?`/`scatterY?`/`onScatterAxesChange?` ใน `ChartProps`
+    - **`Chart.tsx`**: forward 3 prop ใหม่นี้ต่อให้ `<ScatterChart>` (ไม่แตะ Line/Pair Plot เพราะ prop ใหม่ไม่เกี่ยว)
+    - **`ScatterChart.tsx`**: rename prop รับเข้ามาเป็น `persistedX`/`persistedY` (กันชนชื่อกับ local state `scatterX`/`scatterY` เดิม) ใช้ seed ค่าเริ่มต้นตอน mount แทน `''` (`useState(() => persistedX ?? '')`) — เก็บ local state ไว้เหมือนเดิมเพื่อไม่ต้อง rewrite effect เดิมที่ดูแล fallback ตอน sensor list เปลี่ยน/เหลือตัวเดียว, เพิ่ม effect ใหม่ยิง `onScatterAxesChange(x, y)` ทุกครั้งที่ค่าทั้งคู่ settle (คนละอันกับ effect เดิม แยกความรับผิดชอบชัดเจน)
+    - **`Dashboard.tsx`**: state `scatterAxes` (init จาก `initialState?.scatterAxes ?? null`) + `handleScatterAxesChange` (guard เทียบค่าเดิมก่อน set กันสร้าง object ใหม่ทุกครั้งโดยไม่จำเป็น ซึ่งจะไป trigger `buildWorkspaceState` deps เปลี่ยนบ่อยเกินจำเป็น) ต่อเข้า `buildWorkspaceState()` return + deps array (รูปแบบเดียวกับ `alarmLinesEnabled`) และส่ง prop ที่จุด render `<Chart>` ฝั่ง scatter/pair
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด + เทสต์ทั้งโปรเจกต์ **97/97 ผ่าน** (ไม่มี regression) — **ยังไม่ได้ manual test** รอผู้ใช้ลอง: เลือก sensor คู่ X/Y ที่ไม่ใช่ 2 ตัวแรกในกราฟ Scatter → สลับไป Line หรือ Pair Plot → สลับกลับ Scatter → คู่ที่เลือกไว้ต้องยังอยู่เหมือนเดิม, ปิดโปรแกรมแล้วเปิด workspace เดิมใหม่ → คู่ที่เลือกไว้ต้องยังอยู่เหมือนกัน
+
+- **🆕 2026-08-06 — 🐛 พบสาเหตุ (ยังไม่แก้ ตามที่ผู้ใช้สั่ง "ค่อยแก้ทีหลัง"): Pair Plot spam error `(regl) context lost` x65254 ครั้ง**: ผู้ใช้ส่งภาพ error overlay ให้ดู — สอบสวนแล้วเป็นบั๊กคนละจุดจากการแก้ scatterAxes ด้านบน ไม่ได้แตะ `PairPlotChart.tsx`/`PairPlotCell.tsx` เลย บันทึกรายละเอียดเต็มไว้ที่ **`docs/BACKLOG.md` ข้อ 5** แล้ว สรุปสั้นๆ ที่นี่:
+  - **สาเหตุ**: `PairPlotCell.tsx` สร้าง 1 WebGL context (`regl-scatterplot` instance) ต่อ 1 cell — รวมทั้ง matrix = `n(n+1)/2` context เมื่อ n = จำนวน sensor ที่เลือก (5 sensor = 15 context, 8 sensor = 36 context) เกิน limit ของเบราว์เซอร์ (ประมาณ 8-16 แล้วแต่เครื่อง/GPU) ได้ง่าย พอ context โดนเขี่ยทิ้ง **`PairPlotCell.tsx` ไม่มี `webglcontextlost` listener เลย** (ต่างจาก `ScatterChart.tsx` ที่มีอยู่แล้ว) เลย error ซ้ำไม่หยุดทุกเฟรมจนกลายเป็น x65254
+  - **แนวทางแก้ที่คุยกันไว้ (ยังไม่ implement)**: (1) เพิ่ม context-loss guard ให้ `PairPlotCell.tsx` แบบเดียวกับ `ScatterChart.tsx` (2) พิจารณา soft warning เมื่อเลือก sensor เกิน ~5 ตัวใน Pair Plot — ผู้ใช้ถามด้วยว่าเปลี่ยน lib ช่วยไหม คำตอบคือช่วยได้เฉพาะถ้าเปลี่ยนสถาปัตยกรรมเป็น "1 context ใช้ร่วมกันทั้ง matrix" หรือ "เลี่ยง WebGL ไปใช้ Canvas 2D อย่าง ECharts" ไม่ใช่แค่สลับ WebGL lib ตัวอื่นที่ยังสร้าง 1 context ต่อ cell เหมือนเดิม
+  - **สถานะ**: ผู้ใช้สั่ง "ค่อยแก้ทีหลัง" — parked ไว้ใน backlog ยังไม่ได้ลงมือทำอะไรกับโค้ดจริง
+
+- **🆕 2026-08-06 — ⚡ งานใหญ่: ยุบหน้าต่าง Failure Group Creation เข้า Dashboard ทั้งหมด แล้วลบไฟล์เดิมทิ้ง**: ต่อยอดจาก design mockup ที่ทำไว้ก่อนหน้า (2 mockup: แท็บ "Failure Groups" ในคอลัมน์ขวา + modal สรุปเต็มจอ) ผู้ใช้ confirm ว่า design ถูกทางแล้วหลังจากถามคำถามเพิ่มเรื่องสถาปัตยกรรม (ใช้ `AskUserQuestion` 2 ข้อ) ได้คำตอบ: (1) modal สรุปเปิดแบบ on-demand ไม่ pin ติดจอ (2) ปุ่ม Build Model ยังเปิดหน้าต่าง Predictive Model แยกเหมือนเดิม แค่ตัดขั้นตอนผ่านหน้าต่าง FG เดิมออก แล้วสั่ง "ทำต่อเลย ถูกต้องแล้ว เทสดีๆด้วยละ อย่าให้มีบัค" — ก่อนเริ่มโค้ด ใช้ Explore agent สำรวจทุกจุดที่ reference `'failure-group'` ทั่วโค้ดเบสก่อน (routing ใน `main.tsx`, การ spawn ใน `Dashboard.tsx`/`DataUploadPage.tsx`, contract ของ `PredictiveModelBuild.tsx`) เพื่อไม่ให้เหลือจุดที่ลืมแก้:
+  - **ไฟล์ใหม่ `src/components/dashboard/FailureGroupsPanel.tsx`**: มุมมอง "manage" แบบ group-centric สำหรับแท็บ Failure Groups — การ์ดกลุ่มพับได้ (เหมือนของเดิม), กดแถวเซนเซอร์ขยาย inline editor ด้านล่างตรงๆ (concept sensor/model type/model notes/status/ปุ่ม Build Model/Remove) — แถวที่ยังไม่มี sensor tag จะโชว์ตัวค้นหา+เลือก tag ก่อน (มี guard กันซ้ำ tag ในกลุ่มเดียวกันแบบเดิม) รีใช้ CSS class เดิมที่มีอยู่แล้วทั้งหมด (`.fg-group-color-*`, `.fg-status-pill`, `.fg-icon-btn*`, `.fg-inspector-field/input/textarea`, `.fg-build-model-btn`) ไม่ต้องเขียน CSS ใหม่เลย เพราะ App.css เป็น global stylesheet ไม่ได้ผูกกับไฟล์ FG เดิมโดยเฉพาะ — จงใจ**ไม่แสดงกลุ่ม "Not in Group" (no===0)** เพราะโมเดล assignment แบบใหม่ (toggle-based ผ่าน `toggleSensorGroup`/`createGroupForSensor`) ไม่เคยสร้าง row ให้กลุ่มนี้เลย (ต่างจาก FG เดิมที่ทุก sensor มี row เริ่มต้นในกลุ่ม 0 เสมอ)
+  - **ไฟล์ใหม่ `src/components/dashboard/FailureGroupsSummaryModal.tsx`**: มุมมอง "อ่านอย่างเดียว" เปิดแบบ on-demand จากปุ่ม Summary ในแท็บ manage — progress strip (sensors/groups/ready/pending/completion bar) + ตารางแยกตามกลุ่ม พร้อมปุ่ม Build ยิงตรงเข้า PM ได้จากตรงนี้เลย รีใช้ `.pair-regl-modal*` (backdrop/header/title/body/table) ที่มีอยู่แล้วจาก `PairPlotChart.tsx` — เป็น modal chrome กลางที่ generic พอจะใช้ซ้ำได้เลยไม่ต้องเขียนใหม่ — **เจอบั๊กระหว่างทาง**: ใช้ `<>...</>` fragment เป็น top-level return ของ `.map()` ซึ่ง React ต้องการ `key` แต่ shorthand fragment รับ key ไม่ได้ — แก้เป็น `<Fragment key={group.no}>` (import จาก `react`) ก่อนที่จะเจอตอน manual test จริง
+  - **`Dashboard.tsx`** (ไฟล์หลักที่แก้เยอะสุด):
+    - state ใหม่ `activeSensorTab` ('sensor' | 'failure-groups', default อ่านจาก `initialState?.lastRoute === 'failure-group'` — **repurpose ความหมายเดิมของ route นี้**: เดิมมันคือ "เปิดหน้าต่าง FG แยก" ตอนนี้กลายเป็น "เปิด Dashboard แล้วแลนด์ที่แท็บ Failure Groups" — ไม่ต้องแก้ type `WorkspaceRoute` ใน `types.ts` เลยเพราะ literal เดิมยังใช้ค่าเดิม แค่เปลี่ยนพฤติกรรมตอนอ่าน) + `showFgSummary` (boolean เปิด/ปิด modal)
+    - handler ใหม่ 5 ตัวต่อจาก `toggleSensorGroup`/`createGroupForSensor`/`renameGroup`/`deleteGroup` เดิม: `toggleGroupCollapse`, `createEmptyGroup` (สร้างกลุ่มเปล่าไม่ผูก sensor — ต่างจาก `createGroupForSensor` เดิมที่ต้องมี sensor เสมอ), `addBlankRowToGroup` (สร้าง row ว่าง คืน id แบบ synchronous ให้ panel เอาไปขยายต่อได้ทันที), `updateFgRow` (mirror `updateRow` เดิมของ FG — auto-sync `mappedSensorName` จาก metadata เมื่อแก้ `mappedSensorTag`), `removeFgRowById`
+    - **ย้าย Build Model logic จาก FailureGroupCreation.tsx มาไว้ที่นี่ทั้งหมด** (`pendingModelDataRef`, effect ตอบ `request-predictive-data`, `spawnPredictiveModel`, `handleBuildModel`) — ก็อปพฤติกรรมเดิมของ `spawnPMHelper` มาแทบทุกบรรทัด (default `predictiveModelState`, idempotency check ผ่าน `WebviewWindow.getByLabel`, dual listener `tauri://destroyed` + `predictive-model-closed` เพื่อรีเซ็ต `lastRoute`) — **เจอบั๊กระหว่างทาง**: วางบล็อกนี้ไว้ตำแหน่งแรกสุด (ใกล้ๆ `fgGroups`/`fgRows`) ทำให้ `tsc` error "used before declaration" เพราะ `buildDashboardSnapshot` อ้างถึง `filters`/`samplingMethod` ที่ declare ทีหลังในไฟล์เดียวกัน (React state hooks ผูกกับ lexical order) — ย้ายทั้งบล็อกไปอยู่หลัง `samplingMethod` declare แล้ว `tsc` ผ่านสะอาด
+    - **auto-resume PM effect ใหม่** (mount ครั้งเดียว ผ่าน ref guard): ถ้า `initialState.lastRoute === 'predictive-model'` และมี `predictiveModelState.targetSensor` อยู่ → เรียก `spawnPredictiveModel` ทันที — แทนที่กลไก "FG cascade" เดิมที่ `DataUploadPage.tsx` เคยส่ง `targetRoute` ไปให้ FG ตัดสินใจ spawn PM ต่อ
+    - `renderSensorsContent()`: เพิ่ม tab bar 2 แท็บ (Sensor / Failure Groups) รูปแบบเดียวกับ `activeDataTab` ของแผง Data ที่มีอยู่แล้ว — สลับ render ระหว่าง `<SensorSelection>` เดิม (ไม่แตะ, ปุ่ม FolderPlus quick-assign ยังอยู่เหมือนเดิม) กับ `<FailureGroupsPanel>` ใหม่ — ปุ่ม "Add Special Sensor" ใน footer โชว์เฉพาะแท็บ Sensor
+    - ปุ่ม **"Create Failure Group"** เดิม (spawn หน้าต่าง FG พร้อม handshake ยาวเกือบ 90 บรรทัด) **ถูกแทนที่ทั้งหมด**ด้วยปุ่ม "Failure Groups" ที่แค่ `expandPanel('sensors')` + `setActiveSensorTab('failure-groups')` — ลบโค้ด spawn/handshake/`tauri://destroyed` listener เดิมทิ้งหมด
+    - เพิ่ม `<FailureGroupsSummaryModal>` render แบบ conditional (`showFgSummary`) ต่อท้าย root return
+    - ลบ `emit('failure-group-updated')` ออกจาก `persistFailureGroupState` เพราะไม่มีหน้าต่าง FG ให้ฟังอีกต่อไปแล้ว (เดิมไว้แจ้ง FG window ที่เปิดค้างอยู่ให้ reload state)
+  - **ลบไฟล์ `src/components/windows/FailureGroupCreation.tsx` ทิ้งทั้งไฟล์ (1074 บรรทัด)** + ลบ export ออกจาก `src/components/windows/index.ts` + ลบ import/branch `windowType === 'failure-group'` ออกจาก `src/main.tsx`
+  - **`src/components/upload/DataUploadPage.tsx`**: ลบ branch `route === 'failure-group' || route === 'predictive-model'` ทั้งก้อน (~90 บรรทัด — เดิม spawn หน้าต่าง FG แบบ **destroy `main` ก่อน** ไม่ใช่ coexisting-window เหมือนปุ่มใน Dashboard ซึ่งเป็นรายละเอียดที่ต้องอ่านโค้ดจริงถึงจะรู้ ไม่ใช่แค่เดาจาก pattern อื่น) แทนที่ด้วยการเรียก `onDataReady(...)` ตรงๆ เสมอ ไม่ว่า `lastRoute` จะเป็นอะไร — Dashboard เป็นคนตัดสินใจเองว่าจะแลนด์ที่แท็บไหน/auto-spawn PM ไหม ผ่าน logic ที่เพิ่งเพิ่มด้านบน — ลบ import `WebviewWindow`/`emit` ที่ไม่ได้ใช้แล้วออกด้วย (`tsc` เตือน unused)
+  - **`src/hooks/useSubWindowMenu.ts`**: แก้ doc comment ที่อ้างถึง FG (ตอนนี้มีแค่ PM ที่ใช้ hook นี้)
+  - **`src/components/windows/PredictiveModelBuild.tsx`**: แก้ comment 2 จุดที่อ้างถึง FG ให้ตรงความจริง (listener `predictive-model-shake` ตอนนี้ไม่มีใคร emit แล้วเพราะ FG หายไป — เป็น dead code ที่ไม่เป็นอันตราย ตั้งใจ**ไม่ลบโค้ดจริงออก**เพราะต้องตรวจสอบ `containerRef` ทุกจุดที่ใช้ในไฟล์ 3889 บรรทัดก่อน ถือว่าเกินขอบเขตงานนี้)
+  - **`src/__tests__/DataUploadPage.test.tsx`**: แก้ comment ที่อ้างถึง listener ที่ลบไปแล้ว (เทส I43 เองไม่กระทบเพราะมันจงใจทำให้ `loadWorkspaceData` ค้างไม่ resolve เลยไม่มีทางไปถึง branch ที่ลบ)
+  - **`docs/BACKLOG.md`**: mark ข้อ 1 (FG↔Dashboard sync ทางเดียว) กับข้อ 2 (ASSIGNED GROUP single-select) เป็น **resolved-by-removal** — ปัญหาทั้งคู่เป็นเรื่องเฉพาะของไฟล์ FG เดิมที่หายไปแล้ว ไม่ได้ renumber ข้อที่เหลือ (กันพัง cross-reference ที่ entry อื่นในเอกสารนี้ชี้ไปที่ "ข้อ 5")
+  - Verify: `npx tsc --noEmit` ผ่านสะอาดทุกรอบที่แก้ + เทสต์ทั้งโปรเจกต์ **97/97 ผ่าน** (รวม `DataUploadPage.test.tsx` แยกอีกรอบ 53/53) ไม่มี regression + `grep -rn "FailureGroupCreation"` ทั่ว `src/` ยืนยันว่าเหลือแต่คอมเมนต์อธิบายประวัติเท่านั้น ไม่มี reference ที่ทำงานจริงหลงเหลือ — **ยังไม่ได้ manual test เลย เป็น flow ใหญ่ที่สุดที่เคยแก้ในเซสชันนี้ ต้องเทสละเอียด**: (1) เปิด workspace ใหม่ ไปแท็บ Failure Groups ต้องไม่มี error, สร้างกลุ่มเปล่า, เพิ่ม sensor เข้ากลุ่มผ่านตัวค้นหา, แก้ concept/model type/notes, ติ๊ก Ready (2) กด Build Model ต้องเปิด PM window ได้จริง ตั้งค่า target/predictor ได้ปกติ (3) ปิด PM แล้วเปิดใหม่จาก workspace เดิม (ผ่าน Recent) ต้อง auto-spawn PM กลับมาเลยไม่ค้างที่ Dashboard เฉยๆ (4) ปิดตอนอยู่แท็บ Failure Groups แล้วเปิด workspace เดิมใหม่ ต้องแลนด์ที่แท็บ Failure Groups อัตโนมัติ (5) กดปุ่ม Summary ต้องเห็น modal ตารางถูกต้องตรงกับข้อมูลจริง กด Build จากในนั้นได้ (6) ปุ่ม FolderPlus quick-assign เดิมในแท็บ Sensor ต้องยังทำงานปกติไม่กระทบ (7) ทดสอบ workspace เก่าที่เคยมี `lastRoute: 'failure-group'` ค้างจากก่อนแก้ (ถ้ามี) ต้องไม่พัง แค่แลนด์ที่แท็บ Failure Groups แทนที่จะพยายามเปิดหน้าต่างที่ไม่มีอยู่แล้ว
+
+- **🆕 2026-08-06 — ปรับ UI ฟีเจอร์ Failure Groups tab หลังผู้ใช้ manual test จริง (ส่งภาพหน้าจอที่ใช้งานได้แล้วมาให้ดู — ฟีเจอร์ใหญ่ก่อนหน้าทำงานถูกต้อง!)**: ผู้ใช้ให้ feedback 3 ข้อพร้อมเหตุผลชัดเจน สั่งแก้ตรงๆไม่ต้องถามก่อน:
+  - **1) ลบปุ่ม "Failure Groups" (เดิมคือ "Create Failure Group") ที่ท้ายคอลัมน์ขวาออกทั้งปุ่ม**: ผู้ใช้ชี้ว่าซ้ำซ้อน — กดที่ตัวแท็บด้านบนได้อยู่แล้ว ไม่จำเป็นต้องมีปุ่มลัดอีกจุด — ลบทั้ง `.save-continue-section` div ออกจาก `Dashboard.tsx` เลย (ไม่ใช่แค่ซ่อน)
+  - **2) ปุ่ม Summary ด้านบนแท็บก็เอาออกด้วย**: ผู้ใช้ชี้ว่าโชว์ข้อมูลซ้ำกับที่อยู่ในแท็บ manage อยู่แล้ว ไม่รู้จะแยก view ทำไม — **ลบทั้งฟีเจอร์ summary modal ทิ้ง** ไม่ใช่แค่ปุ่ม (ตามรูปแบบเดิมที่เคยเรียนรู้จากตอนลบปุ่ม CSV round-trip — "เอาออก" หมายถึง code ที่เกี่ยวข้องทั้งหมด): ลบไฟล์ `src/components/dashboard/FailureGroupsSummaryModal.tsx` ทิ้งทั้งไฟล์ (เพิ่งสร้างเมื่อกี้ในเซสชันนี้เอง), ลบ `showFgSummary` state + import + conditional render ออกจาก `Dashboard.tsx`, ลบ prop `onOpenSummary` ออกจาก `FailureGroupsPanel.tsx` (ทั้ง interface และปุ่ม Summary ใน header)
+  - **3) เปลี่ยนคำ "Ready"/"Pending" เป็น "Complete"/"Incomplete" + ทำให้กด badge สถานะได้ตรงๆ**: ผู้ใช้ถามว่า "ทำไมกดเปลี่ยนสถานะไม่ได้" — เดิม badge สถานะที่แถวเซนเซอร์ (ตอนยังไม่ขยาย row) เป็นแค่ `<span>` แสดงผลอย่างเดียว ต้องกดขยาย row ก่อนถึงจะเจอ checkbox toggle ได้ข้างใน — **แก้ให้ badge เองกดได้เลย**: เปลี่ยนจาก `<span className="fg-status-pill...">` เป็น `<button className="fg-status-pill..." onClick={e => { e.stopPropagation(); onUpdateRow(row.id, 'status', !row.status); }}>` (มี `stopPropagation` กันไม่ให้ไป trigger การขยาย/ย่อ row ที่ครอบอยู่) — เปลี่ยนคำใน `FailureGroupsPanel.tsx` ทั้ง badge และ checkbox label ในตัว inline editor จาก Ready/Pending → Complete/Incomplete ให้ตรงกัน, เปลี่ยนคำในสถิติแถบบนสุดจาก "X% ready" → "X% complete" ด้วยเพื่อความสอดคล้อง
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด (มี unused-import warning 1 จุดจาก `ArrowRight` ที่ปุ่มที่ลบไปเคยใช้ — ลบ import ออกด้วยแล้ว) + เทสต์ทั้งโปรเจกต์ **97/97 ผ่าน** ไม่มี regression + grep ยืนยันไม่มี `showFgSummary`/`FailureGroupsSummaryModal`/`onOpenSummary` เหลือค้างในโค้ดเลย — **ยังไม่ได้ manual test รอบนี้** รอผู้ใช้ลอง: แท็บ Failure Groups ต้องไม่มีปุ่ม "Failure Groups"/Summary ค้างอยู่แล้ว, กด badge สถานะที่แถวเซนเซอร์ (ไม่ต้องขยาย row ก่อน) ต้องสลับ Complete/Incomplete ได้ทันที, % complete บนแถบสถิติต้องอัปเดตตามด้วย
+
+- **🆕 2026-08-06 — 🐛 พบสาเหตุ (ยังไม่แก้ รอผู้ใช้ confirm repro ก่อน): สร้าง Failure Group แล้วปิดโปรแกรมเปิดใหม่ ข้อมูลหาย**: ผู้ใช้ถามว่า "ไม่ได้จำค่าไว้ หรือจำไว้แต่ code ทำงานผิดพลาด" — สอบสวนโค้ดจริงแล้วสรุปว่า **เป็น race condition ระหว่างการเขียนไฟล์แบบ async กับการปิดโปรแกรม ไม่ใช่ "ไม่ได้บันทึกเลย"**:
+  - `persistFailureGroupState` (`Dashboard.tsx`) เรียก `updateWorkspaceData(...)` แบบ**ไม่ await** — ฟังก์ชันนี้เป็น chain หลายจังหวะ (`loadWorkspaceData` อ่านไฟล์ → patch → `saveWorkspaceData` เช็ค folder + เขียนไฟล์ + อัปเดต recent-workspaces list — แต่ละจุดเป็น async IPC round-trip ไป Rust)
+  - ปุ่มปิดหน้าต่าง (X) ใน [`TitleBar.tsx:166`](src/components/TitleBar.tsx) เรียก `appWindow.close()` ตรงๆ ไม่รอ pending write ใดๆ เลย + ฝั่ง Rust ([`lib.rs:2625-2661`](src-tauri/src/lib.rs)) มี exit-guard ที่พอเห็นว่าไม่มีหน้าต่างที่มองเห็นได้เหลือ จะสั่ง `app_handle.exit(0)` ทันที (มี fallback `std::process::exit(0)` บังคับอีกทีถ้า 500ms แล้วยังไม่จบ) — **ไม่มีขั้นตอนไหนรอ JS เขียนไฟล์ที่ค้างอยู่ให้เสร็จก่อนเลย**
+  - ถ้าผู้ใช้กด Create แล้วปิดโปรแกรมทันที มีโอกาสสูงที่ process จะถูกฆ่าก่อนเขียนไฟล์เสร็จ — เป็นปัญหาเชิงระบบที่กระทบทุก action ที่ผ่าน `updateWorkspaceData`/`saveWorkspaceData` ไม่ได้จำกัดแค่ failure group แต่สังเกตเห็นชัดที่นี่เพราะมักเป็น action สุดท้ายก่อนปิดโปรแกรม
+  - **ระวัง**: จุดที่เกี่ยวกับการปิดหน้าต่างเคยพังมาแล้ว 2 ครั้งในเซสชันนี้ (จาก `onCloseRequested` ที่ทำให้ปิดโปรแกรมไม่ได้เลย) ห้ามใช้แนวทางบล็อกการปิดหน้าต่างโดยตรงอีก — ถามผู้ใช้กลับไปว่ากด Create แล้วปิดทันทีหรือเปล่า เพื่อ confirm theory ก่อนเสนอทางแก้ แต่ยังไม่ได้คำตอบ (ผู้ใช้เปลี่ยนไปสั่งงานอื่นต่อ — ลบปุ่ม Save As) **ยังไม่ได้ implement อะไรเลย รอ confirm + ออกแบบทางแก้ที่ปลอดภัยก่อน**
+
+- **🆕 2026-08-06 — ลบฟีเจอร์ "Save As" (สร้างสำเนา workspace ชื่อใหม่) ทิ้งทั้งหมด**: ผู้ใช้ส่งภาพชี้ปุ่ม disk icon บน titlebar บอก "ไม่ได้ใช้ เอาออกเลย รวมถึง code ที่เกี่ยวข้องด้วย" — ไล่โค้ดก่อนแล้วพบว่า `SaveAsWindow.tsx` เป็น component เดียวที่ใช้ร่วมกันระหว่าง 2 โหมด: `mode=save-as` (สร้างสำเนา — ที่จะลบ) กับ `mode=rename` (เปลี่ยนชื่อ workspace เดิม — **ต้องเก็บไว้** เพราะเป็น mechanism เดียวที่ใช้ rename จากเมนูของหน้าต่าง Predictive Model) — ต้องแยกให้ชัดว่าจุดไหนลบได้จุดไหนต้องเก็บ:
+  - **ลบ**: `TitleBar.tsx` (ปุ่ม disk icon + prop `onSaveAs`), `App.tsx` (`handleManualSaveAs` + `onSaveAs` ที่ส่งเข้า `useAppMenu`/`<TitleBar>`), `useAppMenu.ts` (`onSaveAs` ใน interface + menu item "Save As…" ในเมนู File หลัก), `Dashboard.tsx` (`saveWorkspaceAs` ออกจาก `DashboardRef` + `useImperativeHandle`, ทั้ง effect `setupSaveAsListeners` ที่ฟัง `request-save-as-data`/`save-as-submit`, รวมถึง `localNameRef`/`buildStateRef` ที่มีไว้ใช้เฉพาะจุดนี้), `useSubWindowMenu.ts` (`doSaveAs` + menu item "Save As…" ในเมนู File ของหน้าต่าง Predictive Model — ลบเพราะเป็นฟีเจอร์เดียวกัน ทิ้งไว้ครึ่งเดียวจะขัดแย้งกันเอง)
+  - **เก็บไว้ไม่แตะ**: `doRename`/menu item "Rename Workspace" ใน `useSubWindowMenu.ts`, `SaveAsWindow.tsx` ทั้งไฟล์ (ยังต้องใช้สำหรับ mode=rename) — เพิ่มคอมเมนต์อธิบายว่า branch `mode=save-as` ภายในไฟล์นี้กลายเป็น dead code แล้ว (ไม่มี caller ไหนส่ง `mode=save-as` อีกต่อไป ยืนยันด้วย grep) แต่ตั้งใจไม่แตะ logic ข้างในเพราะเสี่ยงทำ rename (ฟีเจอร์ที่ยังใช้อยู่) พังโดยไม่จำเป็น
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด (เจอ `buildStateRef` ค้างอีกจุดที่ sync เข้า ref ตอนแรกลืมลบ — แก้แล้ว) + เทสต์ทั้งโปรเจกต์ **97/97 ผ่าน** ไม่มี regression + grep ยืนยันไม่มี `saveWorkspaceAs`/`onSaveAs`/`save-as-submit`/`doSaveAs` เหลือค้างที่ไหนอีก (เหลือแค่ comment อธิบายและ dead branch ที่ตั้งใจเก็บไว้ใน `SaveAsWindow.tsx`) — **ยังไม่ได้ manual test** รอผู้ใช้ลอง: titlebar ต้องไม่มีปุ่ม disk icon แล้ว, เมนู File หลักต้องไม่มี "Save As…" แล้ว, ฟีเจอร์ Rename Workspace (ทั้งจาก titlebar เดิม inline-edit และจากเมนู Predictive Model) ต้องยังทำงานปกติไม่กระทบ

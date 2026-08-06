@@ -28,6 +28,18 @@ function findColumnIndex(headers: string[], candidates: string[]): number | null
   return null;
 }
 
+/** Parses a mapping-CSV cell as an alarm setpoint. Empty/whitespace-only
+ *  cells and anything that doesn't parse as a finite number come back as
+ *  `undefined` — "no value", not 0 — so the Dashboard's "only show what
+ *  exists" checkbox list has something real to check for. */
+function parseAlarmValue(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === '') return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /** Build SensorMetadata[] from mapping data + result. Exported for reuse by the
  *  Recent Workspace click flow in `DataUploadPage.handleLoadWorkspace`. */
 export function buildSensorMetadataFromMapping(
@@ -42,6 +54,10 @@ export function buildSensorMetadataFromMapping(
   const descIdx = findColumnIndex(headers, ['description', 'desc', 'name', 'sensor_name', 'sensor name']);
   const unitIdx = findColumnIndex(headers, ['unit', 'units', 'uom', 'eng_unit', 'eng unit']);
   const compIdx = findColumnIndex(headers, ['component', 'comp', 'group', 'category', 'system']);
+  const alarmLIdx = findColumnIndex(headers, ['alarm_l', 'alarm l', 'low', 'lo']);
+  const alarmLLIdx = findColumnIndex(headers, ['alarm_ll', 'alarm ll', 'lowlow', 'low low', 'lolo', 'lo lo']);
+  const alarmHIdx = findColumnIndex(headers, ['alarm_h', 'alarm h', 'high', 'hi']);
+  const alarmHHIdx = findColumnIndex(headers, ['alarm_hh', 'alarm hh', 'highhigh', 'high high', 'hihi', 'hi hi']);
 
   const matchedSet = new Set(mappingResult.matched);
   const result: SensorMetadata[] = [];
@@ -53,6 +69,10 @@ export function buildSensorMetadataFromMapping(
       description: descIdx !== null ? (row[descIdx]?.trim() ?? '') : '',
       unit: unitIdx !== null ? (row[unitIdx]?.trim() ?? '') : '',
       component: compIdx !== null ? (row[compIdx]?.trim() ?? '') : '',
+      alarmL: alarmLIdx !== null ? parseAlarmValue(row[alarmLIdx]) : undefined,
+      alarmLL: alarmLLIdx !== null ? parseAlarmValue(row[alarmLLIdx]) : undefined,
+      alarmH: alarmHIdx !== null ? parseAlarmValue(row[alarmHIdx]) : undefined,
+      alarmHH: alarmHHIdx !== null ? parseAlarmValue(row[alarmHHIdx]) : undefined,
     });
   }
   return result.length > 0 ? result : null;

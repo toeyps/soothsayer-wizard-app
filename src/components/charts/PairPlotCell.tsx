@@ -4,6 +4,18 @@ import { scaleLinear } from 'd3-scale';
 import type { CsvRecord } from '../../types';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
+import type { ThemeMode } from '../../hooks/useThemeMode';
+import { formatYearMonth } from '../../utils/dateFormat';
+
+/** WebGL can't read CSS custom properties — mirrors ScatterChart.tsx's own
+ *  CANVAS_BG/POINT_COLOR_HOVER constants (kept file-local rather than
+ *  shared, since these two components already duplicate their whole
+ *  regl-scatterplot setup rather than sharing a base). */
+const CANVAS_BG: Record<ThemeMode, [number, number, number, number]> = {
+    dark: [0, 0, 0, 1],
+    light: [1.0, 1.0, 1.0, 1.0],
+};
+const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
 /**
  * One scatter / time × value cell of the pair plot. Wraps a single
@@ -74,6 +86,10 @@ interface PairPlotCellProps {
      *  camera back to the full data extent. Allows a single toolbox
      *  button to broadcast a reset to every cell at once. */
     resetTick: number;
+    /** Read once from the parent (PairPlotChart) instead of each cell
+     *  running its own MutationObserver — a matrix can have dozens of
+     *  cells mounted at once. */
+    themeMode: ThemeMode;
 }
 
 /**
@@ -103,7 +119,7 @@ function makeTicks(min: number, max: number, count: number): number[] {
 function PairPlotCell({
     data, headers, sensorY, sensorX, isTimeAxis,
     showXAxis, showYAxis, showXLabel, showYLabel,
-    tool, clusters, onLasso, onHover, pointColor, resetTick,
+    tool, clusters, onLasso, onHover, pointColor, resetTick, themeMode,
 }: PairPlotCellProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -183,10 +199,9 @@ function PairPlotCell({
                 pointSize: 2,
                 pointColor,
                 pointColorActive: [0.99, 0.75, 0.18, 1.0],
-                pointColorHover: [1.0, 1.0, 1.0, 1.0],
+                pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.55,
-                // Pure black plot background
-                backgroundColor: [0, 0, 0, 1],
+                backgroundColor: CANVAS_BG[themeMode],
                 lassoColor: [0.65, 0.73, 0.97, 0.8],
             });
         } catch (err) {
@@ -267,8 +282,12 @@ function PairPlotCell({
         // change identity every render and would force a costly recreate.
         // The latest props are captured via the closures below in newer
         // effects (selectedRows / tool sync).
+        // `themeMode` IS included below (unlike the callback props) — a theme
+        // toggle must recreate the instance, since `backgroundColor` is baked
+        // into a WebGL color texture at construction time and `.set()` never
+        // rebuilds it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [innerDims.width, innerDims.height]);
+    }, [innerDims.width, innerDims.height, themeMode]);
 
     // Push fresh data whenever the source rows / chosen sensors / instance
     // changes. Also (re)builds the row↔point lookups used by the linked
@@ -459,7 +478,7 @@ function PairPlotCell({
                         y={11}
                         textAnchor="middle"
                         fontSize="10"
-                        fill="#cbd5e1"
+                        fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
                         {isTimeAxis ? 'Time' : sensorX}
@@ -472,7 +491,7 @@ function PairPlotCell({
                         transform={`rotate(-90, 9, ${padTop + innerDims.height / 2})`}
                         textAnchor="middle"
                         fontSize="10"
-                        fill="#cbd5e1"
+                        fill="var(--text-primary)"
                         fontFamily="Inter, system-ui"
                     >
                         {sensorY}
@@ -483,17 +502,17 @@ function PairPlotCell({
                     const x = padLeft + innerDims.width * (i / (arr.length - 1));
                     const y = padTop + innerDims.height;
                     const label = isTimeAxis
-                        ? new Date(v).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+                        ? formatYearMonth(new Date(v))
                         : fmt(v);
                     return (
                         <g key={`x${i}`}>
-                            <line x1={x} y1={y} x2={x} y2={y + 3} stroke="#94a3b8" strokeWidth="0.5" />
+                            <line x1={x} y1={y} x2={x} y2={y + 3} stroke="var(--text-secondary)" strokeWidth="0.5" />
                             <text
                                 x={x}
                                 y={y + 12}
                                 textAnchor="middle"
                                 fontSize="8"
-                                fill="#94a3b8"
+                                fill="var(--text-secondary)"
                                 fontFamily="Inter, system-ui"
                             >
                                 {label}
@@ -506,13 +525,13 @@ function PairPlotCell({
                     const y = padTop + innerDims.height * (1 - i / (arr.length - 1));
                     return (
                         <g key={`y${i}`}>
-                            <line x1={padLeft - 3} y1={y} x2={padLeft} y2={y} stroke="#94a3b8" strokeWidth="0.5" />
+                            <line x1={padLeft - 3} y1={y} x2={padLeft} y2={y} stroke="var(--text-secondary)" strokeWidth="0.5" />
                             <text
                                 x={padLeft - 5}
                                 y={y + 3}
                                 textAnchor="end"
                                 fontSize="8"
-                                fill="#94a3b8"
+                                fill="var(--text-secondary)"
                                 fontFamily="Inter, system-ui"
                             >
                                 {fmt(v)}
@@ -527,7 +546,7 @@ function PairPlotCell({
                     width={innerDims.width}
                     height={innerDims.height}
                     fill="none"
-                    stroke="#334155"
+                    stroke="var(--border-strong, #334155)"
                     strokeWidth="1"
                 />
             </svg>

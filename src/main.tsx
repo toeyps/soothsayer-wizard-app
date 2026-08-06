@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { AddSensorWindow, PredictiveModelBuild, FailureGroupCreation, SaveAsWindow } from "./components/windows";
+import { AddSensorWindow, PredictiveModelBuild, SaveAsWindow } from "./components/windows";
 import "./App.css";
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -13,8 +13,6 @@ if (windowType === "add-sensor") {
   RootComponent = AddSensorWindow;
 } else if (windowType === "predictive-model") {
   RootComponent = PredictiveModelBuild;
-} else if (windowType === "failure-group") {
-  RootComponent = FailureGroupCreation;
 } else if (windowType === "save-as") {
   RootComponent = SaveAsWindow;
 }

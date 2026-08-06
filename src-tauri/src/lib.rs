@@ -2551,9 +2551,25 @@ pub fn run() {
                     default_hook(info);
                 }));
             }
-            // On non-macOS platforms, disable native decorations so we use the custom titlebar.
-            // macOS uses native decorations with Overlay titlebar style (traffic lights).
-            #[cfg(not(target_os = "macos"))]
+            // Native decorations are OFF everywhere except macOS, because the
+            // frontend draws its own titlebar (see TitleBar.tsx — it renders
+            // custom window buttons whenever the platform isn't macOS).
+            //
+            // Windows gets this from `tauri.windows.conf.json`, which Tauri
+            // merges over `tauri.conf.json` at build/dev time. Setting it there
+            // rather than stripping decorations here means the window is BORN
+            // undecorated — a runtime strip can't help but create the window
+            // with a native frame first, risking a visible flash before the
+            // call lands.
+            //
+            // macOS deliberately keeps `decorations: true` (base config) so the
+            // native traffic lights still exist — without them, and with the
+            // custom buttons suppressed on macOS, the window would have no
+            // close/minimise affordance at all.
+            //
+            // Linux has no platform config file of its own, so it still needs
+            // the runtime strip to match the custom titlebar.
+            #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
                 if let Some(window) = _app.get_webview_window("main") {

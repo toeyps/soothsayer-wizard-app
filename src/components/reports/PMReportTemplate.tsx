@@ -39,6 +39,7 @@ import type { PMReportData, ReportSensorRef, ReportSensorStats } from './pmRepor
 import { stiffnessLabel } from './pmReportTypes';
 import type { WorkspaceSensorFilter } from '../../types';
 import { REPORT_THEME as T } from './pmReportTheme';
+import { formatDateTime } from '../../utils/dateFormat';
 
 // ─────────────────────────── Helpers ───────────────────────────
 
@@ -55,11 +56,7 @@ const fmtInt = (n: number | null | undefined): string => {
     return Math.round(n).toLocaleString();
 };
 
-const fmtDate = (d: Date): string =>
-    d.toLocaleString(undefined, {
-        day: '2-digit', month: 'short', year: 'numeric',
-        hour: '2-digit', minute: '2-digit',
-    });
+const fmtDate = formatDateTime;
 
 const fmtFilter = (f: WorkspaceSensorFilter): string => {
     switch (f.operation) {

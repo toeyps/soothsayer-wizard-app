@@ -57,18 +57,6 @@ function App() {
     setWorkspaceName("");
   };
 
-  const handleManualSave = () => {
-    if (dashboardRef.current) {
-        dashboardRef.current.saveWorkspace();
-    }
-  };
-
-  const handleManualSaveAs = () => {
-    if (dashboardRef.current) {
-        dashboardRef.current.saveWorkspaceAs();
-    }
-  };
-
   const handleRename = (newName: string) => {
     setWorkspaceName(newName);
     if (dashboardRef.current) {
@@ -79,8 +67,6 @@ function App() {
   useAppMenu({
     hasWorkspace: !!metadata,
     onNew: handleBackToImport,
-    onSave: handleManualSave,
-    onSaveAs: handleManualSaveAs,
     onCloseWorkspace: handleBackToImport,
     onRename: () => setRenameTrigger(t => t + 1),
     onToggleTheme: toggleTheme,
@@ -109,30 +95,32 @@ function App() {
         <TitleBar
           theme={theme}
           toggleTheme={toggleTheme}
-          onSave={metadata ? handleManualSave : undefined}
-          onSaveAs={metadata ? handleManualSaveAs : undefined}
           workspaceName={metadata ? workspaceName : undefined}
           onRename={handleRename}
           renameTrigger={renameTrigger}
         />
         <main className="app-container">
           {!metadata ? (
-            <DataUploadPage
-              onDataReady={(data, workspaceState, sm) => {
-                setMetadata(data);
-                setSensorMetadata(sm ?? null);
-                setInitialWorkspaceState(workspaceState);
-                setWorkspaceName(workspaceState.name);
-              }}
-            />
+            <div className="app-page-transition">
+              <DataUploadPage
+                onDataReady={(data, workspaceState, sm) => {
+                  setMetadata(data);
+                  setSensorMetadata(sm ?? null);
+                  setInitialWorkspaceState(workspaceState);
+                  setWorkspaceName(workspaceState.name);
+                }}
+              />
+            </div>
           ) : (
-            <Dashboard
-              ref={dashboardRef}
-              metadata={metadata}
-              sensorMetadata={sensorMetadata}
-              onBack={handleBackToImport}
-              initialState={initialWorkspaceState}
-            />
+            <div className="app-page-transition">
+              <Dashboard
+                ref={dashboardRef}
+                metadata={metadata}
+                sensorMetadata={sensorMetadata}
+                onBack={handleBackToImport}
+                initialState={initialWorkspaceState}
+              />
+            </div>
           )}
         </main>
       </ErrorBoundary>

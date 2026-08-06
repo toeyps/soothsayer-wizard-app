@@ -1,0 +1,129 @@
+<svg width="1280" height="800" viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" font-family="Inter, 'Segoe UI', sans-serif">
+  <g id="Background">
+    <rect x="0" y="0" width="1280" height="800" fill="#09090b"/>
+  </g>
+
+  <g id="TitleBar">
+    <rect x="0" y="0" width="1280" height="32" fill="#18181b"/>
+    <rect x="0" y="31" width="1280" height="1" fill="#27272a"/>
+    <text x="16" y="20" font-size="11" fill="#a1a1aa" opacity="0.7">Wizard</text>
+    <g id="WindowControls">
+      <rect x="1194" y="10" width="12" height="12" fill="none" stroke="#a1a1aa" stroke-width="1"/>
+      <rect x="1222" y="10" width="12" height="12" fill="none" stroke="#a1a1aa" stroke-width="1"/>
+      <path d="M1250 10 L1262 22 M1262 10 L1250 22" stroke="#a1a1aa" stroke-width="1.2" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <g id="Sidebar">
+    <rect x="0" y="32" width="240" height="768" fill="#09090b"/>
+    <rect x="240" y="32" width="1" height="768" fill="#27272a"/>
+    <rect x="16" y="52" width="208" height="30" rx="7" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <text x="30" y="71" font-size="12" fill="#71717a">Find workspace…</text>
+    <text x="16" y="106" font-size="10.5" font-weight="600" fill="#71717a" letter-spacing="0.05em">RECENT</text>
+  </g>
+
+  <g id="StepIndicator">
+    <circle cx="272" cy="66" r="9" fill="#3b82f6"/>
+    <path d="M268 66 l3 3 l6 -7" stroke="#ffffff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="288" y="70" font-size="13" fill="#a1a1aa">Create project</text>
+    <rect x="400" y="65" width="60" height="1.5" fill="#3b82f6"/>
+    <circle cx="472" cy="66" r="9" fill="#3b82f6"/>
+    <text x="472" y="70" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="700">2</text>
+    <text x="488" y="70" font-size="13" font-weight="600" fill="#fafafa">Prepare dataset</text>
+  </g>
+
+  <g id="Header">
+    <text x="272" y="118" font-size="24" font-weight="700" fill="#fafafa">Prepare your dataset</text>
+    <text x="272" y="142" font-size="12.5" fill="#a1a1aa">Upload sensor CSV files, apply an optional tag-to-name mapping, then</text>
+    <text x="272" y="158" font-size="12.5" fill="#a1a1aa">choose how you'd like to analyze the data.</text>
+  </g>
+
+  <g id="DatasetFilesPanel">
+    <rect x="272" y="188" width="590" height="470" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <g id="PanelHeader">
+      <rect x="296" y="212" width="34" height="34" rx="8" fill="#0c1e3d"/>
+      <path d="M304 232 l4 -12 l4 8 l4 -14 l4 18" stroke="#60a5fa" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="342" y="228" font-size="14" font-weight="600" fill="#fafafa">Dataset files</text>
+      <text x="342" y="246" font-size="11.5" fill="#71717a">CSV · timestamp index required</text>
+    </g>
+
+    <g id="Checklist">
+      <circle cx="298" cy="272" r="6" fill="#14532d"/>
+      <path d="M295 272 l2 2 l4 -4" stroke="#4ade80" stroke-width="1.3" fill="none"/>
+      <text x="310" y="276" font-size="11" fill="#a1a1aa">First column = datetime</text>
+
+      <circle cx="470" cy="272" r="6" fill="#14532d"/>
+      <path d="M467 272 l2 2 l4 -4" stroke="#4ade80" stroke-width="1.3" fill="none"/>
+      <text x="482" y="276" font-size="11" fill="#a1a1aa">No duplicate column names</text>
+
+      <circle cx="670" cy="272" r="6" fill="#14532d"/>
+      <path d="M667 272 l2 2 l4 -4" stroke="#4ade80" stroke-width="1.3" fill="none"/>
+      <text x="682" y="276" font-size="11" fill="#a1a1aa">Shared datetime index</text>
+    </g>
+
+    <g id="DropZone">
+      <rect x="296" y="300" width="542" height="64" rx="8" fill="none" stroke="#3f3f46" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <path d="M321 322 v14 M315 330 l6 -8 l6 8" stroke="#60a5fa" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="344" y="328" font-size="12.5" fill="#fafafa">Drop CSV files or <tspan fill="#60a5fa">browse</tspan></text>
+      <text x="344" y="346" font-size="11" fill="#71717a">Up to 2 GB · multi-select supported</text>
+    </g>
+
+    <g id="FileRow">
+      <rect x="296" y="380" width="542" height="60" rx="8" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+      <rect x="308" y="392" width="34" height="34" rx="6" fill="#0c1e3d"/>
+      <text x="325" y="413" font-size="9" font-weight="700" fill="#60a5fa" text-anchor="middle">CSV</text>
+      <text x="356" y="406" font-size="12.5" font-weight="600" fill="#fafafa">raw_data_normalize_format.csv</text>
+      <text x="356" y="422" font-size="10.5" fill="#71717a">C:\00_DATA\...\data\raw_data_normalize_format.csv</text>
+      <path d="M810 402 L820 412 M820 402 L810 412" stroke="#71717a" stroke-width="1.3" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <g id="SensorMappingPanel">
+    <rect x="880" y="188" width="392" height="240" rx="10" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <rect x="904" y="212" width="34" height="34" rx="8" fill="#2e1065"/>
+    <path d="M912 220 h18 l-7 9 v9 l-4 -3 v-6 z" fill="none" stroke="#c4b5fd" stroke-width="1.4" stroke-linejoin="round"/>
+    <text x="950" y="226" font-size="14" font-weight="600" fill="#fafafa">Sensor mapping</text>
+    <text x="1058" y="226" font-size="10.5" fill="#71717a">optional</text>
+    <text x="950" y="244" font-size="11" fill="#71717a">Tag → name lookup</text>
+
+    <text x="904" y="272" font-size="11" fill="#a1a1aa">Replace cryptic tags like</text>
+    <text x="1032" y="272" font-size="11" font-family="'JetBrains Mono', monospace" fill="#fafafa">850P402.PV</text>
+    <text x="904" y="288" font-size="11" fill="#a1a1aa">with human-readable sensor names.</text>
+
+    <rect x="904" y="308" width="344" height="70" rx="8" fill="#09090b" stroke="#27272a" stroke-width="1"/>
+    <rect x="916" y="320" width="30" height="30" rx="6" fill="#0c1e3d"/>
+    <text x="931" y="339" font-size="8.5" font-weight="700" fill="#60a5fa" text-anchor="middle">CSV</text>
+    <text x="956" y="336" font-size="12" font-weight="600" fill="#fafafa">msater_data.csv</text>
+    <text x="956" y="352" font-size="10.5" fill="#71717a">132 rows · 132 matched</text>
+
+    <text x="904" y="404" font-size="10" font-weight="600" fill="#71717a" letter-spacing="0.04em">MAPPING RESULTS</text>
+  </g>
+
+  <g id="MatchedBadge">
+    <rect x="880" y="416" width="392" height="30" rx="6" fill="#052e16"/>
+    <circle cx="900" cy="431" r="6" fill="none" stroke="#4ade80" stroke-width="1.3"/>
+    <path d="M897 431 l2 2 l4 -4" stroke="#4ade80" stroke-width="1.2" fill="none"/>
+    <text x="914" y="435" font-size="11.5" fill="#86efac">132 columns matched</text>
+  </g>
+
+  <g id="UnmatchedBadge">
+    <rect x="880" y="454" width="392" height="46" rx="6" fill="#450a0a"/>
+    <circle cx="900" cy="471" r="6" fill="none" stroke="#f87171" stroke-width="1.3"/>
+    <text x="898" y="475" font-size="9" fill="#f87171" text-anchor="middle" font-weight="700">!</text>
+    <text x="914" y="470" font-size="11.5" fill="#fca5a5">1 dataset column not found in mapping</text>
+    <text x="914" y="486" font-size="10.5" font-family="'JetBrains Mono', monospace" fill="#fca5a5">11PT1220.PV.1</text>
+  </g>
+
+  <g id="BottomBar">
+    <rect x="240" y="756" width="1040" height="1" fill="#27272a"/>
+    <text x="272" y="785" font-size="11" fill="#71717a" font-family="'JetBrains Mono', monospace" letter-spacing="0.04em">Ready · 159,264 rows</text>
+    <g id="BackButton">
+      <rect x="1032" y="762" width="90" height="34" rx="8" fill="none" stroke="#27272a" stroke-width="1"/>
+      <text x="1077" y="784" font-size="13" font-weight="500" fill="#a1a1aa" text-anchor="middle">‹ Back</text>
+    </g>
+    <g id="SaveContinueButton">
+      <rect x="1132" y="762" width="150" height="34" rx="8" fill="#3b82f6"/>
+      <text x="1207" y="784" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Continue →</text>
+    </g>
+  </g>
+</svg>

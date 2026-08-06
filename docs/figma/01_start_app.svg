@@ -1,0 +1,70 @@
+<svg width="1280" height="800" viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" font-family="Inter, 'Segoe UI', sans-serif">
+  <g id="Background">
+    <rect x="0" y="0" width="1280" height="800" fill="#09090b"/>
+  </g>
+
+  <g id="TitleBar">
+    <rect x="0" y="0" width="1280" height="32" fill="#18181b"/>
+    <rect x="0" y="31" width="1280" height="1" fill="#27272a"/>
+    <text x="16" y="20" font-size="11" fill="#a1a1aa" opacity="0.7">Wizard</text>
+    <g id="WindowControls">
+      <rect x="1194" y="10" width="12" height="12" fill="none" stroke="#a1a1aa" stroke-width="1"/>
+      <rect x="1222" y="10" width="12" height="12" fill="none" stroke="#a1a1aa" stroke-width="1"/>
+      <path d="M1250 10 L1262 22 M1262 10 L1250 22" stroke="#a1a1aa" stroke-width="1.2" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <g id="Header">
+    <text x="40" y="76" font-size="28" font-weight="700" fill="#fafafa">Get started</text>
+    <text x="40" y="102" font-size="13" fill="#a1a1aa">Start a brand new project, or jump back into one you were already working on.</text>
+  </g>
+
+  <g id="CreateNewProjectCard">
+    <rect x="40" y="140" width="600" height="180" rx="12" fill="none" stroke="#27272a" stroke-width="1.5" stroke-dasharray="6 5"/>
+    <g id="PlusIcon">
+      <rect x="64" y="164" width="36" height="36" rx="8" fill="#1e293b"/>
+      <path d="M82 174 L82 190 M74 182 L90 182" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <text x="64" y="228" font-size="16" font-weight="600" fill="#fafafa">Create new project</text>
+    <text x="64" y="250" font-size="12.5" fill="#a1a1aa">Start fresh — name your project, then upload a new</text>
+    <text x="64" y="266" font-size="12.5" fill="#a1a1aa">CSV dataset.</text>
+  </g>
+
+  <g id="OpenRecentProjectPanel">
+    <rect x="660" y="140" width="580" height="480" rx="12" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+    <g id="PanelHeader">
+      <rect x="684" y="164" width="36" height="36" rx="8" fill="#2e1065"/>
+      <path d="M694 174 h16 v14 h-16 z M694 174 l3 -4 h6 l3 4" fill="none" stroke="#c4b5fd" stroke-width="1.6" stroke-linejoin="round"/>
+      <text x="732" y="180" font-size="15" font-weight="600" fill="#fafafa">Open recent project</text>
+      <text x="732" y="200" font-size="12.5" fill="#a1a1aa">Continue where you left off.</text>
+    </g>
+    <rect x="684" y="220" width="532" height="1" fill="#27272a"/>
+
+    <g id="RecentRow1">
+      <circle cx="696" cy="248" r="4" fill="#3b82f6"/>
+      <text x="712" y="253" font-size="14" font-weight="600" fill="#fafafa">test (Copy) (Copy)</text>
+      <text x="712" y="271" font-size="12" fill="#a1a1aa">test</text>
+      <path d="M1196 244 L1206 254 M1206 244 L1196 254" stroke="#71717a" stroke-width="1.4" stroke-linecap="round"/>
+      <rect x="684" y="290" width="532" height="1" fill="#27272a"/>
+    </g>
+
+    <g id="RecentRow2">
+      <circle cx="696" cy="316" r="4" fill="#3b82f6"/>
+      <text x="712" y="321" font-size="14" font-weight="600" fill="#fafafa">test (Copy) (Copy)</text>
+      <text x="712" y="339" font-size="12" fill="#a1a1aa">test</text>
+      <path d="M1196 312 L1206 322 M1206 312 L1196 322" stroke="#71717a" stroke-width="1.4" stroke-linecap="round"/>
+      <rect x="684" y="358" width="532" height="1" fill="#27272a"/>
+    </g>
+
+    <g id="RecentRow3">
+      <circle cx="696" cy="384" r="4" fill="#3b82f6"/>
+      <text x="712" y="389" font-size="14" font-weight="600" fill="#fafafa">test (Copy)</text>
+      <text x="712" y="407" font-size="12" fill="#a1a1aa">test</text>
+      <path d="M1196 380 L1206 390 M1206 380 L1196 390" stroke="#71717a" stroke-width="1.4" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <g id="Sidebar_FindWorkspace">
+    <rect x="40" y="356" width="600" height="1" fill="#27272a" opacity="0"/>
+  </g>
+</svg>

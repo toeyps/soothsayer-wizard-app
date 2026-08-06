@@ -1,30 +1,6 @@
 @import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-:root {
-    --bg-primary: #09090b;
-    --bg-secondary: #18181b;
-    --text-primary: #fafafa;
-    --text-secondary: #a1a1aa;
-    --accent-color: #3b82f6;
-    --border: #27272a;
-    --card-bg: #18181b;
-    --input-bg: #09090b;
-    --hover-bg: #27272a;
-}
-
-[data-theme="light"] {
-    --bg-primary: #f8fafc;
-    --bg-secondary: #f1f5f9;
-    --text-primary: #0f172a;
-    --text-secondary: #64748b;
-    --accent-color: #3b82f6;
-    --border: #cbd5e1;
-    --card-bg: #ffffff;
-    --input-bg: #ffffff;
-    --hover-bg: #f1f5f9;
-}
-
 body {
     margin: 0;
     padding: 0;
@@ -46,6 +22,18 @@ body {
     width: 100%;
     display: flex;
     flex-direction: column;
+}
+
+/* Wraps whichever page App.tsx is showing (Import wizard vs Dashboard).
+   That swap is a full unmount/mount with nothing shared between the two —
+   without this it read as the whole program closing and reopening rather
+   than a page change. */
+.app-page-transition {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    animation: fadeIn 0.2s ease-out;
 }
 
 /* Import Screen */
@@ -251,6 +239,14 @@ body {
     cursor: pointer;
 }
 
+/* The browser's native picker icon defaults to dark — invert(1) above flips
+   it to white so it's visible on this app's dark background. In light theme
+   the icon is already dark-on-light, so the same invert would flip it to
+   white-on-white (invisible) — cancel it. */
+[data-theme="light"] .date-input-wrapper input::-webkit-calendar-picker-indicator {
+    filter: none;
+}
+
 .separator {
     color: var(--text-secondary);
 }
@@ -317,12 +313,6 @@ body {
     overflow: hidden;
     flex: 1;
     min-height: 0;
-}
-
-/* Filter Widget in Left Column */
-.filter-widget {
-    flex: 1;
-    min-height: 250px;
 }
 
 .filter-content {
@@ -1200,14 +1190,18 @@ tr:hover {
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    padding: 10px 8px;
+    padding: 10px 6px;
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.2s ease;
-    min-width: 50px;
+    /* Fixed width (not min-width) so a long label like "Control Chart"
+       wraps onto a second line instead of stretching the button wider —
+       this sidebar is `position: fixed; left: 0`, so a wider button just
+       reached further over the chart underneath it. */
+    width: 68px;
 }
 
 .collapsed-tab:hover {
@@ -1218,10 +1212,19 @@ tr:hover {
 }
 
 .collapsed-tab-label {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.02em;
+    text-align: center;
+    white-space: normal;
+    /* `normal` (not `break-word`) so wrapping only happens at spaces —
+       "Control Chart" still wraps cleanly into two words, but a single
+       long word like "Sensors" no longer gets sliced into an orphaned
+       leftover letter on its own line. */
+    word-break: normal;
+    overflow-wrap: normal;
+    line-height: 1.25;
 }
 
 .collapsible-header {
@@ -1301,6 +1304,14 @@ tr:hover {
 }
 .dashboard-grid-2x2.right-fully-collapsed .left-column {
     flex: 1 1 100%;
+}
+
+/* The collapsed-tabs-sidebar is `position: fixed; left: 0`, floating over
+   whatever sits at the viewport's left edge. Without this, it overlaps the
+   chart's y-axis labels/scale once enough panels are hidden that the chart
+   reaches all the way to x=0. Reserve room instead of overlapping. */
+.dashboard-grid-2x2.has-collapsed-sidebar {
+    padding-left: 76px;
 }
 
 /* =============================================
@@ -1608,6 +1619,10 @@ tr:hover {
     filter: invert(1);
     opacity: 0.5;
     cursor: pointer;
+}
+
+[data-theme="light"] .config-input::-webkit-calendar-picker-indicator {
+    filter: none;
 }
 
 .config-apply-btn {
@@ -2138,64 +2153,10 @@ tr:hover {
     gap: 0.75rem;
 }
 
-.fg-toolbar-left,
-.fg-toolbar-right {
+.fg-toolbar-left {
     display: flex;
     gap: 0.5rem;
     align-items: center;
-}
-
-.fg-upload-btn,
-.fg-download-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.85rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: var(--card-bg);
-    color: var(--text-primary);
-    font-size: 0.78rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.fg-upload-btn:hover,
-.fg-download-btn:hover {
-    border-color: var(--accent-color);
-    background: rgba(59, 130, 246, 0.08);
-}
-
-.fg-upload-btn {
-    border-color: #059669;
-    color: #34d399;
-}
-
-.fg-upload-btn:hover {
-    background: rgba(5, 150, 105, 0.12);
-    border-color: #34d399;
-}
-
-.fg-save-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 1.2rem;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
-    border: none;
-    border-radius: 0.35rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.25);
-}
-
-.fg-save-btn:hover {
-    filter: brightness(1.1);
-    box-shadow: 0 3px 10px rgba(59, 130, 246, 0.35);
 }
 
 /* ── Groups Container ── */
@@ -3103,65 +3064,6 @@ tr:hover {
     align-items: center;
 }
 
-.fg-toolbar-right {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-.fg-upload-btn,
-.fg-download-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.85rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: var(--card-bg);
-    color: var(--text-primary);
-    font-size: 0.78rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.fg-upload-btn:hover,
-.fg-download-btn:hover {
-    border-color: var(--accent-color);
-    background: rgba(59, 130, 246, 0.08);
-}
-
-.fg-upload-btn {
-    border-color: #059669;
-    color: #34d399;
-}
-
-.fg-upload-btn:hover {
-    background: rgba(5, 150, 105, 0.12);
-    border-color: #34d399;
-}
-
-.fg-save-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 1.2rem;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
-    border: none;
-    border-radius: 0.35rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.25);
-}
-
-.fg-save-btn:hover {
-    filter: brightness(1.1);
-    box-shadow: 0 3px 10px rgba(59, 130, 246, 0.35);
-}
-
 /* ── Groups Container ── */
 
 .fg-groups-container {
@@ -3897,65 +3799,6 @@ tr:hover {
     align-items: center;
 }
 
-.fg-toolbar-right {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-.fg-upload-btn,
-.fg-download-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.85rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: var(--card-bg);
-    color: var(--text-primary);
-    font-size: 0.78rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.fg-upload-btn:hover,
-.fg-download-btn:hover {
-    border-color: var(--accent-color);
-    background: rgba(59, 130, 246, 0.08);
-}
-
-.fg-upload-btn {
-    border-color: #059669;
-    color: #34d399;
-}
-
-.fg-upload-btn:hover {
-    background: rgba(5, 150, 105, 0.12);
-    border-color: #34d399;
-}
-
-.fg-save-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 1.2rem;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
-    border: none;
-    border-radius: 0.35rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.25);
-}
-
-.fg-save-btn:hover {
-    filter: brightness(1.1);
-    box-shadow: 0 3px 10px rgba(59, 130, 246, 0.35);
-}
-
 /* Table Container */
 .fg-table-container {
     flex: 1;
@@ -4625,6 +4468,9 @@ tr:hover {
     --input-bg: #fafafa;
     --hover-bg: rgba(10, 10, 15, 0.04);
     --chip-bg: rgba(10, 10, 15, 0.04);
+    --ok: oklch(0.55 0.15 150);
+    --warn: oklch(0.58 0.16 75);
+    --danger: oklch(0.55 0.2 25);
 }
 
 body {
@@ -5015,59 +4861,8 @@ body {
     gap: 12px;
 }
 
-.fg-toolbar-left,
-.fg-toolbar-right {
+.fg-toolbar-left {
     gap: 8px;
-}
-
-.fg-upload-btn,
-.fg-download-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--card-bg);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    font-size: 12.5px;
-    font-weight: 500;
-    font-family: 'Inter', sans-serif;
-    letter-spacing: -0.005em;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.fg-upload-btn:hover,
-.fg-download-btn:hover {
-    background: var(--surface-hi);
-    border-color: var(--border-strong);
-    color: var(--text-primary);
-    filter: none;
-}
-
-.fg-save-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--accent-color);
-    color: #fff;
-    border: 1px solid var(--accent-color);
-    border-radius: 7px;
-    font-size: 12.5px;
-    font-weight: 500;
-    font-family: 'Inter', sans-serif;
-    letter-spacing: -0.005em;
-    box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.15) inset;
-    cursor: pointer;
-    transition: filter 0.15s ease;
-}
-
-.fg-save-btn:hover {
-    background: var(--accent-hi);
-    border-color: var(--accent-hi);
-    filter: none;
 }
 
 /* Groups container */
@@ -5706,20 +5501,6 @@ body {
     gap: 12px;
     flex: 1;
     min-width: 0;
-}
-
-.fg-toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-}
-
-.fg-toolbar-divider {
-    width: 1px;
-    height: 22px;
-    background: var(--border);
-    flex-shrink: 0;
 }
 
 /* Workspace label pill — anchors the user's location after step/breadcrumb
@@ -6882,13 +6663,8 @@ body {
         gap: 10px;
     }
 
-    .fg-toolbar-left,
-    .fg-toolbar-right {
+    .fg-toolbar-left {
         justify-content: flex-start;
-    }
-
-    .fg-toolbar-right {
-        flex-wrap: wrap;
     }
 
     .fg-progress-strip {
@@ -6961,10 +6737,6 @@ body {
     }
 
     .fg-completion-label {
-        display: none;
-    }
-
-    .fg-toolbar-divider {
         display: none;
     }
 
@@ -8490,6 +8262,59 @@ body {
     cursor: not-allowed;
 }
 
+.scatter-regl-axis-editor {
+    position: absolute;
+    top: 44px;
+    right: 12px;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(30, 41, 59, 0.96);
+    border: 1px solid rgba(71, 85, 105, 0.6);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 11px;
+    backdrop-filter: blur(4px);
+    min-width: 190px;
+}
+
+.scatter-regl-axis-editor-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.scatter-regl-axis-editor-label {
+    color: #94a3b8;
+    width: 10px;
+    flex-shrink: 0;
+    text-align: center;
+}
+
+.scatter-regl-axis-editor-input {
+    width: 64px;
+    padding: 2px 5px;
+    background: #1e293b;
+    border: 1px solid rgba(71, 85, 105, 0.6);
+    border-radius: 3px;
+    color: #f1f5f9;
+    font-size: 11px;
+    outline: none;
+    color-scheme: dark;
+}
+
+.scatter-regl-axis-editor-error {
+    color: #fca5a5;
+    font-size: 10px;
+}
+
+.scatter-regl-axis-editor-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+}
+
 .scatter-regl-tooltip {
     position: absolute;
     z-index: 20;
@@ -8555,7 +8380,7 @@ body {
     width: 100%;
     height: 100%;
     min-height: 0;
-    background: #000;
+    background: var(--bg-primary);
 }
 
 .pair-regl-toolbox {
