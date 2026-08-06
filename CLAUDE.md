@@ -43,7 +43,9 @@ npm run tauri:build               # release bundle; per-target + installer scrip
 
 ### Windows & capabilities
 
-Multi-window app: `main` (upload → dashboard) plus sub-windows `failure-group`, `predictive-model`, `save-as` (full capability, `src-tauri/capabilities/default.json`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths (CSV/PDF/PNG exports) must go through the Rust `write_user_file` command, via `writeUserTextFile` / `writeUserBinaryFile` in `workspaceManager.ts`.
+Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-model`, `save-as` (full capability, `src-tauri/capabilities/default.json`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths (CSV/PDF/PNG exports) must go through the Rust `write_user_file` command, via `writeUserTextFile` / `writeUserBinaryFile` in `workspaceManager.ts`.
+
+**2026-08-06**: the standalone `failure-group` sub-window (`FailureGroupCreation.tsx`) was deleted — failure-group management now lives inline in the Dashboard window as a "Failure Groups" tab in the Sensor panel (`FailureGroupsPanel.tsx`), plus a per-sensor quick-assign in the existing Sensor tab (`SensorSelection.tsx`). `save-as`'s window/component is still spawned, but only for the "Rename Workspace" mode now — the "Save As" (duplicate workspace) mode was removed app-wide. See `docs/PROJECT_HANDOVER.md` for the full account.
 
 ### Workspace persistence & auto-resume
 

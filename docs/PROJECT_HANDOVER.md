@@ -1,11 +1,10 @@
 # Wizard (Soothsayer-Wizard) — Project Handover Summary
 
-> อัปเดตล่าสุด: 2026-07-16 — เอกสารนี้เขียนจากการสำรวจโค้ดจริง + งาน UI/UX รอบใหญ่ที่ทำต่อเนื่องในเซสชันนี้
-> (เริ่มจาก branch `main` @ v0.2.1, commit `cb6d105`) เพื่อใช้เป็นจุดเริ่มต้นสำหรับ developer คนใหม่หรือ session ใหม่ที่รับช่วงงานต่อ
+> อัปเดตล่าสุด: 2026-08-06 — §1-§9 ด้านล่างคือ**ภาพรวม/reference ที่ sync กับสภาพโค้ดปัจจุบันแล้ว** (ตรวจสอบซ้ำและแก้ให้ตรงความจริงในรอบนี้) ส่วน §6.1 เป็นต้นไปคือ**บันทึกประวัติงานแบบเรียงตามเวลา** (แต่ละหัวข้อ 🆕 คือสิ่งที่เกิดขึ้น ณ วันที่นั้นๆ ไม่ใช่สถานะปัจจุบันเสมอไป — ถ้าเรื่องไหนถูกแก้/revert ต่อในภายหลัง จะมีหัวข้อใหม่ต่อท้ายบอกไว้)
 >
 > ⚠️ **โปรเจกต์ย้าย path แล้ว**: จากเดิม `C:\00_DATA\OneDrive - P-DICTOR\repo\Soothsayer-wizard-app` (อยู่ใน OneDrive sync) ➜ ปัจจุบันอยู่ที่ **`C:\00_DATA\Soothsayer-wizard-app`** (โฟลเดอร์ปกติ นอก OneDrive) — ดูเหตุผลใน §9
 >
-> 📌 **เอกสารนี้อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ 1 อย่าง** (ผู้ใช้ทำงานสลับ 2 เครื่อง และ Claude Code ไม่มี session history sync ข้ามเครื่อง — เอกสารนี้คือตัวแทนความต่อเนื่องแทน chat history) ถ้าจะให้เอกสารนี้ตามไปเครื่องที่ 2 ได้จริง **ต้อง commit + push ไฟล์นี้ด้วย** เพราะตอนนี้ยังเป็น untracked file อยู่ (ดู §7/§10)
+> 📌 **เอกสารนี้อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ 1 อย่าง** (ผู้ใช้ทำงานสลับ 2 เครื่อง และ Claude Code ไม่มี session history sync ข้ามเครื่อง — เอกสารนี้คือตัวแทนความต่อเนื่องแทน chat history) **✅ commit + push แล้ว** (commit `6dfb269`, 2026-08-06, ไปที่ remote `personal` — ดู §7 ที่แก้ใหม่)
 
 ---
 
@@ -13,9 +12,9 @@
 
 **Wizard** เป็น desktop app (Tauri v2) สำหรับ:
 1. Import CSV ข้อมูลเซนเซอร์
-2. สำรวจข้อมูล (dashboard: table / line chart / scatter / pair-plot)
-3. สร้าง Failure Group
-4. เทรน Predictive Model (3 แบบ: Individual, Clustering, Relationship)
+2. สำรวจข้อมูล (dashboard: table / line chart / scatter / pair-plot / alarm setpoint lines)
+3. จัดกลุ่ม Failure Group (**2026-08-06: ย้ายเข้ามาอยู่ใน Dashboard แล้ว** — เป็นแท็บ "Failure Groups" ในแผง Sensor ฝั่งขวา ไม่ใช่หน้าต่างแยกอีกต่อไป ดู §3/§5 และ entry `🆕 2026-08-06 — ⚡ งานใหญ่` ด้านล่าง)
+4. เทรน Predictive Model (3 แบบ: Individual, Clustering, Relationship) — เปิดจากปุ่ม Build Model ในแท็บ Failure Groups โดยตรง
 
 สถาปัตยกรรมแบ่งเป็น 3 tier: **React frontend** ↔ **Rust core (Tauri)** ↔ **Python sidecar** (เฉพาะโมเดล Relationship)
 
@@ -67,9 +66,9 @@ Soothsayer-wizard-app/
 │  ├─ App.tsx                  # entry ของหน้าต่างหลัก (main window)
 │  ├─ components/
 │  │  ├─ upload/                DataUploadPage (ตอนนี้เป็น 3-step wizard — ดู §6) + ลูกๆ
-│  │  ├─ dashboard/              Dashboard, DataTable, FilterPanel, SensorSelection
+│  │  ├─ dashboard/              Dashboard, DataTable, FilterPanel, SensorSelection, **FailureGroupsPanel** (ใหม่ 2026-08-06)
 │  │  ├─ charts/                 LineChart, ScatterChart, PairPlotCell/Chart, ResponsiveECharts
-│  │  ├─ windows/                4 sub-window: AddSensor / FailureGroup / PredictiveModelBuild / SaveAs
+│  │  ├─ windows/                **3 sub-window** (ลดจาก 4 เมื่อ 2026-08-06 — `FailureGroupCreation.tsx` ถูกลบทิ้ง): AddSensor / PredictiveModelBuild / SaveAs (SaveAs ตอนนี้ทำหน้าที่แค่ "Rename Workspace" เท่านั้น โหมด duplicate-workspace เดิมถูกลบออกด้วย)
 │  │  └─ reports/                PM PDF report template (react-pdf)
 │  ├─ hooks/                    useDataUpload, useMappingData, useChartData, useScatterSample,
 │  │                             useTablePage, useCalculationEngine, useFormulaEditor,
@@ -135,11 +134,11 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
 
 - **Rust**: `src-tauri/src/main.rs` → `tauri_app_lib::run()` ใน `lib.rs` — ตั้งค่า plugin, register 22 command ผ่าน `invoke_handler`, และ handle window-lifecycle (ปิดแอปเมื่อไม่มีหน้าต่าง *visible* เหลือ — มี logic เฉพาะกันเคส race ตอนสลับไป sub-window)
 - **Frontend**: `src/main.tsx` อ่าน query param `?window=` เพื่อเลือก root component:
-  - ไม่มี param → `App.tsx` (main window: upload → dashboard)
+  - ไม่มี param → `App.tsx` (main window: upload → dashboard → **Failure Groups tab ก็อยู่ในนี้ด้วยแล้ว 2026-08-06**)
   - `add-sensor` → `AddSensorWindow`
   - `predictive-model` → `PredictiveModelBuild`
-  - `failure-group` → `FailureGroupCreation`
-  - `save-as` → `SaveAsWindow`
+  - `save-as` → `SaveAsWindow` (**2026-08-06: เหลือแค่โหมด `?mode=rename` เท่านั้นที่ยังถูกเรียกจริง** — โหมด `save-as`/duplicate-workspace ถูกลบทุก entry point แล้ว โค้ดในไฟล์ยังมี branch เดิมค้างไว้เป็น dead code โดยตั้งใจ ไม่เสี่ยงแก้เพราะกลัวพัง rename)
+  - ~~`failure-group` → `FailureGroupCreation`~~ — **ลบออกแล้ว 2026-08-06** (ทั้ง route นี้และไฟล์ component ถูกลบ — ดู entry `🆕 2026-08-06 — ⚡ งานใหญ่` ด้านล่างสำหรับรายละเอียดเต็ม)
 
   แต่ละ sub-window คือ Tauri window แยก คนละ capability file (`default.json` เต็ม, `add-sensor.json` แคบกว่า)
 
@@ -225,19 +224,25 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
 
 ---
 
-## 7. หนี้ Rust build ปัจจุบัน (uncommitted)
+## 7. สถานะ Git (แก้ใหม่ทั้งหมด 2026-08-06 — ของเดิมผิดไปแล้ว)
 
-`git status` ตอนนี้มีไฟล์แก้ค้างอยู่ 13 ไฟล์ + เอกสารนี้ที่ยังไม่ commit (ดูรายชื่อเต็มใน §8) — **ยังไม่มีอะไร push หรือ commit เลยตั้งแต่ session UI/UX รอบนี้เริ่มต้น** ถ้าจะ commit ควรแบ่งเป็นหลาย commit ตามฟีเจอร์ (upload flow, dashboard sensor panel, chart legend/axis, filter panel) แทนที่จะ commit รวดเดียวทั้งหมด เพื่อให้ review/revert ง่ายในอนาคต
+**✅ Commit + push แล้ว** เมื่อ 2026-08-06 — เดิม section นี้เขียนไว้ว่า "ยังไม่มีอะไร push หรือ commit เลย" ซึ่งจริงตอนเขียนครั้งแรก (16 ก.ค.) แต่ผิดไปแล้วตอนนี้ **อย่าเชื่อบรรทัดนี้เกิน 1 วันโดยไม่เช็ค `git log`/`git status` เองก่อน**:
+
+- Commit เดียวรวมทุกอย่าง: `6dfb269` — "Fold Failure Group Creation into Dashboard; fix several UI bugs; git hygiene" (50 ไฟล์, รวมงานสะสมของหลาย session ตั้งแต่ก่อน 16 ก.ค. จนถึงงาน Failure Groups migration + ลบปุ่ม Save As วันนี้)
+- Push ไปที่ remote **`personal`** (`https://github.com/toeyps/soothsayer-wizard-app.git`) branch `main` — เป็น branch ใหม่บน repo ว่างเปล่า (ยังไม่เคย push มาก่อน)
+- Repo นี้มี **2 remotes**: `origin` (`https://github.com/Alpha-Com-Thailand/Soothsayer-wizard-app.git` — org repo, local `main` ยัง track อยู่กับตัวนี้โดย default) กับ `personal` (ของผู้ใช้เอง toeyps) — **`git push` เฉยๆ (ไม่ระบุ remote) จะไปที่ `origin` ไม่ใช่ `personal`** ถ้าต้องการ push ไป personal ต้องพิมพ์ `git push personal main` ให้ครบทุกครั้ง (หรือถามผู้ใช้ว่าต้องการตั้ง tracking ใหม่ไหม)
+- ก่อน commit ต้องตั้ง git identity ก่อน (เครื่องนี้ไม่เคยตั้งมาก่อนเลย ต้องให้ผู้ใช้รัน `git config --global user.name/user.email` เอง — ห้าม Claude ไปแก้ git config เองเด็ดขาดตาม Git Safety Protocol)
+- ไฟล์แปลกปลอมที่เคยพูดถึงใน §8 ข้อ 3 เดิม (`src-tauri/2`, `check_output.txt`, `nuitka-crash-report.xml`, `.claude/settings.local.json`, `.claude/worktrees/*`) **ถูกลบออกจาก git แล้วใน commit นี้** (ยังอยู่ในเครื่อง local แต่ gitignore ไว้แล้ว ไม่ track อีกต่อไป)
 
 ---
 
 ## 8. จุดที่ควรระวังตอน handover (พบจากการตรวจโค้ดจริง — อัปเดตสถานะแล้ว)
 
-1. **`README.md` ล้าสมัย** — อ้างถึง `ImportScreen` (ปัจจุบันคือ `DataUploadPage` ที่ตอนนี้กลายเป็น 3-step wizard ไปอีกชั้น) และไม่มีข้อมูล bounded chart pipeline / error reporting / step-based upload flow เลย — **ยังไม่ได้แก้** แนะนำอัปเดตหรือรวมกับเอกสารนี้
+1. ~~**`README.md` ล้าสมัย**~~ → **✅ แก้แล้ว 2026-08-06** — เขียนใหม่ทั้งไฟล์ให้ตรงสภาพปัจจุบัน (features, sub-window list ที่ถูกต้อง, setup/run/test commands ที่ตรวจกับ `package.json` จริง) commit ไปพร้อมกับ README fix รอบนี้ (ดู entry ท้ายสุดของเอกสารนี้)
 
 2. **ข้อขัดแย้งเรื่อง auto-resume ยังไม่ได้แก้**: `CLAUDE.md` เขียนว่า auto-resume เป็น hard requirement แต่คอมเมนต์จริงใน `src/App.tsx` บอกว่า "No auto-resume" — ผู้ใช้ต้องเลือกเองจาก **step 0 "Open recent project"** (จุดใหม่ที่แทนที่ sidebar เดิมในหน้าแรก) ยังไม่ได้ยืนยันกับทีมว่าอันไหนคือพฤติกรรมที่ตั้งใจ
 
-3. **ไฟล์แปลกปลอมที่ commit เข้า git ยังอยู่**: [`src-tauri/2`](src-tauri/2) และ [`src-tauri/check_output.txt`](src-tauri/check_output.txt) ยังอยู่ในโฟลเดอร์ใหม่ด้วย (ติดมาตอน copy ย้าย path) — เป็น output หลุดจาก shell redirect เก่าจากเครื่อง/คนละ path (`D:\Github\vibe`) ยังควรลบทิ้งอยู่
+3. ~~**ไฟล์แปลกปลอมที่ commit เข้า git ยังอยู่**~~ → **✅ แก้แล้ว** — `src-tauri/2`, `src-tauri/check_output.txt`, `src-tauri/nuitka-crash-report.xml` ลบออกจาก git แล้ว (commit `6dfb269`) และเพิ่มเข้า `.gitignore` กันไม่ให้กลับมาอีก
 
 4. **Sidecar binary compile แล้วบนเครื่องนี้** — `src-tauri/bin/backend-x86_64-pc-windows-msvc.exe` มีอยู่แล้ว (ไม่ track ใน git ตามปกติ) แต่**เครื่องอื่นต้อง build เองใหม่** ตามขั้นตอนใน §4
 
@@ -536,3 +541,11 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **ลบ**: `TitleBar.tsx` (ปุ่ม disk icon + prop `onSaveAs`), `App.tsx` (`handleManualSaveAs` + `onSaveAs` ที่ส่งเข้า `useAppMenu`/`<TitleBar>`), `useAppMenu.ts` (`onSaveAs` ใน interface + menu item "Save As…" ในเมนู File หลัก), `Dashboard.tsx` (`saveWorkspaceAs` ออกจาก `DashboardRef` + `useImperativeHandle`, ทั้ง effect `setupSaveAsListeners` ที่ฟัง `request-save-as-data`/`save-as-submit`, รวมถึง `localNameRef`/`buildStateRef` ที่มีไว้ใช้เฉพาะจุดนี้), `useSubWindowMenu.ts` (`doSaveAs` + menu item "Save As…" ในเมนู File ของหน้าต่าง Predictive Model — ลบเพราะเป็นฟีเจอร์เดียวกัน ทิ้งไว้ครึ่งเดียวจะขัดแย้งกันเอง)
   - **เก็บไว้ไม่แตะ**: `doRename`/menu item "Rename Workspace" ใน `useSubWindowMenu.ts`, `SaveAsWindow.tsx` ทั้งไฟล์ (ยังต้องใช้สำหรับ mode=rename) — เพิ่มคอมเมนต์อธิบายว่า branch `mode=save-as` ภายในไฟล์นี้กลายเป็น dead code แล้ว (ไม่มี caller ไหนส่ง `mode=save-as` อีกต่อไป ยืนยันด้วย grep) แต่ตั้งใจไม่แตะ logic ข้างในเพราะเสี่ยงทำ rename (ฟีเจอร์ที่ยังใช้อยู่) พังโดยไม่จำเป็น
   - Verify: `npx tsc --noEmit` ผ่านสะอาด (เจอ `buildStateRef` ค้างอีกจุดที่ sync เข้า ref ตอนแรกลืมลบ — แก้แล้ว) + เทสต์ทั้งโปรเจกต์ **97/97 ผ่าน** ไม่มี regression + grep ยืนยันไม่มี `saveWorkspaceAs`/`onSaveAs`/`save-as-submit`/`doSaveAs` เหลือค้างที่ไหนอีก (เหลือแค่ comment อธิบายและ dead branch ที่ตั้งใจเก็บไว้ใน `SaveAsWindow.tsx`) — **ยังไม่ได้ manual test** รอผู้ใช้ลอง: titlebar ต้องไม่มีปุ่ม disk icon แล้ว, เมนู File หลักต้องไม่มี "Save As…" แล้ว, ฟีเจอร์ Rename Workspace (ทั้งจาก titlebar เดิม inline-edit และจากเมนู Predictive Model) ต้องยังทำงานปกติไม่กระทบ
+
+- **🆕 2026-08-06 — ตรวจสอบ sync ระหว่างแท็บ Sensor กับแท็บ Failure Groups (ไม่พบบั๊ก) + git push ครั้งแรกของเซสชันนี้ + อัปเดต README/CLAUDE.md/เอกสารนี้เอง**:
+  - **ตรวจ sync 2 แท็บ**: ผู้ใช้กังวลว่า assign/remove sensor จากแท็บนึงจะไม่ไปอัปเดตอีกแท็บ (ประสบการณ์เดิมจากตอนที่ FG เป็นหน้าต่างแยกที่เคย sync ยาก) — ไล่โค้ดแล้วยืนยันว่า **sync กันแน่นอน เพราะทั้งสองแท็บอ่าน `fgGroups`/`fgRows` state ก้อนเดียวกันใน `Dashboard.tsx`** (บรรทัด ~205-208) ไม่มี copy แยก — ต่างจากปัญหาเดิมที่เป็นคนละ React tree คนละหน้าต่าง ไม่พบบั๊กจากการตรวจโค้ด (ยังไม่ได้ manual test เองเพราะ Tauri app ไม่เปิดผ่าน browser preview ได้)
+  - **Git audit + commit + push ครั้งแรก**: ผู้ใช้ขอให้ตรวจไฟล์ก่อน push — เจอว่า `.gitignore` ถูกต้อง (ครอบคลุมจุดที่เคยแก้ไปก่อนหน้า), ไม่มี secret/credential หลุด, แต่**ยังไม่มี commit อะไรเลยตั้งแต่ 14 ก.ค.** (`git log` ล่าสุดคือ `cb6d105`) งานทั้งหมดสะสมอยู่ใน working tree เฉยๆ — repo มี 2 remotes (`origin` = org, `personal` = ของผู้ใช้เอง) ถามแล้วผู้ใช้เลือก push ไป `personal` — commit เป็นก้อนเดียว (`6dfb269`) รวมทุกอย่างสะสมมาตั้งแต่ก่อน 16 ก.ค. ถึงงานวันนี้ (ผู้ใช้ขอให้โชว์ commit message ก่อน commit จริง) — **ติดปัญหา git identity ไม่เคยตั้งค่าบนเครื่องนี้เลย** (`Author identity unknown`) ไม่ได้แก้ git config เองตาม Git Safety Protocol ให้ผู้ใช้รัน `git config --global user.name/user.email` เอง แล้ว commit ต่อสำเร็จ — push ไป `personal main` สำเร็จ (branch ใหม่บน repo ว่างเปล่า)
+  - **README.md ล้าสมัยมาก**: ผู้ใช้สังเกตว่าไม่เคยอัปเดต README เลยทั้งที่ทำงานมานาน — ตรวจแล้วพบว่าจริง (`git log` ล่าสุดของไฟล์นี้คือ 2 ก.ค., ไม่ได้อยู่ใน commit ที่เพิ่ง push ด้วย) เนื้อหาอ้าง `cd Exploring-data-with-csv` (ชื่อ directory เก่า), component ชื่อเก่า (`ImportScreen`), ไม่มี Failure Groups/Predictive Model/Alarm Setpoints/multi-chart-type เลย — **เขียนใหม่ทั้งไฟล์** อ้างอิงจาก `CLAUDE.md` + `package.json` จริง (scripts/deps ตรวจแล้วตรง) ครอบคลุม features ปัจจุบัน, sub-window list ที่ถูกต้อง (3 ไม่ใช่ 4), setup/run/test commands, project structure ย่อ
+  - **`CLAUDE.md` มี 1 บรรทัดที่ผิดไปแล้ว**: ส่วน "Windows & capabilities" ยังอ้างถึง sub-window `failure-group` ที่ถูกลบไปแล้ว — เพิ่มบรรทัดแก้ไขต่อท้ายอธิบายการเปลี่ยนแปลง (ไม่ได้ลบของเดิมทิ้ง เพิ่มหมายเหตุต่อแทน เพื่อให้เห็น diff ของความเข้าใจเก่า→ใหม่)
+  - **🔧 พบว่าเอกสารนี้เอง (`PROJECT_HANDOVER.md`) มีส่วน reference (§1/§3/§5/§7/§8) ที่ค้างมาตั้งแต่ 16 ก.ค. และผิดไปแล้วหลายจุด** — ทั้งที่หัวไฟล์บอกว่า "อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ" แต่ที่ผ่านมามีแต่การ**เพิ่ม entry ใหม่ต่อท้ายเป็น changelog** ไม่เคยย้อนกลับไปแก้ส่วน reference/overview ด้านบนให้ตรงเลย ทำให้ session ใหม่ที่อ่านเอกสารนี้ตั้งแต่ต้นจะได้ข้อมูลผิด (เช่น "ยังไม่มีอะไร commit เลย" ทั้งที่ commit ไปแล้ว, "4 sub-window" ทั้งที่เหลือ 3, README "ยังไม่ได้แก้" ทั้งที่เพิ่งแก้) — **แก้ไขรอบนี้**: อัปเดตวันที่ที่หัวไฟล์ + เพิ่มคำอธิบายชัดเจนว่า §1-§9 คือ reference (ต้องตรงปัจจุบันเสมอ) ส่วน §6.1 เป็นต้นไปคือ history log (ไม่ต้องตรงปัจจุบัน แค่ตรง ณ วันที่บันทึก), แก้ §1 (overview พูดถึง FG ที่ย้ายเข้า Dashboard แล้ว), §3 (sub-window list + FailureGroupsPanel.tsx), §5 (entry-point routing ตัด `failure-group` ออก), §7 (เขียนใหม่ทั้งหมดเป็นสถานะ git จริง), §8 ข้อ 1 และ 3 (mark resolved) — **บทเรียนสำหรับ session ถัดไป**: ทุกครั้งที่ทำงานเสร็จและจะ log เข้าเอกสารนี้ ต้องเช็คด้วยว่า entry ใหม่ทำให้ส่วน reference (§1-§9) ข้อไหนล้าสมัยไปด้วยไหม ไม่ใช่แค่เพิ่ม entry ท้ายไฟล์เฉยๆ
+  - Verify: `npx tsc --noEmit` ผ่านสะอาด (README/CLAUDE.md/เอกสารนี้เป็น markdown ล้วน ไม่กระทบ build) — commit + push รอบใหม่ (README + CLAUDE.md + เอกสารนี้) ยังไม่ได้ทำ ณ จุดที่เขียน entry นี้ — ดู commit ถัดไปสำหรับ hash จริง
