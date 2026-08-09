@@ -118,7 +118,7 @@ export interface DashboardRef {
     renameWorkspace: (newName: string) => void;
 }
 
-const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata, onBack, initialState }, ref) => {
+const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata: sensorMetadataProp, onBack, initialState }, ref) => {
     const [localName, setLocalName] = useState(initialState?.name || "");
 
     const [sensorHeaders, setSensorHeaders] = useState<string[]>(() =>
@@ -127,6 +127,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             return lower !== 'timestamp' && lower !== 'time';
         })
     );
+
+    // Metadata for sensors created at runtime via "Add Special Sensor" --
+    // the mapping-CSV-derived `sensorMetadataProp` never changes after
+    // initial load, so calculated sensors' component assignments live here
+    // instead, seeded from the persisted workspace and merged below into the
+    // `sensorMetadata` every child actually reads.
+    const [extraSensorMetadata, setExtraSensorMetadata] = useState<SensorMetadata[]>(
+        initialState?.extraSensorMetadata ?? []
+    );
+    const sensorMetadata = useMemo(() => {
+        if (extraSensorMetadata.length === 0) return sensorMetadataProp;
+        const known = new Set((sensorMetadataProp ?? []).map(m => m.tag.toLowerCase()));
+        const extras = extraSensorMetadata.filter(m => !known.has(m.tag.toLowerCase()));
+        if (extras.length === 0) return sensorMetadataProp;
+        return [...(sensorMetadataProp ?? []), ...extras];
+    }, [sensorMetadataProp, extraSensorMetadata]);
 
     const [selectedSensors, setSelectedSensors] = useState<string[]>(initialState?.selectedSensors || []);
     const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
@@ -660,11 +676,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             });
 
             // Listen for new selections from child window
-            unlistenAdd = await listen<{ sensors: string[], operation: SensorOperationConfig | null }>('add-sensor-selection', async (event) => {
+            unlistenAdd = await listen<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[] }>('add-sensor-selection', async (event) => {
                 console.log("Dashboard received 'add-sensor-selection'", event.payload);
 
                 let newSelectedSensors: string[] = [];
                 let newOperationConfig: SensorOperationConfig | null = null;
+                let newMetadata: SensorMetadata[] = [];
 
                 if (Array.isArray(event.payload)) {
                     newSelectedSensors = event.payload;
@@ -672,11 +689,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 } else {
                     newSelectedSensors = event.payload.sensors;
                     newOperationConfig = event.payload.operation;
+                    newMetadata = event.payload.newMetadata ?? [];
                 }
 
                 // Update selection
                 setSelectedSensors(newSelectedSensors);
                 setOperationConfig(newOperationConfig);
+
+                if (newMetadata.length > 0) {
+                    setExtraSensorMetadata(prev => {
+                        const byTag = new Map(prev.map(m => [m.tag.toLowerCase(), m]));
+                        for (const m of newMetadata) byTag.set(m.tag.toLowerCase(), m);
+                        return Array.from(byTag.values());
+                    });
+                }
 
                 // Manually update sensor headers to include any new sensors from the selection
                 // This ensures immediate UI update without waiting for backend fetch
@@ -1021,8 +1047,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         failureGroupState: { groups: fgGroups, rows: fgRows },
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
+        extraSensorMetadata,
         ...overrides,
-    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes]);
+    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes, extraSensorMetadata]);
 
     // Auto-save state changes
     useEffect(() => {

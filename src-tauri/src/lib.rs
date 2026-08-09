@@ -1860,9 +1860,11 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
     refs
 }
 
-/// Replace `^` with `.pow(...)` for fasteval compatibility and convert
-/// sensor references to fasteval-safe variable names.
+/// Convert sensor references to fasteval-safe variable names.
 /// Returns (transformed_expression, map_of_safe_name -> original_sensor_name).
+///
+/// `^` needs no rewriting -- fasteval parses it natively as its exponent
+/// operator (`BinaryOp::EExp`).
 fn prepare_formula_for_eval(
     formula: &str,
     sensor_refs: &[(String, String)],
@@ -1879,6 +1881,53 @@ fn prepare_formula_for_eval(
     }
 
     (expr, safe_names)
+}
+
+/// fasteval's own function set (`abs`/`log`/`round`/`min`/`max`/`ceil`/
+/// `floor`/trig) doesn't include `sqrt`, `exp`, `log10`, or `pow` -- calling
+/// any of those in a formula used to silently fail per-row (the eval
+/// namespace only resolved sensor variables, so an unknown function name
+/// made every row NAN with no error surfaced to the user, even though the
+/// "Formula Syntax Help" panel advertised all four as supported). Handled
+/// here via fasteval's custom-function namespace callback instead of
+/// pre-rewriting the formula text, since `pow`'s two arguments can be
+/// arbitrary sub-expressions that a naive string rewrite can't safely
+/// re-bracket.
+fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
+    match (name, args) {
+        ("sqrt", [x]) => Some(x.sqrt()),
+        ("exp", [x]) => Some(x.exp()),
+        ("log10", [x]) => Some(x.log10()),
+        ("pow", [x, y]) => Some(x.powf(*y)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod eval_extra_math_fn_tests {
+    use super::*;
+
+    #[test]
+    fn computes_each_supported_function() {
+        assert_eq!(eval_extra_math_fn("sqrt", &[9.0]), Some(3.0));
+        assert_eq!(eval_extra_math_fn("exp", &[0.0]), Some(1.0));
+        assert_eq!(eval_extra_math_fn("log10", &[100.0]), Some(2.0));
+        assert_eq!(eval_extra_math_fn("pow", &[2.0, 10.0]), Some(1024.0));
+    }
+
+    #[test]
+    fn rejects_wrong_arg_count_instead_of_panicking() {
+        // Formerly the eval namespace only resolved sensor variables, so
+        // these names fell through to `None` and silently produced NaN for
+        // every row -- same must-not-panic contract applies to bad arities.
+        assert_eq!(eval_extra_math_fn("sqrt", &[1.0, 2.0]), None);
+        assert_eq!(eval_extra_math_fn("pow", &[1.0]), None);
+    }
+
+    #[test]
+    fn unknown_name_falls_through_to_none() {
+        assert_eq!(eval_extra_math_fn("not_a_function", &[1.0]), None);
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1968,13 +2017,13 @@ fn validate_formula(
     match parser.parse(&expr, &mut slab.ps) {
         Ok(expr_i) => {
             // Try to evaluate with dummy values to catch runtime issues
-            let mut ns = |name: &str, _args: Vec<f64>| -> Option<f64> {
+            let mut ns = |name: &str, args: Vec<f64>| -> Option<f64> {
                 for (safe_name, _) in &safe_names {
                     if name == safe_name {
                         return Some(1.0); // dummy value
                     }
                 }
-                None
+                eval_extra_math_fn(name, &args)
             };
 
             let expr_ref = slab.ps.get_expr(expr_i);
@@ -2070,8 +2119,11 @@ fn evaluate_formula(
                 .map(|(safe_name, col)| (*safe_name, col[r]))
                 .collect();
 
-            let mut ns = |name: &str, _args: Vec<f64>| -> Option<f64> {
-                row_values.get(name).copied()
+            let mut ns = |name: &str, args: Vec<f64>| -> Option<f64> {
+                match row_values.get(name) {
+                    Some(v) => Some(*v),
+                    None => eval_extra_math_fn(name, &args),
+                }
             };
 
             let expr_ref = slab.ps.get_expr(expr_i);

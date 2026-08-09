@@ -159,9 +159,11 @@ export default function SensorSelection({
                                 {meta ? (
                                     <>
                                         {meta.description}
-                                        <span style={{ marginLeft: '6px', fontSize: '0.8em', color: '#94a3b8', fontWeight: 400 }}>
-                                            ({meta.unit})
-                                        </span>
+                                        {meta.unit && (
+                                            <span style={{ marginLeft: '6px', fontSize: '0.8em', color: '#94a3b8', fontWeight: 400 }}>
+                                                ({meta.unit})
+                                            </span>
+                                        )}
                                     </>
                                 ) : sensor}
                             </label>

@@ -25,7 +25,9 @@ export interface SensorMetadata {
 /** The four alarm setpoint levels, in low-to-high order. */
 export type AlarmLevel = 'LL' | 'L' | 'H' | 'HH';
 
-export type SingleOperationType = 'add' | 'subtract' | 'multiply' | 'divide' | 'power';
+export type SingleOperationType =
+    | 'add' | 'subtract' | 'multiply' | 'divide' | 'power'
+    | 'abs' | 'log10' | 'sqrt' | 'round' | 'exp' | 'ceil' | 'floor';
 export type MultiOperationType = 'sum' | 'mean' | 'median' | 'product' | 'subtract' | 'divide';
 
 export interface SensorOperationConfig {
@@ -213,4 +215,11 @@ export interface WorkspaceState {
      *  the pair to the first two sensors every time. Absent = default to
      *  the first two selected sensors. */
     scatterAxes?: { x: string; y: string };
+    /** Metadata for sensors created at runtime via "Add Special Sensor"
+     *  (calculated/derived sensors have no row in the mapping CSV, so they
+     *  get no entry there). Merged with the mapping-CSV-derived
+     *  `sensorMetadata` in Dashboard.tsx -- kept separate here rather than
+     *  folded into one array because `sensorMetadata` itself is re-derived
+     *  fresh from the mapping CSV on every load, not persisted directly. */
+    extraSensorMetadata?: SensorMetadata[];
 }
