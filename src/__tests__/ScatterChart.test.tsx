@@ -108,8 +108,16 @@ describe('ScatterChart', () => {
         render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
         expect(mockCreateScatterplot).toHaveBeenCalledTimes(1);
         const opts = mockCreateScatterplot.mock.calls[0][0];
-        expect(opts.width).toBe(800 - 60 - 20); // AXIS_PADDING.left/right
-        expect(opts.height).toBe(600 - 50 - 50); // AXIS_PADDING.top/bottom
+        const expectedWidth = 800 - 60 - 20; // AXIS_PADDING.left/right
+        const expectedHeight = 600 - 50 - 50; // AXIS_PADDING.top/bottom
+        expect(opts.width).toBe(expectedWidth);
+        expect(opts.height).toBe(expectedHeight);
+        // Regression: regl-scatterplot defaults aspectRatio to 1 (assumes a
+        // square data domain) and letterboxes a non-square canvas — our x/y
+        // domains are both normalized to [-1,1] with nothing physical to
+        // preserve, so this must match the canvas's own ratio to fill the
+        // whole chart area instead of showing black bars on the sides.
+        expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
         expect(opts.backgroundColor).toEqual([0.058, 0.094, 0.165, 1.0]);
     });
 
@@ -241,25 +249,26 @@ describe('ScatterChart', () => {
         });
     });
 
-    it('shows a hover tooltip with the formatted values for the hovered point', () => {
+    it('shows a hover tooltip with the formatted values for the hovered point (regression: row id used to be shown too but is not user-meaningful, so it was dropped)', () => {
         const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
         act(() => { lastInstance!.__subs['pointover'](0); });
 
         const tooltip = container.querySelector('.scatter-regl-tooltip')!;
         expect(tooltip).toBeTruthy();
-        expect(tooltip.textContent).toContain('Row 0');
+        expect(tooltip.querySelector('.scatter-regl-tooltip-title')).toBeNull();
+        expect(tooltip.textContent).not.toContain('Row');
         expect(tooltip.textContent).toContain('1.00'); // x value for row 0
         expect(tooltip.textContent).toContain('10.00'); // y value for row 0
         expect(tooltip.textContent).toContain('t0');
     });
 
     it('clears the tooltip on pointout', () => {
-        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
         act(() => { lastInstance!.__subs['pointover'](0); });
-        expect(screen.getByText('Row 0')).toBeTruthy();
+        expect(container.querySelector('.scatter-regl-tooltip')).toBeTruthy();
 
         act(() => { lastInstance!.__subs['pointout'](); });
-        expect(screen.queryByText('Row 0')).toBeNull();
+        expect(container.querySelector('.scatter-regl-tooltip')).toBeNull();
     });
 
     it('exports the selected rows as CSV', async () => {

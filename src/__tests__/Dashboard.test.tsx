@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
 import type { CsvMetadata, SensorMetadata, WorkspaceState } from '../types';
 import type { DashboardRef } from '../components/dashboard/Dashboard';
@@ -16,6 +16,7 @@ vi.mock('../components/charts', () => ({
     Chart: (props: any) => { chartProps.push(props); return <div data-testid="chart-mock" />; },
     defaultSensorColor: (tag: string) => `default-${tag}`,
     LINE_CHART_COLORS: ['c0', 'c1', 'c2', 'c3', 'c4', 'c5'],
+    MAX_PAIR_PLOT_SENSORS: 4,
 }));
 
 const filterPanelProps: any[] = [];
@@ -40,6 +41,8 @@ vi.mock('../components/dashboard/SensorSelection', () => ({
             <div data-testid="sensor-selection">
                 <button onClick={() => props.onSensorChange(['TAG1'])}>select-tag1</button>
                 <button onClick={() => props.onSensorChange(['TAG1', 'TAG2'])}>select-tag1-tag2</button>
+                <button onClick={() => props.onSensorChange(['TAG1', 'TAG2', 'TAG3', 'TAG4'])}>select-4-tags</button>
+                <button onClick={() => props.onSensorChange(['TAG1', 'TAG2', 'TAG3', 'TAG4', 'TAG5'])}>select-5-tags</button>
                 <button onClick={() => props.onSensorChange([])}>select-none</button>
                 <button onClick={() => props.onToggleSensorGroup('TAG1', 1)}>toggle-group</button>
                 <button onClick={() => props.onCreateGroupForSensor('TAG1', 'New Group')}>create-group-for-sensor</button>
@@ -134,7 +137,11 @@ const { webviewWindowCalls, mockGetByLabel, MockWebviewWindow } = vi.hoisted(() 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ WebviewWindow: MockWebviewWindow }));
 
 const mockSave = vi.fn();
-vi.mock('@tauri-apps/plugin-dialog', () => ({ save: (opts: unknown) => mockSave(opts) }));
+const mockMessage = vi.fn().mockResolvedValue(undefined);
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+    save: (opts: unknown) => mockSave(opts),
+    message: (text: string, opts: unknown) => mockMessage(text, opts),
+}));
 
 const splitCalls: any[] = [];
 const mockSplitDestroy = vi.fn();
@@ -211,6 +218,7 @@ beforeEach(() => {
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockGetByLabel.mockClear().mockResolvedValue(null);
     mockSave.mockClear();
+    mockMessage.mockClear().mockResolvedValue(undefined);
     mockSaveWorkspaceData.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockClear().mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id }));
     mockLoadWorkspaceData.mockClear().mockResolvedValue(null);
@@ -290,6 +298,19 @@ describe('Dashboard', () => {
             expect(last(chartProps).chartType).toBe('scatter');
         });
 
+        it('forwards sensorMetadata to Chart in Scatter/Pair Plot mode too (regression: only the line-chart branch passed it, so Pair Plot\'s hover-tooltip descriptions had no data to read)', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
+            fireEvent.click(screen.getByText('Scatter'));
+            expect(last(chartProps).sensorMetadata).toEqual(
+                expect.arrayContaining([expect.objectContaining({ tag: 'TAG1' })]),
+            );
+
+            fireEvent.click(screen.getByText('Pair Plot'));
+            expect(last(chartProps).sensorMetadata).toEqual(
+                expect.arrayContaining([expect.objectContaining({ tag: 'TAG1' })]),
+            );
+        });
+
         it('bounces back to "line" when the selection drops below 2 while scatter is active', () => {
             renderDashboard({
                 initialState: makeInitialState({
@@ -300,6 +321,43 @@ describe('Dashboard', () => {
 
             fireEvent.click(screen.getByText('select-tag1')); // down to 1 sensor
             expect(last(chartProps).chartType).toBe('line');
+        });
+
+        it('Pair Plot stays clickable (not natively disabled) once the selection exceeds the 4-sensor cap, but clicking it shows a warning dialog instead of switching', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+
+            fireEvent.click(screen.getByText('select-4-tags'));
+            expect((screen.getByText('Pair Plot') as HTMLButtonElement).disabled).toBe(false);
+            expect((screen.getByText('Scatter') as HTMLButtonElement).disabled).toBe(false);
+
+            fireEvent.click(screen.getByText('select-5-tags'));
+            const pairBtn = screen.getByText('Pair Plot') as HTMLButtonElement;
+            // Not a native `disabled` — the click must still fire so the
+            // warning dialog can explain why, per the user's explicit
+            // preference over silently redirecting away from the chart.
+            expect(pairBtn.disabled).toBe(false);
+            expect(pairBtn.className).toContain('blocked');
+            expect(pairBtn.title).toContain('at most 4 sensors');
+            // Scatter has no such cap — still just needs >= 2.
+            expect((screen.getByText('Scatter') as HTMLButtonElement).disabled).toBe(false);
+
+            fireEvent.click(pairBtn);
+            await waitFor(() => expect(mockMessage).toHaveBeenCalledTimes(1));
+            expect(mockMessage.mock.calls[0][0]).toContain('at most 4 sensors');
+            expect(mockMessage.mock.calls[0][1]).toMatchObject({ kind: 'warning' });
+            expect(last(chartProps).chartType).toBe('line'); // never switched away from the default
+        });
+
+        it('does NOT bounce back to "line" when the selection grows past the cap while Pair Plot is already active — PairPlotChart shows its own in-place message instead', () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], chartType: 'pair',
+                }),
+            });
+            expect(last(chartProps).chartType).toBe('pair');
+
+            fireEvent.click(screen.getByText('select-5-tags'));
+            expect(last(chartProps).chartType).toBe('pair');
         });
     });
 

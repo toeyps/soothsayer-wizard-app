@@ -258,6 +258,14 @@ function ScatterChart({
                 canvas: canvasRef.current,
                 width: innerDims.width,
                 height: innerDims.height,
+                // regl-scatterplot defaults aspectRatio to 1 (assumes a
+                // square DATA domain) and letterboxes to preserve it when the
+                // canvas itself isn't square. Our x/y domains are both
+                // normalized to [-1, 1] (equal ranges, genuinely square
+                // data), so there's no meaningful shape to preserve; setting
+                // this to the canvas's own ratio makes the plot fill the
+                // whole chart area instead of leaving black bars on the sides.
+                aspectRatio: innerDims.width / innerDims.height,
                 pointSize: 3,
                 // Indigo at low alpha — density emerges via WebGL alpha blending.
                 pointColor: [0.39, 0.58, 0.98, 0.55],
@@ -665,7 +673,6 @@ function ScatterChart({
                     from stealing hover from neighbouring points. */}
                 {tooltip && (
                     <div className="scatter-regl-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
-                        <div className="scatter-regl-tooltip-title">Row {tooltip.origIdx}</div>
                         <div className="scatter-regl-tooltip-row">
                             <span className="scatter-regl-tooltip-label">{scatterX}</span>
                             <span className="scatter-regl-tooltip-value">

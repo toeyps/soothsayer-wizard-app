@@ -6,15 +6,13 @@ import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import type { ThemeMode } from '../../hooks/useThemeMode';
 import { formatYearMonth } from '../../utils/dateFormat';
+import { CANVAS_BG, CANVAS_BG_HEX } from './pairPlotColors';
 
-/** WebGL can't read CSS custom properties — mirrors ScatterChart.tsx's own
- *  CANVAS_BG/POINT_COLOR_HOVER constants (kept file-local rather than
- *  shared, since these two components already duplicate their whole
- *  regl-scatterplot setup rather than sharing a base). */
-const CANVAS_BG: Record<ThemeMode, [number, number, number, number]> = {
-    dark: [0, 0, 0, 1],
-    light: [1.0, 1.0, 1.0, 1.0],
-};
+/** WebGL can't read CSS custom properties, so the canvas clear colour is a
+ *  plain RGBA constant — shared with PairPlotChart's diagonal histograms via
+ *  pairPlotColors.ts so both always render the exact same background (not
+ *  ScatterChart.tsx's own separate CANVAS_BG, which is a single-canvas
+ *  component with no sibling background to stay in sync with). */
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
 /**
@@ -196,6 +194,15 @@ function PairPlotCell({
                 canvas: canvasRef.current,
                 width: innerDims.width,
                 height: innerDims.height,
+                // regl-scatterplot defaults aspectRatio to 1 (assumes a
+                // square DATA domain) and letterboxes to preserve it when the
+                // canvas itself isn't square — exactly what a pairplot cell
+                // usually is (wider than tall). Our x/y domains are already
+                // both normalized to [-1, 1] (equal ranges, genuinely square
+                // data), so there's no meaningful shape to preserve; setting
+                // this to the canvas's own ratio makes the plot fill the
+                // whole cell instead of leaving black bars on the sides.
+                aspectRatio: innerDims.width / innerDims.height,
                 pointSize: 2,
                 pointColor,
                 pointColorActive: [0.99, 0.75, 0.18, 1.0],
@@ -435,7 +442,7 @@ function PairPlotCell({
     const padTop = AXIS_PAD.top;
 
     return (
-        <div ref={containerRef} className="pair-regl-cell">
+        <div ref={containerRef} className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
             <div
                 className="pair-regl-cell-canvas-wrap"
                 style={{

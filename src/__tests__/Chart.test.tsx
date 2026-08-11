@@ -74,10 +74,11 @@ describe('Chart', () => {
         expect(pairProps).toHaveLength(0);
     });
 
-    it('renders PairPlotChart for chartType="pair" with 2+ sensors', () => {
-        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" />);
+    it('renders PairPlotChart for chartType="pair" with 2+ sensors, forwarding sensorMetadata (regression: was never wired through, so the hover-tooltip sensor descriptions had no data to read)', () => {
+        const sensorMetadata = [{ tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' }];
+        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" sensorMetadata={sensorMetadata} />);
         expect(screen.getByTestId('pair-chart')).toBeTruthy();
-        expect(pairProps[0]).toMatchObject({ data: baseProps.data, sensors: ['A', 'B'], headers: baseProps.headers });
+        expect(pairProps[0]).toMatchObject({ data: baseProps.data, sensors: ['A', 'B'], headers: baseProps.headers, sensorMetadata });
     });
 
     it('renders ScatterChart for chartType="scatter" and forwards axis props', () => {

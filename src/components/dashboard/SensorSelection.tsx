@@ -10,6 +10,13 @@ interface SensorSelectionProps {
     sensors: string[];
     selectedSensors: string[];
     onSensorChange: (sensors: string[]) => void;
+    /** When set, selecting a NEW sensor once selectedSensors.length has
+     *  already reached this count is a no-op — used to hard-block picking a
+     *  5th sensor while Pair Plot is active (WebGL context exhaustion), per
+     *  the user's explicit "don't let the click through" preference over
+     *  silently redirecting away from the chart afterward. Deselecting is
+     *  never blocked. */
+    maxSelectable?: number;
     sensorMetadata: SensorMetadata[] | null;
     fgGroups: FailureGroup[];
     fgRows: FailureSensorRow[];
@@ -29,6 +36,7 @@ export default function SensorSelection({
     sensors,
     selectedSensors,
     onSensorChange,
+    maxSelectable,
     sensorMetadata,
     fgGroups,
     fgRows,
@@ -62,10 +70,13 @@ export default function SensorSelection({
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
     const [editGroupDraft, setEditGroupDraft] = useState('');
 
+    const atSelectionCap = maxSelectable !== undefined && selectedSensors.length >= maxSelectable;
+
     const handleSensorToggle = (sensor: string) => {
         if (selectedSensors.includes(sensor)) {
             onSensorChange(selectedSensors.filter(s => s !== sensor));
         } else {
+            if (atSelectionCap) return;
             onSensorChange([...selectedSensors, sensor]);
         }
     };
@@ -138,19 +149,29 @@ export default function SensorSelection({
         // own box does NOT auto-reveal it.
         const hasAlarms = hasAlarmSetpoints(meta);
         const alarmOpen = alarmPanelFor === sensor;
+        const isSelected = selectedSensors.includes(sensor);
+        // Not selected AND the cap is reached — the click is a no-op, so the
+        // row reads as disabled instead of inviting a click that does nothing.
+        const blockedByCap = !isSelected && atSelectionCap;
         return (
             <div
                 key={sensor}
                 className="sensor-list-row"
                 onClick={() => handleSensorToggle(sensor)}
-                style={{ cursor: 'pointer', flexDirection: 'column', alignItems: 'stretch', position: 'relative' }}
+                title={blockedByCap ? `Pair Plot supports at most ${maxSelectable} sensors` : undefined}
+                style={{
+                    cursor: blockedByCap ? 'not-allowed' : 'pointer',
+                    opacity: blockedByCap ? 0.45 : 1,
+                    flexDirection: 'column', alignItems: 'stretch', position: 'relative',
+                }}
             >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div className="checkbox-wrapper">
                         <input
                             type="checkbox"
                             id={`sensor-${sensor}`}
-                            checked={selectedSensors.includes(sensor)}
+                            checked={isSelected}
+                            disabled={blockedByCap}
                             onChange={() => handleSensorToggle(sensor)}
                             onClick={(e) => e.stopPropagation()}
                         />

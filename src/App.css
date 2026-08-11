@@ -457,6 +457,17 @@ body {
     color: var(--text-secondary);
 }
 
+/* "Blocked" looks identical to :disabled but stays a real, clickable button —
+   used where the click itself must fire (e.g. Pair Plot over the sensor cap
+   explains why via a dialog instead of just refusing to respond). */
+.chart-type-btn.blocked,
+.chart-type-btn.blocked:hover {
+    opacity: 0.35;
+    cursor: not-allowed;
+    background: transparent;
+    color: var(--text-secondary);
+}
+
 /* Save & Continue Section */
 .save-continue-section {
     flex: 0 0 auto;
@@ -1135,21 +1146,21 @@ tr:hover {
 
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
     height: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-    background: rgba(30, 41, 59, 0.5);
-    border-radius: 3px;
+    background: transparent;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #475569;
+    background: var(--border-strong);
     border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #64748b;
+    background: var(--text-faint);
 }
 
 /* Split JS Gutters */
@@ -8795,6 +8806,49 @@ body {
 .pair-regl-inspect-overlay:hover {
     background: rgba(165, 180, 252, 0.18);
     box-shadow: inset 0 0 0 2px #818cf8;
+}
+
+/* Axis label hover tooltip (sensor description) — zero footprint at rest,
+   pure CSS :hover, no JS position tracking. See AxisLabel in
+   PairPlotChart.tsx. */
+.pair-regl-axis-label.hoverable > span {
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+    text-decoration-color: var(--text-faint);
+    cursor: default;
+}
+
+.pair-regl-axis-tooltip {
+    position: absolute;
+    background: var(--surface-hi);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 5px 9px;
+    white-space: nowrap;
+    z-index: 20;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.1s ease;
+}
+
+.pair-regl-axis-label.hoverable:hover .pair-regl-axis-tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+
+.pair-regl-axis-tooltip-tag {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px;
+    color: var(--text-secondary);
+}
+
+.pair-regl-axis-tooltip-desc {
+    font-size: 11px;
+    color: var(--text-primary);
+    font-weight: 500;
+    margin-top: 1px;
 }
 
 /* Enlarged-view dialog (one cell big, themed) ------------------------- */

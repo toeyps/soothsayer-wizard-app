@@ -33,7 +33,7 @@ function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines
         if (sensors.length < 2) {
             return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
         }
-        return <PairPlotChart data={data} sensors={sensors} headers={headers} />;
+        return <PairPlotChart data={data} sensors={sensors} headers={headers} sensorMetadata={sensorMetadata} />;
     }
 
     // Default to Scatter

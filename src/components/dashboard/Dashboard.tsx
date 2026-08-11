@@ -14,7 +14,7 @@ import type { DashboardDataFilter } from '../../types/commands';
 // constant slot→panel mapping below.
 
 import DataTable from './DataTable';
-import { Chart, defaultSensorColor, LINE_CHART_COLORS, type ChartMarkLine } from '../charts';
+import { Chart, defaultSensorColor, LINE_CHART_COLORS, MAX_PAIR_PLOT_SENSORS, type ChartMarkLine } from '../charts';
 import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
 import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
@@ -27,7 +27,7 @@ import { useTablePage } from '../../hooks/useTablePage';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { save } from '@tauri-apps/plugin-dialog';
+import { save, message } from '@tauri-apps/plugin-dialog';
 import { Plus, EyeOff, BarChart3, Radio, Download, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
 
 // Panel configuration
@@ -899,11 +899,34 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Also covers workspace restores that persisted a scatter view whose
     // sensor selection no longer qualifies.
     const canScatter = selectedSensors.length >= 2;
+    // See MAX_PAIR_PLOT_SENSORS (ChartTypes.ts) for why Pair Plot specifically
+    // needs its own, tighter cap than plain Scatter — WebGL context exhaustion.
+    // Unlike the < 2 case below, exceeding this cap does NOT auto-bounce the
+    // chart type: the selection UI blocks picking a 5th sensor while Pair
+    // Plot is already active (see `maxSelectable` on SensorSelection), and
+    // the Pair Plot tab itself blocks entry with an explanatory dialog
+    // instead of switching charts out from under the user (handlePairPlotClick
+    // below). PairPlotChart's own render guard is the last line of defense
+    // for the one path that can still exceed it — a workspace restore that
+    // persisted chartType:'pair' alongside a larger selection.
     useEffect(() => {
         if (!canScatter && chartType !== 'line') {
             setChartType('line');
         }
     }, [canScatter, chartType]);
+
+    const handlePairPlotClick = useCallback(async () => {
+        if (selectedSensors.length > MAX_PAIR_PLOT_SENSORS) {
+            const text = `Pair Plot supports at most ${MAX_PAIR_PLOT_SENSORS} sensors — ${selectedSensors.length} are currently selected. Deselect some sensors first.`;
+            try {
+                await message(text, { title: 'Too many sensors', kind: 'warning' });
+            } catch {
+                alert(text);
+            }
+            return;
+        }
+        setChartType('pair');
+    }, [selectedSensors.length]);
 
 
     // ── Bounded data-view queries ────────────────────────────────────
@@ -1278,10 +1301,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             title={canScatter ? undefined : 'Select at least 2 sensors'}
                         >Scatter</button>
                         <button
-                            className={`chart-type-btn ${chartType === 'pair' ? 'active' : ''}`}
-                            onClick={() => setChartType('pair')}
-                            disabled={!canScatter}
-                            title={canScatter ? undefined : 'Select at least 2 sensors'}
+                            className={`chart-type-btn ${chartType === 'pair' ? 'active' : ''} ${selectedSensors.length > MAX_PAIR_PLOT_SENSORS ? 'blocked' : ''}`}
+                            onClick={handlePairPlotClick}
+                            disabled={selectedSensors.length < 2}
+                            title={
+                                selectedSensors.length < 2
+                                    ? 'Select at least 2 sensors'
+                                    : selectedSensors.length > MAX_PAIR_PLOT_SENSORS
+                                        ? `Pair Plot supports at most ${MAX_PAIR_PLOT_SENSORS} sensors`
+                                        : undefined
+                            }
                         >Pair Plot</button>
                     </div>
                     <button className="collapse-btn" onClick={() => togglePanel('chart')} title="Hide panel">
@@ -1317,6 +1346,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onScatterAxesChange={handleScatterAxesChange}
                         scatterAxisPins={scatterAxisPins}
                         onScatterAxisPinsChange={handleScatterAxisPinsChange}
+                        sensorMetadata={sensorMetadata}
                     />
                 )}
             </div>
@@ -1559,7 +1589,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         />
                     </div>
                 ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+                    <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
                         {selectedSensors.length === 0 && (
                             <div style={{ padding: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
                                 No sensors plotted yet — pick some from the Sensor panel.
@@ -1775,6 +1805,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensors={sensorHeaders}
                         selectedSensors={selectedSensors}
                         onSensorChange={setSelectedSensors}
+                        maxSelectable={chartType === 'pair' ? MAX_PAIR_PLOT_SENSORS : undefined}
                         sensorMetadata={sensorMetadata}
                         fgGroups={fgGroups}
                         fgRows={fgRows}

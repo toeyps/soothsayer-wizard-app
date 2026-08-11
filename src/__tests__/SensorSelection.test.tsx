@@ -105,6 +105,57 @@ describe('SensorSelection', () => {
             expect(onSensorChange).toHaveBeenCalledWith(['TAG1']);
         });
 
+        describe('maxSelectable cap (Pair Plot: at most N sensors)', () => {
+            it('blocks selecting a NEW sensor once the cap is reached — the click is a no-op', () => {
+                const onSensorChange = vi.fn();
+                render(<SensorSelection {...makeProps({
+                    onSensorChange, selectedSensors: ['TAG1', 'TAG2'], maxSelectable: 2,
+                })} />);
+                fireEvent.click(screen.getByText('Uncategorized'));
+                fireEvent.click(screen.getByLabelText('TAG3'));
+                expect(onSensorChange).not.toHaveBeenCalled();
+            });
+
+            it('still allows deselecting an already-selected sensor at the cap', () => {
+                const onSensorChange = vi.fn();
+                render(<SensorSelection {...makeProps({
+                    onSensorChange, selectedSensors: ['TAG1', 'TAG2'], maxSelectable: 2,
+                })} />);
+                expandPump();
+                fireEvent.click(screen.getByLabelText(/Pump Pressure/));
+                expect(onSensorChange).toHaveBeenCalledWith(['TAG2']);
+            });
+
+            it('disables the checkbox (and dims the row) for unselected sensors once at the cap', () => {
+                render(<SensorSelection {...makeProps({
+                    selectedSensors: ['TAG1', 'TAG2'], maxSelectable: 2,
+                })} />);
+                fireEvent.click(screen.getByText('Uncategorized'));
+                const checkbox = screen.getByLabelText('TAG3') as HTMLInputElement;
+                expect(checkbox.disabled).toBe(true);
+            });
+
+            it('does not block selection while under the cap', () => {
+                const onSensorChange = vi.fn();
+                render(<SensorSelection {...makeProps({
+                    onSensorChange, selectedSensors: ['TAG1'], maxSelectable: 2,
+                })} />);
+                fireEvent.click(screen.getByText('Uncategorized'));
+                fireEvent.click(screen.getByLabelText('TAG3'));
+                expect(onSensorChange).toHaveBeenCalledWith(['TAG1', 'TAG3']);
+            });
+
+            it('has no effect at all when maxSelectable is undefined (Line/Scatter mode)', () => {
+                const onSensorChange = vi.fn();
+                render(<SensorSelection {...makeProps({
+                    onSensorChange, selectedSensors: ['TAG1', 'TAG2'],
+                })} />);
+                fireEvent.click(screen.getByText('Uncategorized'));
+                fireEvent.click(screen.getByLabelText('TAG3'));
+                expect(onSensorChange).toHaveBeenCalledWith(['TAG1', 'TAG2', 'TAG3']);
+            });
+        });
+
         it('shows a singular/plural selected-count badge', () => {
             const { rerender } = render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
             expect(screen.getByText('1 sensor selected')).toBeTruthy();

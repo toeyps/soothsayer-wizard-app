@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
-import { Download, Lasso, RotateCcw, Table2, X, Search, Trash2 } from 'lucide-react';
+import { Download, Lasso, Move, RotateCcw, Table2, X, Search, Trash2 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeUserTextFile } from '../../workspaceManager';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
-import { ChartProps } from './ChartTypes';
+import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
 import { useThemeMode, type ThemeMode } from '../../hooks/useThemeMode';
+import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { formatDateTime } from '../../utils/dateFormat';
+import { ACCENT_HEX, CANVAS_BG_HEX, correlationGradientHex, hexToRgba, hexToRgbaCss, rgbaToHex } from './pairPlotColors';
+import { pearsonCorrelation } from './pairPlotStats';
+
+type Tool = 'lasso' | 'pan';
 
 /** Max rows rendered in the dialog table at once. Keeps the DOM cheap and
  *  the scroll responsive on huge lassos; the full set is still in memory
@@ -15,9 +20,11 @@ const TABLE_PAGE = 500;
 /** Width of the row-label column at the very left. */
 const HEAD_W = 0;
 
-/** Single indigo colour used by every scatter cell — keeps the matrix visually
- *  cohesive so the user reads density / shape rather than chasing per-cell hue. */
-const POINT_COLOR: [number, number, number, number] = [0.39, 0.58, 0.98, 0.55];
+/** Colour used by every scatter cell — keeps the matrix visually cohesive so
+ *  the user reads density / shape rather than chasing per-cell hue. Derived
+ *  from the shared ACCENT_HEX (pairPlotColors.ts) so it never drifts from
+ *  the diagonal histogram's bar colour again. */
+const POINT_COLOR: [number, number, number, number] = hexToRgba(ACCENT_HEX, 0.55);
 
 /** Must match PairPlotCell's AXIS_PAD so the diagonal histogram's frame
  *  has the exact same inset as every scatter cell. */
@@ -36,22 +43,6 @@ const CLUSTER_PALETTE: Array<[number, number, number, number]> = [
     [0.78, 0.66, 0.99, 1.0],  // violet
 ];
 
-/** Hex `#rrggbb` → `[r, g, b, a]` in 0..1 space (alpha defaults to 1). */
-function hexToRgba(hex: string, a = 1): [number, number, number, number] {
-    const r = parseInt(hex.slice(1, 3), 16) / 255;
-    const g = parseInt(hex.slice(3, 5), 16) / 255;
-    const b = parseInt(hex.slice(5, 7), 16) / 255;
-    return [r, g, b, a];
-}
-
-/** Reverse of `hexToRgba` for the `<input type="color">` value attribute. */
-function rgbaToHex(c: [number, number, number, number]): string {
-    const r = Math.round(c[0] * 255).toString(16).padStart(2, '0');
-    const g = Math.round(c[1] * 255).toString(16).padStart(2, '0');
-    const b = Math.round(c[2] * 255).toString(16).padStart(2, '0');
-    return `#${r}${g}${b}`;
-}
-
 /** Compact diagonal histogram — pure SVG so the cell doesn't burn a WebGL
  *  context just to draw 20 bars. Uses the same pixel padding as PairPlotCell
  *  (CELL_PAD) so the bordered frame matches scatter cells exactly. */
@@ -60,6 +51,10 @@ function DiagonalHistogram({
 }: {
     values: number[];
     sensor: string;
+    /** Only row 0's diagonal prints its name — it doubles as that column's
+     *  header. Every other row's diagonal sits at column i (i > 0), which
+     *  row 0 already labeled at the top; repeating it there would be noise
+     *  the "outer frame only" label scheme deliberately avoids. */
     isTopRow: boolean;
     themeMode: ThemeMode;
 }) {
@@ -101,7 +96,7 @@ function DiagonalHistogram({
     const innerH = Math.max(0, dims.height - CELL_PAD.top - CELL_PAD.bottom);
 
     return (
-        <div ref={containerRef} className="pair-regl-cell" style={{ background: themeMode === 'light' ? '#fff' : '#000' }}>
+        <div ref={containerRef} className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
             <svg
                 width={dims.width}
                 height={dims.height}
@@ -132,7 +127,7 @@ function DiagonalHistogram({
                             y={y}
                             width={w}
                             height={Math.max(0, h - 0.5)}
-                            fill="#6366f1"
+                            fill={ACCENT_HEX}
                             opacity={0.75}
                         />
                     );
@@ -153,6 +148,109 @@ function DiagonalHistogram({
     );
 }
 
+/** Lower-triangle correlation heatmap cell — mirrors the upper-triangle
+ *  scatter cell for the same sensor pair. Computes nothing new: `r` is
+ *  derived once for the whole matrix from the same `sensorVals` sample the
+ *  diagonal histograms already use. Tinted by sign (indigo accent = positive,
+ *  rose = negative) and magnitude (stronger |r| = more saturated fill), so
+ *  the strongest relationships in the matrix are visible at a glance before
+ *  drilling into any one scatter cell. */
+/** Outer-frame axis label with an on-hover tooltip showing the sensor's full
+ *  description (when known from the mapping CSV). Pure CSS `:hover` — no JS
+ *  hover-state or position tracking — so it works the same wherever a label
+ *  is rendered. Deliberately zero footprint at rest (matches the design the
+ *  user approved over an always-visible legend): the dotted underline is the
+ *  only hint, the tooltip itself takes no layout space until hovered.
+ *  `overflow: visible` on the wrapper matters for `orientation="left"` — see
+ *  the truncation regression this same wrapper already fixed once. */
+function AxisLabel({
+    tag, description, orientation,
+}: {
+    tag: string;
+    description?: string;
+    orientation: 'top' | 'left';
+}) {
+    const wrapStyle: React.CSSProperties = orientation === 'top'
+        ? { position: 'absolute', top: 0, left: CELL_PAD.left, right: CELL_PAD.right, height: CELL_PAD.top, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+        : { position: 'absolute', top: CELL_PAD.top, bottom: CELL_PAD.bottom, left: 0, width: CELL_PAD.left, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'visible' };
+    const tooltipStyle: React.CSSProperties = orientation === 'top'
+        ? { top: '100%', left: '50%', transform: 'translateX(-50%)', marginTop: 4 }
+        : { left: '100%', top: '50%', transform: 'translateY(-50%)', marginLeft: 4 };
+
+    return (
+        <div style={{ ...wrapStyle, zIndex: 4 }} className={`pair-regl-axis-label${description ? ' hoverable' : ''}`}>
+            <span style={{
+                fontSize: 10, color: 'var(--text-primary)', fontFamily: 'Inter, system-ui',
+                whiteSpace: 'nowrap',
+                // Ellipsis is safe (and wanted) for a `top` label — it's never
+                // rotated, so it just truncates gracefully in the horizontal
+                // space it actually has. It must NOT apply to `left` — CSS
+                // `transform` never triggers reflow, so clipping the span
+                // BEFORE rotation would truncate it to ~4 characters, then
+                // rotate that truncated stub (the exact regression this
+                // component already fixed once for CorrelationCell's own
+                // label — see the overflow:visible on the wrapper above).
+                ...(orientation === 'top'
+                    ? { overflow: 'hidden', textOverflow: 'ellipsis' }
+                    : { transform: 'rotate(-90deg)' }),
+            }}>
+                {tag}
+            </span>
+            {description && (
+                <div className="pair-regl-axis-tooltip" style={tooltipStyle}>
+                    <div className="pair-regl-axis-tooltip-tag">{tag}</div>
+                    <div className="pair-regl-axis-tooltip-desc">{description}</div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function CorrelationCell({
+    r, sensorY, sensorYDescription, showYLabel, themeMode,
+}: {
+    r: number | null;
+    sensorY: string;
+    sensorYDescription?: string;
+    /** True only for the left-most correlation cell in its row (column 0) —
+     *  that's the row's shared header, "outer frame only" like every other
+     *  cell type. Correlation cells never sit in row 0, so they never carry
+     *  a top/column label — row 0 already labeled that column. */
+    showYLabel: boolean;
+    themeMode: ThemeMode;
+}) {
+    // Diverging-by-magnitude, not by sign: weak (|r| near 0) reads red,
+    // strong (|r| near 1) reads green regardless of direction — a strong
+    // negative relationship is exactly as noteworthy as a strong positive
+    // one for this app's use case (spotting *any* tight sensor relationship).
+    const mag = r == null ? 0 : Math.abs(r);
+    const tintHex = correlationGradientHex(mag);
+    const tintAlpha = r == null ? 0 : 0.22 + mag * 0.55;
+    const textColor = r == null ? 'var(--text-secondary)' : 'var(--text-primary)';
+
+    return (
+        <div className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
+            {showYLabel && (
+                <AxisLabel tag={sensorY} description={sensorYDescription} orientation="left" />
+            )}
+            <div
+                style={{
+                    position: 'absolute',
+                    left: CELL_PAD.left, right: CELL_PAD.right,
+                    top: CELL_PAD.top, bottom: CELL_PAD.bottom,
+                    background: hexToRgbaCss(tintHex, tintAlpha),
+                    border: '1px solid var(--border-strong, #334155)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+            >
+                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500, color: textColor }}>
+                    {r == null ? 'n/a' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}`}
+                </span>
+            </div>
+        </div>
+    );
+}
+
 /** Format a tooltip value cleanly. */
 function fmt(n: number): string {
     if (!isFinite(n)) return '—';
@@ -160,8 +258,13 @@ function fmt(n: number): string {
     return n.toFixed(4);
 }
 
-function PairPlotChart({ data, sensors, headers }: ChartProps) {
+function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     const themeMode = useThemeMode();
+    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    const getDescription = useCallback(
+        (tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description || undefined,
+        [sensorMetaMap],
+    );
     /** Ordered list of brushed clusters. Each lasso pushes a new entry; the
      *  user can recolour or delete any cluster from the bottom panel. */
     const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -169,6 +272,10 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
      *  fire in the same ms while React batches state updates). */
     const clusterSeqRef = useRef(0);
     const [hover, setHover] = useState<HoverInfo | null>(null);
+    /** Active interaction mode, shared by every cell in the matrix (and the
+     *  enlarged-view dialog). Lasso still creates clusters; Pan/zoom lets the
+     *  user look closer at a dense cloud without accidentally brushing one. */
+    const [tool, setTool] = useState<Tool>('lasso');
     /** Increments on every Reset click; each cell watches it and calls
      *  `sc.reset()` once when it changes. Lets the toolbox broadcast a
      *  reset action to every WebGL canvas without holding refs to them all. */
@@ -278,6 +385,19 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
         });
     }, [data, sensors, headers]);
 
+    /** Pearson r for every lower-triangle pair, keyed `"i-k"` (i = row, k =
+     *  column, k < i). Computed once per matrix from the same sensorVals
+     *  sample — no extra data fetch, just a stat over what's already loaded. */
+    const correlations = useMemo(() => {
+        const map = new Map<string, number | null>();
+        for (let i = 0; i < sensors.length; i++) {
+            for (let k = 0; k < i; k++) {
+                map.set(`${i}-${k}`, pearsonCorrelation(sensorVals[i], sensorVals[k]));
+            }
+        }
+        return map;
+    }, [sensorVals, sensors.length]);
+
     const handleExportCsv = useCallback(async () => {
         // Export reflects the dialog's current filter — what you see is what
         // you get. Enable every chip first if you want the full set.
@@ -325,6 +445,18 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
     if (n < 2) {
         return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
+    // Defense-in-depth: Dashboard's tab-enabling logic already keeps the
+    // selection at MAX_PAIR_PLOT_SENSORS while in Pair Plot mode, but its
+    // bounce-back effect runs AFTER render — this guard covers the one frame
+    // where a selection could still exceed the cap (e.g. a workspace restore
+    // that persisted a larger selection alongside chartType: 'pair').
+    if (n > MAX_PAIR_PLOT_SENSORS) {
+        return (
+            <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>
+                Pair Plot supports at most {MAX_PAIR_PLOT_SENSORS} sensors at once — {n} selected
+            </div>
+        );
+    }
 
     // Grid template: n+1 columns (n sensors + 1 timeseries column) × n rows.
     const gridTemplate = {
@@ -334,15 +466,24 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
 
     return (
         <div className="pair-regl-wrap">
-            {/* Global toolbox — Lasso is always active (drag = polygon select),
-                so this row only needs the mode indicator + Reset + Magnifier. */}
+            {/* Global toolbox — Lasso / Pan-zoom are mutually exclusive, shared
+                by every cell in the matrix (and the enlarged-view dialog). */}
             <div className="pair-regl-toolbox">
                 <button
-                    className="scatter-regl-tool active"
+                    onClick={() => setTool('lasso')}
+                    className={`scatter-regl-tool${tool === 'lasso' ? ' active' : ''}`}
                     title="Lasso select — drag to draw a polygon, rows inside light up across every cell"
-                    aria-pressed="true"
+                    aria-pressed={tool === 'lasso'}
                 >
                     <Lasso size={13} />
+                </button>
+                <button
+                    onClick={() => setTool('pan')}
+                    className={`scatter-regl-tool${tool === 'pan' ? ' active' : ''}`}
+                    title="Pan / zoom — drag to pan, scroll to zoom, without brushing a cluster"
+                    aria-pressed={tool === 'pan'}
+                >
+                    <Move size={13} />
                 </button>
                 <button
                     onClick={() => setInspectMode(m => !m)}
@@ -374,9 +515,12 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                     <DiagonalHistogram
                                         values={sensorVals[i]}
                                         sensor={sensorY}
-                                        isTopRow={i === 0}
+                                        isTopRow={false}
                                         themeMode={themeMode}
                                     />
+                                    {i === 0 && (
+                                        <AxisLabel tag={sensorY} description={getDescription(sensorY)} orientation="top" />
+                                    )}
                                     {inspectMode && (
                                         <div
                                             className="pair-regl-inspect-overlay"
@@ -398,10 +542,10 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                         sensorX={sensorX}
                                         sensorY={sensorY}
                                         showXAxis={i === n - 1}
-                                        showYAxis={false}      // only the diagonal in this row sits at column 0
-                                        showXLabel={i === 0}
+                                        showYAxis={false}
+                                        showXLabel={false}
                                         showYLabel={false}
-                                        tool="lasso"
+                                        tool={tool}
                                         clusters={clusters}
                                         onLasso={handleLasso}
                                         onHover={setHover}
@@ -409,6 +553,9 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                         resetTick={resetTick}
                                         themeMode={themeMode}
                                     />
+                                    {i === 0 && (
+                                        <AxisLabel tag={sensorX} description={getDescription(sensorX)} orientation="top" />
+                                    )}
                                     {inspectMode && (
                                         <div
                                             className="pair-regl-inspect-overlay"
@@ -420,8 +567,22 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                     )}
                                 </div>
                             );
+                        } else {
+                            // Lower triangle (k < i): correlation heatmap for the
+                            // same sensor pair as the scatter cell mirrored above
+                            // it — no new data fetch, just a stat over sensorVals.
+                            rowCells.push(
+                                <div key={`c-${i}-${k}`} className="pair-regl-cell-slot" style={gridStyle}>
+                                    <CorrelationCell
+                                        r={correlations.get(`${i}-${k}`) ?? null}
+                                        sensorY={sensorY}
+                                        sensorYDescription={getDescription(sensorY)}
+                                        showYLabel={k === 0}
+                                        themeMode={themeMode}
+                                    />
+                                </div>
+                            );
                         }
-                        // Lower triangle (k < i): skip — empty grid space.
                     }
 
                     // Right-most timeseries cell for this row
@@ -438,9 +599,9 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                 isTimeAxis
                                 showXAxis={i === n - 1}
                                 showYAxis={false}
-                                showXLabel={i === 0}
+                                showXLabel={false}
                                 showYLabel={false}
-                                tool="lasso"
+                                tool={tool}
                                 clusters={clusters}
                                 onLasso={handleLasso}
                                 onHover={setHover}
@@ -448,6 +609,9 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                 resetTick={resetTick}
                                 themeMode={themeMode}
                             />
+                            {i === 0 && (
+                                <AxisLabel tag="Time" orientation="top" />
+                            )}
                             {inspectMode && (
                                 <div
                                     className="pair-regl-inspect-overlay"
@@ -466,7 +630,11 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
 
             {/* Global hover tooltip — child cells report page-anchored coords
                 via `onHover`, so we can position it without re-computing
-                offsets inside each cell on every camera move. */}
+                offsets inside each cell on every camera move. This same
+                tooltip also serves the enlarged-view dialog's PairPlotCell
+                (shared `onHover={setHover}`), so its z-index must clear
+                .pair-regl-expand-backdrop's 150 or it renders correctly but
+                paints behind the modal. */}
             {hover && (
                 <div
                     className="scatter-regl-tooltip"
@@ -474,10 +642,9 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                         position: 'fixed',
                         left: hover.pageX + 14,
                         top: hover.pageY + 14,
-                        zIndex: 50,
+                        zIndex: 200,
                     }}
                 >
-                    <div className="scatter-regl-tooltip-title">Row {hover.rowIdx}</div>
                     <div className="scatter-regl-tooltip-row">
                         <span className="scatter-regl-tooltip-label">{hover.sensorX}</span>
                         <span className="scatter-regl-tooltip-value">
@@ -568,13 +735,24 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                             </div>
                             <div className="pair-regl-expand-toolbox">
                                 {expanded.kind !== 'diagonal' && (
-                                    <button
-                                        className="scatter-regl-tool active"
-                                        title="Lasso (always on)"
-                                        aria-pressed="true"
-                                    >
-                                        <Lasso size={13} />
-                                    </button>
+                                    <>
+                                        <button
+                                            onClick={() => setTool('lasso')}
+                                            className={`scatter-regl-tool${tool === 'lasso' ? ' active' : ''}`}
+                                            title="Lasso select"
+                                            aria-pressed={tool === 'lasso'}
+                                        >
+                                            <Lasso size={13} />
+                                        </button>
+                                        <button
+                                            onClick={() => setTool('pan')}
+                                            className={`scatter-regl-tool${tool === 'pan' ? ' active' : ''}`}
+                                            title="Pan / zoom"
+                                            aria-pressed={tool === 'pan'}
+                                        >
+                                            <Move size={13} />
+                                        </button>
+                                    </>
                                 )}
                                 <button
                                     onClick={openTable}
@@ -619,7 +797,7 @@ function PairPlotChart({ data, sensors, headers }: ChartProps) {
                                     showYAxis
                                     showXLabel
                                     showYLabel
-                                    tool="lasso"
+                                    tool={tool}
                                     clusters={clusters}
                                     onLasso={handleLasso}
                                     onHover={setHover}
