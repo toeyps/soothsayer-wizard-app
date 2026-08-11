@@ -2,6 +2,7 @@ import { useMemo, memo, useRef, useState, useEffect } from 'react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 import { formatDate, formatDateTime } from '../../utils/dateFormat';
+import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 // Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
 // show/default to the same palette a sensor would get without an override.
@@ -29,10 +30,15 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
     return palette[Math.abs(hash) % palette.length];
 }
 
-function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange }: ChartProps) {
+function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetadata }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
+
+    // Unit lookup for the hover tooltip — covers both mapping-CSV sensors
+    // and runtime "special" (calculated) sensors, since Dashboard.tsx merges
+    // both into the same `sensorMetadata` array before it reaches here.
+    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
 
     useEffect(() => {
         const el = wrapperRef.current;
@@ -182,9 +188,14 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                         // the tooltip display to 3 decimals regardless of
                         // sensor or aggregation method.
                         const displayValue = typeof p.value === 'number' ? p.value.toFixed(3) : p.value;
+                        // Unit from master data — covers both mapping-CSV
+                        // sensors and runtime "special" (calculated) ones,
+                        // since Dashboard.tsx merges both before this prop
+                        // reaches the chart. Absent unit → omit, not "undefined".
+                        const unit = sensorMetaMap.get(normalizeSensorTag(p.seriesName))?.unit;
                         content += `<div style="display:flex; align-items:center; gap:5px;">
                             <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${p.color};"></span>
-                            <span>${p.seriesName}: ${displayValue}</span>
+                            <span>${p.seriesName}: ${displayValue}${unit ? ` ${unit}` : ''}</span>
                         </div>`;
                     });
                     return content;
@@ -343,7 +354,7 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                 };
             })
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>

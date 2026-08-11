@@ -1,4 +1,4 @@
-import { CsvRecord } from '../../types';
+import { CsvRecord, SensorMetadata, ScatterAxisPins } from '../../types';
 
 export interface ChartMarkLine {
     /** Sensor (yAxis) this marker belongs to. Must be present in `sensors`. */
@@ -56,4 +56,16 @@ export interface ChartProps {
     /** Fired whenever the Scatter chart's X/Y selection settles on a
      *  value, so the parent can persist it. */
     onScatterAxesChange?: (x: string, y: string) => void;
+    /** Scatter chart's persisted axis-scale pins (Dashboard-owned) — the
+     *  ruler-icon editor's min/max, independent of `scatterX`/`scatterY`
+     *  above. Ignored by Line/Pair Plot. */
+    scatterAxisPins?: ScatterAxisPins;
+    /** Fired whenever the Scatter chart's axis pins change (apply/clear),
+     *  so the parent can persist them. */
+    onScatterAxisPinsChange?: (pins: ScatterAxisPins) => void;
+    /** Sensor master data (description/unit/component), including
+     *  runtime-created "special" sensors merged in by Dashboard.tsx. Used
+     *  by LineChart's hover tooltip to append each sensor's unit next to
+     *  its value. */
+    sensorMetadata?: SensorMetadata[] | null;
 }

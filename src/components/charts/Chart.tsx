@@ -8,7 +8,7 @@ interface MainChartProps extends ChartProps {
     chartType?: 'line' | 'scatter' | 'pair';
 }
 
-function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines, sensorColors, sensorAxisRange, scatterX, scatterY, onScatterAxesChange }: MainChartProps) {
+function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines, sensorColors, sensorAxisRange, scatterX, scatterY, onScatterAxesChange, scatterAxisPins, onScatterAxisPinsChange, sensorMetadata }: MainChartProps) {
 
     if (!sensors || sensors.length === 0) {
         return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select sensors to view data</div>;
@@ -24,6 +24,7 @@ function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines
                 markLines={markLines}
                 sensorColors={sensorColors}
                 sensorAxisRange={sensorAxisRange}
+                sensorMetadata={sensorMetadata}
             />
         );
     }
@@ -44,6 +45,8 @@ function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines
             scatterX={scatterX}
             scatterY={scatterY}
             onScatterAxesChange={onScatterAxesChange}
+            scatterAxisPins={scatterAxisPins}
+            onScatterAxisPinsChange={onScatterAxisPinsChange}
         />
     );
 }

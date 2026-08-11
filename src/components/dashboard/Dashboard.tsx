@@ -6,7 +6,7 @@ import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../..
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureSensorRow, AlarmLevel,
+    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -363,12 +363,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [fgGroups, fgRows, persistFailureGroupState]);
 
     // Per-sensor line-color override and pinned Y-axis bounds, set from the
-    // "Selected Sensor" tab. Display-only tweaks — session state, not part
-    // of the persisted WorkspaceState.
-    const [sensorColors, setSensorColors] = useState<Record<string, string>>({});
+    // "Selected Sensor" tab.
+    const [sensorColors, setSensorColors] = useState<Record<string, string>>(initialState?.sensorColors ?? {});
     // min/max are independently optional — pinning just one side (e.g. a
     // floor with no ceiling) is valid; the unset side keeps auto-fitting.
-    const [sensorAxisRange, setSensorAxisRange] = useState<Record<string, { min?: number; max?: number }>>({});
+    const [sensorAxisRange, setSensorAxisRange] = useState<Record<string, { min?: number; max?: number }>>(
+        initialState?.sensorAxisRange ?? {}
+    );
 
     // Scatter chart's X/Y sensor pair — owned here (not local to
     // ScatterChart) because Chart.tsx unmounts ScatterChart entirely
@@ -379,6 +380,28 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const handleScatterAxesChange = useCallback((x: string, y: string) => {
         setScatterAxes(prev => (prev?.x === x && prev?.y === y) ? prev : { x, y });
     }, []);
+
+    // Scatter chart's pinned axis SCALE (ruler-icon editor) — a different
+    // thing from `scatterAxes` above (which just tracks which sensor is on
+    // which axis). Same "lift out of ScatterChart" reasoning: it unmounts
+    // on every chart-type switch, so anything left as local state there is
+    // lost the moment the user looks away and back.
+    const [scatterAxisPins, setScatterAxisPins] = useState<ScatterAxisPins>(initialState?.scatterAxisPins ?? {});
+    const handleScatterAxisPinsChange = useCallback((pins: ScatterAxisPins) => {
+        setScatterAxisPins(pins);
+    }, []);
+
+    // Quick relative time range (e.g. "last 2 D") — an alternative to
+    // manually picking absolute start/end dates. Y/M use calendar-accurate
+    // arithmetic (setFullYear/setMonth) since those units aren't a fixed
+    // duration; W/D/H are plain millisecond math. Declared here (rather than
+    // next to `applyRelativeRange` below, where it conceptually belongs)
+    // because `buildWorkspaceState` — defined earlier in this file — reads
+    // it, and TypeScript's block scoping doesn't allow forward references.
+    const RANGE_UNITS = ['Y', 'M', 'W', 'D', 'H'] as const;
+    type RangeUnit = typeof RANGE_UNITS[number];
+    const [relativeAmount, setRelativeAmount] = useState(initialState?.relativeTimeRange?.amount ?? '1');
+    const [relativeUnit, setRelativeUnit] = useState<RangeUnit>(initialState?.relativeTimeRange?.unit ?? 'D');
 
     const setSensorColor = useCallback((sensor: string, color: string) => {
         setSensorColors(prev => ({ ...prev, [sensor]: color }));
@@ -1048,8 +1071,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
         extraSensorMetadata,
+        sensorColors,
+        sensorAxisRange,
+        scatterAxisPins,
+        relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
-    }), [initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType, samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes, extraSensorMetadata]);
+    }), [
+        initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
+        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
+        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, relativeAmount, relativeUnit,
+    ]);
 
     // Auto-save state changes
     useEffect(() => {
@@ -1157,15 +1188,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Display values: show data range when filter is empty
     const displayTimestampStart = filters.timestampStart || (dataRange ? formatForInput(dataRange.min) : '');
     const displayTimestampEnd = filters.timestampEnd || (dataRange ? formatForInput(dataRange.max) : '');
-
-    // Quick relative time range (e.g. "last 2 D") — an alternative to
-    // manually picking absolute start/end dates. Y/M use calendar-accurate
-    // arithmetic (setFullYear/setMonth) since those units aren't a fixed
-    // duration; W/D/H are plain millisecond math.
-    const RANGE_UNITS = ['Y', 'M', 'W', 'D', 'H'] as const;
-    type RangeUnit = typeof RANGE_UNITS[number];
-    const [relativeAmount, setRelativeAmount] = useState('1');
-    const [relativeUnit, setRelativeUnit] = useState<RangeUnit>('D');
 
     const applyRelativeRange = useCallback(() => {
         const n = parseFloat(relativeAmount);
@@ -1280,6 +1302,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         markLines={markLines}
                         sensorColors={resolvedSensorColors}
                         sensorAxisRange={sensorAxisRange}
+                        sensorMetadata={sensorMetadata}
                     />
                 ) : (
                     // Scatter / pair plot render the bounded Rust sample so
@@ -1292,6 +1315,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         scatterX={scatterAxes?.x}
                         scatterY={scatterAxes?.y}
                         onScatterAxesChange={handleScatterAxesChange}
+                        scatterAxisPins={scatterAxisPins}
+                        onScatterAxisPinsChange={handleScatterAxisPinsChange}
                     />
                 )}
             </div>
@@ -1787,8 +1812,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             const webview = new WebviewWindow('add-sensor', {
                                 url: '/?window=add-sensor',
                                 title: 'Add Special Sensor',
-                                width: 800,
-                                height: 700,
+                                width: 1000,
+                                height: 800,
                                 center: true,
                                 alwaysOnTop: false,
                                 decorations: false

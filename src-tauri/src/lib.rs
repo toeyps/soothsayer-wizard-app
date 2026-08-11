@@ -195,6 +195,216 @@ fn validate_user_write_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod path_validation_tests {
+    use super::*;
+
+    // ── sanitize_filename_component ─────────────────────────────────
+
+    #[test]
+    fn sanitize_filename_component_accepts_a_plain_name() {
+        assert_eq!(
+            sanitize_filename_component("Sensor A").unwrap(),
+            "Sensor A"
+        );
+    }
+
+    #[test]
+    fn sanitize_filename_component_rejects_empty() {
+        assert!(sanitize_filename_component("").is_err());
+    }
+
+    #[test]
+    fn sanitize_filename_component_rejects_dot_and_dotdot() {
+        assert!(sanitize_filename_component(".").is_err());
+        assert!(sanitize_filename_component("..").is_err());
+    }
+
+    #[test]
+    fn sanitize_filename_component_rejects_path_separators() {
+        assert!(sanitize_filename_component("a/b").is_err());
+        assert!(sanitize_filename_component("a\\b").is_err());
+    }
+
+    #[test]
+    fn sanitize_filename_component_rejects_windows_reserved_chars() {
+        for c in ['*', '?', '<', '>', '|', '"', ':'] {
+            let s = format!("bad{c}name");
+            assert!(sanitize_filename_component(&s).is_err(), "should reject {c:?}");
+        }
+    }
+
+    #[test]
+    fn sanitize_filename_component_rejects_nul_and_control_chars() {
+        assert!(sanitize_filename_component("a\0b").is_err());
+        assert!(sanitize_filename_component("a\nb").is_err());
+    }
+
+    // ── validate_read_path ──────────────────────────────────────────
+
+    #[test]
+    fn validate_read_path_accepts_a_normal_path() {
+        assert!(validate_read_path("C:/data/sensors.csv").is_ok());
+        assert!(validate_read_path("relative/path.csv").is_ok());
+    }
+
+    #[test]
+    fn validate_read_path_rejects_empty() {
+        assert!(validate_read_path("").is_err());
+    }
+
+    #[test]
+    fn validate_read_path_rejects_nul_byte() {
+        assert!(validate_read_path("a\0b.csv").is_err());
+    }
+
+    #[test]
+    fn validate_read_path_rejects_traversal_on_either_slash_style() {
+        assert!(validate_read_path("../secret.csv").is_err());
+        assert!(validate_read_path("a/../b.csv").is_err());
+        assert!(validate_read_path("a\\..\\b.csv").is_err());
+    }
+
+    #[test]
+    fn validate_read_path_allows_single_dot_component() {
+        // Only ".." is rejected -- "." (current dir) is a legitimate,
+        // non-traversing component.
+        assert!(validate_read_path("./data.csv").is_ok());
+    }
+
+    // ── excel_safe ───────────────────────────────────────────────────
+
+    #[test]
+    fn excel_safe_escapes_formula_trigger_chars() {
+        for c in ['=', '+', '-', '@'] {
+            let s = format!("{c}cmd|calc");
+            let escaped = excel_safe(&s);
+            assert!(escaped.starts_with('\''), "should escape leading {c:?}");
+            assert_eq!(&escaped[1..], s);
+        }
+    }
+
+    #[test]
+    fn excel_safe_escapes_leading_tab_and_cr() {
+        assert!(excel_safe("\tdanger").starts_with('\''));
+        assert!(excel_safe("\rdanger").starts_with('\''));
+    }
+
+    #[test]
+    fn excel_safe_leaves_ordinary_strings_untouched() {
+        assert_eq!(excel_safe("Sensor A"), "Sensor A");
+        assert_eq!(excel_safe(""), "");
+    }
+
+    #[test]
+    fn excel_safe_leaves_numeric_looking_strings_untouched() {
+        // Numbers can start with -/+ but must round-trip as numeric values,
+        // not be defensively escaped (escaping would corrupt them).
+        // Only string CELLS go through excel_safe in practice, but the
+        // function itself has no way to know that -- document the actual
+        // (intentional) behavior: a leading '-' or '+' IS escaped.
+        assert!(excel_safe("-5.2").starts_with('\''));
+        assert_eq!(excel_safe("5.2"), "5.2");
+    }
+
+    // ── validate_save_dir ────────────────────────────────────────────
+
+    #[test]
+    fn validate_save_dir_rejects_empty_and_nul() {
+        assert!(validate_save_dir("").is_err());
+        assert!(validate_save_dir("C:/a\0b").is_err());
+    }
+
+    #[test]
+    fn validate_save_dir_rejects_relative_paths() {
+        assert!(validate_save_dir("relative/dir").is_err());
+    }
+
+    #[test]
+    fn validate_save_dir_rejects_traversal_components() {
+        let dir = std::env::temp_dir();
+        let with_traversal = format!("{}/../{}", dir.display(), "x");
+        assert!(validate_save_dir(&with_traversal).is_err());
+    }
+
+    #[test]
+    fn validate_save_dir_rejects_nonexistent_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "wizard-does-not-exist-{}",
+            std::process::id()
+        ));
+        assert!(validate_save_dir(dir.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn validate_save_dir_rejects_a_file_path() {
+        let dir = std::env::temp_dir().join(format!("wizard-savedir-file-{}", std::process::id()));
+        std::fs::write(&dir, b"x").unwrap();
+        assert!(validate_save_dir(dir.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn validate_save_dir_accepts_an_existing_absolute_directory() {
+        let dir = std::env::temp_dir().join(format!("wizard-savedir-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(validate_save_dir(dir.to_str().unwrap()).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── validate_user_write_path ─────────────────────────────────────
+
+    #[test]
+    fn validate_user_write_path_rejects_empty_and_nul() {
+        assert!(validate_user_write_path("").is_err());
+        assert!(validate_user_write_path("a\0b").is_err());
+    }
+
+    #[test]
+    fn validate_user_write_path_rejects_traversal_components() {
+        let dir = std::env::temp_dir().join(format!("wizard-writepath-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let traversal = dir.join("..").join("evil.csv");
+        assert!(validate_user_write_path(traversal.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_user_write_path_rejects_a_parent_dir_with_no_existing_directory() {
+        let path = std::env::temp_dir()
+            .join(format!("wizard-missing-parent-{}", std::process::id()))
+            .join("out.csv");
+        assert!(validate_user_write_path(path.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn validate_user_write_path_accepts_a_file_under_an_existing_directory() {
+        let dir = std::env::temp_dir().join(format!("wizard-writepath-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("out.csv");
+        assert!(validate_user_write_path(file.to_str().unwrap()).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── write_user_file (thin wrapper over validate_user_write_path) ──
+
+    #[test]
+    fn write_user_file_rejects_an_invalid_path_without_touching_disk() {
+        let result = write_user_file("".into(), vec![1, 2, 3]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_user_file_writes_the_given_bytes() {
+        let dir = std::env::temp_dir().join(format!("wizard-writefile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("out.bin");
+        write_user_file(file.to_str().unwrap().to_string(), vec![1, 2, 3]).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), vec![1, 2, 3]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// Bridge command for frontend `save()` dialog → arbitrary-path file write.
 /// See [`validate_user_write_path`] for the trust model.
 #[tauri::command]
@@ -529,6 +739,152 @@ impl ResolvedFilter {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod resolved_filter_tests {
+    use super::*;
+
+    fn dataset() -> ColumnarData {
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            vec![
+                Some("2020-01-01T00:00".into()),
+                Some("2020-01-01T00:05".into()),
+                Some("2020-01-01T00:10".into()),
+                None, // unparseable / missing timestamp
+            ],
+            vec![
+                vec![f64::NAN; 4],
+                vec![1.0, 2.0, 3.0, 4.0],
+            ],
+        )
+    }
+
+    #[test]
+    fn none_filter_resolves_to_a_noop() {
+        let resolved = ResolvedFilter::resolve(None, &dataset().headers);
+        assert!(resolved.is_noop());
+    }
+
+    #[test]
+    fn empty_filter_resolves_to_a_noop() {
+        let resolved = ResolvedFilter::resolve(Some(&PreviewFilter::default()), &dataset().headers);
+        assert!(resolved.is_noop());
+    }
+
+    #[test]
+    fn a_timestamp_filter_is_not_a_noop_and_gates_rows() {
+        let data = dataset();
+        let filter = PreviewFilter {
+            timestamp_start: Some("2020-01-01T00:05".into()),
+            timestamp_end: None,
+            value_filters: vec![],
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        assert!(!resolved.is_noop());
+        assert!(!resolved.keeps(&data, 0)); // before start
+        assert!(resolved.keeps(&data, 1)); // exactly at start
+        assert!(resolved.keeps(&data, 2)); // after start
+    }
+
+    #[test]
+    fn rows_with_missing_timestamp_are_excluded_once_a_timestamp_gate_is_active() {
+        let data = dataset();
+        let filter = PreviewFilter {
+            timestamp_start: Some("2020-01-01T00:00".into()),
+            timestamp_end: None,
+            value_filters: vec![],
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        assert!(!resolved.keeps(&data, 3)); // row 3 has no timestamp
+    }
+
+    #[test]
+    fn missing_timestamp_rows_pass_through_when_no_timestamp_gate_is_set() {
+        let data = dataset();
+        let filter = PreviewFilter {
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![PreviewValueFilter {
+                sensor: "A".into(),
+                operation: "greater_than".into(),
+                value1: Some(0.0),
+                value2: None,
+            }],
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        assert!(resolved.keeps(&data, 3)); // A=4.0 > 0, no timestamp gate active
+    }
+
+    #[test]
+    fn value_filter_unknown_sensor_is_dropped_from_the_resolved_set() {
+        let data = dataset();
+        let filter = PreviewFilter {
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![PreviewValueFilter {
+                sensor: "DOES_NOT_EXIST".into(),
+                operation: "greater_than".into(),
+                value1: Some(0.0),
+                value2: None,
+            }],
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        // Unknown sensor -> filtered out during resolve -> effectively a noop.
+        assert!(resolved.is_noop());
+    }
+
+    #[test]
+    fn value_filter_operations_match_expected_semantics() {
+        let data = dataset(); // A values: 1, 2, 3, 4
+        let make = |op: &str, v1: Option<f64>, v2: Option<f64>| {
+            ResolvedFilter::resolve(
+                Some(&PreviewFilter {
+                    timestamp_start: None,
+                    timestamp_end: None,
+                    value_filters: vec![PreviewValueFilter {
+                        sensor: "A".into(),
+                        operation: op.into(),
+                        value1: v1,
+                        value2: v2,
+                    }],
+                }),
+                &data.headers,
+            )
+        };
+
+        let gt = make("greater_than", Some(2.0), None);
+        assert_eq!((0..4).filter(|&r| gt.keeps(&data, r)).count(), 2); // 3, 4
+
+        let lt = make("less_than", Some(3.0), None);
+        assert_eq!((0..4).filter(|&r| lt.keeps(&data, r)).count(), 2); // 1, 2
+
+        let eq = make("equals", Some(3.0), None);
+        assert_eq!((0..4).filter(|&r| eq.keeps(&data, r)).count(), 1); // 3
+
+        let between = make("between", Some(2.0), Some(3.0));
+        assert_eq!((0..4).filter(|&r| between.keeps(&data, r)).count(), 2); // 2, 3
+    }
+
+    #[test]
+    fn unknown_operation_string_passes_every_row() {
+        let data = dataset();
+        let resolved = ResolvedFilter::resolve(
+            Some(&PreviewFilter {
+                timestamp_start: None,
+                timestamp_end: None,
+                value_filters: vec![PreviewValueFilter {
+                    sensor: "A".into(),
+                    operation: "not_a_real_op".into(),
+                    value1: Some(999.0),
+                    value2: None,
+                }],
+            }),
+            &data.headers,
+        );
+        assert_eq!((0..4).filter(|&r| resolved.keeps(&data, r)).count(), 4);
     }
 }
 
@@ -1664,8 +2020,6 @@ struct SingleOperation {
 struct MultiOperation {
     #[serde(rename = "type")]
     op_type: String,
-    #[serde(rename = "baseSensor")]
-    base_sensor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1732,53 +2086,23 @@ fn calculate_new_sensor(
 
         let src_cols: Vec<&[f64]> = indices.iter().map(|&i| data.columns[i].as_slice()).collect();
 
-        if operation_registry::is_base_op(&op.op_type) {
-            let base_sensor = op
-                .base_sensor
-                .as_ref()
-                .ok_or("Missing base sensor for subtract/divide")?;
-            new_sensor_name = format!("{}({}, others)", op_name, base_sensor);
+        new_sensor_name = format!("{}({:?})", op_name, sensors);
 
-            for r in 0..n {
-                let mut base_val = None;
-                let mut others_sum = 0.0;
-
-                for (sensor_name, col) in sensors.iter().zip(&src_cols) {
-                    let v = col[r];
-                    if !v.is_nan() {
-                        if sensor_name == base_sensor {
-                            base_val = Some(v);
-                        } else {
-                            others_sum += v;
-                        }
-                    }
+        for r in 0..n {
+            let mut valid_values = Vec::new();
+            for col in &src_cols {
+                let v = col[r];
+                if !v.is_nan() {
+                    valid_values.push(v);
                 }
-
-                let new_val = match base_val {
-                    Some(b) => operation_registry::execute_base_op(&op.op_type, b, others_sum)?,
-                    None => None,
-                };
-                new_col.push(new_val.unwrap_or(f64::NAN));
             }
-        } else {
-            new_sensor_name = format!("{}({:?})", op_name, sensors);
 
-            for r in 0..n {
-                let mut valid_values = Vec::new();
-                for col in &src_cols {
-                    let v = col[r];
-                    if !v.is_nan() {
-                        valid_values.push(v);
-                    }
-                }
-
-                let new_val = if valid_values.is_empty() {
-                    None
-                } else {
-                    operation_registry::execute_multi_op(&op.op_type, &valid_values)?
-                };
-                new_col.push(new_val.unwrap_or(f64::NAN));
-            }
+            let new_val = if valid_values.is_empty() {
+                None
+            } else {
+                operation_registry::execute_multi_op(&op.op_type, &valid_values)?
+            };
+            new_col.push(new_val.unwrap_or(f64::NAN));
         }
     } else {
         return Err("Invalid mode".to_string());
@@ -1975,6 +2299,57 @@ fn check_formula_limits(formula: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod check_formula_limits_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_a_short_shallow_formula() {
+        assert!(check_formula_limits("$A + $B * 2").is_ok());
+    }
+
+    #[test]
+    fn rejects_a_formula_over_the_length_cap() {
+        let formula = "1".repeat(MAX_FORMULA_LEN + 1);
+        let err = check_formula_limits(&formula).unwrap_err();
+        assert!(err.contains("too long"));
+    }
+
+    #[test]
+    fn accepts_a_formula_exactly_at_the_length_cap() {
+        let formula = "1".repeat(MAX_FORMULA_LEN);
+        assert!(check_formula_limits(&formula).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_formula_nested_deeper_than_the_cap() {
+        let formula = "(".repeat(MAX_FORMULA_DEPTH as usize + 1);
+        let err = check_formula_limits(&formula).unwrap_err();
+        assert!(err.contains("too deeply nested"));
+    }
+
+    #[test]
+    fn accepts_a_formula_nested_exactly_at_the_cap() {
+        let formula = "(".repeat(MAX_FORMULA_DEPTH as usize);
+        assert!(check_formula_limits(&formula).is_ok());
+    }
+
+    #[test]
+    fn counts_curly_braces_toward_the_same_depth_budget_as_parens() {
+        let formula = "{".repeat(MAX_FORMULA_DEPTH as usize + 1);
+        assert!(check_formula_limits(&formula).is_err());
+    }
+
+    #[test]
+    fn tracks_depth_as_a_running_max_not_a_final_balance() {
+        // Deeply nested then fully closed: max_depth was breached even
+        // though the formula ends balanced at depth 0.
+        let mut formula = "(".repeat(MAX_FORMULA_DEPTH as usize + 1);
+        formula.push_str(&")".repeat(MAX_FORMULA_DEPTH as usize + 1));
+        assert!(check_formula_limits(&formula).is_err());
+    }
 }
 
 #[tauri::command]

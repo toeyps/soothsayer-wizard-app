@@ -40,11 +40,8 @@ export const OPERATIONS: {
     { id: 'sum', label: 'Sum all', symbol: 'Σ', requiresValue: false },
     { id: 'mean', label: 'Average all', symbol: 'μ', requiresValue: false },
     { id: 'median', label: 'Median', symbol: 'M̃', requiresValue: false },
-    { id: 'product', label: 'Product', symbol: '∏', requiresValue: false },
     { id: 'temp_spread', label: 'Spread (max − min)', symbol: 'Δ', requiresValue: false },
     { id: 'abs_diff', label: 'Absolute difference', symbol: '|Δ|', requiresValue: false },
-    { id: 'subtract', label: 'Subtract the rest from one', symbol: '-', requiresValue: false, requiresBase: true },
-    { id: 'divide', label: 'Divide one by the rest', symbol: '÷', requiresValue: false, requiresBase: true },
     { id: 'efficiency_pct', label: 'Efficiency % (output ÷ input × 100)', symbol: '%', requiresValue: false, requiresBase: true },
   ],
 } as const;

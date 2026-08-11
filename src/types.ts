@@ -28,7 +28,7 @@ export type AlarmLevel = 'LL' | 'L' | 'H' | 'HH';
 export type SingleOperationType =
     | 'add' | 'subtract' | 'multiply' | 'divide' | 'power'
     | 'abs' | 'log10' | 'sqrt' | 'round' | 'exp' | 'ceil' | 'floor';
-export type MultiOperationType = 'sum' | 'mean' | 'median' | 'product' | 'subtract' | 'divide';
+export type MultiOperationType = 'sum' | 'mean' | 'median';
 
 export interface SensorOperationConfig {
     mode: 'single' | 'multi';
@@ -38,7 +38,6 @@ export interface SensorOperationConfig {
     };
     multiOp?: {
         type: MultiOperationType;
-        baseSensor?: string;
     };
     customName?: string;
 }
@@ -175,6 +174,20 @@ export interface DashboardLayoutSizes {
     leftRows: [number, number];
 }
 
+/** A single pinned axis bound for the Scatter chart — which sensor it was
+ *  set against, plus min/max (either may be omitted to keep that side
+ *  auto-fitting). */
+export interface ScatterAxisPin {
+    sensor: string;
+    min?: number;
+    max?: number;
+}
+
+export interface ScatterAxisPins {
+    x?: ScatterAxisPin;
+    y?: ScatterAxisPin;
+}
+
 export interface WorkspaceState {
     id: string;
     name: string;
@@ -222,4 +235,25 @@ export interface WorkspaceState {
      *  folded into one array because `sensorMetadata` itself is re-derived
      *  fresh from the mapping CSV on every load, not persisted directly. */
     extraSensorMetadata?: SensorMetadata[];
+    /** Per-sensor line-color override, set via the pipette in the Selected
+     *  Sensor tab. Sensors absent from this map fall back to the default
+     *  palette (see `resolvedSensorColors` in Dashboard.tsx). */
+    sensorColors?: Record<string, string>;
+    /** Per-sensor pinned Y-axis bounds for the Line chart, set via the
+     *  axis-editor icon in the Selected Sensor tab. min/max are independent
+     *  — either may be omitted to keep that side auto-fitting. */
+    sensorAxisRange?: Record<string, { min?: number; max?: number }>;
+    /** Scatter chart's pinned X/Y axis scale (the ruler-icon editor,
+     *  independent of `scatterAxes` above which just tracks WHICH sensor is
+     *  on each axis). Each side records which sensor it was pinned against
+     *  so it stops applying automatically if the X/Y dropdown is later
+     *  switched to a different sensor — same "stale pin" guard ScatterChart
+     *  already does for the in-session case, now surviving reload too. */
+    scatterAxisPins?: ScatterAxisPins;
+    /** Last-used input for the TIME RANGE panel's quick relative-range
+     *  shortcut (the Y/M/W/D/H buttons + amount field). Purely a UI
+     *  convenience — the actual applied range lives in `filters`, which
+     *  already persists on its own; this only restores what was last typed
+     *  into the shortcut so it doesn't silently reset to "1 D". */
+    relativeTimeRange?: { amount: string; unit: 'Y' | 'M' | 'W' | 'D' | 'H' };
 }

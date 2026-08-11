@@ -40,11 +40,9 @@ pub struct SingleOp {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MultiOp {
-    /// "sum" | "mean" | "median" | "product" | "subtract" | "divide"
+    /// "sum" | "mean" | "median"
     #[serde(rename = "type")]
     pub op_type: String,
-    #[serde(default)]
-    pub base_sensor: Option<String>,
 }
 
 /// Mirrors the frontend `SensorOperationConfig` (camelCase keys). Extra
@@ -114,12 +112,9 @@ enum MultiKind {
     Sum,
     Mean,
     Median,
-    Product,
-    /// Payload = position of the base sensor within `QueryCtx::cols`
-    /// (`None` when the configured base isn't among the resolved sensors —
-    /// the result column is then all-null, matching the legacy JS).
-    Subtract(Option<usize>),
-    Divide(Option<usize>),
+    /// Unrecognized op id — all-null result column (legacy JS left
+    /// `result = null` for unmatched switch arms).
+    Unknown,
 }
 
 struct QueryCtx<'a> {
@@ -172,22 +167,12 @@ fn resolve_ctx<'a>(
             None => OpKind::None,
         },
         Some(cfg) if cfg.mode == "multi" => match &cfg.multi_op {
-            Some(m) => {
-                let base = m.base_sensor.as_ref().and_then(|b| {
-                    sensor_headers.iter().position(|h| h == b)
-                });
-                OpKind::Multi(match m.op_type.as_str() {
-                    "sum" => MultiKind::Sum,
-                    "mean" => MultiKind::Mean,
-                    "median" => MultiKind::Median,
-                    "product" => MultiKind::Product,
-                    "subtract" => MultiKind::Subtract(base),
-                    "divide" => MultiKind::Divide(base),
-                    // Unknown multi op → all-null result column (legacy JS
-                    // left `result = null` for unmatched switch arms).
-                    _ => MultiKind::Subtract(None),
-                })
-            }
+            Some(m) => OpKind::Multi(match m.op_type.as_str() {
+                "sum" => MultiKind::Sum,
+                "mean" => MultiKind::Mean,
+                "median" => MultiKind::Median,
+                _ => MultiKind::Unknown,
+            }),
             None => OpKind::None,
         },
         _ => OpKind::None,
@@ -263,7 +248,8 @@ impl QueryCtx<'_> {
     /// Multi-op combine across the selected sensors at row `r`.
     fn combine_multi(&self, kind: &MultiKind, r: usize) -> f64 {
         match kind {
-            MultiKind::Sum | MultiKind::Mean | MultiKind::Product | MultiKind::Median => {
+            MultiKind::Unknown => f64::NAN,
+            MultiKind::Sum | MultiKind::Mean | MultiKind::Median => {
                 let mut valid: Vec<f64> = Vec::with_capacity(self.cols.len());
                 for &col in &self.cols {
                     let v = self.data.columns[col][r];
@@ -277,7 +263,6 @@ impl QueryCtx<'_> {
                 match kind {
                     MultiKind::Sum => valid.iter().sum(),
                     MultiKind::Mean => valid.iter().sum::<f64>() / valid.len() as f64,
-                    MultiKind::Product => valid.iter().product(),
                     MultiKind::Median => {
                         valid.sort_by(|a, b| a.partial_cmp(b).unwrap());
                         let mid = valid.len() / 2;
@@ -285,36 +270,6 @@ impl QueryCtx<'_> {
                             valid[mid]
                         } else {
                             (valid[mid - 1] + valid[mid]) / 2.0
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            MultiKind::Subtract(base) | MultiKind::Divide(base) => {
-                let Some(base_pos) = base else {
-                    return f64::NAN;
-                };
-                let base_val = self.data.columns[self.cols[*base_pos]][r];
-                if base_val.is_nan() {
-                    return f64::NAN;
-                }
-                let mut actor_sum = 0.0;
-                for (i, &col) in self.cols.iter().enumerate() {
-                    if i == *base_pos {
-                        continue;
-                    }
-                    let v = self.data.columns[col][r];
-                    if !v.is_nan() {
-                        actor_sum += v;
-                    }
-                }
-                match kind {
-                    MultiKind::Subtract(_) => base_val - actor_sum,
-                    MultiKind::Divide(_) => {
-                        if actor_sum != 0.0 {
-                            base_val / actor_sum
-                        } else {
-                            f64::NAN
                         }
                     }
                     _ => unreachable!(),
@@ -753,14 +708,11 @@ mod tests {
         }
     }
 
-    fn multi_op(op: &str, base: Option<&str>) -> OperationConfig {
+    fn multi_op(op: &str) -> OperationConfig {
         OperationConfig {
             mode: "multi".into(),
             single_op: None,
-            multi_op: Some(MultiOp {
-                op_type: op.into(),
-                base_sensor: base.map(String::from),
-            }),
+            multi_op: Some(MultiOp { op_type: op.into() }),
         }
     }
 
@@ -832,41 +784,16 @@ mod tests {
     #[test]
     fn multi_op_mean_and_median() {
         let d = dataset();
-        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("mean", None)), "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("mean")), "raw", 100);
         assert_eq!(v.headers, vec!["Result (mean)"]);
         assert_eq!(v.series.len(), 1);
         assert_eq!(v.series[0][0], Some(5.5)); // (1+10)/2
         assert_eq!(v.series[0][2], Some(30.0)); // A null → mean of [30]
         assert_eq!(v.series[0][4], Some(5.0)); // B null → mean of [5]
 
-        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("median", None)), "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("median")), "raw", 100);
         assert_eq!(v.series[0][0], Some(5.5)); // even count → midpoint
         assert_eq!(v.series[0][2], Some(30.0)); // odd count → middle
-    }
-
-    #[test]
-    fn multi_op_subtract_with_base() {
-        let d = dataset();
-        let v = build_chart_view(
-            &d,
-            &filter(&["A", "B"]),
-            Some(&multi_op("subtract", Some("B"))),
-            "raw",
-            100,
-        );
-        assert_eq!(v.series[0][0], Some(9.0)); // 10 - 1
-        assert_eq!(v.series[0][2], Some(30.0)); // A null → 30 - 0
-        assert_eq!(v.series[0][4], None); // base (B) null → null
-
-        // Base sensor not in selection → all-null result.
-        let v = build_chart_view(
-            &d,
-            &filter(&["A", "B"]),
-            Some(&multi_op("subtract", Some("MISSING"))),
-            "raw",
-            100,
-        );
-        assert!(v.series[0].iter().all(|x| x.is_none()));
     }
 
     #[test]

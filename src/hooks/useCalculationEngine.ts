@@ -3,7 +3,7 @@ import type { SensorOperationConfig, SingleOperationType, MultiOperationType } f
 import { findOperation } from '../config/operations';
 
 /** Legacy multi-sensor ops the Rust `calculate_new_sensor` command handles natively. */
-const LEGACY_MULTI_IDS = new Set(['sum', 'mean', 'median', 'product', 'subtract', 'divide']);
+const LEGACY_MULTI_IDS = new Set(['sum', 'mean', 'median']);
 /**
  * New multi-sensor shortcuts built as a formula string and sent to
  * `evaluate_formula` instead. Exported so the UI can tell which shortcuts
@@ -12,8 +12,8 @@ const LEGACY_MULTI_IDS = new Set(['sum', 'mean', 'median', 'product', 'subtract'
  * post-processing step).
  */
 export const FORMULA_MULTI_IDS = new Set(['abs_diff', 'temp_spread', 'efficiency_pct']);
-/** Multi-sensor ops (of either kind) that need one selected sensor marked as the "starting value". */
-const NEEDS_BASE_SENSOR = new Set(['subtract', 'divide', 'efficiency_pct']);
+/** Multi-sensor ops that need one selected sensor marked as the "starting value". */
+const NEEDS_BASE_SENSOR = new Set(['efficiency_pct']);
 
 const CHAIN_SYMBOL_TO_FASTEVAL: Record<string, string> = { '+': '+', '−': '-', '×': '*', '÷': '/' };
 
@@ -37,7 +37,7 @@ export interface UseCalculationEngineReturn {
   // or the decimal count for "round"
   value: number;
   setValue: (v: number) => void;
-  // Which selected sensor is the "starting value" for subtract/divide/efficiency
+  // Which selected sensor is the "starting value" for Efficiency %
   baseSensor: string;
   setBaseSensor: (sensor: string) => void;
   // "Combine with operators" chain -- one operator symbol between each
@@ -171,15 +171,11 @@ export function useCalculationEngine(
     // 'single' below that threshold).
     if (operationId) {
       if (LEGACY_MULTI_IDS.has(operationId)) {
-        const needsBase = NEEDS_BASE_SENSOR.has(operationId);
         return {
           kind: 'legacy',
           config: {
             mode: 'multi',
-            multiOp: {
-              type: operationId as MultiOperationType,
-              baseSensor: needsBase ? baseSensor || selectedSensors[0] : undefined,
-            },
+            multiOp: { type: operationId as MultiOperationType },
             customName: customName || undefined,
           },
         };

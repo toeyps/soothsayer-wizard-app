@@ -40,7 +40,10 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
     return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
 }
 
-function ScatterChart({ data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange }: ChartProps) {
+function ScatterChart({
+    data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange,
+    scatterAxisPins: persistedPins, onScatterAxisPinsChange,
+}: ChartProps) {
     const themeMode = useThemeMode();
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -112,9 +115,14 @@ function ScatterChart({ data, sensors, headers, scatterX: persistedX, scatterY: 
      *  follow-up effect, so there's no render where a stale scale from an
      *  unrelated sensor (e.g. a 0–100 pin from a temperature reused for a
      *  0–5000 pressure reading) briefly applies to the new one. Either side
-     *  of either axis may be left unset to keep auto-fitting to the data. */
-    const [xPin, setXPin] = useState<{ sensor: string; min?: number; max?: number } | null>(null);
-    const [yPin, setYPin] = useState<{ sensor: string; min?: number; max?: number } | null>(null);
+     *  of either axis may be left unset to keep auto-fitting to the data.
+     *
+     *  Seeded from the persisted prop on mount — same reasoning as
+     *  scatterX/scatterY above: this component unmounts/remounts on every
+     *  chart-type switch, so without this the pin was lost the moment the
+     *  user looked at Line or Pair Plot and came back. */
+    const [xPin, setXPin] = useState<{ sensor: string; min?: number; max?: number } | null>(() => persistedPins?.x ?? null);
+    const [yPin, setYPin] = useState<{ sensor: string; min?: number; max?: number } | null>(() => persistedPins?.y ?? null);
     const [axisEditorOpen, setAxisEditorOpen] = useState(false);
     const [draftXMin, setDraftXMin] = useState('');
     const [draftXMax, setDraftXMax] = useState('');
@@ -210,6 +218,14 @@ function ScatterChart({ data, sensors, headers, scatterX: persistedX, scatterY: 
     useEffect(() => {
         if (scatterX && scatterY) onScatterAxesChange?.(scatterX, scatterY);
     }, [scatterX, scatterY, onScatterAxesChange]);
+
+    // Push axis-pin changes up too, for the same unmount-survival reason.
+    // Fires on every xPin/yPin change (apply or clear), including the
+    // initial mount if a pin was seeded from `persistedPins` — that
+    // re-send is a no-op for Dashboard (same value it already has).
+    useEffect(() => {
+        onScatterAxisPinsChange?.({ x: xPin ?? undefined, y: yPin ?? undefined });
+    }, [xPin, yPin, onScatterAxisPinsChange]);
 
     // Track wrapper size + derive the inner plot area (canvas size).
     useEffect(() => {

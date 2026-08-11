@@ -31,8 +31,8 @@ interface SensorToolingProps {
 
 const NUMBER_OP_IDS = ["add", "subtract", "multiply", "divide", "power"];
 const TRANSFORM_OP_IDS = ["abs", "sqrt", "log10", "exp", "ceil", "floor", "round"];
-const AGG_OP_IDS = ["sum", "mean", "median", "product", "temp_spread", "abs_diff"];
-const BASE_OP_IDS = ["subtract", "divide", "efficiency_pct"];
+const AGG_OP_IDS = ["sum", "mean", "median", "temp_spread", "abs_diff"];
+const BASE_OP_IDS = ["efficiency_pct"];
 const WRAP_OP_IDS = ["abs", "sqrt", "log10", "exp", "ceil", "floor", "round"];
 const CHAIN_OPERATORS = [
   { symbol: "+", label: "Add" },
@@ -172,7 +172,7 @@ export default function SensorTooling({
           </div>
           {pickingBase && (
             <p className="text-[10px] text-[var(--text-secondary)] mt-1">
-              Click a sensor above to mark it as the starting value.
+              Click a sensor above to mark it as the input.
             </p>
           )}
         </div>
@@ -669,16 +669,11 @@ function buildPreviewText(
   } else {
     const op = findOperation("multi", engine.operationId);
     if (!op) return "";
-    if (BASE_OP_IDS.includes(engine.operationId)) {
+    if (engine.operationId === "efficiency_pct") {
       const baseTag = engine.baseSensor || selectedSensors[0];
       const baseName = getSensorName(baseTag);
-      if (engine.operationId === "efficiency_pct") {
-        const outputName = names.find((_, idx) => selectedSensors[idx] !== baseTag) ?? names[1];
-        base = `${outputName} ÷ ${baseName} × 100`;
-      } else {
-        const others = selectedSensors.filter((s) => s !== baseTag).map(getSensorName).join(" + ");
-        base = `${baseName} ${op.symbol} (${others})`;
-      }
+      const outputName = names.find((_, idx) => selectedSensors[idx] !== baseTag) ?? names[1];
+      base = `${outputName} ÷ ${baseName} × 100`;
     } else if (engine.operationId === "abs_diff") {
       base = `|${names[0]} − ${names[1]}|`;
     } else if (engine.operationId === "temp_spread") {
