@@ -64,6 +64,17 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 
 `usePMReport` exports PNG (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) and PDF (`@react-pdf/renderer` with `PMReportTemplate.tsx`). Note: react-pdf's yoga-layout engine compiles **WebAssembly at runtime** — the production `script-src` in `tauri.conf.json` includes `'unsafe-eval'` for this reason (the narrower `'wasm-unsafe-eval'` also satisfies it if the CSP is ever tightened). Dev mode uses the looser `devCsp`, so CSP regressions in PDF export only surface in **installed builds** — always test export from a real installer build after touching CSP or report code.
 
+## Testing discipline
+
+**Every code change ships with a test change in the same pass — no exceptions, don't wait to be asked.**
+
+- New file/function/component → new test file/case covering it.
+- Changed behavior (UI flow, hook return shape, command args, business logic) → update the existing test(s) that cover it so they assert the *new* behavior, not the old one. A test that still passes after a behavior change but never actually exercises the new behavior is worse than no test — it hides the drift.
+- Renamed/removed a prop, field, command name, or UI copy string? Grep `src/__tests__/` (and `src-tauri/tests/` + `#[cfg(test)]` blocks) for the old name before considering the change done.
+- This applies to *modifications*, not just additions — editing `Dashboard.tsx` means checking `Dashboard.test.tsx` still matches, not just leaving it alone because it currently passes.
+- Verify with `npx tsc --noEmit` + `npx vitest run` (frontend) and `cargo test` (Rust) before calling a task done.
+- Coverage reached 586 frontend tests / 45 files + 139 Rust unit tests as of 2026-08-10 specifically because this discipline was absent for most of the project's history — UI was reshaped multiple times (step-based onboarding, Failure Group panel moves, Class B persistence) while old tests sat untouched. They happened to still be accurate on inspection, but that was luck, not process — see `docs/PROJECT_HANDOVER.md` entry 2026-08-10 for the audit. Don't rely on luck going forward.
+
 ## Security constraints
 
 - 2 GB per-file CSV cap (`MAX_CSV_BYTES`).
@@ -107,6 +118,7 @@ When your task is complete, output this block before stopping:
 - ❌ Exposing "LinearGAM" in user-facing UI (say "Relation model")
 - ❌ Using Tauri v1 API syntax
 - ❌ An agent modifying files outside its zone
+- ❌ Landing a code change (new or modified) without a matching new/updated test in the same pass
 
 ## Repo state snapshot (2026-07-14 — verify with `git log` before trusting)
 

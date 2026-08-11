@@ -291,6 +291,19 @@ computes the rolling result, and returns a new column the same way
 
 ## 7. Sensors created via "Add Special Sensor" don't survive closing and reopening the app
 
+> **📋 2026-08-06 — superseded by [`docs/PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md).**
+> That doc has a full project-wide audit (this turned out to be the ONLY
+> place where actual *data* is lost, but there are 6 more places where
+> *config* is lost), three additional approaches beyond the two recorded
+> below (Arrow/Parquet snapshot, sidecar column file, DuckDB), a
+> recommendation with reasoning, and a phased implementation plan. Read
+> that first — the two options below are still accurate but incomplete.
+>
+> One thing below is now **out of date**: it says master data would need
+> writing back to the mapping CSV. `extraSensorMetadata` was added to
+> `WorkspaceState` after this entry was written, so master data already
+> persists correctly — only the raw values need solving.
+
 **Status: confirmed real, root cause identified, fix approach not decided
 yet — user wants to think about it, revisit last.**
 
