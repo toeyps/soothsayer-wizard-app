@@ -4,7 +4,7 @@
 >
 > ⚠️ **โปรเจกต์ย้าย path แล้ว**: จากเดิม `C:\00_DATA\OneDrive - P-DICTOR\repo\Soothsayer-wizard-app` (อยู่ใน OneDrive sync) ➜ ปัจจุบันอยู่ที่ **`C:\00_DATA\Soothsayer-wizard-app`** (โฟลเดอร์ปกติ นอก OneDrive) — ดูเหตุผลใน §9
 >
-> 📌 **เอกสารนี้อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ 1 อย่าง** (ผู้ใช้ทำงานสลับ 2 เครื่อง และ Claude Code ไม่มี session history sync ข้ามเครื่อง — เอกสารนี้คือตัวแทนความต่อเนื่องแทน chat history) **✅ commit ที่ push แล้วล่าสุดที่ `personal` (toeyps/soothsayer-wizard-app) คือ `6ffafdb` (2026-08-11)** — **⚠️ ตอนนี้มีงานแก้สี pair plot ค้างอยู่ใน working tree ยังไม่ commit** (ดู entry ท้ายสุด) **และ remote `origin` (Alpha-Com-Thailand/soothsayer-wizard-app) ยังตามหลังอยู่หลาย commit เพราะบัญชี git บนเครื่องนี้ไม่มีสิทธิ์ push เข้า origin โดยตรง (403)** ถ้าต้องการให้ origin sync ต้องขอสิทธิ์เขียนเพิ่ม หรือ push จากเครื่อง/บัญชีที่มีสิทธิ์ — ดู §7 กับ entry ท้ายสุดของเอกสารนี้
+> 📌 **เอกสารนี้อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ 1 อย่าง** (ผู้ใช้ทำงานสลับ 2 เครื่อง และ Claude Code ไม่มี session history sync ข้ามเครื่อง — เอกสารนี้คือตัวแทนความต่อเนื่องแทน chat history) **✅ commit ที่ push แล้วล่าสุดที่ `personal` (toeyps/soothsayer-wizard-app) คือ `4784d9b` (2026-08-11)** — งาน pairplot redesign ทั้งชุด (correlation heatmap, pan/zoom, outer-frame labels, hover description tooltip, WebGL aspectRatio/z-index fixes ฯลฯ) commit + push เรียบร้อยแล้ว ไม่มีค้างใน working tree **และ remote `origin` (Alpha-Com-Thailand/soothsayer-wizard-app) ยังตามหลังอยู่หลาย commit เพราะบัญชี git บนเครื่องนี้ไม่มีสิทธิ์ push เข้า origin โดยตรง (403)** ถ้าต้องการให้ origin sync ต้องขอสิทธิ์เขียนเพิ่ม หรือ push จากเครื่อง/บัญชีที่มีสิทธิ์ — ดู §7 กับ entry ท้ายสุดของเอกสารนี้
 
 ---
 
