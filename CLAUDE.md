@@ -73,6 +73,8 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 3. Run the build (`scripts/build-installer-windows.ps1` on Windows — verifies prerequisites, builds the Python sidecar if missing, then `tauri build`).
 4. After a successful build, tag the release (`git tag vX.Y.Z`) so the next changelog entry has an anchor to diff against.
 
+**Windows output is `.exe` only** — `src-tauri/tauri.windows.conf.json` sets `bundle.targets: ["nsis"]`, overriding the main config's `"all"` just for Windows builds so `tauri build` on this platform produces only the NSIS `.exe`, no `.msi`. Don't remove this without asking — it's a deliberate user preference, not an oversight. (macOS builds are untouched — the main `tauri.conf.json`'s `"all"` still applies there, giving `dmg`/`app`.)
+
 ## Testing discipline
 
 **Every code change ships with a test change in the same pass — no exceptions, don't wait to be asked.**
