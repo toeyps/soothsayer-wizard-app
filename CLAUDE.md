@@ -64,6 +64,15 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 
 `usePMReport` exports PNG (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) and PDF (`@react-pdf/renderer` with `PMReportTemplate.tsx`). Note: react-pdf's yoga-layout engine compiles **WebAssembly at runtime** — the production `script-src` in `tauri.conf.json` includes `'unsafe-eval'` for this reason (the narrower `'wasm-unsafe-eval'` also satisfies it if the CSP is ever tightened). Dev mode uses the looser `devCsp`, so CSP regressions in PDF export only surface in **installed builds** — always test export from a real installer build after touching CSP or report code.
 
+## Release checklist — required before every `.exe`/installer build
+
+**Every time this app is built into an installer (`npm run tauri:build`, `installer:win`, or equivalent), `CHANGELOG.md` must get a new version entry in the same pass — no exceptions, don't wait to be asked.**
+
+1. Bump the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (all three must match) if this build represents new work since the last one that was actually packaged/shipped — not every commit needs a bump, but every *build* does.
+2. Before building, write a new `## [x.y.z] — YYYY-MM-DD` section at the top of `CHANGELOG.md` (newest first) summarizing what changed since the previous shipped version — pull from `git log <last-shipped-tag>..HEAD` and group into Breaking changes / Features / Bug fixes / Performance / Tests / Docs / Removed, matching the style of the existing 0.2.1 entry. Written for the end user, not just developers — explain user-visible symptoms fixed, not just function names touched.
+3. Run the build (`scripts/build-installer-windows.ps1` on Windows — verifies prerequisites, builds the Python sidecar if missing, then `tauri build`).
+4. After a successful build, tag the release (`git tag vX.Y.Z`) so the next changelog entry has an anchor to diff against.
+
 ## Testing discipline
 
 **Every code change ships with a test change in the same pass — no exceptions, don't wait to be asked.**
