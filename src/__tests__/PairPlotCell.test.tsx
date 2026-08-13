@@ -29,7 +29,9 @@ vi.mock('../errorReporter', () => ({
     reportError: (...args: unknown[]) => mockReportError(...args),
 }));
 
+let lastResizeCallback: (() => void) | null = null;
 class MockResizeObserver {
+    constructor(cb: () => void) { lastResizeCallback = cb; }
     observe = vi.fn();
     disconnect = vi.fn();
     unobserve = vi.fn();
@@ -54,6 +56,7 @@ beforeEach(() => {
     mockCreateScatterplot.mockClear();
     mockReportError.mockClear();
     lastInstance = null;
+    lastResizeCallback = null;
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
 
     origClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
@@ -65,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     if (origClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', origClientWidth);
     if (origClientHeight) Object.defineProperty(HTMLElement.prototype, 'clientHeight', origClientHeight);
 });
@@ -104,6 +108,27 @@ describe('PairPlotCell', () => {
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
         expect(opts.backgroundColor).toEqual([1.0, 1.0, 1.0, 1.0]);
         expect(opts.pointColor).toEqual(baseProps.pointColor);
+    });
+
+    it('debounces resize-driven WebGL recreation (regression: a split-pane drag used to destroy+recreate every matrix cell\'s context on every single ResizeObserver tick)', () => {
+        vi.useFakeTimers();
+        render(<PairPlotCell {...baseProps} />);
+        expect(mockCreateScatterplot).toHaveBeenCalledTimes(1); // initial mount — immediate, no debounce
+
+        // Simulate a rapid drag: several resize ticks in quick succession.
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 260 });
+        act(() => { lastResizeCallback!(); });
+        act(() => { vi.advanceTimersByTime(50); });
+        act(() => { lastResizeCallback!(); });
+        act(() => { vi.advanceTimersByTime(50); });
+        act(() => { lastResizeCallback!(); });
+        // Still within the 150ms debounce window of the LAST tick — no new
+        // instance yet, even though 3 resize events already fired.
+        expect(mockCreateScatterplot).toHaveBeenCalledTimes(1);
+
+        // Let the debounce settle past the last tick.
+        act(() => { vi.advanceTimersByTime(150); });
+        expect(mockCreateScatterplot).toHaveBeenCalledTimes(2); // exactly one recreation, not three
     });
 
     it('shows an inline error and reports it when instance creation throws', () => {

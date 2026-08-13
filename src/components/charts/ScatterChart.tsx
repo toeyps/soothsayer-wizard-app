@@ -1,13 +1,15 @@
-import { useState, useEffect, useMemo, memo, useRef } from 'react';
+import { useState, useEffect, useMemo, memo, useRef, useCallback } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
-import { Download, Eraser, Move, Lasso, RotateCcw, Ruler } from 'lucide-react';
+import { RotateCcw, Ruler, X } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
+import type { ScatterCriteriaRange } from '../../types';
+import AxisLabel from './AxisLabel';
+import { rgbaToHex } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { useThemeMode } from '../../hooks/useThemeMode';
-
-type ToolMode = 'pan' | 'lasso';
+import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 /** WebGL can't read CSS custom properties, so the canvas clear color is
  *  recomputed per theme here (dark slate-900 / light white, matching
@@ -20,6 +22,31 @@ const CANVAS_BG: Record<ReturnType<typeof useThemeMode>, [number, number, number
     light: [1.0, 1.0, 1.0, 1.0],
 };
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
+
+/** Base point colour when no criteria sensor is selected — the app's
+ *  standard indigo accent at low alpha (density emerges via WebGL alpha
+ *  blending). */
+const BASE_POINT_COLOR: [number, number, number, number] = [0.39, 0.58, 0.98, 0.55];
+
+/** Colour for a point that falls outside every enabled criteria range — very
+ *  low alpha so it fades into the background instead of competing with the
+ *  highlighted bands, while still giving the overall data shape as context. */
+const CRITERIA_UNMATCHED_COLOR: [number, number, number, number] = [0.55, 0.6, 0.68, 0.12];
+
+/** Distinct colours for criteria-sensor value ranges ("load bands") — same
+ *  palette as PairPlotChart's CLUSTER_PALETTE for visual consistency across
+ *  the app's two lasso/range-based colouring features. Cycles if the user
+ *  adds more ranges than colours. */
+const RANGE_PALETTE: Array<[number, number, number, number]> = [
+    [0.99, 0.75, 0.18, 1.0],  // amber
+    [0.20, 0.83, 0.60, 1.0],  // emerald
+    [0.86, 0.40, 0.97, 1.0],  // fuchsia
+    [0.99, 0.45, 0.45, 1.0],  // rose
+    [0.40, 0.85, 0.99, 1.0],  // sky
+    [0.99, 0.55, 0.27, 1.0],  // orange
+    [0.65, 0.85, 0.40, 1.0],  // lime
+    [0.78, 0.66, 0.99, 1.0],  // violet
+];
 
 /**
  * Pixel padding around the WebGL canvas for the SVG axis overlay.
@@ -43,13 +70,19 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
 function ScatterChart({
     data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange,
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
+    scatterCriteria: persistedCriteria, onScatterCriteriaChange, sensorMetadata,
 }: ChartProps) {
     const themeMode = useThemeMode();
+    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    const getDescription = useCallback(
+        (tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description || undefined,
+        [sensorMetaMap],
+    );
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    /** Scatter-point index → original CSV row index. lasso `select` gives us
-     *  point indices into the array we passed to `.draw()`; this maps back
-     *  to the row inside `data[]`. */
+    /** Scatter-point index → original CSV row index. `pointover` gives us a
+     *  point index into the array we passed to `.draw()`; this maps back to
+     *  the row inside `data[]` for the hover tooltip. */
     const origIndicesRef = useRef<number[]>([]);
     /** Last `sc` instance the data-push effect ran against. Lets that effect
      *  tell "sensors/pins changed on an existing instance" (should reset the
@@ -67,6 +100,31 @@ function ScatterChart({
     // sensors every time the user switched chart type and back.
     const [scatterX, setScatterX] = useState<string>(() => persistedX ?? '');
     const [scatterY, setScatterY] = useState<string>(() => persistedY ?? '');
+    /** Optional 3rd sensor whose value ranges ("load bands") colour each
+     *  point — e.g. speed 4000-5000 one colour, 5000-6000 another, so
+     *  multiple operating bands can be compared spatially on the X/Y plot
+     *  at once. Picking a sensor here only stages it; nothing is coloured
+     *  until at least one enabled range exists (see criteriaRanges below).
+     *  '' = off. Seeded from the persisted prop on mount — same unmount-
+     *  survival reasoning as scatterX/scatterY above (regression: this used
+     *  to be plain local state, so switching to Line/Pair Plot and back
+     *  silently dropped the sensor + every range the user had set up). */
+    const [criteriaSensor, setCriteriaSensor] = useState(() => persistedCriteria?.sensor ?? '');
+    /** Real min/max of criteriaSensor's values in the currently-pushed
+     *  points — shown as a hint next to the "add range" inputs so the user
+     *  knows what bounds are actually meaningful to type. Deliberately NOT
+     *  seeded from/persisted via `persistedCriteria` — it's re-derived from
+     *  the live data the moment criteriaSensor settles below, so persisting
+     *  it would just be a stale value flashing before that recompute. */
+    const [criteriaRange, setCriteriaRange] = useState<{ min: number; max: number } | null>(null);
+    /** User-defined value ranges for criteriaSensor. A point's colour comes
+     *  from the FIRST enabled range its value falls inside (array order);
+     *  a point matching no enabled range gets CRITERIA_UNMATCHED_COLOR.
+     *  Seeded from the persisted prop — see criteriaSensor above. */
+    const [criteriaRanges, setCriteriaRanges] = useState<ScatterCriteriaRange[]>(() => persistedCriteria?.ranges ?? []);
+    const [draftRangeMin, setDraftRangeMin] = useState('');
+    const [draftRangeMax, setDraftRangeMax] = useState('');
+    const [rangeError, setRangeError] = useState<string | null>(null);
     const [innerDims, setInnerDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     const [wrapperDims, setWrapperDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     /** Full data extent — never changes while the chart is on a given (x, y).
@@ -81,8 +139,6 @@ function ScatterChart({
     const [visibleBounds, setVisibleBounds] = useState<{ xMin: number; xMax: number; yMin: number; yMax: number }>({
         xMin: 0, xMax: 1, yMin: 0, yMax: 1,
     });
-    const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
-    const [tool, setTool] = useState<ToolMode>('pan');
     /** Point index currently under the cursor — drives the floating tooltip.
      *  Cleared on `pointout`. */
     const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
@@ -213,6 +269,36 @@ function ScatterChart({
         }
     }, [sensors, scatterX, scatterY]);
 
+    // Drop the criteria sensor (turn coloring off) if it's no longer among
+    // the selected sensors — same reasoning as X/Y above, just with 'off'
+    // as its valid "unset" state instead of falling back to a default.
+    // Its ranges go with it — they're meaningless for a different sensor.
+    useEffect(() => {
+        if (criteriaSensor && !sensors.includes(criteriaSensor)) {
+            setCriteriaSensor('');
+            setCriteriaRanges([]);
+        }
+    }, [sensors, criteriaSensor]);
+
+    const addCriteriaRange = () => {
+        const min = parseFloat(draftRangeMin);
+        const max = parseFloat(draftRangeMax);
+        if (!isFinite(min) || !isFinite(max)) { setRangeError('Enter valid numbers'); return; }
+        if (min >= max) { setRangeError('Min must be less than max'); return; }
+        setCriteriaRanges(prev => [...prev, { id: `${Date.now()}-${prev.length}`, min, max, enabled: true }]);
+        setDraftRangeMin('');
+        setDraftRangeMax('');
+        setRangeError(null);
+    };
+
+    const toggleCriteriaRange = (id: string) => {
+        setCriteriaRanges(prev => prev.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
+    };
+
+    const removeCriteriaRange = (id: string) => {
+        setCriteriaRanges(prev => prev.filter(r => r.id !== id));
+    };
+
     // Push the settled X/Y pair up to the parent (Dashboard) so it survives
     // this component being unmounted — see the seeding comment above.
     useEffect(() => {
@@ -227,6 +313,14 @@ function ScatterChart({
         onScatterAxisPinsChange?.({ x: xPin ?? undefined, y: yPin ?? undefined });
     }, [xPin, yPin, onScatterAxisPinsChange]);
 
+    // Push criteria-sensor changes up too, same unmount-survival reason —
+    // fires on every sensor pick / range add / range toggle / range remove,
+    // including the initial mount if seeded from `persistedCriteria` (a
+    // no-op for Dashboard, same value it already has).
+    useEffect(() => {
+        onScatterCriteriaChange?.({ sensor: criteriaSensor, ranges: criteriaRanges });
+    }, [criteriaSensor, criteriaRanges, onScatterCriteriaChange]);
+
     // Track wrapper size + derive the inner plot area (canvas size).
     useEffect(() => {
         const el = wrapperRef.current;
@@ -240,10 +334,23 @@ function ScatterChart({
                 height: Math.max(0, h - AXIS_PADDING.top - AXIS_PADDING.bottom),
             });
         };
-        update();
-        const ro = new ResizeObserver(update);
+        update(); // immediate on mount — no debounce delay for the initial layout
+        // Debounced for every resize AFTER that: a split-pane drag fires many
+        // rapid ResizeObserver callbacks, and each width/height change drives
+        // a full WebGL context destroy+recreate below (shader compile + a
+        // full point-buffer re-upload — real cost on a large scatter sample).
+        // Waiting for the resize to pause briefly means that cost is paid
+        // once at the end of a drag, not on every intermediate tick.
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const ro = new ResizeObserver(() => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(update, 150);
+        });
         ro.observe(el);
-        return () => ro.disconnect();
+        return () => {
+            ro.disconnect();
+            if (debounceTimer) clearTimeout(debounceTimer);
+        };
     }, []);
 
     // Create / destroy the regl-scatterplot instance whenever the canvas
@@ -267,14 +374,10 @@ function ScatterChart({
                 // whole chart area instead of leaving black bars on the sides.
                 aspectRatio: innerDims.width / innerDims.height,
                 pointSize: 3,
-                // Indigo at low alpha — density emerges via WebGL alpha blending.
-                pointColor: [0.39, 0.58, 0.98, 0.55],
-                // Amber for lasso-selected (matches palette used in other charts).
-                pointColorActive: [0.99, 0.75, 0.18, 1.0],
+                pointColor: BASE_POINT_COLOR,
                 pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.6,
                 backgroundColor: CANVAS_BG[themeMode],
-                lassoColor: [0.65, 0.73, 0.97, 0.8],
             });
         } catch (err) {
             reportError('scatter-init', err);
@@ -283,12 +386,6 @@ function ScatterChart({
         }
         setInitError(null);
 
-        inst.subscribe('select', ({ points }: { points: number[] }) => {
-            setSelectedIndices(points);
-        });
-        inst.subscribe('deselect', () => {
-            setSelectedIndices([]);
-        });
         // Hover → tooltip. The library emits `pointover`/`pointout` with the
         // point index (= position inside the array we passed to draw(), i.e.
         // an index into `origIndicesRef.current`).
@@ -337,7 +434,6 @@ function ScatterChart({
             resetDraw();
             inst.destroy();
             setSc(null);
-            setSelectedIndices([]);
         };
         // `themeMode` is included so a theme toggle rebuilds the instance.
         // regl-scatterplot bakes `backgroundColor` into a WebGL color
@@ -355,18 +451,21 @@ function ScatterChart({
         const xIdx = headers.indexOf(scatterX);
         const yIdx = headers.indexOf(scatterY);
         if (xIdx < 0 || yIdx < 0) return;
+        const zIdx = criteriaSensor ? headers.indexOf(criteriaSensor) : -1;
 
         const xs: number[] = [];
         const ys: number[] = [];
+        const zs: (number | null)[] = [];
         const orig: number[] = [];
         // Defensive cap: the Dashboard already feeds a bounded sample, but if
         // this chart is ever handed raw data, stride it down so we never push
         // a GPU-unsafe point count (which would lose the WebGL context and
         // black the canvas). `orig` still records the true row index, so
-        // tooltip + CSV export keep mapping back correctly.
+        // the tooltip keeps mapping back correctly.
         const RENDER_CAP = 500_000;
         const step = data.length > RENDER_CAP ? Math.ceil(data.length / RENDER_CAP) : 1;
         let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+        let zMin = Infinity, zMax = -Infinity;
         for (let i = 0; i < data.length; i += step) {
             const x = data[i].values[xIdx];
             const y = data[i].values[yIdx];
@@ -378,6 +477,21 @@ function ScatterChart({
             if (x > xMax) xMax = x;
             if (y < yMin) yMin = y;
             if (y > yMax) yMax = y;
+            // Criteria value travels alongside x/y on the SAME filtered row
+            // set (so point count / orig-index mapping never depends on
+            // whether a criteria sensor is picked) — a row missing/invalid
+            // on the criteria sensor still plots, just uncoloured (matches
+            // no range) rather than being dropped.
+            if (zIdx >= 0) {
+                const z = data[i].values[zIdx];
+                if (z != null && typeof z === 'number' && !isNaN(z)) {
+                    zs.push(z);
+                    if (z < zMin) zMin = z;
+                    if (z > zMax) zMax = z;
+                } else {
+                    zs.push(null);
+                }
+            }
         }
 
         // Pinned bounds win over the auto-computed data extent on whichever
@@ -410,6 +524,27 @@ function ScatterChart({
             yArr[i] = ((ys[i] - yLo) / yRange) * 2 - 1;
         }
 
+        // valueA is regl-scatterplot's discrete/categorical colour channel
+        // (same one PairPlotCell uses for lasso clusters) — an integer index
+        // into the pointColor palette. 0 = "no enabled range matched" (or no
+        // criteria sensor at all); 1..N = the Nth enabled range, in the
+        // order the user added them. Only the FIRST matching range wins for
+        // a point whose value happens to fall in more than one (overlapping
+        // ranges are the user's call, not an error).
+        const enabledRanges = criteriaSensor ? criteriaRanges.filter(r => r.enabled) : [];
+        const hasActiveRanges = enabledRanges.length > 0;
+        let valueAArr: Float32Array | undefined;
+        if (hasActiveRanges) {
+            valueAArr = new Float32Array(len);
+            for (let i = 0; i < len; i++) {
+                const z = zs[i];
+                if (z == null) continue; // stays 0 (unmatched)
+                const idx = enabledRanges.findIndex(r => z >= r.min && z <= r.max);
+                if (idx >= 0) valueAArr[i] = idx + 1;
+            }
+        }
+        setCriteriaRange(zIdx >= 0 && isFinite(zMin) && isFinite(zMax) ? { min: zMin, max: zMax } : null);
+
         origIndicesRef.current = orig;
         dataBoundsRef.current = { xLo, xHi, yLo, yHi };
         // Fresh data → reset the visible window to the full extent. The next
@@ -425,6 +560,16 @@ function ScatterChart({
         sc.set({
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
+            // Toggle criteria-range colouring on/off. pointColor doubles as
+            // both "the flat colour" (colorBy: null) and "the category
+            // palette, index 0 = unmatched" (colorBy: 'valueA') depending on
+            // which mode is active — same dual-purpose option
+            // regl-scatterplot itself specifies (and the same pattern
+            // PairPlotCell uses for its lasso-cluster colours).
+            colorBy: hasActiveRanges ? 'valueA' : null,
+            pointColor: hasActiveRanges
+                ? [CRITERIA_UNMATCHED_COLOR, ...enabledRanges.map((_, i) => RANGE_PALETTE[i % RANGE_PALETTE.length])]
+                : BASE_POINT_COLOR,
         });
         // Without this, changing sensors or applying/editing a pin while
         // zoomed/panned left the camera showing whatever fraction of the
@@ -441,32 +586,8 @@ function ScatterChart({
             sc.reset();
         }
         prevScForResetRef.current = sc;
-        requestDraw(sc, { x: xArr, y: yArr });
-    }, [sc, data, scatterX, scatterY, headers, requestDraw, effectiveXRange, effectiveYRange]);
-
-    // Push the active tool to regl-scatterplot. 'panZoom' is the library
-    // default; 'lasso' makes a plain drag draw a polygon selection (no need
-    // for shift). Toggle via the toolbar buttons below.
-    useEffect(() => {
-        if (!sc) return;
-        sc.set({ mouseMode: tool === 'lasso' ? 'lasso' : 'panZoom' });
-    }, [sc, tool]);
-
-    // Map scatter-point indices → original CSV rows for the panel + export.
-    const selectedRows = useMemo(() => {
-        return selectedIndices.map(i => {
-            const origIdx = origIndicesRef.current[i];
-            if (origIdx == null) return null;
-            const row = data[origIdx];
-            if (!row) return null;
-            return { origIdx, row };
-        }).filter(Boolean) as Array<{ origIdx: number; row: typeof data[number] }>;
-    }, [selectedIndices, data]);
-
-    const handleClear = () => {
-        sc?.deselect();
-        setSelectedIndices([]);
-    };
+        requestDraw(sc, valueAArr ? { x: xArr, y: yArr, valueA: valueAArr } : { x: xArr, y: yArr });
+    }, [sc, data, scatterX, scatterY, headers, criteriaSensor, criteriaRanges, requestDraw, effectiveXRange, effectiveYRange]);
 
     const handleResetView = () => {
         sc?.reset();
@@ -475,32 +596,6 @@ function ScatterChart({
         // away so the axes don't lag behind the `view` event.
         const { xLo, xHi, yLo, yHi } = dataBoundsRef.current;
         setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
-    };
-
-    const handleExportCsv = () => {
-        if (selectedRows.length === 0) return;
-        const xIdx = headers.indexOf(scatterX);
-        const yIdx = headers.indexOf(scatterY);
-        const cols = ['rowIndex', 'timestamp', scatterX, scatterY];
-        const escape = (v: string) => /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-        const lines = [cols.map(escape).join(',')];
-        for (const { origIdx, row } of selectedRows) {
-            lines.push([
-                String(origIdx),
-                row.timestamp ?? '',
-                row.values[xIdx] != null ? String(row.values[xIdx]) : '',
-                row.values[yIdx] != null ? String(row.values[yIdx]) : '',
-            ].map(escape).join(','));
-        }
-        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `scatter-selection-${Date.now()}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
     };
 
     // Compute tooltip payload from the hovered point. Recomputes whenever
@@ -564,24 +659,75 @@ function ScatterChart({
                 <select value={scatterY} onChange={e => setScatterY(e.target.value)} className="scatter-regl-select">
                     {sensors.map(s => <option key={s} value={s}>{s} (Y)</option>)}
                 </select>
+                <span className="scatter-regl-vs">·</span>
+                <select
+                    value={criteriaSensor}
+                    onChange={e => setCriteriaSensor(e.target.value)}
+                    className="scatter-regl-select"
+                    title="Colour points by a 3rd sensor's value (low→high gradient)"
+                >
+                    <option value="">Colour by…</option>
+                    {sensors.map(s => <option key={s} value={s}>{s} (colour)</option>)}
+                </select>
             </div>
 
-            {/* ECharts-style toolbox (click to activate) */}
+            {/* Criteria-sensor range ("load band") manager — only shown once
+                a 3rd sensor is picked. Points colour by whichever enabled
+                range their value falls in, so several bands (e.g. two speed
+                ranges) can be highlighted and compared at once; a value
+                matching none of them fades to CRITERIA_UNMATCHED_COLOR. */}
+            {criteriaSensor && (
+                <div className="scatter-regl-criteria-legend" title={criteriaSensor}>
+                    <span className="scatter-regl-criteria-legend-label">{criteriaSensor}</span>
+                    {criteriaRange && (
+                        <span className="scatter-regl-criteria-legend-value">
+                            {fmt(criteriaRange.min)}–{fmt(criteriaRange.max)}
+                        </span>
+                    )}
+                    {criteriaRanges.map((r, i) => (
+                        <label key={r.id} className="scatter-regl-range-chip" title={r.enabled ? 'Click to hide this band' : 'Click to show this band'}>
+                            <input type="checkbox" checked={r.enabled} onChange={() => toggleCriteriaRange(r.id)} />
+                            <span
+                                className="scatter-regl-range-chip-swatch"
+                                style={{ background: rgbaToHex(RANGE_PALETTE[i % RANGE_PALETTE.length]) }}
+                            />
+                            <span>{fmt(r.min)}–{fmt(r.max)}</span>
+                            <button
+                                type="button"
+                                onClick={() => removeCriteriaRange(r.id)}
+                                className="scatter-regl-range-chip-remove"
+                                title="Remove this range"
+                            >
+                                <X size={10} />
+                            </button>
+                        </label>
+                    ))}
+                    <input
+                        type="number"
+                        placeholder="min"
+                        value={draftRangeMin}
+                        onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
+                        className="scatter-regl-axis-editor-input"
+                        style={{ width: 84 }}
+                    />
+                    <span>–</span>
+                    <input
+                        type="number"
+                        placeholder="max"
+                        value={draftRangeMax}
+                        onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
+                        className="scatter-regl-axis-editor-input"
+                        style={{ width: 84 }}
+                    />
+                    <button type="button" onClick={addCriteriaRange} className="scatter-regl-btn">+ Add</button>
+                    {rangeError && <span className="scatter-regl-axis-editor-error">{rangeError}</span>}
+                </div>
+            )}
+
+            {/* ECharts-style toolbox (click to activate). Pan/zoom is always
+                on (the library's own default mouseMode) — no lasso-select
+                tool anymore, so there's nothing to toggle it against. */}
             <div className="scatter-regl-toolbox">
-                <button
-                    onClick={() => setTool('pan')}
-                    className={`scatter-regl-tool${tool === 'pan' ? ' active' : ''}`}
-                    title="Pan / Zoom (drag = pan, scroll = zoom)"
-                >
-                    <Move size={13} />
-                </button>
-                <button
-                    onClick={() => setTool('lasso')}
-                    className={`scatter-regl-tool${tool === 'lasso' ? ' active' : ''}`}
-                    title="Lasso select (drag to draw polygon)"
-                >
-                    <Lasso size={13} />
-                </button>
                 <button
                     onClick={handleResetView}
                     className="scatter-regl-tool"
@@ -595,14 +741,6 @@ function ScatterChart({
                     title={isAxisPinned ? 'Axis scale pinned — click to edit, click again to close' : 'Pin the X/Y axis to a fixed scale'}
                 >
                     <Ruler size={13} />
-                </button>
-                <button
-                    onClick={handleClear}
-                    className="scatter-regl-tool"
-                    title="Clear selection"
-                    disabled={selectedIndices.length === 0}
-                >
-                    <Eraser size={13} />
                 </button>
             </div>
 
@@ -781,34 +919,24 @@ function ScatterChart({
                     );
                 })}
 
-                {/* Axis titles */}
-                <text x={AXIS_PADDING.left + innerDims.width / 2} y={wrapperDims.height - 10}
-                      textAnchor="middle" fontSize="11" fill="var(--text-primary)" fontFamily="Inter, system-ui">
-                    {scatterX}
-                </text>
-                <text x={14} y={AXIS_PADDING.top + innerDims.height / 2}
-                      transform={`rotate(-90, 14, ${AXIS_PADDING.top + innerDims.height / 2})`}
-                      textAnchor="middle" fontSize="11" fill="var(--text-primary)" fontFamily="Inter, system-ui">
-                    {scatterY}
-                </text>
             </svg>
 
-            {/* Selection panel — only shown when lasso has picked something. */}
-            {selectedRows.length > 0 && (
-                <div className="scatter-regl-panel">
-                    <span>
-                        <b>{selectedRows.length.toLocaleString()}</b> point{selectedRows.length === 1 ? '' : 's'} selected
-                    </span>
-                    <div className="scatter-regl-actions">
-                        <button onClick={handleExportCsv} className="scatter-regl-btn" title="Export selection to CSV">
-                            <Download size={12} /> CSV
-                        </button>
-                        <button onClick={handleClear} className="scatter-regl-btn scatter-regl-btn-icon" title="Clear selection">
-                            <Eraser size={12} />
-                        </button>
-                    </div>
-                </div>
-            )}
+            {/* Axis titles — HTML overlays (not SVG text) so they can carry a
+                hover tooltip with the sensor's description, same pattern as
+                PairPlotChart's AxisLabel. tooltipSide points back INTO the
+                chart area on both axes so it never hangs off the wrap's edge. */}
+            <AxisLabel
+                tag={scatterX}
+                description={getDescription(scatterX)}
+                tooltipSide="top"
+                style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - 20, height: 18 }}
+            />
+            <AxisLabel
+                tag={scatterY}
+                description={getDescription(scatterY)}
+                rotate
+                style={{ left: 0, width: 24, top: AXIS_PADDING.top, height: innerDims.height }}
+            />
         </div>
     );
 }

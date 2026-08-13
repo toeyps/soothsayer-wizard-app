@@ -17,27 +17,20 @@
     "installer:win": "powershell -ExecutionPolicy Bypass -File scripts/build-installer-windows.ps1"
   },
   "dependencies": {
-    "@react-pdf/renderer": "^4.5.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.4.2",
     "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-store": "^2.4.2",
     "@types/d3-scale": "^4.0.9",
-    "clsx": "^2.1.1",
     "d3-scale": "^4.0.2",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.5",
-    "echarts-gl": "^2.0.9",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.555.0",
-    "pako": "^1.0.11",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-is": "^19.2.0",
     "regl-scatterplot": "^1.16.0",
-    "split.js": "^1.6.5",
-    "tailwind-merge": "^3.4.0"
+    "split.js": "^1.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",

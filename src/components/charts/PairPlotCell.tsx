@@ -177,10 +177,23 @@ function PairPlotCell({
                 height: Math.max(0, h - AXIS_PAD.top - AXIS_PAD.bottom),
             });
         };
-        update();
-        const ro = new ResizeObserver(update);
+        update(); // immediate on mount — no debounce delay for the initial layout
+        // Debounced for every resize AFTER that: a split-pane drag fires many
+        // rapid ResizeObserver callbacks, and each one drives a full WebGL
+        // context destroy+recreate below — multiplied by up to MAX_PAIR_PLOT_SENSORS
+        // matrix cells all resizing at once, since every cell owns its own
+        // instance. Waiting for the resize to pause briefly means that cost
+        // is paid once at the end of a drag, not on every intermediate tick.
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const ro = new ResizeObserver(() => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(update, 150);
+        });
         ro.observe(el);
-        return () => ro.disconnect();
+        return () => {
+            ro.disconnect();
+            if (debounceTimer) clearTimeout(debounceTimer);
+        };
     }, []);
 
     // Build / tear down the regl-scatterplot instance whenever the inner

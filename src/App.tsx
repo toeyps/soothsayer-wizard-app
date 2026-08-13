@@ -1,7 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { DataUploadPage } from "./components/upload";
-import { Dashboard, DashboardRef } from "./components/dashboard";
+import type { DashboardRef } from "./components/dashboard";
 import { CsvMetadata, SensorMetadata, WorkspaceState } from "./types";
+
+// Dashboard pulls in echarts + regl-scatterplot (the app's two heaviest
+// dependencies) — deferring it until a workspace is actually open keeps
+// those out of the initial bundle the upload screen has to parse.
+const Dashboard = lazy(() =>
+  import("./components/dashboard").then((m) => ({ default: m.Dashboard })),
+);
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { message } from "@tauri-apps/plugin-dialog";
@@ -113,13 +120,15 @@ function App() {
             </div>
           ) : (
             <div className="app-page-transition">
-              <Dashboard
-                ref={dashboardRef}
-                metadata={metadata}
-                sensorMetadata={sensorMetadata}
-                onBack={handleBackToImport}
-                initialState={initialWorkspaceState}
-              />
+              <Suspense fallback={null}>
+                <Dashboard
+                  ref={dashboardRef}
+                  metadata={metadata}
+                  sensorMetadata={sensorMetadata}
+                  onBack={handleBackToImport}
+                  initialState={initialWorkspaceState}
+                />
+              </Suspense>
             </div>
           )}
         </main>

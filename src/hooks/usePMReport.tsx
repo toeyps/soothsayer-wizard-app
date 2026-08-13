@@ -1,11 +1,8 @@
 import { useCallback } from 'react';
 import { toPng } from 'html-to-image';
-import { pdf } from '@react-pdf/renderer';
 import * as echarts from 'echarts';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeUserBinaryFile } from '../workspaceManager';
-import { PMReportTemplate } from '../components/reports/PMReportTemplate';
-import type { PMReportData } from '../components/reports/pmReportTypes';
 
 // ───────── Helpers ─────────
 
@@ -265,14 +262,6 @@ export interface PMReportHook {
      * the live PM page — useful for quick visual sharing.
      */
     exportPNG: (node: HTMLElement, workspaceName: string) => Promise<void>;
-    /**
-     * Render a structured PDF report from the supplied data object using
-     * `<PMReportTemplate />` (react-pdf). The PM page is responsible for
-     * assembling the data — this function just renders + saves. Unlike
-     * `exportPNG`, this is a designed document (text-selectable, paginated
-     * tables, themed headers) NOT a screenshot.
-     */
-    exportPDF: (data: PMReportData) => Promise<void>;
 }
 
 export function usePMReport(): PMReportHook {
@@ -289,20 +278,5 @@ export function usePMReport(): PMReportHook {
         await writeUserBinaryFile(filePath, dataUrlToBytes(dataUrl));
     }, []);
 
-    const exportPDF = useCallback(async (data: PMReportData) => {
-        const defaultPath = buildDefaultName(data.meta.workspaceName, data.meta.generatedAt, 'pdf');
-        const filePath = await save({
-            defaultPath,
-            filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
-        });
-        if (!filePath) return;
-
-        // `pdf(<Doc/>)` returns an instance with a `.toBlob()` method that
-        // runs the React render → PDF binary pipeline.
-        const blob = await pdf(<PMReportTemplate data={data} />).toBlob();
-        const arrayBuffer = await blob.arrayBuffer();
-        await writeUserBinaryFile(filePath, new Uint8Array(arrayBuffer));
-    }, []);
-
-    return { exportPNG, exportPDF };
+    return { exportPNG };
 }

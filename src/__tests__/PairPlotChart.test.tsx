@@ -130,9 +130,12 @@ describe('PairPlotChart', () => {
         it('the left-most correlation cell in a row shows the row header (sensorY only, never sensorX)', () => {
             const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
             const rNode = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === '+1.00');
-            const cell = rNode!.closest('.pair-regl-cell') as HTMLElement;
-            expect(cell.textContent).toContain('B'); // row header for row 1
-            expect(cell.textContent).not.toContain('A'); // no column label on a correlation cell
+            // AxisLabel renders as a sibling of .pair-regl-cell (not nested
+            // inside it) so its hover tooltip isn't clipped by .pair-regl-cell's
+            // overflow:hidden — .pair-regl-cell-slot is their shared ancestor.
+            const slot = rNode!.closest('.pair-regl-cell-slot') as HTMLElement;
+            expect(slot.textContent).toContain('B'); // row header for row 1
+            expect(slot.textContent).not.toContain('A'); // no column label on a correlation cell
         });
 
         describe('hover tooltip for sensor description (no legend strip — zero footprint until hovered)', () => {
@@ -185,6 +188,15 @@ describe('PairPlotChart', () => {
                     .find((el) => el.querySelector('span')?.textContent === 'Time');
                 expect(timeLabel).toBeTruthy();
                 expect(timeLabel!.className).not.toContain('hoverable');
+            });
+
+            it('the tooltip bubble for both label orientations sits outside .pair-regl-cell (regression: .pair-regl-cell carries overflow:hidden for the chart canvas, and a tooltip nested inside it gets clipped/cut off for a long description)', () => {
+                const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+                const tooltips = Array.from(container.querySelectorAll('.pair-regl-axis-tooltip'));
+                expect(tooltips.length).toBeGreaterThan(0);
+                for (const tooltip of tooltips) {
+                    expect(tooltip.closest('.pair-regl-cell')).toBeNull();
+                }
             });
         });
 

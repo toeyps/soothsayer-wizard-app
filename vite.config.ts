@@ -8,6 +8,19 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the app's heaviest dependencies into their own vendor
+        // chunks instead of one monolithic bundle.
+        manualChunks: {
+          echarts: ['echarts', 'echarts-for-react'],
+          "regl-scatterplot": ['regl-scatterplot'],
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

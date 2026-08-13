@@ -3,6 +3,7 @@ import { Download, Lasso, Move, RotateCcw, Table2, X, Search, Trash2 } from 'luc
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeUserTextFile } from '../../workspaceManager';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
+import AxisLabel from './AxisLabel';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
 import { useThemeMode, type ThemeMode } from '../../hooks/useThemeMode';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
@@ -155,56 +156,14 @@ function DiagonalHistogram({
  *  rose = negative) and magnitude (stronger |r| = more saturated fill), so
  *  the strongest relationships in the matrix are visible at a glance before
  *  drilling into any one scatter cell. */
-/** Outer-frame axis label with an on-hover tooltip showing the sensor's full
- *  description (when known from the mapping CSV). Pure CSS `:hover` — no JS
- *  hover-state or position tracking — so it works the same wherever a label
- *  is rendered. Deliberately zero footprint at rest (matches the design the
- *  user approved over an always-visible legend): the dotted underline is the
- *  only hint, the tooltip itself takes no layout space until hovered.
- *  `overflow: visible` on the wrapper matters for `orientation="left"` — see
- *  the truncation regression this same wrapper already fixed once. */
-function AxisLabel({
-    tag, description, orientation,
-}: {
-    tag: string;
-    description?: string;
-    orientation: 'top' | 'left';
-}) {
-    const wrapStyle: React.CSSProperties = orientation === 'top'
-        ? { position: 'absolute', top: 0, left: CELL_PAD.left, right: CELL_PAD.right, height: CELL_PAD.top, display: 'flex', alignItems: 'center', justifyContent: 'center' }
-        : { position: 'absolute', top: CELL_PAD.top, bottom: CELL_PAD.bottom, left: 0, width: CELL_PAD.left, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'visible' };
-    const tooltipStyle: React.CSSProperties = orientation === 'top'
-        ? { top: '100%', left: '50%', transform: 'translateX(-50%)', marginTop: 4 }
-        : { left: '100%', top: '50%', transform: 'translateY(-50%)', marginLeft: 4 };
-
-    return (
-        <div style={{ ...wrapStyle, zIndex: 4 }} className={`pair-regl-axis-label${description ? ' hoverable' : ''}`}>
-            <span style={{
-                fontSize: 10, color: 'var(--text-primary)', fontFamily: 'Inter, system-ui',
-                whiteSpace: 'nowrap',
-                // Ellipsis is safe (and wanted) for a `top` label — it's never
-                // rotated, so it just truncates gracefully in the horizontal
-                // space it actually has. It must NOT apply to `left` — CSS
-                // `transform` never triggers reflow, so clipping the span
-                // BEFORE rotation would truncate it to ~4 characters, then
-                // rotate that truncated stub (the exact regression this
-                // component already fixed once for CorrelationCell's own
-                // label — see the overflow:visible on the wrapper above).
-                ...(orientation === 'top'
-                    ? { overflow: 'hidden', textOverflow: 'ellipsis' }
-                    : { transform: 'rotate(-90deg)' }),
-            }}>
-                {tag}
-            </span>
-            {description && (
-                <div className="pair-regl-axis-tooltip" style={tooltipStyle}>
-                    <div className="pair-regl-axis-tooltip-tag">{tag}</div>
-                    <div className="pair-regl-axis-tooltip-desc">{description}</div>
-                </div>
-            )}
-        </div>
-    );
-}
+/** Positioning for the two AxisLabel orientations used across this matrix —
+ *  `top` labels span the cell's top padding strip (column headers), `left`
+ *  labels span the left padding strip, rotated (row headers). Shared here
+ *  so every call site stays consistent with CELL_PAD. */
+const AXIS_LABEL_STYLE = {
+    top: { top: 0, left: CELL_PAD.left, right: CELL_PAD.right, height: CELL_PAD.top },
+    left: { top: CELL_PAD.top, bottom: CELL_PAD.bottom, left: 0, width: CELL_PAD.left },
+} as const;
 
 function CorrelationCell({
     r, sensorY, sensorYDescription, showYLabel, themeMode,
@@ -229,25 +188,31 @@ function CorrelationCell({
     const textColor = r == null ? 'var(--text-secondary)' : 'var(--text-primary)';
 
     return (
-        <div className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
-            {showYLabel && (
-                <AxisLabel tag={sensorY} description={sensorYDescription} orientation="left" />
-            )}
-            <div
-                style={{
-                    position: 'absolute',
-                    left: CELL_PAD.left, right: CELL_PAD.right,
-                    top: CELL_PAD.top, bottom: CELL_PAD.bottom,
-                    background: hexToRgbaCss(tintHex, tintAlpha),
-                    border: '1px solid var(--border-strong, #334155)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-            >
-                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500, color: textColor }}>
-                    {r == null ? 'n/a' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}`}
-                </span>
+        <>
+            <div className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: CELL_PAD.left, right: CELL_PAD.right,
+                        top: CELL_PAD.top, bottom: CELL_PAD.bottom,
+                        background: hexToRgbaCss(tintHex, tintAlpha),
+                        border: '1px solid var(--border-strong, #334155)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                >
+                    <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500, color: textColor }}>
+                        {r == null ? 'n/a' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}`}
+                    </span>
+                </div>
             </div>
-        </div>
+            {/* Sibling of .pair-regl-cell, not nested inside it — .pair-regl-cell
+                clips to the tinted square (see App.css), and the hover
+                tooltip needs to escape that boundary to show a full
+                description without being cut off. */}
+            {showYLabel && (
+                <AxisLabel tag={sensorY} description={sensorYDescription} rotate style={AXIS_LABEL_STYLE.left} />
+            )}
+        </>
     );
 }
 
@@ -519,7 +484,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         themeMode={themeMode}
                                     />
                                     {i === 0 && (
-                                        <AxisLabel tag={sensorY} description={getDescription(sensorY)} orientation="top" />
+                                        <AxisLabel tag={sensorY} description={getDescription(sensorY)} style={AXIS_LABEL_STYLE.top} />
                                     )}
                                     {inspectMode && (
                                         <div
@@ -554,7 +519,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         themeMode={themeMode}
                                     />
                                     {i === 0 && (
-                                        <AxisLabel tag={sensorX} description={getDescription(sensorX)} orientation="top" />
+                                        <AxisLabel tag={sensorX} description={getDescription(sensorX)} style={AXIS_LABEL_STYLE.top} />
                                     )}
                                     {inspectMode && (
                                         <div
@@ -610,7 +575,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                 themeMode={themeMode}
                             />
                             {i === 0 && (
-                                <AxisLabel tag="Time" orientation="top" />
+                                <AxisLabel tag="Time" style={AXIS_LABEL_STYLE.top} />
                             )}
                             {inspectMode && (
                                 <div

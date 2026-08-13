@@ -8226,6 +8226,79 @@ body {
     user-select: none;
 }
 
+/* Criteria-sensor range ("load band") manager — mirrors
+   .scatter-regl-controls' pill styling, positioned directly beneath it.
+   Only rendered once a criteria sensor is picked (see ScatterChart.tsx). */
+.scatter-regl-criteria-legend {
+    position: absolute;
+    top: 44px;
+    left: 70px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    background: rgba(30, 41, 59, 0.85);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    color: #94a3b8;
+}
+
+.scatter-regl-criteria-legend-label {
+    color: #e2e8f0;
+    font-weight: 600;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.scatter-regl-criteria-legend-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.scatter-regl-range-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(71, 85, 105, 0.6);
+    border-radius: 10px;
+    padding: 1px 6px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+
+.scatter-regl-range-chip input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.scatter-regl-range-chip-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+
+.scatter-regl-range-chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0;
+}
+
+.scatter-regl-range-chip-remove:hover {
+    color: #f1f5f9;
+}
+
 .scatter-regl-toolbox {
     position: absolute;
     top: 10px;
@@ -8421,7 +8494,13 @@ body {
     position: relative;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    /* NOT overflow:hidden — the axis-label hover tooltip (a sibling of
+       .pair-regl-cell, see AxisLabel in PairPlotChart.tsx) must be able to
+       spill outside a cell's own narrow bounds to show a full sensor
+       description. The chart itself is clipped one level deeper, on
+       .pair-regl-cell, which reaches the exact same pixel bounds since it's
+       sized to 100%/100% of this slot — so nothing about chart rendering
+       changes, only the tooltip gets room to render outside the cell. */
 }
 
 .pair-regl-cell {
@@ -8430,6 +8509,7 @@ body {
     height: 100%;
     min-width: 0;
     min-height: 0;
+    overflow: hidden;
 }
 
 .pair-regl-cell-canvas-wrap {
@@ -8824,7 +8904,12 @@ body {
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 5px 9px;
-    white-space: nowrap;
+    /* Bounded + wrapping instead of nowrap — a long sensor description would
+       otherwise render as one very long unbroken line (regression: used to
+       also get clipped by the cell's own overflow:hidden, see
+       .pair-regl-cell-slot). */
+    max-width: 220px;
+    white-space: normal;
     z-index: 20;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
     opacity: 0;
@@ -8921,30 +9006,6 @@ body {
 
 .pair-regl-expand-footer b {
     color: var(--text-primary);
-}
-
-.scatter-regl-panel {
-    position: absolute;
-    bottom: 10px;
-    left: 70px;
-    right: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.75));
-    border: 1px solid rgba(165, 180, 252, 0.35);
-    border-radius: 4px;
-    padding: 6px 12px;
-    font-size: 11px;
-    color: #f1f5f9;
-    z-index: 10;
-    backdrop-filter: blur(4px);
-}
-
-.scatter-regl-panel b {
-    color: #fafafa;
-    font-weight: 600;
 }
 
 .scatter-regl-actions {

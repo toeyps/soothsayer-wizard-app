@@ -6,7 +6,7 @@ import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../..
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins,
+    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, ScatterCriteria,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -391,6 +391,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setScatterAxisPins(pins);
     }, []);
 
+    // Scatter chart's criteria-sensor colouring (3rd "Colour by…" dropdown +
+    // its value-range chips) — same "lift out of ScatterChart" reasoning as
+    // scatterAxes/scatterAxisPins above (regression the user hit: this used
+    // to be plain local state in ScatterChart, so switching to Line/Pair
+    // Plot and back silently dropped the sensor + every range they'd set up).
+    const [scatterCriteria, setScatterCriteria] = useState<ScatterCriteria>(
+        initialState?.scatterCriteria ?? { sensor: '', ranges: [] },
+    );
+    const handleScatterCriteriaChange = useCallback((criteria: ScatterCriteria) => {
+        setScatterCriteria(criteria);
+    }, []);
+
     // Quick relative time range (e.g. "last 2 D") — an alternative to
     // manually picking absolute start/end dates. Y/M use calendar-accurate
     // arithmetic (setFullYear/setMonth) since those units aren't a fixed
@@ -402,6 +414,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     type RangeUnit = typeof RANGE_UNITS[number];
     const [relativeAmount, setRelativeAmount] = useState(initialState?.relativeTimeRange?.amount ?? '1');
     const [relativeUnit, setRelativeUnit] = useState<RangeUnit>(initialState?.relativeTimeRange?.unit ?? 'D');
+    // Whether the currently-shown Start/End dates were actually produced by
+    // the last "Apply relative range" click — NOT just whether a unit is
+    // selected in the picker. Without this, the unit buttons (and the
+    // amount field) kept showing the last-applied preset as "active" even
+    // after the user hand-edited Start/End directly, falsely implying the
+    // dates on screen still equal that preset. Cleared on manual edit,
+    // set on Apply. Deliberately not persisted — on workspace reload we
+    // don't actually know whether the saved dates still match the saved
+    // amount/unit, so defaulting to "not active" is the honest state.
+    const [relativeRangeApplied, setRelativeRangeApplied] = useState(false);
 
     const setSensorColor = useCallback((sensor: string, color: string) => {
         setSensorColors(prev => ({ ...prev, [sensor]: color }));
@@ -1097,12 +1119,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         sensorColors,
         sensorAxisRange,
         scatterAxisPins,
+        scatterCriteria,
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
-        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, relativeAmount, relativeUnit,
+        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, scatterCriteria, relativeAmount, relativeUnit,
     ]);
 
     // Auto-save state changes
@@ -1249,6 +1272,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             timestampStart: formatForInput(start.toISOString()),
             timestampEnd: formatForInput(end.toISOString()),
         });
+        setRelativeRangeApplied(true);
     }, [relativeAmount, relativeUnit, filters, handleFiltersChange, formatForInput]);
 
     // Drag-and-drop swap was removed in favor of a fixed layout (see
@@ -1346,6 +1370,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onScatterAxesChange={handleScatterAxesChange}
                         scatterAxisPins={scatterAxisPins}
                         onScatterAxisPinsChange={handleScatterAxisPinsChange}
+                        scatterCriteria={scatterCriteria}
+                        onScatterCriteriaChange={handleScatterCriteriaChange}
                         sensorMetadata={sensorMetadata}
                     />
                 )}
@@ -1360,7 +1386,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 <input
                                     type="datetime-local"
                                     value={displayTimestampStart}
-                                    onChange={(e) => handleFiltersChange({ ...filters, timestampStart: e.target.value })}
+                                    onChange={(e) => {
+                                        handleFiltersChange({ ...filters, timestampStart: e.target.value });
+                                        setRelativeRangeApplied(false);
+                                    }}
                                     placeholder="Start Date"
                                 />
                             </div>
@@ -1370,29 +1399,56 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 <input
                                     type="datetime-local"
                                     value={displayTimestampEnd}
-                                    onChange={(e) => handleFiltersChange({ ...filters, timestampEnd: e.target.value })}
+                                    onChange={(e) => {
+                                        handleFiltersChange({ ...filters, timestampEnd: e.target.value });
+                                        setRelativeRangeApplied(false);
+                                    }}
                                     placeholder="End Date"
                                 />
                             </div>
                             <span className="separator">·</span>
-                            {RANGE_UNITS.map(u => (
-                                <button
-                                    key={u}
-                                    type="button"
-                                    onClick={() => setRelativeUnit(u)}
-                                    style={{
-                                        width: '22px', height: '22px', padding: 0,
-                                        background: relativeUnit === u ? 'var(--accent-color)' : 'transparent',
-                                        border: '1px solid var(--border)',
-                                        borderRadius: '4px',
-                                        color: relativeUnit === u ? '#fff' : 'var(--text-secondary)',
-                                        fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
-                                    }}
-                                    title={{ Y: 'Years', M: 'Months', W: 'Weeks', D: 'Days', H: 'Hours' }[u]}
-                                >
-                                    {u}
-                                </button>
-                            ))}
+                            {RANGE_UNITS.map(u => {
+                                // Two DIFFERENT things, deliberately shown differently:
+                                //   isSelected — this unit is what's currently picked
+                                //     in the widget. Must update on every click, on its
+                                //     own, with zero dependency on Apply having ever run
+                                //     — otherwise clicking Y/M/W/D/H gives no visible
+                                //     feedback at all while relativeRangeApplied is
+                                //     false (e.g. right after a manual calendar edit),
+                                //     which reads as "the buttons don't respond" even
+                                //     though relativeUnit IS changing underneath.
+                                //   isActive — the STRONGER claim that relativeRangeApplied
+                                //     is ALSO true, i.e. the dates on screen really are
+                                //     this unit's last-Applied result (see that state's
+                                //     own docstring for why it can go false again).
+                                const isSelected = relativeUnit === u;
+                                const isActive = relativeRangeApplied && isSelected;
+                                const unitLabel = { Y: 'Years', M: 'Months', W: 'Weeks', D: 'Days', H: 'Hours' }[u];
+                                return (
+                                    <button
+                                        key={u}
+                                        type="button"
+                                        onClick={() => { setRelativeUnit(u); setRelativeRangeApplied(false); }}
+                                        title={
+                                            isActive
+                                                ? `Currently applied — last ${relativeAmount || '?'} ${unitLabel}`
+                                                : isSelected
+                                                    ? `Selected — click ✓ Apply to use "last ${relativeAmount || '?'} ${unitLabel}"`
+                                                    : unitLabel
+                                        }
+                                        style={{
+                                            width: '22px', height: '22px', padding: 0,
+                                            background: isActive ? 'var(--accent-color)' : 'transparent',
+                                            border: isSelected ? '1px solid var(--accent-color)' : '1px solid var(--border)',
+                                            borderRadius: '4px',
+                                            color: isActive ? '#fff' : (isSelected ? 'var(--accent-color)' : 'var(--text-secondary)'),
+                                            fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                                        }}
+                                    >
+                                        {u}
+                                    </button>
+                                );
+                            })}
                             <input
                                 type="number"
                                 min="0"
@@ -1401,7 +1457,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 // whole units for those two; W/D/H stay fractional-friendly.
                                 step={relativeUnit === 'Y' || relativeUnit === 'M' ? '1' : 'any'}
                                 value={relativeAmount}
-                                onChange={(e) => setRelativeAmount(e.target.value)}
+                                onChange={(e) => { setRelativeAmount(e.target.value); setRelativeRangeApplied(false); }}
                                 style={{
                                     width: '68px', padding: '2px 4px',
                                     background: 'var(--input-bg)', border: '1px solid var(--border)',
@@ -1430,6 +1486,32 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             </button>
                         </div>
                     </div>
+                    {/* Sits right after TIME RANGE (not after AGGREGATION,
+                        which it never touches) — only clears
+                        timestampStart/End back to the full data range.
+                        Label says "Period" explicitly so it doesn't read as
+                        also resetting the aggregation dropdown next to it. */}
+                    {dataRange && filters.timestampStart && (
+                        <button
+                            className="reset-range-btn"
+                            title="Reset the time period back to the full data range — does not change Aggregation"
+                            onClick={() => {
+                                handleFiltersChange({
+                                    ...filters,
+                                    timestampStart: '',
+                                    timestampEnd: ''
+                                });
+                                // Same reasoning as the manual Start/End edit
+                                // handlers above: the dates just changed out
+                                // from under whatever relative-range preset
+                                // was last applied, so its unit button must
+                                // stop claiming to still be "active".
+                                setRelativeRangeApplied(false);
+                            }}
+                        >
+                            Reset Period
+                        </button>
+                    )}
                     <div className="time-range-tab-group">
                         <label>AGGREGATION (1 HR)</label>
                         <div className="date-input-wrapper">
@@ -1455,20 +1537,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             </select>
                         </div>
                     </div>
-                    {dataRange && filters.timestampStart && (
-                        <button
-                            className="reset-range-btn"
-                            onClick={() => {
-                                handleFiltersChange({
-                                    ...filters,
-                                    timestampStart: '',
-                                    timestampEnd: ''
-                                });
-                            }}
-                        >
-                            Reset
-                        </button>
-                    )}
                 </div>
             </div>
         </div>

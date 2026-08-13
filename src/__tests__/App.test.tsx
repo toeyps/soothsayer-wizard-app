@@ -113,18 +113,23 @@ describe('App', () => {
         expect(last(titleBarProps).workspaceName).toBeUndefined();
     });
 
-    it('switching to a loaded dataset renders Dashboard with the workspace name in the TitleBar', () => {
+    // Dashboard is React.lazy-loaded (see App.tsx) to keep echarts/regl-scatterplot
+    // out of the initial bundle, so it only mounts after its dynamic import()
+    // resolves — even with the module mocked, that's still a microtask. Tests that
+    // click through to it must await its appearance via findByText/find*, not
+    // assert on it synchronously right after the click.
+    it('switching to a loaded dataset renders Dashboard with the workspace name in the TitleBar', async () => {
         render(<App />);
         fireEvent.click(screen.getByText('trigger-data-ready'));
-        expect(screen.getByText('trigger-back')).toBeTruthy();
+        expect(await screen.findByText('trigger-back')).toBeTruthy();
         expect(last(titleBarProps).workspaceName).toBe('Loaded WS');
         expect(last(dashboardProps).metadata).toEqual({ headers: ['A'], total_rows: 10 });
     });
 
-    it('Dashboard\'s onBack returns to DataUploadPage and clears the workspace name', () => {
+    it('Dashboard\'s onBack returns to DataUploadPage and clears the workspace name', async () => {
         render(<App />);
         fireEvent.click(screen.getByText('trigger-data-ready'));
-        fireEvent.click(screen.getByText('trigger-back'));
+        fireEvent.click(await screen.findByText('trigger-back'));
         expect(screen.getByText('trigger-data-ready')).toBeTruthy();
         expect(last(titleBarProps).workspaceName).toBeUndefined();
     });
@@ -145,19 +150,20 @@ describe('App', () => {
         });
     });
 
-    it('TitleBar\'s onRename updates the displayed name and forwards to the Dashboard ref', () => {
+    it('TitleBar\'s onRename updates the displayed name and forwards to the Dashboard ref', async () => {
         render(<App />);
         fireEvent.click(screen.getByText('trigger-data-ready'));
+        await screen.findByText('trigger-back'); // wait for the lazy Dashboard (and its ref) to mount
         fireEvent.click(screen.getByText('trigger-rename'));
         expect(last(titleBarProps).workspaceName).toBe('Renamed via TitleBar');
         expect(mockRenameWorkspace).toHaveBeenCalledWith('Renamed via TitleBar');
     });
 
     describe('native app-menu wiring', () => {
-        it('onNew / onCloseWorkspace both reset back to the import page', () => {
+        it('onNew / onCloseWorkspace both reset back to the import page', async () => {
             render(<App />);
             fireEvent.click(screen.getByText('trigger-data-ready'));
-            expect(screen.getByText('trigger-back')).toBeTruthy();
+            expect(await screen.findByText('trigger-back')).toBeTruthy();
 
             act(() => { capturedMenuHandlers.onNew(); });
             expect(screen.getByText('trigger-data-ready')).toBeTruthy();

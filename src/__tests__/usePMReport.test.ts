@@ -27,26 +27,13 @@ vi.mock('echarts', () => ({
     init: vi.fn(),
 }));
 
-const mockToBlob = vi.fn();
-const mockPdf = vi.fn((_el?: unknown) => ({ toBlob: mockToBlob }));
-vi.mock('@react-pdf/renderer', () => ({
-    pdf: (el: unknown) => mockPdf(el),
-}));
-
-vi.mock('../components/reports/PMReportTemplate', () => ({
-    PMReportTemplate: () => null,
-}));
-
 import { usePMReport } from '../hooks/usePMReport';
-import type { PMReportData } from '../components/reports/pmReportTypes';
 
 beforeEach(() => {
     mockSave.mockReset();
     mockWriteUserBinaryFile.mockReset().mockResolvedValue(undefined);
     mockToPng.mockReset();
     mockGetInstanceByDom.mockReset().mockReturnValue(undefined);
-    mockToBlob.mockReset();
-    mockPdf.mockReset().mockImplementation(() => ({ toBlob: mockToBlob }));
 });
 
 describe('usePMReport', () => {
@@ -92,42 +79,6 @@ describe('usePMReport', () => {
 
             const call = mockSave.mock.calls[0][0];
             expect(call.defaultPath).toMatch(/^wizard-report-Weird-Name-\d{4}-\d{2}-\d{2}\.png$/);
-        });
-    });
-
-    describe('exportPDF', () => {
-        const reportData: PMReportData = {
-            meta: { workspaceName: 'PDF Workspace', generatedAt: new Date(2026, 4, 21) },
-        } as PMReportData;
-
-        it('does nothing when the user cancels the save dialog', async () => {
-            mockSave.mockResolvedValue(null);
-            const { result } = renderHook(() => usePMReport());
-
-            await result.current.exportPDF(reportData);
-
-            expect(mockPdf).not.toHaveBeenCalled();
-            expect(mockWriteUserBinaryFile).not.toHaveBeenCalled();
-        });
-
-        it('renders the PDF and writes the resulting bytes to the chosen path', async () => {
-            mockSave.mockResolvedValue('C:/reports/out.pdf');
-            const blob = new Blob([new Uint8Array([1, 2, 3])]);
-            mockToBlob.mockResolvedValue(blob);
-            const { result } = renderHook(() => usePMReport());
-
-            await result.current.exportPDF(reportData);
-
-            expect(mockSave).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    defaultPath: 'wizard-report-PDF-Workspace-2026-05-21.pdf',
-                    filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
-                }),
-            );
-            expect(mockWriteUserBinaryFile).toHaveBeenCalledTimes(1);
-            const [path, bytes] = mockWriteUserBinaryFile.mock.calls[0];
-            expect(path).toBe('C:/reports/out.pdf');
-            expect(Array.from(bytes as Uint8Array)).toEqual([1, 2, 3]);
         });
     });
 });

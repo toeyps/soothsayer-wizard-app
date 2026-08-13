@@ -1,4 +1,4 @@
-import { CsvRecord, SensorMetadata, ScatterAxisPins } from '../../types';
+import { CsvRecord, SensorMetadata, ScatterAxisPins, ScatterCriteria } from '../../types';
 
 /** Pair Plot renders one regl-scatterplot WebGL context per scatter cell
  *  AND per time-series cell — n(n-1)/2 + n contexts for n sensors. Chromium
@@ -74,6 +74,13 @@ export interface ChartProps {
     /** Fired whenever the Scatter chart's axis pins change (apply/clear),
      *  so the parent can persist them. */
     onScatterAxisPinsChange?: (pins: ScatterAxisPins) => void;
+    /** Scatter chart's persisted criteria-sensor colouring (Dashboard-owned)
+     *  — the 3rd "Colour by…" dropdown + its value-range chips. Ignored by
+     *  Line/Pair Plot. */
+    scatterCriteria?: ScatterCriteria;
+    /** Fired whenever the Scatter chart's criteria sensor or ranges change,
+     *  so the parent can persist them. */
+    onScatterCriteriaChange?: (criteria: ScatterCriteria) => void;
     /** Sensor master data (description/unit/component), including
      *  runtime-created "special" sensors merged in by Dashboard.tsx. Used
      *  by LineChart's hover tooltip to append each sensor's unit next to

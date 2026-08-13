@@ -188,6 +188,23 @@ export interface ScatterAxisPins {
     y?: ScatterAxisPin;
 }
 
+/** One user-defined "load band" for the Scatter chart's criteria-sensor
+ *  colouring — a point whose criteria-sensor value falls in [min, max] gets
+ *  this range's colour when `enabled`. */
+export interface ScatterCriteriaRange {
+    id: string;
+    min: number;
+    max: number;
+    enabled: boolean;
+}
+
+/** Scatter chart's criteria-sensor colouring config — which sensor colours
+ *  the points, plus its value ranges. */
+export interface ScatterCriteria {
+    sensor: string;
+    ranges: ScatterCriteriaRange[];
+}
+
 export interface WorkspaceState {
     id: string;
     name: string;
@@ -256,4 +273,12 @@ export interface WorkspaceState {
      *  already persists on its own; this only restores what was last typed
      *  into the shortcut so it doesn't silently reset to "1 D". */
     relativeTimeRange?: { amount: string; unit: 'Y' | 'M' | 'W' | 'D' | 'H' };
+    /** Scatter chart's criteria-sensor colouring (the 3rd "Colour by…"
+     *  dropdown + its value-range chips). Persisted for the same reason as
+     *  `scatterAxes`/`scatterAxisPins` — Chart.tsx unmounts ScatterChart
+     *  entirely when the chart type isn't 'scatter', so anything left as
+     *  local state there (this used to be, before this field existed) is
+     *  lost the instant the user looks at Line/Pair Plot and comes back.
+     *  Absent = no criteria sensor picked (the pre-feature default). */
+    scatterCriteria?: ScatterCriteria;
 }

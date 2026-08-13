@@ -39,7 +39,7 @@ vi.mock('../workspaceManager', () => ({
 
 vi.mock('../hooks/useSubWindowMenu', () => ({ useSubWindowMenu: vi.fn() }));
 vi.mock('../hooks/usePMReport', () => ({
-    usePMReport: () => ({ exportPNG: vi.fn().mockResolvedValue(undefined), exportPDF: vi.fn().mockResolvedValue(undefined) }),
+    usePMReport: () => ({ exportPNG: vi.fn().mockResolvedValue(undefined) }),
 }));
 
 const mockUseChartData = vi.fn((_q?: unknown) => ({ view: null, loading: false, error: null } as any));

@@ -81,10 +81,13 @@ describe('Chart', () => {
         expect(pairProps[0]).toMatchObject({ data: baseProps.data, sensors: ['A', 'B'], headers: baseProps.headers, sensorMetadata });
     });
 
-    it('renders ScatterChart for chartType="scatter" and forwards axis props', () => {
+    it('renders ScatterChart for chartType="scatter" and forwards axis props + criteria props + sensorMetadata (regression: sensorMetadata was never wired through to ScatterChart, so the axis-title hover-tooltip descriptions had no data to read)', () => {
         const onScatterAxesChange = vi.fn();
         const onScatterAxisPinsChange = vi.fn();
+        const onScatterCriteriaChange = vi.fn();
         const scatterAxisPins = { x: { sensor: 'A' } };
+        const scatterCriteria = { sensor: 'A', ranges: [{ id: 'r1', min: 0, max: 10, enabled: true }] };
+        const sensorMetadata = [{ tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' }];
         render(
             <Chart
                 {...baseProps}
@@ -95,6 +98,9 @@ describe('Chart', () => {
                 onScatterAxesChange={onScatterAxesChange}
                 scatterAxisPins={scatterAxisPins}
                 onScatterAxisPinsChange={onScatterAxisPinsChange}
+                scatterCriteria={scatterCriteria}
+                onScatterCriteriaChange={onScatterCriteriaChange}
+                sensorMetadata={sensorMetadata}
             />,
         );
         expect(screen.getByTestId('scatter-chart')).toBeTruthy();
@@ -105,6 +111,9 @@ describe('Chart', () => {
             onScatterAxesChange,
             scatterAxisPins,
             onScatterAxisPinsChange,
+            scatterCriteria,
+            onScatterCriteriaChange,
+            sensorMetadata,
         });
     });
 });

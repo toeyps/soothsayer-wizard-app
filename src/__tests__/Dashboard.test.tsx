@@ -311,6 +311,18 @@ describe('Dashboard', () => {
             );
         });
 
+        it('seeds scatterCriteria from initialState and forwards it (+ the change handler) to Chart (regression: this used to be plain local state inside ScatterChart, so switching chart type and back silently dropped the criteria sensor + every range)', () => {
+            const scatterCriteria = { sensor: 'TAG1', ranges: [{ id: 'r1', min: 0, max: 10, enabled: true }] };
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], scatterCriteria,
+                }),
+            });
+            fireEvent.click(screen.getByText('Scatter'));
+            expect(last(chartProps).scatterCriteria).toEqual(scatterCriteria);
+            expect(typeof last(chartProps).onScatterCriteriaChange).toBe('function');
+        });
+
         it('bounces back to "line" when the selection drops below 2 while scatter is active', () => {
             renderDashboard({
                 initialState: makeInitialState({
@@ -609,6 +621,159 @@ describe('Dashboard', () => {
             fireEvent.click(screen.getByTitle('Apply relative range'));
             const lastCall = last(mockUseChartData.mock.calls)![0] as any;
             expect(lastCall.filter.timestamp_start).not.toBe('');
+        });
+
+        // Regression #1 (fixed first): the unit button (D/H/W/...) kept
+        // showing the STRONG "active" accent background forever after being
+        // clicked, even once the user hand-edited Start/End and the shown
+        // dates no longer matched that preset at all — falsely implying the
+        // preset was still in effect.
+        //
+        // Regression #2 (found by the user immediately after #1 shipped):
+        // the fix above tied ALL visual feedback to `relativeRangeApplied`,
+        // so once it went false (e.g. right after editing a date by hand),
+        // clicking Y/M/W/D/H produced ZERO visible change — every unit
+        // button looked identically plain no matter which one `relativeUnit`
+        // actually was, reading as "the buttons don't respond to clicks" (a
+        // user had to click ✓ Apply blind before a unit's selection ever
+        // became visible). Fixed by splitting the two claims apart:
+        // `isSelected` (relativeUnit === u — always live, shown as an accent
+        // OUTLINE) vs `isActive` (isSelected AND relativeRangeApplied — the
+        // stronger claim, shown as a SOLID accent fill). D is the default
+        // relativeUnit, so it renders as "selected" (outline) from the very
+        // first render even with nothing clicked yet.
+        describe('unit-button selected/applied indicator (2-tier: outline = picked, solid = picked AND matches the shown dates)', () => {
+            const dayBtn = () => screen.getByRole('button', { name: 'D' }) as HTMLButtonElement;
+            const hourBtn = () => screen.getByRole('button', { name: 'H' }) as HTMLButtonElement;
+
+            it('shows the default unit (D) as selected-but-not-applied at rest — outline, no solid fill', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                const btn = dayBtn();
+                expect(btn.style.background).toBe('transparent');
+                expect(btn.style.border).toBe('1px solid var(--accent-color)');
+                expect(btn.style.color).toBe('var(--accent-color)');
+                expect(btn.title).toMatch(/^Selected/);
+            });
+
+            it('every OTHER unit stays fully plain while D is selected', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                const btn = hourBtn();
+                expect(btn.style.background).toBe('transparent');
+                expect(btn.style.border).toBe('1px solid var(--border)');
+                expect(btn.style.color).toBe('var(--text-secondary)');
+                expect(btn.title).toBe('Hours');
+            });
+
+            it('solid-fills after clicking Apply', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                const btn = dayBtn();
+                expect(btn.style.background).toBe('var(--accent-color)');
+                expect(btn.style.color).toBe('rgb(255, 255, 255)'); // jsdom normalizes '#fff'
+                expect(btn.title).toMatch(/^Currently applied/);
+            });
+
+            it('drops back to outline-only (stays selected, stops claiming "applied") when Start is edited by hand after Apply', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
+                const btn = dayBtn();
+                expect(btn.style.background).toBe('transparent');
+                expect(btn.style.border).toBe('1px solid var(--accent-color)'); // still selected
+            });
+
+            it('drops back to outline-only when End is edited by hand after Apply', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                fireEvent.change(screen.getByPlaceholderText('End Date'), { target: { value: '2020-01-02T00:00' } });
+                const btn = dayBtn();
+                expect(btn.style.background).toBe('transparent');
+                expect(btn.style.border).toBe('1px solid var(--accent-color)');
+            });
+
+            it('moves the outline to the newly-clicked unit (not the solid fill) when the picker is changed after Apply — this is the exact click the user reported as "unresponsive"', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                fireEvent.click(hourBtn());
+
+                const day = dayBtn();
+                expect(day.style.background).toBe('transparent');
+                expect(day.style.border).toBe('1px solid var(--border)'); // no longer selected at all
+
+                const hour = hourBtn();
+                expect(hour.style.background).toBe('transparent'); // not yet applied
+                expect(hour.style.border).toBe('1px solid var(--accent-color)'); // but IS now selected — visible immediately
+                expect(hour.title).toMatch(/^Selected/);
+            });
+
+            it('drops back to outline-only when the amount input is changed after Apply', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '5' } });
+                const btn = dayBtn();
+                expect(btn.style.background).toBe('transparent');
+                expect(btn.style.border).toBe('1px solid var(--accent-color)');
+            });
+
+            it('re-solid-fills after clicking Apply again', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                const btn = dayBtn();
+                expect(btn.style.background).toBe('var(--accent-color)');
+            });
+        });
+
+        describe('"Reset Period" button (regression: used to be labelled just "Reset" and sit after the AGGREGATION dropdown, reading as if it might also reset that — it only ever clears the time period)', () => {
+            beforeEach(() => {
+                // The button only renders once there's a data range to reset
+                // BACK TO (dataRange, from view.ts_min/ts_max) and an active
+                // Start filter to reset AWAY FROM.
+                mockUseChartData.mockReturnValue({
+                    view: { headers: ['TAG1'], timestamps: [], series: [[]], total_rows: 5, ts_min: '2025-01-01T00:00:00Z', ts_max: '2025-06-01T00:00:00Z' },
+                    loading: false, error: null,
+                });
+            });
+
+            it('is labelled "Reset Period", not the ambiguous "Reset"', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                expect(screen.getByText('Reset Period')).toBeTruthy();
+                expect(screen.queryByText('Reset')).toBeNull();
+            });
+
+            it('sits before the AGGREGATION control in the DOM, not after it', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                const resetBtn = screen.getByText('Reset Period');
+                const aggregationLabel = screen.getByText('AGGREGATION (1 HR)');
+                expect(resetBtn.compareDocumentPosition(aggregationLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            });
+
+            it('clears the time period back to the full data range without touching Aggregation', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                const aggregationSelect = screen.getByDisplayValue('Raw') as HTMLSelectElement;
+                fireEvent.change(aggregationSelect, { target: { value: 'max' } });
+
+                fireEvent.click(screen.getByText('Reset Period'));
+
+                const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+                // '' → null: the dataFilter builder does `filters.timestampStart || null`.
+                expect(lastCall.filter.timestamp_start).toBeNull();
+                expect(lastCall.filter.timestamp_end).toBeNull();
+                expect((screen.getByDisplayValue('Max') as HTMLSelectElement).value).toBe('max'); // untouched
+            });
+
+            it('clears the unit-button "applied" highlight too (regression: Reset went through handleFiltersChange directly, bypassing the path that clears relativeRangeApplied, so a unit button could stay highlighted after Reset even though the dates no longer matched it)', () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                fireEvent.click(screen.getByTitle('Apply relative range'));
+                expect(screen.getByTitle(/Currently applied/)).toBeTruthy();
+
+                fireEvent.click(screen.getByText('Reset Period'));
+                expect((screen.getByRole('button', { name: 'D' }) as HTMLButtonElement).style.background).toBe('transparent');
+            });
         });
     });
 });
