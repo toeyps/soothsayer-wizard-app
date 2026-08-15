@@ -6,7 +6,7 @@ import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../..
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, ScatterCriteria,
+    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, TimeHighlight,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -14,11 +14,13 @@ import type { DashboardDataFilter } from '../../types/commands';
 // constant slot→panel mapping below.
 
 import DataTable from './DataTable';
-import { Chart, defaultSensorColor, LINE_CHART_COLORS, MAX_PAIR_PLOT_SENSORS, type ChartMarkLine } from '../charts';
+import { Chart, defaultSensorColor, LINE_CHART_COLORS, MAX_PAIR_PLOT_SENSORS, RANGE_PALETTE, type ChartMarkLine } from '../charts';
+import { rgbaToHex } from '../charts/pairPlotColors';
 import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
 import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 import FailureGroupsPanel from './FailureGroupsPanel';
+import HighlightsPanel from './HighlightsPanel';
 import ColorPlatePicker from './ColorPlatePicker';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
@@ -76,6 +78,12 @@ const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 // on a typical panel width — visually indistinguishable from raw.
 const LINE_MAX_POINTS = 4000;
 const TABLE_PAGE_SIZE = 50;
+// Same debounce window as useChartData/useScatterSample/useTablePage's own
+// backend-query debounce -- applied here to the autosave-to-disk write
+// instead. Without it, every tracked state change (including e.g. each
+// keystroke in a Filter value box, which has no debounce of its own)
+// triggered an immediate JSON.stringify + writeTextFile to $APPDATA.
+const AUTOSAVE_DEBOUNCE_MS = 250;
 
 // Alarm-level constants/helpers live in ../../utils/alarmLevels — shared
 // with SensorSelection.tsx, which is where the setpoint checkboxes actually
@@ -391,16 +399,36 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setScatterAxisPins(pins);
     }, []);
 
-    // Scatter chart's criteria-sensor colouring (3rd "Colour by…" dropdown +
-    // its value-range chips) — same "lift out of ScatterChart" reasoning as
-    // scatterAxes/scatterAxisPins above (regression the user hit: this used
-    // to be plain local state in ScatterChart, so switching to Line/Pair
-    // Plot and back silently dropped the sensor + every range they'd set up).
-    const [scatterCriteria, setScatterCriteria] = useState<ScatterCriteria>(
-        initialState?.scatterCriteria ?? { sensor: '', ranges: [] },
+    // Time-window highlights ("Highlights" tab) — global across every chart
+    // type except Pair Plot. See TimeHighlight in types.ts for why.
+    const [timeHighlights, setTimeHighlights] = useState<TimeHighlight[]>(
+        initialState?.timeHighlights ?? [],
     );
-    const handleScatterCriteriaChange = useCallback((criteria: ScatterCriteria) => {
-        setScatterCriteria(criteria);
+
+    const handleAddTimeHighlight = useCallback((start: string, end: string, label: string) => {
+        setTimeHighlights(prev => [...prev, {
+            id: `${Date.now()}-${prev.length}`,
+            start, end,
+            label: label || `Highlight ${prev.length + 1}`,
+            color: rgbaToHex(RANGE_PALETTE[prev.length % RANGE_PALETTE.length]),
+            enabled: true,
+        }]);
+    }, []);
+
+    const handleToggleTimeHighlight = useCallback((id: string) => {
+        setTimeHighlights(prev => prev.map(h => h.id === id ? { ...h, enabled: !h.enabled } : h));
+    }, []);
+
+    const handleRemoveTimeHighlight = useCallback((id: string) => {
+        setTimeHighlights(prev => prev.filter(h => h.id !== id));
+    }, []);
+
+    const handleRecolorTimeHighlight = useCallback((id: string, color: string) => {
+        setTimeHighlights(prev => prev.map(h => h.id === id ? { ...h, color } : h));
+    }, []);
+
+    const handleRenameTimeHighlight = useCallback((id: string, label: string) => {
+        setTimeHighlights(prev => prev.map(h => h.id === id ? { ...h, label } : h));
     }, []);
 
     // Quick relative time range (e.g. "last 2 D") — an alternative to
@@ -1119,20 +1147,30 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         sensorColors,
         sensorAxisRange,
         scatterAxisPins,
-        scatterCriteria,
+        timeHighlights,
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
-        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, scatterCriteria, relativeAmount, relativeUnit,
+        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights,
+        relativeAmount, relativeUnit,
     ]);
 
-    // Auto-save state changes
+    // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
+    // burst of rapid edits (typing, dragging a slider, resizing panels)
+    // coalesces into ONE disk write instead of one per intermediate state.
+    // Every relevant state change gives buildWorkspaceState a new identity,
+    // which reruns this effect: the OLD timer is cleared (cleanup below)
+    // and a new one queued, so only the LAST edit in a rapid burst ever
+    // actually reaches disk — same "clear + requeue" shape as the
+    // useChartData/useScatterSample/useTablePage debounce this mirrors.
     useEffect(() => {
-        if (initialState) {
+        if (!initialState) return;
+        const timer = setTimeout(() => {
             saveWorkspaceData(buildWorkspaceState());
-        }
+        }, AUTOSAVE_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
     }, [buildWorkspaceState, initialState]);
 
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
@@ -1208,7 +1246,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Matches scatterFilter above — falls back to the full selection, not
     // the line-chart-only visible subset.
     const scatterChartHeaders = scatterSample.headers.length > 0 ? scatterSample.headers : selectedSensors;
-
 
     // Data range for auto-filling the time inputs — first/last timestamp of
     // the filtered population, computed backend-side.
@@ -1356,6 +1393,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensorColors={resolvedSensorColors}
                         sensorAxisRange={sensorAxisRange}
                         sensorMetadata={sensorMetadata}
+                        timeHighlights={timeHighlights}
                     />
                 ) : (
                     // Scatter / pair plot render the bounded Rust sample so
@@ -1370,9 +1408,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onScatterAxesChange={handleScatterAxesChange}
                         scatterAxisPins={scatterAxisPins}
                         onScatterAxisPinsChange={handleScatterAxisPinsChange}
-                        scatterCriteria={scatterCriteria}
-                        onScatterCriteriaChange={handleScatterCriteriaChange}
                         sensorMetadata={sensorMetadata}
+                        timeHighlights={timeHighlights}
                     />
                 )}
             </div>
@@ -1547,13 +1584,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Which tab the Data Insight panel shows — the raw/aggregated table, or
     // the "Selected Sensor" list (per-sensor show/hide + remove controls;
     // replaces the old in-chart ECharts legend).
-    const [activeDataTab, setActiveDataTab] = useState<'insight' | 'selected' | 'filter'>('selected');
+    const [activeDataTab, setActiveDataTab] = useState<'insight' | 'selected' | 'filter' | 'highlights'>('selected');
 
     const renderDataContent = () => (
         <div className="widget-section data-widget">
             <div className="section-header collapsible-header">
                 <div className="section-header-left" style={{ gap: '4px' }}>
-                    {(['selected', 'insight', 'filter'] as const).map(tab => (
+                    {(['selected', 'insight', 'filter', 'highlights'] as const).map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveDataTab(tab)}
@@ -1569,7 +1606,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 ? 'Data Insight'
                                 : tab === 'filter'
                                     ? 'Filter'
-                                    : `Selected Sensor${selectedSensors.length > 0 ? ` (${selectedSensors.length})` : ''}`}
+                                    : tab === 'highlights'
+                                        ? 'Highlights'
+                                        : `Selected Sensor${selectedSensors.length > 0 ? ` (${selectedSensors.length})` : ''}`}
                         </button>
                     ))}
                 </div>
@@ -1656,6 +1695,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             sensorMetadata={sensorMetadata}
                         />
                     </div>
+                ) : activeDataTab === 'highlights' ? (
+                    <HighlightsPanel
+                        timeHighlights={timeHighlights}
+                        onAddTimeHighlight={handleAddTimeHighlight}
+                        onToggleTimeHighlight={handleToggleTimeHighlight}
+                        onRemoveTimeHighlight={handleRemoveTimeHighlight}
+                        onRecolorTimeHighlight={handleRecolorTimeHighlight}
+                        onRenameTimeHighlight={handleRenameTimeHighlight}
+                        chartType={chartType}
+                    />
                 ) : (
                     <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
                         {selectedSensors.length === 0 && (
@@ -1668,9 +1717,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             'line' only, and scatterChartHeaders always uses the FULL
                             selectedSensors regardless of visibleSensors) — showing those
                             controls for Scatter/Pair Plot let the user "edit" something
-                            with zero effect. Scatter and Pair Plot already carry their own
-                            appropriate controls inside the chart canvas itself, so this
-                            tab just points there instead of faking shared controls. */}
+                            with zero effect. Scatter's X/Y picker stays inside the chart
+                            canvas itself; its value/time colouring lives in the Highlights
+                            tab. Pair Plot's lasso-cluster is its own self-contained
+                            mechanism and deliberately does NOT read the Highlights tab at
+                            all (see ChartTypes.ts's timeHighlights docstring) — mixing two
+                            differently-scoped highlighting systems on the same matrix read
+                            as more confusing than useful. */}
                         {chartType !== 'line' && selectedSensors.length > 0 && (
                             <div style={{
                                 margin: '8px 10px', padding: '8px 10px',
@@ -1678,8 +1731,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 borderRadius: '6px', fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.5,
                             }}>
                                 {chartType === 'scatter'
-                                    ? 'Scatter Plot: pick the X/Y sensor pair from the dropdowns above the chart. Pan/zoom, lasso-select points, and export the selection using the toolbar in the chart.'
-                                    : 'Pair Plot: lasso-select points in any cell to brush a colored cluster — recolor or delete clusters from the panel under the chart, or click the magnifier to inspect one cell in detail.'}
+                                    ? 'Scatter Plot: pick the X/Y sensor pair from the dropdowns above the chart. Colour points by value or highlight them by time from the Highlights tab.'
+                                    : 'Pair Plot: lasso-select points in any cell to brush a colored cluster — recolor or delete clusters from the panel under the chart.'}
                             </div>
                         )}
                         {selectedSensors.map((sensor) => {

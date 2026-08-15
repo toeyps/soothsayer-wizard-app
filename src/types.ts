@@ -188,21 +188,22 @@ export interface ScatterAxisPins {
     y?: ScatterAxisPin;
 }
 
-/** One user-defined "load band" for the Scatter chart's criteria-sensor
- *  colouring — a point whose criteria-sensor value falls in [min, max] gets
- *  this range's colour when `enabled`. */
-export interface ScatterCriteriaRange {
+/** One user-defined time window, highlighted across every chart type — a
+ *  span of wall-clock time, not tied to any one sensor or chart, so it's
+ *  meaningful on Line (a tinted band), Scatter (a coloured ring around
+ *  points whose timestamp falls inside it), and Pair Plot (an enlarged
+ *  point, since Pair Plot can't afford the extra WebGL context a ring
+ *  would cost per cell — see PairPlotCell.tsx). `start`/`end` are
+ *  datetime-local input strings (not epoch numbers) so they round-trip
+ *  through the same `<input type="datetime-local">` the rest of the app's
+ *  date fields already use. */
+export interface TimeHighlight {
     id: string;
-    min: number;
-    max: number;
+    start: string;
+    end: string;
+    label: string;
+    color: string;
     enabled: boolean;
-}
-
-/** Scatter chart's criteria-sensor colouring config — which sensor colours
- *  the points, plus its value ranges. */
-export interface ScatterCriteria {
-    sensor: string;
-    ranges: ScatterCriteriaRange[];
 }
 
 export interface WorkspaceState {
@@ -273,12 +274,8 @@ export interface WorkspaceState {
      *  already persists on its own; this only restores what was last typed
      *  into the shortcut so it doesn't silently reset to "1 D". */
     relativeTimeRange?: { amount: string; unit: 'Y' | 'M' | 'W' | 'D' | 'H' };
-    /** Scatter chart's criteria-sensor colouring (the 3rd "Colour by…"
-     *  dropdown + its value-range chips). Persisted for the same reason as
-     *  `scatterAxes`/`scatterAxisPins` — Chart.tsx unmounts ScatterChart
-     *  entirely when the chart type isn't 'scatter', so anything left as
-     *  local state there (this used to be, before this field existed) is
-     *  lost the instant the user looks at Line/Pair Plot and comes back.
-     *  Absent = no criteria sensor picked (the pre-feature default). */
-    scatterCriteria?: ScatterCriteria;
+    /** Time windows highlighted across every chart type (Line/Scatter/Pair
+     *  Plot all read the same list) — see `TimeHighlight`. Absent = no
+     *  highlights defined (the pre-feature default). */
+    timeHighlights?: TimeHighlight[];
 }

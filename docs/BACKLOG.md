@@ -367,3 +367,54 @@ implemented yet. When resumed: confirm which of the two pieces (master-data
 write-back, raw-value recipe-replay) to build, or both, before touching
 code — this is the kind of decision that's expensive to reverse once
 workspace files in the wild start depending on whichever shape gets picked.
+
+---
+
+## 8. Autosave debounce has no flush-before-close — a change made in the last 250ms before quitting can be lost
+
+**Found:** performance audit requested by the user across the whole app
+(2026-08-15). `Dashboard.tsx`'s autosave effect used to call
+`saveWorkspaceData(buildWorkspaceState())` on every single tracked state
+change with no debounce at all — a real disk-I/O cost (every keystroke in a
+Filter value box, every drag-tick while resizing a panel, etc. each
+triggered an immediate `JSON.stringify` + `writeTextFile`). Fixed by adding
+a 250ms debounce (`AUTOSAVE_DEBOUNCE_MS`), matching the same pattern already
+used by `useChartData`/`useScatterSample`/`useTablePage` for backend
+queries — see the `useEffect` around `AUTOSAVE_DEBOUNCE_MS` in
+`Dashboard.tsx`.
+
+**Residual risk introduced by that fix (not present before):** with the
+debounce in place, there's now up to a 250ms window after any edit where
+the change exists only in React state, not yet on disk. If the user closes
+the app within that window, the change is lost — the workspace still
+resumes correctly, just one edit behind. Checked the whole codebase for an
+existing "flush pending work before the window actually closes" mechanism
+(Tauri v2's `getCurrentWindow().onCloseRequested(...)`, which lets you
+`preventDefault()`, await async work, then close manually) — **there isn't
+one anywhere**, not just for autosave. `PredictiveModelBuild.tsx` even has
+an explicit comment confirming this: "No `onCloseRequested` handler — let
+close proceed unconditionally."
+
+**Why not fixed in the same pass:** adding a close-intercept touches window
+lifecycle behavior that's hard to verify without interactively closing the
+real app (get it wrong — e.g. a handler that `preventDefault()`s but never
+actually calls `.close()` after the flush — and the window becomes
+impossible to close normally, which is a much worse regression than losing
+up to 250ms of the last edit). Scoped down to just the debounce, which was
+the actual ask.
+
+**User's call:** explicitly deferred — **"เขียนทิ้งไว้ใน backlog แต่ยังไม่
+ต้องทำตรงนี้ เดี๋ยวผมมาแก้ปัญหาทีหลัง"** (note it in the backlog, don't fix
+it now, will come back to it later).
+
+**Proposed fix, when picked up:** add `onCloseRequested` to the **main**
+window only (where `Dashboard.tsx` lives — sub-windows like Predictive
+Model / Add Sensor don't own workspace state). Track whether a debounced
+save is currently pending (e.g. a ref flipped by the same effect that sets
+the timer); if one is pending when close is requested, `preventDefault()`,
+await the flush (`saveWorkspaceData` on the latest state), then call
+`getCurrentWindow().close()` to let it actually close. Test manually via a
+real close (custom titlebar button in `TitleBar.tsx` + the native OS close
+control) after an edit, both inside and outside the 250ms window, before
+considering this done — this is exactly the kind of change unit tests
+can't fully cover.

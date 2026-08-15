@@ -220,6 +220,19 @@ describe('PairPlotCell', () => {
         );
     });
 
+    // Regression guard: Pair Plot deliberately does NOT read the Highlights
+    // tab's time-window list at all (unlike ScatterChart/LineChart) — its
+    // lasso-cluster already covers "mark points I care about", and an
+    // earlier revision's `sizeBy`-driven highlight emphasis here was removed
+    // as more confusing than useful once both existed side by side.
+    it('has no timeHighlights prop at all -- Pair Plot only ever reads clusters for colouring', () => {
+        render(<PairPlotCell {...baseProps} />);
+        const setCalls = lastInstance!.set.mock.calls;
+        const dataSetCall = setCalls.find((c) => c[0]?.colorBy === 'valueA');
+        expect(dataSetCall![0].sizeBy).toBeUndefined();
+        expect(dataSetCall![0].pointSize).toBeUndefined();
+    });
+
     it('sets mouseMode according to the active tool', () => {
         const { rerender } = render(<PairPlotCell {...baseProps} tool="pan" />);
         expect(lastInstance!.set).toHaveBeenCalledWith(expect.objectContaining({ mouseMode: 'panZoom' }));

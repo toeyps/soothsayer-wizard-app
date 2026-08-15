@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, memo, useRef, useCallback } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
-import { RotateCcw, Ruler, X } from 'lucide-react';
+import { RotateCcw, Ruler } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
-import type { ScatterCriteriaRange } from '../../types';
+import type { TimeHighlight } from '../../types';
+import { firstMatchingHighlight } from '../../utils/timeHighlights';
 import AxisLabel from './AxisLabel';
-import { rgbaToHex } from './pairPlotColors';
+import { hexToRgba } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { useThemeMode } from '../../hooks/useThemeMode';
@@ -23,21 +24,17 @@ const CANVAS_BG: Record<ReturnType<typeof useThemeMode>, [number, number, number
 };
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
-/** Base point colour when no criteria sensor is selected — the app's
- *  standard indigo accent at low alpha (density emerges via WebGL alpha
- *  blending). */
+/** Base point colour — the app's standard indigo accent at low alpha
+ *  (density emerges via WebGL alpha blending). */
 const BASE_POINT_COLOR: [number, number, number, number] = [0.39, 0.58, 0.98, 0.55];
 
-/** Colour for a point that falls outside every enabled criteria range — very
- *  low alpha so it fades into the background instead of competing with the
- *  highlighted bands, while still giving the overall data shape as context. */
-const CRITERIA_UNMATCHED_COLOR: [number, number, number, number] = [0.55, 0.6, 0.68, 0.12];
-
-/** Distinct colours for criteria-sensor value ranges ("load bands") — same
- *  palette as PairPlotChart's CLUSTER_PALETTE for visual consistency across
- *  the app's two lasso/range-based colouring features. Cycles if the user
- *  adds more ranges than colours. */
-const RANGE_PALETTE: Array<[number, number, number, number]> = [
+/** Distinct colours auto-assigned to new time highlights — same palette as
+ *  PairPlotChart's CLUSTER_PALETTE for visual consistency across the app's
+ *  range/lasso-based colouring features. Cycles if the user adds more
+ *  highlights than colours. Exported (via charts/index.ts) so
+ *  Dashboard.tsx's `handleAddTimeHighlight` can assign a default colour to
+ *  each new highlight. */
+export const RANGE_PALETTE: Array<[number, number, number, number]> = [
     [0.99, 0.75, 0.18, 1.0],  // amber
     [0.20, 0.83, 0.60, 1.0],  // emerald
     [0.86, 0.40, 0.97, 1.0],  // fuchsia
@@ -70,7 +67,7 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
 function ScatterChart({
     data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange,
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
-    scatterCriteria: persistedCriteria, onScatterCriteriaChange, sensorMetadata,
+    sensorMetadata, timeHighlights,
 }: ChartProps) {
     const themeMode = useThemeMode();
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
@@ -100,31 +97,6 @@ function ScatterChart({
     // sensors every time the user switched chart type and back.
     const [scatterX, setScatterX] = useState<string>(() => persistedX ?? '');
     const [scatterY, setScatterY] = useState<string>(() => persistedY ?? '');
-    /** Optional 3rd sensor whose value ranges ("load bands") colour each
-     *  point — e.g. speed 4000-5000 one colour, 5000-6000 another, so
-     *  multiple operating bands can be compared spatially on the X/Y plot
-     *  at once. Picking a sensor here only stages it; nothing is coloured
-     *  until at least one enabled range exists (see criteriaRanges below).
-     *  '' = off. Seeded from the persisted prop on mount — same unmount-
-     *  survival reasoning as scatterX/scatterY above (regression: this used
-     *  to be plain local state, so switching to Line/Pair Plot and back
-     *  silently dropped the sensor + every range the user had set up). */
-    const [criteriaSensor, setCriteriaSensor] = useState(() => persistedCriteria?.sensor ?? '');
-    /** Real min/max of criteriaSensor's values in the currently-pushed
-     *  points — shown as a hint next to the "add range" inputs so the user
-     *  knows what bounds are actually meaningful to type. Deliberately NOT
-     *  seeded from/persisted via `persistedCriteria` — it's re-derived from
-     *  the live data the moment criteriaSensor settles below, so persisting
-     *  it would just be a stale value flashing before that recompute. */
-    const [criteriaRange, setCriteriaRange] = useState<{ min: number; max: number } | null>(null);
-    /** User-defined value ranges for criteriaSensor. A point's colour comes
-     *  from the FIRST enabled range its value falls inside (array order);
-     *  a point matching no enabled range gets CRITERIA_UNMATCHED_COLOR.
-     *  Seeded from the persisted prop — see criteriaSensor above. */
-    const [criteriaRanges, setCriteriaRanges] = useState<ScatterCriteriaRange[]>(() => persistedCriteria?.ranges ?? []);
-    const [draftRangeMin, setDraftRangeMin] = useState('');
-    const [draftRangeMax, setDraftRangeMax] = useState('');
-    const [rangeError, setRangeError] = useState<string | null>(null);
     const [innerDims, setInnerDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     const [wrapperDims, setWrapperDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
     /** Full data extent — never changes while the chart is on a given (x, y).
@@ -161,6 +133,21 @@ function ScatterChart({
      *  issued while one is in flight, so back-to-back data/axis updates
      *  could leave the canvas showing stale points. */
     const { requestDraw, resetDraw } = useCoalescedDraw();
+
+    /** Highlight halo layer — see the canvas JSX comment for what this is.
+     *  A second, independent regl-scatterplot instance needs its own
+     *  coalesced-draw queue (the hook's busy flag is per-instance-of-the-hook,
+     *  not per-`sc` — sharing one with the main canvas would let a draw meant
+     *  for one instance block/coalesce a draw meant for the other). */
+    const haloCanvasRef = useRef<HTMLCanvasElement>(null);
+    const [haloSc, setHaloSc] = useState<any>(null);
+    /** Main creation effect's `view` subscriber reads this to relay camera
+     *  moves to the halo instance — a ref because that subscriber is set up
+     *  once (inside the main instance's own creation effect) and must always
+     *  see the CURRENT halo instance, not whatever existed at subscribe time. */
+    const haloScRef = useRef<any>(null);
+    useEffect(() => { haloScRef.current = haloSc; }, [haloSc]);
+    const { requestDraw: requestHaloDraw, resetDraw: resetHaloDraw } = useCoalescedDraw();
 
     /** Pinned X/Y axis bounds — like Line Plot's per-sensor Y-axis pin, but
      *  scoped to the axis ROLE (X vs Y) since Scatter only ever plots one
@@ -269,36 +256,6 @@ function ScatterChart({
         }
     }, [sensors, scatterX, scatterY]);
 
-    // Drop the criteria sensor (turn coloring off) if it's no longer among
-    // the selected sensors — same reasoning as X/Y above, just with 'off'
-    // as its valid "unset" state instead of falling back to a default.
-    // Its ranges go with it — they're meaningless for a different sensor.
-    useEffect(() => {
-        if (criteriaSensor && !sensors.includes(criteriaSensor)) {
-            setCriteriaSensor('');
-            setCriteriaRanges([]);
-        }
-    }, [sensors, criteriaSensor]);
-
-    const addCriteriaRange = () => {
-        const min = parseFloat(draftRangeMin);
-        const max = parseFloat(draftRangeMax);
-        if (!isFinite(min) || !isFinite(max)) { setRangeError('Enter valid numbers'); return; }
-        if (min >= max) { setRangeError('Min must be less than max'); return; }
-        setCriteriaRanges(prev => [...prev, { id: `${Date.now()}-${prev.length}`, min, max, enabled: true }]);
-        setDraftRangeMin('');
-        setDraftRangeMax('');
-        setRangeError(null);
-    };
-
-    const toggleCriteriaRange = (id: string) => {
-        setCriteriaRanges(prev => prev.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
-    };
-
-    const removeCriteriaRange = (id: string) => {
-        setCriteriaRanges(prev => prev.filter(r => r.id !== id));
-    };
-
     // Push the settled X/Y pair up to the parent (Dashboard) so it survives
     // this component being unmounted — see the seeding comment above.
     useEffect(() => {
@@ -312,14 +269,6 @@ function ScatterChart({
     useEffect(() => {
         onScatterAxisPinsChange?.({ x: xPin ?? undefined, y: yPin ?? undefined });
     }, [xPin, yPin, onScatterAxisPinsChange]);
-
-    // Push criteria-sensor changes up too, same unmount-survival reason —
-    // fires on every sensor pick / range add / range toggle / range remove,
-    // including the initial mount if seeded from `persistedCriteria` (a
-    // no-op for Dashboard, same value it already has).
-    useEffect(() => {
-        onScatterCriteriaChange?.({ sensor: criteriaSensor, ranges: criteriaRanges });
-    }, [criteriaSensor, criteriaRanges, onScatterCriteriaChange]);
 
     // Track wrapper size + derive the inner plot area (canvas size).
     useEffect(() => {
@@ -408,11 +357,18 @@ function ScatterChart({
         // scale's domain to reflect the currently-visible region — so
         // `xScale.domain()` here is already in REAL data values, no manual
         // inversion needed.
-        inst.subscribe('view', ({ xScale, yScale }: any) => {
+        inst.subscribe('view', ({ xScale, yScale, view }: any) => {
             if (!xScale || !yScale) return;
             const [vxMin, vxMax] = xScale.domain();
             const [vyMin, vyMax] = yScale.domain();
             setVisibleBounds({ xMin: vxMin, xMax: vxMax, yMin: vyMin, yMax: vyMax });
+            // Relay pan/zoom to the halo layer, if mounted — it never
+            // receives its own mouse input (pointer-events:none), so this
+            // programmatic sync is the only way its camera ever moves. Both
+            // instances share the exact same xLo/xHi/yLo/yHi → [-1,1]
+            // mapping (built from the same data effect below), so applying
+            // the identical view matrix keeps them visually aligned.
+            if (view) haloScRef.current?.set({ cameraView: view });
         });
 
         // WebGL context-loss recovery. Without `preventDefault` the browser
@@ -444,6 +400,74 @@ function ScatterChart({
         // call. Recreating is the only way that's been confirmed to work.
     }, [innerDims.width, innerDims.height, rebuildNonce, themeMode]);
 
+    /** Whether the halo layer has anything to show — recomputed each render
+     *  from the (small) `timeHighlights` list rather than memoized; used
+     *  both as the halo creation effect's mount/unmount gate and as a
+     *  dependency so toggling a highlight on/off (with no data or resize
+     *  change) actually creates or tears down the second WebGL context. */
+    const hasEnabledHighlights = (timeHighlights ?? []).some(h => h.enabled);
+
+    // Create / destroy the halo instance. Deliberately NOT tied to the main
+    // instance's lifecycle — it only exists while `hasEnabledHighlights` is
+    // true, so the extra WebGL context is never held when the feature isn't
+    // in use (this chart already carries one context; a second is cheap,
+    // but there's no reason to pay it for nothing).
+    useEffect(() => {
+        if (!haloCanvasRef.current || innerDims.width === 0 || innerDims.height === 0 || !hasEnabledHighlights) return;
+
+        let inst: ReturnType<typeof createScatterplot>;
+        try {
+            inst = createScatterplot({
+                canvas: haloCanvasRef.current,
+                width: innerDims.width,
+                height: innerDims.height,
+                aspectRatio: innerDims.width / innerDims.height,
+                pointSize: 7,
+                // Fully transparent clear colour — this canvas contributes
+                // nothing to the page except the highlighted points
+                // themselves, painted underneath the main canvas.
+                backgroundColor: [0, 0, 0, 0],
+            });
+        } catch (err) {
+            // Decorative layer only — if a second WebGL context genuinely
+            // can't be created, skip the halo silently rather than layering
+            // another error overlay on top of the main chart's own.
+            reportError('scatter-halo-init', err);
+            return;
+        }
+        setHaloSc(inst);
+        const haloCanvas = haloCanvasRef.current;
+
+        return () => {
+            resetHaloDraw();
+            // Null the ref synchronously, BEFORE destroy() — not just via
+            // `setHaloSc(null)` below. The main instance's `view` subscriber
+            // (registered once, in the OTHER creation effect) reads
+            // `haloScRef.current` directly and can fire from a pan/zoom in
+            // the gap between this cleanup and the next render's `haloSc ->
+            // haloScRef` sync effect. If that happens it calls `.set()` on
+            // an instance destroy() is tearing down (or has just torn down),
+            // throwing "The instance was already destroyed" from
+            // regl-scatterplot. Setting the ref here closes that gap.
+            haloScRef.current = null;
+            inst.destroy();
+            setHaloSc(null);
+            // `destroy()` tears down the WebGL context but does NOT clear
+            // the canvas's own pixel buffer — the browser keeps showing
+            // whatever was last rendered to it, frozen, since nothing else
+            // ever paints over a canvas element on its own. Without this,
+            // turning off the last enabled highlight (or removing it) left
+            // a stale halo image behind that no longer tracked pan/zoom —
+            // confirmed live: user disabled a highlight, then zoomed the
+            // main chart, and the old amber rings stayed fixed in place,
+            // visibly detached from the actual data underneath. Resetting
+            // `width` (even to its own value) is a standard trick that
+            // forces the browser to reinitialize — and thus fully clear —
+            // a canvas's backing bitmap regardless of which API drew to it.
+            if (haloCanvas) haloCanvas.width = haloCanvas.width;
+        };
+    }, [innerDims.width, innerDims.height, rebuildNonce, themeMode, hasEnabledHighlights, resetHaloDraw]);
+
     // Build points + normalise to [-1, 1] and push to the instance.
     // Runs whenever data / chosen sensors / the instance itself changes.
     useEffect(() => {
@@ -451,11 +475,9 @@ function ScatterChart({
         const xIdx = headers.indexOf(scatterX);
         const yIdx = headers.indexOf(scatterY);
         if (xIdx < 0 || yIdx < 0) return;
-        const zIdx = criteriaSensor ? headers.indexOf(criteriaSensor) : -1;
 
         const xs: number[] = [];
         const ys: number[] = [];
-        const zs: (number | null)[] = [];
         const orig: number[] = [];
         // Defensive cap: the Dashboard already feeds a bounded sample, but if
         // this chart is ever handed raw data, stride it down so we never push
@@ -465,7 +487,6 @@ function ScatterChart({
         const RENDER_CAP = 500_000;
         const step = data.length > RENDER_CAP ? Math.ceil(data.length / RENDER_CAP) : 1;
         let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-        let zMin = Infinity, zMax = -Infinity;
         for (let i = 0; i < data.length; i += step) {
             const x = data[i].values[xIdx];
             const y = data[i].values[yIdx];
@@ -477,21 +498,6 @@ function ScatterChart({
             if (x > xMax) xMax = x;
             if (y < yMin) yMin = y;
             if (y > yMax) yMax = y;
-            // Criteria value travels alongside x/y on the SAME filtered row
-            // set (so point count / orig-index mapping never depends on
-            // whether a criteria sensor is picked) — a row missing/invalid
-            // on the criteria sensor still plots, just uncoloured (matches
-            // no range) rather than being dropped.
-            if (zIdx >= 0) {
-                const z = data[i].values[zIdx];
-                if (z != null && typeof z === 'number' && !isNaN(z)) {
-                    zs.push(z);
-                    if (z < zMin) zMin = z;
-                    if (z > zMax) zMax = z;
-                } else {
-                    zs.push(null);
-                }
-            }
         }
 
         // Pinned bounds win over the auto-computed data extent on whichever
@@ -524,26 +530,31 @@ function ScatterChart({
             yArr[i] = ((ys[i] - yLo) / yRange) * 2 - 1;
         }
 
-        // valueA is regl-scatterplot's discrete/categorical colour channel
-        // (same one PairPlotCell uses for lasso clusters) — an integer index
-        // into the pointColor palette. 0 = "no enabled range matched" (or no
-        // criteria sensor at all); 1..N = the Nth enabled range, in the
-        // order the user added them. Only the FIRST matching range wins for
-        // a point whose value happens to fall in more than one (overlapping
-        // ranges are the user's call, not an error).
-        const enabledRanges = criteriaSensor ? criteriaRanges.filter(r => r.enabled) : [];
-        const hasActiveRanges = enabledRanges.length > 0;
-        let valueAArr: Float32Array | undefined;
-        if (hasActiveRanges) {
-            valueAArr = new Float32Array(len);
-            for (let i = 0; i < len; i++) {
-                const z = zs[i];
-                if (z == null) continue; // stays 0 (unmatched)
-                const idx = enabledRanges.findIndex(r => z >= r.min && z <= r.max);
-                if (idx >= 0) valueAArr[i] = idx + 1;
+        // Halo layer's categorical colour channel (same one PairPlotCell
+        // uses for lasso clusters) — 0 = not in any enabled highlight;
+        // 1..N = the Nth enabled highlight, first-match-wins.
+        if (haloSc) {
+            const enabledHighlights: TimeHighlight[] = (timeHighlights ?? []).filter(h => h.enabled);
+            if (enabledHighlights.length > 0) {
+                const idOrder = new Map(enabledHighlights.map((h, i) => [h.id, i]));
+                const haloValueA = new Float32Array(len);
+                for (let i = 0; i < len; i++) {
+                    const row = data[orig[i]];
+                    const match = firstMatchingHighlight(row?.timestamp, enabledHighlights);
+                    if (match) haloValueA[i] = (idOrder.get(match.id) ?? -1) + 1;
+                }
+                haloSc.set({
+                    xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
+                    yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
+                    colorBy: 'valueA',
+                    // Category 0 (no match) is fully transparent — the halo
+                    // canvas is otherwise empty, so an unmatched point simply
+                    // doesn't paint anything there.
+                    pointColor: [[0, 0, 0, 0], ...enabledHighlights.map(h => hexToRgba(h.color, 0.85))],
+                });
+                requestHaloDraw(haloSc, { x: xArr, y: yArr, valueA: haloValueA });
             }
         }
-        setCriteriaRange(zIdx >= 0 && isFinite(zMin) && isFinite(zMax) ? { min: zMin, max: zMax } : null);
 
         origIndicesRef.current = orig;
         dataBoundsRef.current = { xLo, xHi, yLo, yHi };
@@ -560,16 +571,8 @@ function ScatterChart({
         sc.set({
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
-            // Toggle criteria-range colouring on/off. pointColor doubles as
-            // both "the flat colour" (colorBy: null) and "the category
-            // palette, index 0 = unmatched" (colorBy: 'valueA') depending on
-            // which mode is active — same dual-purpose option
-            // regl-scatterplot itself specifies (and the same pattern
-            // PairPlotCell uses for its lasso-cluster colours).
-            colorBy: hasActiveRanges ? 'valueA' : null,
-            pointColor: hasActiveRanges
-                ? [CRITERIA_UNMATCHED_COLOR, ...enabledRanges.map((_, i) => RANGE_PALETTE[i % RANGE_PALETTE.length])]
-                : BASE_POINT_COLOR,
+            colorBy: null,
+            pointColor: BASE_POINT_COLOR,
         });
         // Without this, changing sensors or applying/editing a pin while
         // zoomed/panned left the camera showing whatever fraction of the
@@ -586,8 +589,8 @@ function ScatterChart({
             sc.reset();
         }
         prevScForResetRef.current = sc;
-        requestDraw(sc, valueAArr ? { x: xArr, y: yArr, valueA: valueAArr } : { x: xArr, y: yArr });
-    }, [sc, data, scatterX, scatterY, headers, criteriaSensor, criteriaRanges, requestDraw, effectiveXRange, effectiveYRange]);
+        requestDraw(sc, { x: xArr, y: yArr });
+    }, [sc, data, scatterX, scatterY, headers, requestDraw, effectiveXRange, effectiveYRange, haloSc, timeHighlights, requestHaloDraw]);
 
     const handleResetView = () => {
         sc?.reset();
@@ -659,70 +662,7 @@ function ScatterChart({
                 <select value={scatterY} onChange={e => setScatterY(e.target.value)} className="scatter-regl-select">
                     {sensors.map(s => <option key={s} value={s}>{s} (Y)</option>)}
                 </select>
-                <span className="scatter-regl-vs">·</span>
-                <select
-                    value={criteriaSensor}
-                    onChange={e => setCriteriaSensor(e.target.value)}
-                    className="scatter-regl-select"
-                    title="Colour points by a 3rd sensor's value (low→high gradient)"
-                >
-                    <option value="">Colour by…</option>
-                    {sensors.map(s => <option key={s} value={s}>{s} (colour)</option>)}
-                </select>
             </div>
-
-            {/* Criteria-sensor range ("load band") manager — only shown once
-                a 3rd sensor is picked. Points colour by whichever enabled
-                range their value falls in, so several bands (e.g. two speed
-                ranges) can be highlighted and compared at once; a value
-                matching none of them fades to CRITERIA_UNMATCHED_COLOR. */}
-            {criteriaSensor && (
-                <div className="scatter-regl-criteria-legend" title={criteriaSensor}>
-                    <span className="scatter-regl-criteria-legend-label">{criteriaSensor}</span>
-                    {criteriaRange && (
-                        <span className="scatter-regl-criteria-legend-value">
-                            {fmt(criteriaRange.min)}–{fmt(criteriaRange.max)}
-                        </span>
-                    )}
-                    {criteriaRanges.map((r, i) => (
-                        <label key={r.id} className="scatter-regl-range-chip" title={r.enabled ? 'Click to hide this band' : 'Click to show this band'}>
-                            <input type="checkbox" checked={r.enabled} onChange={() => toggleCriteriaRange(r.id)} />
-                            <span
-                                className="scatter-regl-range-chip-swatch"
-                                style={{ background: rgbaToHex(RANGE_PALETTE[i % RANGE_PALETTE.length]) }}
-                            />
-                            <span>{fmt(r.min)}–{fmt(r.max)}</span>
-                            <button
-                                type="button"
-                                onClick={() => removeCriteriaRange(r.id)}
-                                className="scatter-regl-range-chip-remove"
-                                title="Remove this range"
-                            >
-                                <X size={10} />
-                            </button>
-                        </label>
-                    ))}
-                    <input
-                        type="number"
-                        placeholder="min"
-                        value={draftRangeMin}
-                        onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
-                        className="scatter-regl-axis-editor-input"
-                        style={{ width: 84 }}
-                    />
-                    <span>–</span>
-                    <input
-                        type="number"
-                        placeholder="max"
-                        value={draftRangeMax}
-                        onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
-                        className="scatter-regl-axis-editor-input"
-                        style={{ width: 84 }}
-                    />
-                    <button type="button" onClick={addCriteriaRange} className="scatter-regl-btn">+ Add</button>
-                    {rangeError && <span className="scatter-regl-axis-editor-error">{rangeError}</span>}
-                </div>
-            )}
 
             {/* ECharts-style toolbox (click to activate). Pan/zoom is always
                 on (the library's own default mouseMode) — no lasso-select
@@ -805,7 +745,32 @@ function ScatterChart({
                 width: innerDims.width,
                 height: innerDims.height,
             }}>
-                <canvas ref={canvasRef} style={{ display: 'block', width: innerDims.width, height: innerDims.height }} />
+                {/* Highlight halo — a second, transparent WebGL layer behind
+                    the main canvas, rendering only points inside an enabled
+                    time highlight, larger and in that highlight's own
+                    colour, so the visible sliver peeking out around each
+                    normal dot on top reads as a ring.
+                    pointerEvents:none keeps ALL mouse interaction on the
+                    main canvas — this layer's camera is driven
+                    programmatically from the main instance's `view` events,
+                    never by its own drag/zoom. Only mounted while at least
+                    one highlight is enabled (see the halo creation effect)
+                    so it costs nothing — not even a WebGL context — the rest
+                    of the time. */}
+                <canvas
+                    ref={haloCanvasRef}
+                    data-testid="scatter-halo-canvas"
+                    style={{
+                        display: 'block', position: 'absolute', inset: 0,
+                        width: innerDims.width, height: innerDims.height,
+                        pointerEvents: 'none', zIndex: 0,
+                    }}
+                />
+                <canvas
+                    ref={canvasRef}
+                    data-testid="scatter-main-canvas"
+                    style={{ display: 'block', position: 'absolute', inset: 0, width: innerDims.width, height: innerDims.height, zIndex: 1 }}
+                />
                 {/* Hover tooltip — positioned in canvas-local coordinates so it
                     tracks the highlighted point. pointerEvents:none prevents it
                     from stealing hover from neighbouring points. */}

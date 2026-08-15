@@ -79,6 +79,18 @@ afterEach(() => {
 });
 
 describe('PairPlotChart', () => {
+    // Regression guard: Pair Plot deliberately does not read the Highlights
+    // tab's timeHighlights at all (see ChartTypes.ts / Dashboard.tsx for
+    // why) -- it never receives the prop from Chart.tsx and none of its
+    // cells accept it.
+    it('never forwards a timeHighlights prop to PairPlotCell', () => {
+        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        expect(cellCalls.length).toBeGreaterThan(0);
+        for (const call of cellCalls) {
+            expect(call.timeHighlights).toBeUndefined();
+        }
+    });
+
     it('diagonal histogram and scatter cells derive their default colour from the same hex (regression: used to be two hardcoded near-duplicate blues)', () => {
         render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
 

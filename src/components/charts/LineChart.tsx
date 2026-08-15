@@ -3,6 +3,27 @@ import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 import { formatDate, formatDateTime } from '../../utils/dateFormat';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { hexToRgbaCss } from './pairPlotColors';
+
+/** Index into `xData` (a category axis of timestamp strings) whose parsed
+ *  time is closest to `targetMs` — ECharts' category axis needs an actual
+ *  axis value (or index) for markArea boundaries, not an arbitrary
+ *  timestamp, so a highlight's start/end snap to the nearest plotted point.
+ *  Linear scan is fine here: xData is capped at a few thousand points
+ *  (LINE_MAX_POINTS backend-side) and this only runs per highlight, not per
+ *  render frame. */
+function nearestXIndex(xData: (string | null)[], targetMs: number): number {
+    let best = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < xData.length; i++) {
+        const raw = xData[i];
+        const t = raw == null ? NaN : new Date(raw).getTime();
+        if (isNaN(t)) continue;
+        const diff = Math.abs(t - targetMs);
+        if (diff < bestDiff) { bestDiff = diff; best = i; }
+    }
+    return best;
+}
 
 // Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
 // show/default to the same palette a sensor would get without an override.
@@ -30,7 +51,7 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
     return palette[Math.abs(hash) % palette.length];
 }
 
-function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetadata }: ChartProps) {
+function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetadata, timeHighlights }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
@@ -101,6 +122,43 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
         // spline is visually identical to straight segments anyway (<1 px per
         // segment), so the pretty profile is reserved for genuinely small data.
         const isLargeData = dataCount > 2000;
+
+        // Time-highlight bands ("Highlights" tab's "By time" group) — a
+        // distinct ECharts mechanism from the horizontal markLine used for
+        // alarm setpoints above/below. Attached to the first series only:
+        // markArea renders across the shared grid regardless of which
+        // series owns it, so adding it to every series would just draw the
+        // same bands N times over. Category axis needs an actual axis
+        // value/index for the boundary, not an arbitrary timestamp, so each
+        // highlight's start/end snap to the nearest plotted point.
+        const highlightAreas = dataCount > 0
+            ? (timeHighlights ?? [])
+                .filter(h => h.enabled)
+                .map(h => {
+                    const s = new Date(h.start).getTime();
+                    const e = new Date(h.end).getTime();
+                    if (isNaN(s) || isNaN(e)) return null;
+                    const startIdx = nearestXIndex(xData, Math.min(s, e));
+                    const endIdx = nearestXIndex(xData, Math.max(s, e));
+                    return [
+                        {
+                            xAxis: startIdx,
+                            itemStyle: { color: hexToRgbaCss(h.color, 0.16) },
+                            label: {
+                                show: true,
+                                formatter: h.label,
+                                position: 'insideTop' as const,
+                                color: h.color,
+                                fontSize: 10,
+                                fontWeight: 600,
+                                fontFamily: 'JetBrains Mono, monospace',
+                            },
+                        },
+                        { xAxis: endIdx },
+                    ];
+                })
+                .filter((v): v is NonNullable<typeof v> => v !== null)
+            : [];
 
         // ── Dynamic horizontal padding ────────────────────────────
         const AXIS_OFFSET = 60;
@@ -351,10 +409,16 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                     // vertex.
                     ...(isLargeData ? { sampling: 'lttb' as const } : {}),
                     ...(markLine ? { markLine } : {}),
+                    // Only the first series carries markArea — see
+                    // highlightAreas' own comment above for why attaching it
+                    // to every series would be redundant.
+                    ...(index === 0 && highlightAreas.length > 0
+                        ? { markArea: { silent: true, data: highlightAreas } }
+                        : {}),
                 };
             })
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>

@@ -21,6 +21,13 @@ const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 
  * subscribes to lasso & hover events, and accepts a parent-owned list of
  * brushed clusters so the multi-coloured highlight stays in sync across
  * every cell.
+ *
+ * Deliberately does NOT read the Highlights tab's time-window list (unlike
+ * ScatterChart/LineChart) — Pair Plot's lasso-cluster already covers "mark a
+ * group of points I care about", and layering a second, differently-scoped
+ * highlighting mechanism on top of it was judged more confusing than useful
+ * (an earlier revision added a `sizeBy`-driven emphasis for this; removed
+ * per the same call).
  */
 
 type ToolMode = 'pan' | 'lasso';

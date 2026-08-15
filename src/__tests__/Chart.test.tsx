@@ -81,12 +81,10 @@ describe('Chart', () => {
         expect(pairProps[0]).toMatchObject({ data: baseProps.data, sensors: ['A', 'B'], headers: baseProps.headers, sensorMetadata });
     });
 
-    it('renders ScatterChart for chartType="scatter" and forwards axis props + criteria props + sensorMetadata (regression: sensorMetadata was never wired through to ScatterChart, so the axis-title hover-tooltip descriptions had no data to read)', () => {
+    it('renders ScatterChart for chartType="scatter" and forwards axis props + sensorMetadata (regression: sensorMetadata was never wired through to ScatterChart, so the axis-title hover-tooltip descriptions had no data to read)', () => {
         const onScatterAxesChange = vi.fn();
         const onScatterAxisPinsChange = vi.fn();
-        const onScatterCriteriaChange = vi.fn();
         const scatterAxisPins = { x: { sensor: 'A' } };
-        const scatterCriteria = { sensor: 'A', ranges: [{ id: 'r1', min: 0, max: 10, enabled: true }] };
         const sensorMetadata = [{ tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' }];
         render(
             <Chart
@@ -98,8 +96,6 @@ describe('Chart', () => {
                 onScatterAxesChange={onScatterAxesChange}
                 scatterAxisPins={scatterAxisPins}
                 onScatterAxisPinsChange={onScatterAxisPinsChange}
-                scatterCriteria={scatterCriteria}
-                onScatterCriteriaChange={onScatterCriteriaChange}
                 sensorMetadata={sensorMetadata}
             />,
         );
@@ -111,9 +107,22 @@ describe('Chart', () => {
             onScatterAxesChange,
             scatterAxisPins,
             onScatterAxisPinsChange,
-            scatterCriteria,
-            onScatterCriteriaChange,
             sensorMetadata,
         });
+    });
+
+    it('forwards timeHighlights to Line and Scatter, but never to Pair Plot (its lasso-cluster is a separate, self-contained mechanism)', () => {
+        const timeHighlights = [{ id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true }];
+
+        const { unmount: unmountLine } = render(<Chart {...baseProps} sensors={['A']} chartType="line" timeHighlights={timeHighlights} />);
+        expect(lineProps[0].timeHighlights).toBe(timeHighlights);
+        unmountLine();
+
+        const { unmount: unmountScatter } = render(<Chart {...baseProps} sensors={['A', 'B']} chartType="scatter" timeHighlights={timeHighlights} />);
+        expect(scatterProps[0].timeHighlights).toBe(timeHighlights);
+        unmountScatter();
+
+        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" timeHighlights={timeHighlights} />);
+        expect(pairProps[0].timeHighlights).toBeUndefined();
     });
 });

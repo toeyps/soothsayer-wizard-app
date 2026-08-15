@@ -15,8 +15,14 @@ function makeMockInstance() {
 }
 
 let lastInstance: ReturnType<typeof makeMockInstance> | null = null;
+/** Every instance created this test, in creation order — main canvas first
+ *  (its creation effect is declared before the halo layer's), halo second
+ *  when one gets created. Used by the halo-layer tests below to tell the
+ *  two WebGL instances apart. */
+let instances: ReturnType<typeof makeMockInstance>[] = [];
 const mockCreateScatterplot = vi.fn((_opts: any) => {
     lastInstance = makeMockInstance();
+    instances.push(lastInstance);
     return lastInstance;
 });
 vi.mock('regl-scatterplot', () => ({
@@ -56,6 +62,7 @@ beforeEach(() => {
     mockCreateScatterplot.mockClear();
     mockReportError.mockClear();
     lastInstance = null;
+    instances = [];
     lastResizeCallback = null;
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
 
@@ -152,202 +159,130 @@ describe('ScatterChart', () => {
         expect(events).not.toEqual(expect.arrayContaining(['select', 'deselect']));
     });
 
-    describe('criteria-sensor colouring (value-range "load bands", multi-select)', () => {
+    describe('point colouring (criteria-sensor "By value" colouring was removed — Scatter only ever renders a flat colour on its own canvas)', () => {
         const headers3 = ['A', 'B', 'C'];
         const data3 = [
-            { timestamp: 't0', values: [1, 10, 100] },  // C=100 → range 1
-            { timestamp: 't1', values: [2, 20, 200] },  // C=200 → range 2
-            { timestamp: 't2', values: [3, 30, 150] },  // C=150 → between ranges, unmatched
-            { timestamp: 't3', values: [4, 40, null] }, // missing C — must still plot, unmatched
+            { timestamp: 't0', values: [1, 10, 100] },
+            { timestamp: 't1', values: [2, 20, 200] },
         ] as any;
 
-        function addRange(min: string, max: string) {
-            fireEvent.change(screen.getByPlaceholderText('min'), { target: { value: min } });
-            fireEvent.change(screen.getByPlaceholderText('max'), { target: { value: max } });
-            fireEvent.click(screen.getByText('+ Add'));
-        }
-
-        it('defaults to flat colouring (colorBy off) with no criteria sensor selected', () => {
+        it('no criteria control exists in this chart\'s own toolbar (only X/Y pickers)', () => {
             render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
-            expect(lastSetCall![0].colorBy).toBeNull();
+            expect(screen.getAllByRole('combobox')).toHaveLength(2); // X, Y only
+            expect(screen.queryByText('Colour by…')).toBeNull();
+            expect(screen.queryByPlaceholderText('min')).toBeNull();
+            expect(screen.queryByText('+ Add')).toBeNull();
         });
 
-        it('picking a criteria sensor alone does not turn on colouring — a range must be added first', () => {
+        it('always colours points flat (colorBy off), never a category palette', () => {
             render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-
             const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
             expect(lastSetCall![0].colorBy).toBeNull();
             expect(lastSetCall![0].pointColor).toEqual([0.39, 0.58, 0.98, 0.55]);
         });
+    });
 
-        it('adding a range turns on category colouring (colorBy: valueA) and categorizes each point', async () => {
-            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
+    describe('time-highlight halo layer (2nd WebGL instance, colour ring around matching points)', () => {
+        const dataT = [
+            { timestamp: '2026-01-01T00:00:00', values: [1, 10] },
+            { timestamp: '2026-01-01T01:00:00', values: [2, 20] },
+            { timestamp: '2026-01-01T02:00:00', values: [3, 30] },
+        ] as any;
+        const highlight1 = { id: 'h1', start: '2026-01-01T00:00:00', end: '2026-01-01T01:00:00', label: 'Startup', color: '#ff0000', enabled: true };
 
-            // requestDraw defers sc.draw() to a microtask (see useCoalescedDraw) —
-            // sc.set() runs synchronously, but draw() needs a flush before its
-            // mock calls are visible.
+        it('does not create a halo instance when timeHighlights is absent or empty', () => {
+            render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[]} />);
+            expect(mockCreateScatterplot).toHaveBeenCalledTimes(1); // main only
+        });
+
+        it('does not create a halo instance when every highlight is disabled', () => {
+            render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[{ ...highlight1, enabled: false }]} />);
+            expect(mockCreateScatterplot).toHaveBeenCalledTimes(1);
+        });
+
+        it('creates a second, transparent-background WebGL instance once a highlight is enabled', () => {
+            render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
+            expect(mockCreateScatterplot).toHaveBeenCalledTimes(2);
+            const haloOpts = mockCreateScatterplot.mock.calls[1][0];
+            expect(haloOpts.backgroundColor).toEqual([0, 0, 0, 0]);
+        });
+
+        it('draws only points whose timestamp falls inside the enabled highlight, categorised on the halo layer', async () => {
             await act(async () => {
-                addRange('50', '100');
+                render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
                 await Promise.resolve();
                 await Promise.resolve();
             });
+            const haloInstance = instances[1];
+            const haloDraw = last(haloInstance.draw.mock.calls);
+            const valueA = haloDraw[0].valueA as Float32Array;
+            expect(valueA[0]).toBe(1); // 00:00 — inside [00:00, 01:00]
+            expect(valueA[1]).toBe(1); // 01:00 — inside (inclusive end)
+            expect(valueA[2]).toBe(0); // 02:00 — outside
 
-            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
-            expect(lastSetCall![0].colorBy).toBe('valueA');
-            expect(lastSetCall![0].pointColor).toHaveLength(2); // [unmatched, range1]
-
-            const lastDrawCall = last(lastInstance!.draw.mock.calls);
-            const valueA = lastDrawCall[0].valueA as Float32Array;
-            expect(valueA[0]).toBe(1); // C=100 → inside [50,100]
-            expect(valueA[1]).toBe(0); // C=200 → outside
-            expect(valueA[2]).toBe(0); // C=150 → outside
-            expect(valueA[3]).toBe(0); // C missing → unmatched
+            const haloSet = last(haloInstance.set.mock.calls.filter((c: any) => 'colorBy' in c[0]));
+            expect(haloSet[0].colorBy).toBe('valueA');
+            expect(haloSet[0].pointColor[0]).toEqual([0, 0, 0, 0]); // unmatched → fully transparent
+            expect(haloSet[0].pointColor[1]).toEqual([1, 0, 0, 0.85]); // highlight1's own colour
         });
 
-        it('supports multiple enabled ranges at once, each its own category', async () => {
-            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            addRange('50', '100');
+        it('never touches the main canvas\'s flat fill colour — the two channels stay independent', async () => {
             await act(async () => {
-                addRange('180', '220');
+                render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
                 await Promise.resolve();
                 await Promise.resolve();
             });
-
-            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
-            expect(lastSetCall![0].pointColor).toHaveLength(3); // [unmatched, range1, range2]
-
-            const lastDrawCall = last(lastInstance!.draw.mock.calls);
-            const valueA = lastDrawCall[0].valueA as Float32Array;
-            expect(valueA[0]).toBe(1); // C=100 → range 1
-            expect(valueA[1]).toBe(2); // C=200 → range 2
-            expect(valueA[2]).toBe(0); // C=150 → matches neither
+            const mainSet = last(instances[0].set.mock.calls.filter((c: any) => 'colorBy' in c[0]));
+            expect(mainSet[0].colorBy).toBeNull();
+            expect(mainSet[0].pointColor).toEqual([0.39, 0.58, 0.98, 0.55]); // still the flat base colour, untouched by the highlight
         });
 
-        it('unchecking a range excludes it from colouring without deleting it', async () => {
-            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            addRange('50', '100');
-
-            await act(async () => {
-                fireEvent.click(screen.getByRole('checkbox'));
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
-            expect(lastSetCall![0].colorBy).toBeNull(); // no enabled ranges left
-            // The chip itself must still exist (unchecked, not removed).
-            expect(screen.getByText('50.00–100.00')).toBeTruthy();
+        it('relays pan/zoom from the main instance to the halo layer via cameraView', () => {
+            render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
+            const fakeScale = { domain: () => [0, 1] };
+            const fakeView = new Float32Array([1, 0, 0, 0]);
+            act(() => { instances[0].__subs['view']({ xScale: fakeScale, yScale: fakeScale, view: fakeView }); });
+            expect(instances[1].set).toHaveBeenCalledWith(expect.objectContaining({ cameraView: fakeView }));
         });
 
-        it('removing a range via its × button deletes it entirely', () => {
-            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            addRange('50', '100');
-            expect(screen.getByText('50.00–100.00')).toBeTruthy();
+        it('tears down the halo instance once every highlight becomes disabled', () => {
+            const { rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
+            expect(mockCreateScatterplot).toHaveBeenCalledTimes(2);
+            const haloInstance = instances[1];
 
-            fireEvent.click(screen.getByTitle('Remove this range'));
-            expect(screen.queryByText('50.00–100.00')).toBeNull();
+            rerender(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[{ ...highlight1, enabled: false }]} />);
+            expect(haloInstance.destroy).toHaveBeenCalledTimes(1);
         });
 
-        it('rejects an invalid range (min >= max) with an inline error, without adding a chip', () => {
-            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            addRange('100', '50');
+        it('stops relaying view events to the halo instance once it is torn down (no "already destroyed" call)', () => {
+            const { rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
+            const haloInstance = instances[1];
 
-            expect(screen.getByText('Min must be less than max')).toBeTruthy();
-            expect(screen.queryByText('100.00–50.00')).toBeNull();
+            rerender(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[{ ...highlight1, enabled: false }]} />);
+            expect(haloInstance.destroy).toHaveBeenCalledTimes(1);
+            const setCallsAtTeardown = haloInstance.set.mock.calls.length;
+
+            // Simulate a pan/zoom landing right after teardown — the main
+            // instance's `view` subscriber must not call `.set()` on the
+            // now-destroyed halo instance (that's what regl-scatterplot
+            // throws "The instance was already destroyed" for).
+            const fakeScale = { domain: () => [0, 1] };
+            act(() => { instances[0].__subs['view']({ xScale: fakeScale, yScale: fakeScale, view: new Float32Array([1, 0, 0, 0]) }); });
+            expect(haloInstance.set.mock.calls.length).toBe(setCallsAtTeardown);
         });
 
-        it('shows the real min/max of the criteria sensor as a hint, and hides the whole panel when turned off', () => {
-            const { container } = render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            expect(container.querySelector('.scatter-regl-criteria-legend')).toBeNull();
+        it('clears the halo canvas pixel buffer on teardown, not just the WebGL context', () => {
+            const { rerender } = render(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[highlight1]} />);
+            const haloCanvas = screen.getByTestId('scatter-halo-canvas') as HTMLCanvasElement;
+            const widthSetter = vi.fn();
+            Object.defineProperty(haloCanvas, 'width', { configurable: true, get: () => 300, set: widthSetter });
 
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            const legend = container.querySelector('.scatter-regl-criteria-legend')!;
-            expect(legend).toBeTruthy();
-            expect(legend.textContent).toContain('C');
-            expect(legend.textContent).toContain('100.00');
-            expect(legend.textContent).toContain('200.00');
+            rerender(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[{ ...highlight1, enabled: false }]} />);
 
-            fireEvent.change(criteriaSelect, { target: { value: '' } });
-            expect(container.querySelector('.scatter-regl-criteria-legend')).toBeNull();
-        });
-
-        it('reverts to the flat base colour when the criteria sensor is cleared while a range was active', async () => {
-            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            await act(async () => {
-                addRange('50', '100');
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-            expect(last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]))![0].colorBy).toBe('valueA');
-
-            fireEvent.change(criteriaSelect, { target: { value: '' } });
-            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
-            expect(lastSetCall![0].colorBy).toBeNull();
-            expect(lastSetCall![0].pointColor).toEqual([0.39, 0.58, 0.98, 0.55]);
-        });
-
-        it('drops the criteria selection (and its ranges) if that sensor is deselected from the sensor list', () => {
-            const { rerender, container } = render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-            addRange('50', '100');
-            expect(container.querySelector('.scatter-regl-criteria-legend')).toBeTruthy();
-
-            rerender(<ScatterChart data={data3} sensors={['A', 'B']} headers={headers3} />);
-            expect(container.querySelector('.scatter-regl-criteria-legend')).toBeNull();
-
-            // Re-selecting C (now back in the sensor list) must start with a
-            // clean slate, not a resurrected stale range.
-            rerender(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            const [, , criteriaSelect2] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(criteriaSelect2, { target: { value: 'C' } });
-            expect(screen.queryByText('50.00–100.00')).toBeNull();
-        });
-
-        describe('persistence (regression: used to be plain local state, so switching to Line/Pair Plot and back to Scatter silently dropped the sensor + every range)', () => {
-            it('seeds the sensor and its ranges from the scatterCriteria prop on mount, unmount-surviving via Dashboard', () => {
-                const scatterCriteria = { sensor: 'C', ranges: [{ id: 'r1', min: 50, max: 100, enabled: true }] };
-                render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} scatterCriteria={scatterCriteria} />);
-
-                const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-                expect(criteriaSelect.value).toBe('C');
-                expect(screen.getByText('50.00–100.00')).toBeTruthy();
-            });
-
-            it('fires onScatterCriteriaChange whenever the sensor or ranges change, so the parent can persist them', () => {
-                const onScatterCriteriaChange = vi.fn();
-                render(
-                    <ScatterChart
-                        data={data3} sensors={['A', 'B', 'C']} headers={headers3}
-                        onScatterCriteriaChange={onScatterCriteriaChange}
-                    />,
-                );
-                const [, , criteriaSelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-                fireEvent.change(criteriaSelect, { target: { value: 'C' } });
-                expect(onScatterCriteriaChange).toHaveBeenLastCalledWith({ sensor: 'C', ranges: [] });
-
-                addRange('50', '100');
-                expect(onScatterCriteriaChange).toHaveBeenLastCalledWith({
-                    sensor: 'C',
-                    ranges: [expect.objectContaining({ min: 50, max: 100, enabled: true })],
-                });
-            });
+            // destroy() only tears down the WebGL context — it leaves the canvas's
+            // last-rendered frame on screen. Re-assigning `width` is what actually
+            // forces the browser to clear the backing bitmap, so this must fire too.
+            expect(widthSetter).toHaveBeenCalledWith(300);
         });
     });
 
@@ -369,8 +304,12 @@ describe('ScatterChart', () => {
     });
 
     it('shows a context-lost overlay on webglcontextlost and hides it on restore', () => {
-        const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
-        const canvas = container.querySelector('canvas')!;
+        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        // Must target the MAIN canvas specifically -- the halo canvas (see
+        // the halo-layer describe block below) is always present in the DOM
+        // ahead of it, even when unused, and never gets the context-loss
+        // listeners since no WebGL context is ever created on it in that case.
+        const canvas = screen.getByTestId('scatter-main-canvas');
 
         act(() => { canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true })); });
         expect(screen.getByText(/GPU dropped the canvas/)).toBeTruthy();

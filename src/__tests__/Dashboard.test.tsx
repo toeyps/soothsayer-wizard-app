@@ -17,6 +17,13 @@ vi.mock('../components/charts', () => ({
     defaultSensorColor: (tag: string) => `default-${tag}`,
     LINE_CHART_COLORS: ['c0', 'c1', 'c2', 'c3', 'c4', 'c5'],
     MAX_PAIR_PLOT_SENSORS: 4,
+    // Real palette (not a stub) -- Dashboard's default-colour-assignment
+    // tests read actual entries from it, and it must match ScatterChart's
+    // own RANGE_PALETTE exactly since the two are meant to agree.
+    RANGE_PALETTE: [
+        [0.99, 0.75, 0.18, 1.0], [0.20, 0.83, 0.60, 1.0], [0.86, 0.40, 0.97, 1.0], [0.99, 0.45, 0.45, 1.0],
+        [0.40, 0.85, 0.99, 1.0], [0.99, 0.55, 0.27, 1.0], [0.65, 0.85, 0.40, 1.0], [0.78, 0.66, 0.99, 1.0],
+    ],
 }));
 
 const filterPanelProps: any[] = [];
@@ -80,6 +87,22 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
 
 vi.mock('../components/dashboard/ColorPlatePicker', () => ({
     default: (props: any) => <button onClick={() => props.onChange('#abcdef')}>set-color</button>,
+}));
+
+const highlightsPanelProps: any[] = [];
+vi.mock('../components/dashboard/HighlightsPanel', () => ({
+    default: (props: any) => {
+        highlightsPanelProps.push(props);
+        return (
+            <div data-testid="highlights-panel">
+                <button onClick={() => props.onAddTimeHighlight('2026-01-01T00:00', '2026-01-01T01:00', 'Test')}>hl-add-highlight</button>
+                <button onClick={() => props.onToggleTimeHighlight('h1')}>hl-toggle-highlight</button>
+                <button onClick={() => props.onRemoveTimeHighlight('h1')}>hl-remove-highlight</button>
+                <button onClick={() => props.onRecolorTimeHighlight('h1', '#abcdef')}>hl-recolor-highlight</button>
+                <button onClick={() => props.onRenameTimeHighlight('h1', 'Renamed')}>hl-rename-highlight</button>
+            </div>
+        );
+    },
 }));
 
 // ── Data hooks — controllable, no debounce/invoke timing to fight ─────────
@@ -207,6 +230,7 @@ beforeEach(() => {
     filterPanelProps.length = 0;
     sensorSelectionProps.length = 0;
     fgPanelProps.length = 0;
+    highlightsPanelProps.length = 0;
     webviewWindowCalls.length = 0;
     splitCalls.length = 0;
     listenCallbacks = {};
@@ -227,6 +251,7 @@ beforeEach(() => {
 
 afterEach(() => {
     cleanup();
+    vi.useRealTimers();
 });
 
 describe('Dashboard', () => {
@@ -237,11 +262,32 @@ describe('Dashboard', () => {
         expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1']);
     });
 
-    it('autosaves on mount with the workspace name and lastRoute "dashboard"', () => {
+    it('autosaves on mount with the workspace name and lastRoute "dashboard" (after the debounce settles)', async () => {
         renderDashboard({ initialState: makeInitialState({ name: 'My Workspace' }) });
-        expect(mockSaveWorkspaceData).toHaveBeenCalledWith(
+        await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalledWith(
             expect.objectContaining({ name: 'My Workspace', lastRoute: 'dashboard' }),
-        );
+        ));
+    });
+
+    it('debounces autosave -- a burst of rapid state changes writes to disk once, not once per change (regression: every tracked state change, including each keystroke in a Filter box with no debounce of its own, used to trigger an immediate write)', () => {
+        vi.useFakeTimers();
+        renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+        mockSaveWorkspaceData.mockClear(); // drop the initial on-mount autosave
+
+        // Simulate a rapid burst: three filter edits in quick succession,
+        // each well inside the debounce window of the previous one.
+        act(() => { fireEvent.click(screen.getByText('Filter')); });
+        act(() => { fireEvent.click(screen.getByText('apply-filter')); });
+        act(() => { vi.advanceTimersByTime(100); });
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); }); // no-op reselect, still a state change
+        act(() => { vi.advanceTimersByTime(100); });
+
+        // Still within the debounce window of the LAST change (100 + 100 = 200ms < 250ms) -- no write yet.
+        expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+
+        // Let the debounce settle past the last change.
+        act(() => { vi.advanceTimersByTime(150); });
+        expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // exactly one write, not three
     });
 
     describe('panel collapse / expand', () => {
@@ -311,18 +357,6 @@ describe('Dashboard', () => {
             );
         });
 
-        it('seeds scatterCriteria from initialState and forwards it (+ the change handler) to Chart (regression: this used to be plain local state inside ScatterChart, so switching chart type and back silently dropped the criteria sensor + every range)', () => {
-            const scatterCriteria = { sensor: 'TAG1', ranges: [{ id: 'r1', min: 0, max: 10, enabled: true }] };
-            renderDashboard({
-                initialState: makeInitialState({
-                    selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], scatterCriteria,
-                }),
-            });
-            fireEvent.click(screen.getByText('Scatter'));
-            expect(last(chartProps).scatterCriteria).toEqual(scatterCriteria);
-            expect(typeof last(chartProps).onScatterCriteriaChange).toBe('function');
-        });
-
         it('bounces back to "line" when the selection drops below 2 while scatter is active', () => {
             renderDashboard({
                 initialState: makeInitialState({
@@ -370,6 +404,68 @@ describe('Dashboard', () => {
 
             fireEvent.click(screen.getByText('select-5-tags'));
             expect(last(chartProps).chartType).toBe('pair');
+        });
+    });
+
+    describe('Highlights tab (time-window "By time" highlights)', () => {
+        it('renders HighlightsPanel when the Highlights tab is selected, alongside Selected Sensor / Data Insight / Filter', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            expect(screen.queryByTestId('highlights-panel')).toBeNull();
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(screen.getByTestId('highlights-panel')).toBeTruthy();
+        });
+
+        it('onAddTimeHighlight / onToggleTimeHighlight / onRemoveTimeHighlight / onRecolorTimeHighlight / onRenameTimeHighlight all mutate timeHighlights, forwarded to Chart as a global (not chart-type-scoped) prop', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
+            fireEvent.click(screen.getByText('Highlights'));
+
+            fireEvent.click(screen.getByText('hl-add-highlight'));
+            const highlights = last(highlightsPanelProps).timeHighlights;
+            expect(highlights).toEqual([
+                expect.objectContaining({ start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Test', enabled: true, color: expect.any(String) }),
+            ]);
+            const hId = highlights[0].id;
+
+            act(() => { last(highlightsPanelProps).onToggleTimeHighlight(hId); });
+            expect(last(highlightsPanelProps).timeHighlights[0].enabled).toBe(false);
+
+            act(() => { last(highlightsPanelProps).onRecolorTimeHighlight(hId, '#123456'); });
+            expect(last(highlightsPanelProps).timeHighlights[0].color).toBe('#123456');
+
+            act(() => { last(highlightsPanelProps).onRenameTimeHighlight(hId, 'Renamed'); });
+            expect(last(highlightsPanelProps).timeHighlights[0].label).toBe('Renamed');
+
+            // Applies to Line too -- not scoped to whichever chart type is active.
+            expect(last(chartProps).timeHighlights).toEqual(last(highlightsPanelProps).timeHighlights);
+
+            act(() => { last(highlightsPanelProps).onRemoveTimeHighlight(hId); });
+            expect(last(highlightsPanelProps).timeHighlights).toEqual([]);
+        });
+
+        it('an untitled highlight gets an auto-generated label', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            act(() => { last(highlightsPanelProps).onAddTimeHighlight('2026-01-01T00:00', '2026-01-01T01:00', '') ; });
+            expect(last(highlightsPanelProps).timeHighlights[0].label).toBe('Highlight 1');
+        });
+
+        it('persists timeHighlights via the autosave (buildWorkspaceState)', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            fireEvent.click(screen.getByText('hl-add-highlight'));
+
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
+            const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+            expect(saved.timeHighlights).toEqual(last(highlightsPanelProps).timeHighlights);
+        });
+
+        it('forwards the live chartType, driving the panel\'s compatibility banner', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], chartType: 'line' }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(last(highlightsPanelProps).chartType).toBe('line');
+
+            fireEvent.click(screen.getByText('Scatter'));
+            expect(last(highlightsPanelProps).chartType).toBe('scatter');
         });
     });
 
@@ -576,13 +672,13 @@ describe('Dashboard', () => {
     });
 
     describe('imperative rename', () => {
-        it('renameWorkspace via ref updates the persisted name', () => {
+        it('renameWorkspace via ref updates the persisted name', async () => {
             const ref = createRef<DashboardRef>();
             renderDashboard({}, ref);
             act(() => { ref.current!.renameWorkspace('Renamed Workspace'); });
-            expect(mockSaveWorkspaceData).toHaveBeenLastCalledWith(
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenLastCalledWith(
                 expect.objectContaining({ name: 'Renamed Workspace' }),
-            );
+            ));
         });
     });
 

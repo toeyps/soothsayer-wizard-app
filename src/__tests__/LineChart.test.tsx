@@ -181,6 +181,58 @@ describe('LineChart option building', () => {
         expect(capturedOptions[capturedOptions.length - 1].series[0].markLine).toBeUndefined();
     });
 
+    describe('time-highlight bands (markArea — a distinct mechanism from markLine above)', () => {
+        // columnarOf(headers, 5) → 2026-01-01T00:00 .. 00:04, one minute apart.
+        const highlight = { id: 'h1', start: '2026-01-01T00:01:00', end: '2026-01-01T00:03:00', label: 'Startup', color: '#ff0000', enabled: true };
+
+        it('attaches a markArea to the first series only, snapped to the nearest plotted timestamps', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} />);
+            const [seriesA, seriesB] = capturedOptions[capturedOptions.length - 1].series;
+            expect(seriesA.markArea.data).toEqual([[
+                expect.objectContaining({ xAxis: 1 }), // 00:01 → index 1
+                expect.objectContaining({ xAxis: 3 }), // 00:03 → index 3
+            ]]);
+            expect(seriesB.markArea).toBeUndefined(); // not duplicated onto every series
+        });
+
+        it('carries the highlight\'s label and colour on the area\'s start point', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} />);
+            const [start] = capturedOptions[capturedOptions.length - 1].series[0].markArea.data[0];
+            expect(start.label.formatter).toBe('Startup');
+            expect(start.label.color).toBe('#ff0000');
+            expect(start.itemStyle.color).toContain('255, 0, 0'); // hex→rgba, translucent
+        });
+
+        it('excludes disabled highlights', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[{ ...highlight, enabled: false }]} />);
+            expect(capturedOptions[capturedOptions.length - 1].series[0].markArea).toBeUndefined();
+        });
+
+        it('omits markArea entirely with no timeHighlights', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+            expect(capturedOptions[capturedOptions.length - 1].series[0].markArea).toBeUndefined();
+        });
+
+        it('renders one boundary pair per enabled highlight, independently of markLine', () => {
+            const columnar = columnarOf(headers, 5);
+            const highlight2 = { id: 'h2', start: '2026-01-01T00:00:00', end: '2026-01-01T00:01:00', label: 'Overhaul', color: '#00ff00', enabled: true };
+            render(
+                <LineChart
+                    data={[]} columnar={columnar} sensors={headers} headers={headers}
+                    timeHighlights={[highlight, highlight2]}
+                    markLines={[{ sensor: 'A', y: 90, label: 'HH' }]}
+                />,
+            );
+            const seriesA = capturedOptions[capturedOptions.length - 1].series[0];
+            expect(seriesA.markArea.data).toHaveLength(2);
+            expect(seriesA.markLine.data).toHaveLength(1); // unaffected by markArea
+        });
+    });
+
     describe('large-data rendering profile (>2000 points)', () => {
         it('enables smoothing/animation and full-size line for small datasets', () => {
             const columnar = columnarOf(['A'], 500);
