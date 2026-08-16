@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
-import type { TimeHighlight } from '../../types';
+import type { TimeHighlight, HighlightLineDisplay } from '../../types';
 import ColorPlatePicker from './ColorPlatePicker';
 
 interface HighlightsPanelProps {
@@ -11,6 +11,15 @@ interface HighlightsPanelProps {
     onRemoveTimeHighlight: (id: string) => void;
     onRecolorTimeHighlight: (id: string, color: string) => void;
     onRenameTimeHighlight: (id: string, label: string) => void;
+
+    /** How highlights render on the Line chart -- a tinted band, or by
+     *  recolouring the line itself during each window. Only Line reads
+     *  this: Scatter always shows the ring regardless, and Pair Plot
+     *  doesn't apply at all. Both buttons are disabled outside Line (see
+     *  `chartType` below), not just dimmed -- same "genuinely inert, not
+     *  just dimmed" rule as the rest of this component. */
+    lineDisplay: HighlightLineDisplay;
+    onSetLineDisplay: (mode: HighlightLineDisplay) => void;
 
     /** Which chart is on screen right now -- drives the live compatibility
      *  banner + disabled state below. On Pair Plot (the only chart type this
@@ -46,9 +55,13 @@ function fmtRange(start: string, end: string): string {
  */
 export default function HighlightsPanel({
     timeHighlights, onAddTimeHighlight, onToggleTimeHighlight, onRemoveTimeHighlight, onRecolorTimeHighlight,
-    onRenameTimeHighlight, chartType,
+    onRenameTimeHighlight, lineDisplay, onSetLineDisplay, chartType,
 }: HighlightsPanelProps) {
     const highlightApplies = chartType !== 'pair';
+    // Band/Line-colour is a Line-only choice -- Scatter still shows
+    // highlights (as a ring) but has nothing for this control to change,
+    // and Pair Plot is already fully covered by `highlightApplies` above.
+    const lineDisplayApplies = chartType === 'line';
 
     const [draftStart, setDraftStart] = useState('');
     const [draftEnd, setDraftEnd] = useState('');
@@ -102,6 +115,41 @@ export default function HighlightsPanel({
             )}
 
             <fieldset disabled={!highlightApplies} style={highlightApplies ? fieldsetResetStyle : { ...fieldsetResetStyle, ...mutedStyle }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 650, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                        Line display
+                    </span>
+                    <div className="chart-type-group" style={{ width: 'fit-content' }}>
+                        <button
+                            type="button"
+                            className={`chart-type-btn${lineDisplay === 'band' ? ' active' : ''}`}
+                            onClick={() => onSetLineDisplay('band')}
+                            disabled={!lineDisplayApplies}
+                        >
+                            Band
+                        </button>
+                        <button
+                            type="button"
+                            className={`chart-type-btn${lineDisplay === 'line' ? ' active' : ''}`}
+                            onClick={() => onSetLineDisplay('line')}
+                            disabled={!lineDisplayApplies}
+                        >
+                            Line colour
+                        </button>
+                    </div>
+                    {/* Scatter-specific: NOT the amber compatBannerStyle used
+                        above -- highlights are still fully live on Scatter,
+                        just fixed to the ring, so a "not shown" warning would
+                        overstate it. Quiet, informational tone instead. Pair
+                        Plot needs no equivalent note here -- the banner above
+                        already explains the whole group is inert there. */}
+                    {chartType === 'scatter' && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                            Not adjustable here — Scatter always renders highlights as a ring, regardless of this setting.
+                        </span>
+                    )}
+                </div>
+
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
                     <input type="datetime-local" value={draftStart} onChange={e => { setDraftStart(e.target.value); setHighlightError(null); }} style={dtInputStyle} />
                     <span style={{ color: 'var(--text-secondary)' }}>→</span>
@@ -173,7 +221,7 @@ export default function HighlightsPanel({
                 </div>
             </fieldset>
             <div style={{ ...scopeNoteStyle, marginTop: '10px' }}>
-                Applies to Line and Scatter. Line shows a tinted band; Scatter rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
+                Applies to Line and Scatter. Line shows a tinted band or recolours itself (see above); Scatter always rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
             </div>
         </div>
     );

@@ -12,7 +12,7 @@ class MockResizeObserver {
     unobserve = vi.fn();
 }
 
-import LineChart, { LINE_CHART_COLORS, defaultSensorColor } from '../components/charts/LineChart';
+import LineChart, { LINE_CHART_COLORS, defaultSensorColor, buildLineColorPieces } from '../components/charts/LineChart';
 import type { ColumnarSeries } from '../components/charts/ChartTypes';
 
 function columnarOf(headers: string[], length: number): ColumnarSeries {
@@ -43,6 +43,46 @@ describe('defaultSensorColor', () => {
     it('differs for at least some different tags (not a constant fallback)', () => {
         const colors = new Set(['A', 'B', 'C', 'D', 'E', 'F'].map((s) => defaultSensorColor(s)));
         expect(colors.size).toBeGreaterThan(1);
+    });
+});
+
+describe('buildLineColorPieces (visualMap piece construction for \'line\' display mode)', () => {
+    it('returns nothing for zero data points or zero ranges', () => {
+        expect(buildLineColorPieces(0, [{ startIdx: 0, endIdx: 2, color: '#f00' }])).toEqual([]);
+        expect(buildLineColorPieces(10, [])).toEqual([]);
+    });
+
+    it('produces one piece for a single range, leaving the rest uncovered (outOfRange picks it up)', () => {
+        const pieces = buildLineColorPieces(10, [{ startIdx: 2, endIdx: 5, color: '#f00' }]);
+        expect(pieces).toEqual([{ min: 2, max: 5, color: '#f00' }]);
+    });
+
+    it('produces one piece per disjoint range, in index order', () => {
+        const pieces = buildLineColorPieces(10, [
+            { startIdx: 6, endIdx: 8, color: '#0f0' },
+            { startIdx: 1, endIdx: 3, color: '#f00' },
+        ]);
+        // Output order follows index position, not input array order.
+        expect(pieces).toEqual([
+            { min: 1, max: 3, color: '#f00' },
+            { min: 6, max: 8, color: '#0f0' },
+        ]);
+    });
+
+    it('resolves overlapping ranges by "first range in the array wins" (same convention as ScatterChart\'s halo)', () => {
+        const pieces = buildLineColorPieces(10, [
+            { startIdx: 2, endIdx: 6, color: '#f00' }, // listed first -> wins the overlap
+            { startIdx: 4, endIdx: 8, color: '#0f0' },
+        ]);
+        expect(pieces).toEqual([
+            { min: 2, max: 6, color: '#f00' },
+            { min: 7, max: 8, color: '#0f0' },
+        ]);
+    });
+
+    it('a range spanning the entire dataset produces exactly one piece covering it all', () => {
+        const pieces = buildLineColorPieces(5, [{ startIdx: 0, endIdx: 4, color: '#f00' }]);
+        expect(pieces).toEqual([{ min: 0, max: 4, color: '#f00' }]);
     });
 });
 
@@ -233,6 +273,83 @@ describe('LineChart option building', () => {
         });
     });
 
+    describe('\'line\' highlight display mode (a bolder overlay line drawn on top of the trace, instead of a markArea band)', () => {
+        const highlight = { id: 'h1', start: '2026-01-01T00:01:00', end: '2026-01-01T00:03:00', label: 'Startup', color: '#ff0000', enabled: true };
+
+        it('with no highlightDisplay prop (default), behaves exactly like \'band\': markArea attached, no overlay series, base data untouched', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} />);
+            const option = capturedOptions[capturedOptions.length - 1];
+            expect(option.series).toHaveLength(3); // one per sensor, no overlays
+            expect(option.series[0].markArea).toBeDefined();
+            expect(typeof option.series[0].data[0]).toBe('number');
+        });
+
+        it('with highlightDisplay="line" and an enabled highlight: no markArea, base series are untouched (own colour/width, full data), plus one overlay series per sensor', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} highlightDisplay="line" />);
+            const option = capturedOptions[capturedOptions.length - 1];
+
+            expect(option.series).toHaveLength(6); // 3 base + 3 overlay (one highlight x 3 sensors)
+            const baseSeries = option.series.slice(0, 3);
+            const overlaySeries = option.series.slice(3);
+
+            baseSeries.forEach((s: any, i: number) => {
+                expect(s.markArea).toBeUndefined();
+                expect(s.itemStyle.color).toBe(defaultSensorColor(headers[i]));
+                expect(s.lineStyle.width).toBe(2); // unchanged, small-data profile
+                expect(s.data).toEqual([i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4]); // full, untouched
+            });
+
+            overlaySeries.forEach((s: any, i: number) => {
+                expect(s.name).toBe(headers[i]);
+                expect(s.itemStyle.color).toBe('#ff0000'); // the highlight's own colour
+                expect(s.lineStyle.color).toBe('#ff0000');
+                expect(s.lineStyle.width).toBe(4); // double the base width (2 * 2)
+                expect(s.tooltip).toEqual({ show: false }); // excluded, so hover doesn't double up on the sensor
+                expect(s.silent).toBe(true);
+                // null outside the highlighted [1,3] index range (00:01..00:03), the sensor's real value inside it.
+                expect(s.data).toEqual([null, i * 100 + 1, i * 100 + 2, i * 100 + 3, null]);
+            });
+        });
+
+        it('the overlay stays at its full emphasis width even on the large-data hairline profile (regression: doubling the 0.8px hairline base only reached 1.6px, which read as no different from the base line on a real ~4 000-point chart)', () => {
+            const columnar = columnarOf(['A'], 2001); // > 2000 -> isLargeData
+            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} timeHighlights={[highlight]} highlightDisplay="line" />);
+            const option = capturedOptions[capturedOptions.length - 1];
+            const [base, overlay] = option.series;
+            expect(base.lineStyle.width).toBe(0.8); // base still gets the hairline profile
+            expect(overlay.lineStyle.width).toBe(4); // overlay does NOT shrink with it
+        });
+
+        it('a second, differently-coloured highlight produces its own separate overlay series per sensor', () => {
+            const highlight2 = { id: 'h2', start: '2026-01-01T00:00:00', end: '2026-01-01T00:00:00', label: 'Spike', color: '#00ff00', enabled: true };
+            const columnar = columnarOf(['A'], 5);
+            render(
+                <LineChart
+                    data={[]} columnar={columnar} sensors={['A']} headers={['A']}
+                    timeHighlights={[highlight, highlight2]} highlightDisplay="line"
+                />,
+            );
+            const option = capturedOptions[capturedOptions.length - 1];
+            expect(option.series).toHaveLength(3); // 1 base + 2 overlays (one per highlight)
+            const [, overlay1, overlay2] = option.series;
+            expect(overlay1.lineStyle.color).toBe('#00ff00'); // earlier index (0) sorts first
+            expect(overlay1.data).toEqual([0, null, null, null, null]);
+            expect(overlay2.lineStyle.color).toBe('#ff0000');
+            expect(overlay2.data).toEqual([null, 1, 2, 3, null]);
+        });
+
+        it('with highlightDisplay="line" but no enabled highlights: no overlay series, no markArea, same as \'band\' with nothing to draw', () => {
+            const columnar = columnarOf(headers, 5);
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} highlightDisplay="line" />);
+            const option = capturedOptions[capturedOptions.length - 1];
+            expect(option.series).toHaveLength(3); // no overlays added
+            expect(option.series[0].markArea).toBeUndefined();
+            expect(typeof option.series[0].data[0]).toBe('number');
+        });
+    });
+
     describe('large-data rendering profile (>2000 points)', () => {
         it('enables smoothing/animation and full-size line for small datasets', () => {
             const columnar = columnarOf(['A'], 500);
@@ -292,6 +409,18 @@ describe('LineChart option building', () => {
             ]);
             expect(html).toContain('A: 5');
             expect(html).not.toContain('undefined');
+        });
+
+        it('dedupes by seriesName, keeping only the first entry -- defends against a highlight overlay series (same name as its sensor) appearing twice regardless of whether ECharts actually honours that series\' tooltip.show:false for axis-trigger aggregation', () => {
+            const columnar = columnarOf(['A'], 3);
+            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+            const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const html = formatter([
+                { axisValueLabel: '2026-01-01T00:00:00', seriesName: 'A', value: 5, color: '#3b82f6' }, // base series
+                { axisValueLabel: '2026-01-01T00:00:00', seriesName: 'A', value: 5, color: '#ff0000' }, // highlight overlay, same sensor
+            ]);
+            expect((html.match(/A:/g) ?? [])).toHaveLength(1);
+            expect(html).toContain('#3b82f6'); // the FIRST (base series) entry wins, not the overlay
         });
 
         it('caps the number of rendered rows at 10', () => {

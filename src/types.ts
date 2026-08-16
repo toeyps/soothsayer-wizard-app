@@ -188,12 +188,9 @@ export interface ScatterAxisPins {
     y?: ScatterAxisPin;
 }
 
-/** One user-defined time window, highlighted across every chart type — a
- *  span of wall-clock time, not tied to any one sensor or chart, so it's
- *  meaningful on Line (a tinted band), Scatter (a coloured ring around
- *  points whose timestamp falls inside it), and Pair Plot (an enlarged
- *  point, since Pair Plot can't afford the extra WebGL context a ring
- *  would cost per cell — see PairPlotCell.tsx). `start`/`end` are
+/** One user-defined time window, highlighted on Line and Scatter (not Pair
+ *  Plot — it keeps its own lasso-cluster gesture instead) — a span of
+ *  wall-clock time, not tied to any one sensor or chart. `start`/`end` are
  *  datetime-local input strings (not epoch numbers) so they round-trip
  *  through the same `<input type="datetime-local">` the rest of the app's
  *  date fields already use. */
@@ -205,6 +202,16 @@ export interface TimeHighlight {
     color: string;
     enabled: boolean;
 }
+
+/** How "By time" highlights render on the Line chart specifically — a
+ *  tinted background band (the original behaviour), or by recolouring the
+ *  line itself during each highlighted window. One setting for every
+ *  highlight at once (not per-item), so a chart with several highlights
+ *  never ends up half bands, half recoloured segments. Scatter is
+ *  unaffected either way — it always shows the coloured ring, regardless
+ *  of this setting; Pair Plot doesn't read highlights at all. Absent =
+ *  'band' (the original, pre-this-field default). */
+export type HighlightLineDisplay = 'band' | 'line';
 
 export interface WorkspaceState {
     id: string;
@@ -274,8 +281,10 @@ export interface WorkspaceState {
      *  already persists on its own; this only restores what was last typed
      *  into the shortcut so it doesn't silently reset to "1 D". */
     relativeTimeRange?: { amount: string; unit: 'Y' | 'M' | 'W' | 'D' | 'H' };
-    /** Time windows highlighted across every chart type (Line/Scatter/Pair
-     *  Plot all read the same list) — see `TimeHighlight`. Absent = no
-     *  highlights defined (the pre-feature default). */
+    /** Time windows highlighted on Line and Scatter (Pair Plot doesn't read
+     *  this list) — see `TimeHighlight`. Absent = no highlights defined
+     *  (the pre-feature default). */
     timeHighlights?: TimeHighlight[];
+    /** See `HighlightLineDisplay`. Absent = 'band'. */
+    highlightLineDisplay?: HighlightLineDisplay;
 }

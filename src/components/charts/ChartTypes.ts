@@ -1,4 +1,4 @@
-import { CsvRecord, SensorMetadata, ScatterAxisPins, TimeHighlight } from '../../types';
+import { CsvRecord, SensorMetadata, ScatterAxisPins, TimeHighlight, HighlightLineDisplay } from '../../types';
 
 /** Pair Plot renders one regl-scatterplot WebGL context per scatter cell
  *  AND per time-series cell — n(n-1)/2 + n contexts for n sensors. Chromium
@@ -80,10 +80,15 @@ export interface ChartProps {
      *  its value. */
     sensorMetadata?: SensorMetadata[] | null;
     /** Time windows to highlight (Dashboard-owned, edited from the
-     *  Highlights tab's "By time" group). Line renders a tinted band per
-     *  entry; Scatter rings matching points. Ignored by Pair Plot on
+     *  Highlights tab's "By time" group). Line renders a tinted band or a
+     *  recoloured segment per entry (see `highlightDisplay`); Scatter rings
+     *  matching points regardless of that setting. Ignored by Pair Plot on
      *  purpose — its lasso-cluster gesture already covers "mark points I
      *  care about", and layering a second, differently-scoped highlighting
      *  mechanism on top read as more confusing than useful. */
     timeHighlights?: TimeHighlight[];
+    /** How `timeHighlights` render on the Line chart specifically — see
+     *  `HighlightLineDisplay`. Ignored by Scatter (always a ring) and Pair
+     *  Plot (no highlights at all). */
+    highlightDisplay?: HighlightLineDisplay;
 }

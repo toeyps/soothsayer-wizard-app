@@ -25,6 +25,51 @@ function nearestXIndex(xData: (string | null)[], targetMs: number): number {
     return best;
 }
 
+/**
+ * Collapses a (possibly overlapping) list of highlighted index ranges into a
+ * flat, non-overlapping run of `{min, max, color}` pieces — one entry per
+ * contiguous stretch of x-axis indices that all resolve to the same colour.
+ * Indices covered by no highlight are simply omitted from the result.
+ *
+ * Used to build the 'line' display mode's highlight overlay: one extra,
+ * thicker line series per (sensor, piece) pair, drawn on top of that
+ * sensor's normal line — see the overlay-building code below for why a
+ * bolder second layer reads better than recolouring the base line in place
+ * (a same-width colour swap was too easy to miss against a busy chart).
+ *
+ * Resolves overlaps itself rather than depending on undocumented tie-break
+ * behaviour elsewhere — `ranges` is walked in array order and the FIRST
+ * range covering a given index wins, matching the "first enabled highlight
+ * wins" convention already used for ScatterChart's halo layer.
+ */
+export function buildLineColorPieces(
+    dataCount: number,
+    ranges: { startIdx: number; endIdx: number; color: string }[],
+): { min: number; max: number; color: string }[] {
+    const pieces: { min: number; max: number; color: string }[] = [];
+    if (dataCount === 0 || ranges.length === 0) return pieces;
+
+    const colorAt = (i: number): string | null => {
+        for (const r of ranges) {
+            if (i >= r.startIdx && i <= r.endIdx) return r.color;
+        }
+        return null;
+    };
+
+    let runStart = 0;
+    let runColor = colorAt(0);
+    for (let i = 1; i < dataCount; i++) {
+        const c = colorAt(i);
+        if (c !== runColor) {
+            if (runColor !== null) pieces.push({ min: runStart, max: i - 1, color: runColor });
+            runStart = i;
+            runColor = c;
+        }
+    }
+    if (runColor !== null) pieces.push({ min: runStart, max: dataCount - 1, color: runColor });
+    return pieces;
+}
+
 // Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
 // show/default to the same palette a sensor would get without an override.
 export const LINE_CHART_COLORS = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
@@ -51,7 +96,7 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
     return palette[Math.abs(hash) % palette.length];
 }
 
-function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetadata, timeHighlights }: ChartProps) {
+function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetadata, timeHighlights, highlightDisplay }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
@@ -123,41 +168,63 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
         // segment), so the pretty profile is reserved for genuinely small data.
         const isLargeData = dataCount > 2000;
 
-        // Time-highlight bands ("Highlights" tab's "By time" group) — a
-        // distinct ECharts mechanism from the horizontal markLine used for
-        // alarm setpoints above/below. Attached to the first series only:
-        // markArea renders across the shared grid regardless of which
-        // series owns it, so adding it to every series would just draw the
-        // same bands N times over. Category axis needs an actual axis
-        // value/index for the boundary, not an arbitrary timestamp, so each
-        // highlight's start/end snap to the nearest plotted point.
-        const highlightAreas = dataCount > 0
+        // Time highlights ("Highlights" tab's "By time" group) — snapped to
+        // the nearest plotted index once, shared by both display modes
+        // below. Category axis needs an actual axis value/index for a
+        // markArea boundary (or an overlay-series data slice), not an
+        // arbitrary timestamp, so each highlight's start/end snap to the
+        // nearest plotted point. Kept in the user's own creation order — the
+        // "first enabled highlight wins" convention (see
+        // `buildLineColorPieces`) needs that order preserved.
+        const highlightIndexRanges = dataCount > 0
             ? (timeHighlights ?? [])
                 .filter(h => h.enabled)
                 .map(h => {
                     const s = new Date(h.start).getTime();
                     const e = new Date(h.end).getTime();
                     if (isNaN(s) || isNaN(e)) return null;
-                    const startIdx = nearestXIndex(xData, Math.min(s, e));
-                    const endIdx = nearestXIndex(xData, Math.max(s, e));
-                    return [
-                        {
-                            xAxis: startIdx,
-                            itemStyle: { color: hexToRgbaCss(h.color, 0.16) },
-                            label: {
-                                show: true,
-                                formatter: h.label,
-                                position: 'insideTop' as const,
-                                color: h.color,
-                                fontSize: 10,
-                                fontWeight: 600,
-                                fontFamily: 'JetBrains Mono, monospace',
-                            },
-                        },
-                        { xAxis: endIdx },
-                    ];
+                    return {
+                        startIdx: nearestXIndex(xData, Math.min(s, e)),
+                        endIdx: nearestXIndex(xData, Math.max(s, e)),
+                        color: h.color,
+                        label: h.label,
+                    };
                 })
                 .filter((v): v is NonNullable<typeof v> => v !== null)
+            : [];
+
+        // 'band' (the default): a tinted background rectangle — a distinct
+        // ECharts mechanism from the horizontal markLine used for alarm
+        // setpoints above/below. Attached to the first series only:
+        // markArea renders across the shared grid regardless of which
+        // series owns it, so adding it to every series would just draw the
+        // same bands N times over.
+        const highlightAreas = highlightDisplay !== 'line'
+            ? highlightIndexRanges.map(r => [
+                {
+                    xAxis: r.startIdx,
+                    itemStyle: { color: hexToRgbaCss(r.color, 0.16) },
+                    label: {
+                        show: true,
+                        formatter: r.label,
+                        position: 'insideTop' as const,
+                        color: r.color,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        fontFamily: 'JetBrains Mono, monospace',
+                    },
+                },
+                { xAxis: r.endIdx },
+            ])
+            : [];
+
+        // 'line': emphasise each highlighted window with a second, bolder
+        // line drawn on top of the trace, instead of a background band. The
+        // base series is untouched — same colour and width across its whole
+        // range — and `linePieces` (below) drives one extra overlay series
+        // per (sensor, piece), built alongside `series` further down.
+        const linePieces = highlightDisplay === 'line'
+            ? buildLineColorPieces(dataCount, highlightIndexRanges)
             : [];
 
         // ── Dynamic horizontal padding ────────────────────────────
@@ -215,6 +282,129 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
             return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
         };
 
+        const baseSeries = sensors.map((sensor, index) => {
+            const sensorIdx = headers.indexOf(sensor);
+            const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
+            const sensorMarks = (markLines ?? []).filter(m => m.sensor === sensor);
+            const markLine = sensorMarks.length > 0
+                ? {
+                    symbol: 'none',
+                    silent: false,
+                    animation: false,
+                    label: {
+                        show: true,
+                        formatter: (p: any) => p.data?.name ?? '',
+                        position: 'insideEndTop' as const,
+                        color: txtPrimary,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        fontFamily: 'JetBrains Mono, monospace',
+                        backgroundColor: markLabelBg,
+                        padding: [2, 5],
+                        borderRadius: 3,
+                    },
+                    data: sensorMarks.map(m => ({
+                        name: m.label,
+                        yAxis: m.y,
+                        lineStyle: {
+                            color: m.color ?? color,
+                            type: m.lineStyle ?? 'solid',
+                            width: m.width ?? 1,
+                        },
+                        // Per-entry override merges with the shared
+                        // `markLine.label` above — without this every
+                        // label in the group would render in the same
+                        // `txtPrimary` regardless of that line's own color.
+                        label: { color: m.color ?? txtPrimary },
+                    })),
+                }
+                : undefined;
+            const rawValues = columnar
+                ? (columnar.series[sensorIdx] ?? [])
+                : data.map(d => d.values[sensorIdx] ?? null);
+            return {
+                name: sensor,
+                type: 'line',
+                yAxisIndex: index,
+                data: rawValues,
+                smooth: !isLargeData,
+                showSymbol: false,
+                itemStyle: { color: color },
+                // Hairline strokes for dense data: cheaper to rasterize
+                // and the trace reads better when segments are sub-pixel.
+                lineStyle: { width: isLargeData ? 0.8 : 2 },
+                // The axis-trigger tooltip doesn't need the polylines to
+                // be mouse-interactive, but ECharts still hit-tests every
+                // vertex-dense line on each mousemove and runs emphasis
+                // state transitions on hover. Cut both for heavy data —
+                // markLine hover/labels (small-data screens) keep working.
+                silent: isLargeData,
+                emphasis: { disabled: isLargeData },
+                // Hovering a legend entry otherwise re-renders the linked
+                // series into its highlight state — pure cost, low value.
+                legendHoverLink: false,
+                // Belt-and-suspenders for the row-based path: when a
+                // caller still feeds raw points past the threshold, let
+                // ECharts LTTB-downsample instead of rasterizing every
+                // vertex.
+                ...(isLargeData ? { sampling: 'lttb' as const } : {}),
+                ...(markLine ? { markLine } : {}),
+                // Only the first series carries markArea — see
+                // highlightAreas' own comment above for why attaching it
+                // to every series would be redundant.
+                ...(index === 0 && highlightAreas.length > 0
+                    ? { markArea: { silent: true, data: highlightAreas } }
+                    : {}),
+            };
+        });
+
+        // 'line' display mode: one extra, bolder line per (sensor, piece) —
+        // drawn on top of that sensor's own (untouched) base line above, so
+        // the highlighted stretch reads as "the same trace, but thicker and
+        // in the highlight's colour" rather than a same-width colour swap
+        // that's easy to miss on a busy multi-sensor chart. `null` outside
+        // its own [min, max] leaves the rest of the line simply not drawn
+        // by this series — the always-continuous base line underneath is
+        // what the eye follows there.
+        const highlightOverlaySeries = linePieces.length > 0
+            ? sensors.flatMap((sensor, index) => {
+                const sensorIdx = headers.indexOf(sensor);
+                const rawValues = columnar
+                    ? (columnar.series[sensorIdx] ?? [])
+                    : data.map(d => d.values[sensorIdx] ?? null);
+                return linePieces.map(piece => ({
+                    name: sensor,
+                    type: 'line',
+                    yAxisIndex: index,
+                    data: rawValues.map((v, i) => (i >= piece.min && i <= piece.max ? v : null)),
+                    smooth: !isLargeData,
+                    showSymbol: false,
+                    silent: true,
+                    // Excluded from the axis-trigger tooltip — without this
+                    // every hover inside a highlighted window would show the
+                    // same sensor twice (once from this overlay, once from
+                    // its base series).
+                    tooltip: { show: false },
+                    legendHoverLink: false,
+                    animation: false,
+                    // Above the base lines (default z) so the emphasis
+                    // stroke is never hidden behind a neighbouring sensor's
+                    // trace.
+                    z: 5,
+                    itemStyle: { color: piece.color },
+                    // A FIXED emphasis width, not a multiple of the base
+                    // line's own width — the large-data profile's hairline
+                    // stroke is only 0.8px, and doubling that to 1.6px reads
+                    // as no different from the base line at a glance
+                    // (confirmed live: barely visible on a real ~4 000-point
+                    // aggregated chart). This has to be thick enough to read
+                    // as "emphasised" regardless of how thin the base trace
+                    // currently is.
+                    lineStyle: { color: piece.color, width: 4 },
+                }));
+            })
+            : [];
+
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
@@ -236,7 +426,28 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                 hideDelay: 0,
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
-                    const pList = Array.isArray(params) ? params : [params];
+                    const rawList = Array.isArray(params) ? params : [params];
+                    // 'line' display mode's highlight overlay series (see the
+                    // series-building code above) share their sensor's own
+                    // `name` and can report the exact same value, at the
+                    // exact same index, as their base series. Per-series
+                    // `tooltip.show: false` is documented for item-trigger
+                    // tooltips but isn't confirmed to exclude a series from
+                    // *axis*-trigger aggregation too (a matching upstream
+                    // feature request, unresolved as of writing:
+                    // https://github.com/apache/echarts/issues/15924) — don't
+                    // depend on it. Dedupe defensively instead, keeping the
+                    // FIRST entry per sensor name (the base series always
+                    // sorts first: `series: [...baseSeries,
+                    // ...highlightOverlaySeries]`), so a hover inside a
+                    // highlighted window can never show one sensor twice
+                    // regardless of which way that ECharts behavior goes.
+                    const seenNames = new Set<string>();
+                    const pList = rawList.filter((p: any) => {
+                        if (seenNames.has(p.seriesName)) return false;
+                        seenNames.add(p.seriesName);
+                        return true;
+                    });
                     const dateStr = formatDateTime(new Date(pList[0].axisValueLabel));
                     let content = `<div style="font-weight:bold; margin-bottom:5px;">${dateStr}</div>`;
                     const maxItems = 10;
@@ -343,82 +554,9 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                     splitLine: { show: !hideYSplitLine && index === 0, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } }
                 };
             }),
-            series: sensors.map((sensor, index) => {
-                const sensorIdx = headers.indexOf(sensor);
-                const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
-                const sensorMarks = (markLines ?? []).filter(m => m.sensor === sensor);
-                const markLine = sensorMarks.length > 0
-                    ? {
-                        symbol: 'none',
-                        silent: false,
-                        animation: false,
-                        label: {
-                            show: true,
-                            formatter: (p: any) => p.data?.name ?? '',
-                            position: 'insideEndTop' as const,
-                            color: txtPrimary,
-                            fontSize: 10,
-                            fontWeight: 600,
-                            fontFamily: 'JetBrains Mono, monospace',
-                            backgroundColor: markLabelBg,
-                            padding: [2, 5],
-                            borderRadius: 3,
-                        },
-                        data: sensorMarks.map(m => ({
-                            name: m.label,
-                            yAxis: m.y,
-                            lineStyle: {
-                                color: m.color ?? color,
-                                type: m.lineStyle ?? 'solid',
-                                width: m.width ?? 1,
-                            },
-                            // Per-entry override merges with the shared
-                            // `markLine.label` above — without this every
-                            // label in the group would render in the same
-                            // `txtPrimary` regardless of that line's own color.
-                            label: { color: m.color ?? txtPrimary },
-                        })),
-                    }
-                    : undefined;
-                return {
-                    name: sensor,
-                    type: 'line',
-                    yAxisIndex: index,
-                    data: columnar
-                        ? (columnar.series[sensorIdx] ?? [])
-                        : data.map(d => d.values[sensorIdx] ?? null),
-                    smooth: !isLargeData,
-                    showSymbol: false,
-                    itemStyle: { color: color },
-                    // Hairline strokes for dense data: cheaper to rasterize
-                    // and the trace reads better when segments are sub-pixel.
-                    lineStyle: { width: isLargeData ? 0.8 : 2 },
-                    // The axis-trigger tooltip doesn't need the polylines to
-                    // be mouse-interactive, but ECharts still hit-tests every
-                    // vertex-dense line on each mousemove and runs emphasis
-                    // state transitions on hover. Cut both for heavy data —
-                    // markLine hover/labels (small-data screens) keep working.
-                    silent: isLargeData,
-                    emphasis: { disabled: isLargeData },
-                    // Hovering a legend entry otherwise re-renders the linked
-                    // series into its highlight state — pure cost, low value.
-                    legendHoverLink: false,
-                    // Belt-and-suspenders for the row-based path: when a
-                    // caller still feeds raw points past the threshold, let
-                    // ECharts LTTB-downsample instead of rasterizing every
-                    // vertex.
-                    ...(isLargeData ? { sampling: 'lttb' as const } : {}),
-                    ...(markLine ? { markLine } : {}),
-                    // Only the first series carries markArea — see
-                    // highlightAreas' own comment above for why attaching it
-                    // to every series would be redundant.
-                    ...(index === 0 && highlightAreas.length > 0
-                        ? { markArea: { silent: true, data: highlightAreas } }
-                        : {}),
-                };
-            })
+            series: [...baseSeries, ...highlightOverlaySeries],
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>

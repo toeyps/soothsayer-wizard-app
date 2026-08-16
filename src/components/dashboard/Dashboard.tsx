@@ -1,19 +1,17 @@
 import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
-import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, TimeHighlight,
+    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
 // swap was removed) but we still use the type internally to describe the
 // constant slot→panel mapping below.
 
-import DataTable from './DataTable';
 import { Chart, defaultSensorColor, LINE_CHART_COLORS, MAX_PAIR_PLOT_SENSORS, RANGE_PALETTE, type ChartMarkLine } from '../charts';
 import { rgbaToHex } from '../charts/pairPlotColors';
 import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
@@ -25,12 +23,11 @@ import ColorPlatePicker from './ColorPlatePicker';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
 import { useChartData } from '../../hooks/useChartData';
-import { useTablePage } from '../../hooks/useTablePage';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { save, message } from '@tauri-apps/plugin-dialog';
-import { Plus, EyeOff, BarChart3, Radio, Download, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
+import { message } from '@tauri-apps/plugin-dialog';
+import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
 
 // Panel configuration
 const PANELS = {
@@ -77,7 +74,6 @@ const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 // how many rows the dataset holds. ~4k points ≈ 2 output points per pixel
 // on a typical panel width — visually indistinguishable from raw.
 const LINE_MAX_POINTS = 4000;
-const TABLE_PAGE_SIZE = 50;
 // Same debounce window as useChartData/useScatterSample/useTablePage's own
 // backend-query debounce -- applied here to the autosave-to-disk write
 // instead. Without it, every tracked state change (including e.g. each
@@ -430,6 +426,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const handleRenameTimeHighlight = useCallback((id: string, label: string) => {
         setTimeHighlights(prev => prev.map(h => h.id === id ? { ...h, label } : h));
     }, []);
+
+    // How highlights render on the Line chart — see HighlightLineDisplay.
+    // Global (not per-highlight) and Line-only; Scatter/Pair Plot ignore it.
+    const [highlightLineDisplay, setHighlightLineDisplay] = useState<HighlightLineDisplay>(
+        initialState?.highlightLineDisplay ?? 'band',
+    );
 
     // Quick relative time range (e.g. "last 2 D") — an alternative to
     // manually picking absolute start/end dates. Y/M use calendar-accurate
@@ -1034,30 +1036,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (viewError) reportError('chart-data', viewError);
     }, [viewError]);
 
-    // Table pages through the same (post-op / post-aggregation) row set in
-    // the backend; only the visible 50 rows ever reach the WebView.
-    const [tablePageIndex, setTablePageIndex] = useState(0);
-    const tableQueryKey = useMemo(
-        () => (dataFilter ? JSON.stringify({ dataFilter, samplingMethod, operationConfig }) : ''),
-        [dataFilter, samplingMethod, operationConfig]
-    );
-    useEffect(() => {
-        setTablePageIndex(0);
-    }, [tableQueryKey]);
-
-    const { page: tablePage, loading: tableLoading } = useTablePage(
-        dataFilter
-            ? {
-                filter: dataFilter,
-                sampling: samplingMethod,
-                operation: operationConfig,
-                page: tablePageIndex,
-                pageSize: TABLE_PAGE_SIZE,
-            }
-            : null
-    );
-
-    const loading = viewLoading || tableLoading;
+    const loading = viewLoading;
 
     const isMultiOp = operationConfig?.mode === 'multi' && !!operationConfig?.multiOp;
 
@@ -1109,18 +1088,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
     }, [view, isMultiOp, displayHeaders]);
 
-    // Current table page projected to the visible sensors (50 rows max).
-    const tableRows = useMemo<CsvRecord[]>(() => {
-        if (!tablePage) return [];
-        if (isMultiOp) return tablePage.rows;
-        const picks = displayHeaders.map(h => tablePage.headers.indexOf(h));
-        return tablePage.rows.map(r => ({
-            timestamp: r.timestamp,
-            values: picks.map(i => (i >= 0 ? r.values[i] : null)),
-        }));
-    }, [tablePage, isMultiOp, displayHeaders]);
-
-    const tableTotalRows = tablePage?.total_rows ?? 0;
+    // Rows in the filtered (post-aggregation) population — the header badge
+    // count and the export-disabled check both read this. Sourced from the
+    // chart-data query itself (already running for the Line/Scatter view),
+    // not a separate fetch — `get_chart_data`'s response was already
+    // carrying this exact figure.
+    const tableTotalRows = view?.total_rows ?? 0;
 
     // Build workspace state helper for saving
     const buildWorkspaceState = useCallback((overrides?: Partial<WorkspaceState>): WorkspaceState => ({
@@ -1148,12 +1121,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         sensorAxisRange,
         scatterAxisPins,
         timeHighlights,
+        highlightLineDisplay,
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
-        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights,
+        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
         relativeAmount, relativeUnit,
     ]);
 
@@ -1394,6 +1368,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensorAxisRange={sensorAxisRange}
                         sensorMetadata={sensorMetadata}
                         timeHighlights={timeHighlights}
+                        highlightDisplay={highlightLineDisplay}
                     />
                 ) : (
                     // Scatter / pair plot render the bounded Rust sample so
@@ -1579,18 +1554,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         </div>
     );
 
-    const exportDisabled = !dataFilter || tableTotalRows === 0 || displayHeaders.length === 0;
-
-    // Which tab the Data Insight panel shows — the raw/aggregated table, or
-    // the "Selected Sensor" list (per-sensor show/hide + remove controls;
-    // replaces the old in-chart ECharts legend).
-    const [activeDataTab, setActiveDataTab] = useState<'insight' | 'selected' | 'filter' | 'highlights'>('selected');
+    // Which tab the panel shows — Filter, Highlights, or the "Selected
+    // Sensor" list (per-sensor show/hide + remove controls; replaces the old
+    // in-chart ECharts legend). The "Data Insight" tab (raw/aggregated table
+    // + its `useTablePage` backend query) was removed 2026-08-16 — unused in
+    // practice; see docs/PROJECT_HANDOVER.md for how to bring it back.
+    const [activeDataTab, setActiveDataTab] = useState<'selected' | 'filter' | 'highlights'>('selected');
 
     const renderDataContent = () => (
         <div className="widget-section data-widget">
             <div className="section-header collapsible-header">
                 <div className="section-header-left" style={{ gap: '4px' }}>
-                    {(['selected', 'insight', 'filter', 'highlights'] as const).map(tab => (
+                    {(['selected', 'filter', 'highlights'] as const).map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveDataTab(tab)}
@@ -1602,13 +1577,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 padding: '4px 6px', marginBottom: '-1px', cursor: 'pointer',
                             }}
                         >
-                            {tab === 'insight'
-                                ? 'Data Insight'
-                                : tab === 'filter'
-                                    ? 'Filter'
-                                    : tab === 'highlights'
-                                        ? 'Highlights'
-                                        : `Selected Sensor${selectedSensors.length > 0 ? ` (${selectedSensors.length})` : ''}`}
+                            {tab === 'filter'
+                                ? 'Filter'
+                                : tab === 'highlights'
+                                    ? 'Highlights'
+                                    : `Selected Sensor${selectedSensors.length > 0 ? ` (${selectedSensors.length})` : ''}`}
                         </button>
                     ))}
                 </div>
@@ -1628,45 +1601,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             Clear all
                         </button>
                     )}
-                    {activeDataTab === 'insight' && (
-                        <button
-                            className="export-btn-header"
-                            onClick={async () => {
-                                if (exportDisabled || !dataFilter) return;
-                                try {
-                                    const filePath = await save({
-                                        filters: [{ name: 'CSV Files', extensions: ['csv'] }],
-                                        defaultPath: `sensor_data_${new Date().toISOString().slice(0, 10)}.csv`,
-                                    });
-                                    if (!filePath) return;
-                                    // Rust streams the full post-op/post-aggregation
-                                    // row set straight to disk — the rows never
-                                    // enter the WebView (the old exporter built the
-                                    // whole CSV as one JS string and froze/OOMed on
-                                    // multi-million-row datasets).
-                                    await invoke<number>('export_chart_csv', {
-                                        filter: {
-                                            ...dataFilter,
-                                            // Export what the table shows: visible
-                                            // columns (multi-op uses all selected
-                                            // sensors to compute its Result column).
-                                            sensors: isMultiOp ? dataFilter.sensors : displayHeaders,
-                                        },
-                                        sampling: samplingMethod,
-                                        operation: operationConfig,
-                                        path: filePath,
-                                    });
-                                } catch (err) {
-                                    console.error('Export failed:', err);
-                                }
-                            }}
-                            title="Export to CSV"
-                            disabled={exportDisabled}
-                        >
-                            <Download size={14} />
-                            Export dataset
-                        </button>
-                    )}
                     <button
                         className="collapse-btn"
                         onClick={() => togglePanel('data')}
@@ -1677,16 +1611,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
             </div>
             <div className="widget-content">
-                {activeDataTab === 'insight' ? (
-                    <DataTable
-                        headers={displayHeaders}
-                        rows={tableRows}
-                        totalRows={tableTotalRows}
-                        page={tablePageIndex}
-                        pageSize={TABLE_PAGE_SIZE}
-                        onPageChange={setTablePageIndex}
-                    />
-                ) : activeDataTab === 'filter' ? (
+                {activeDataTab === 'filter' ? (
                     <div className="filter-content">
                         <FilterPanel
                             selectedSensors={selectedSensors}
@@ -1703,6 +1628,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRemoveTimeHighlight={handleRemoveTimeHighlight}
                         onRecolorTimeHighlight={handleRecolorTimeHighlight}
                         onRenameTimeHighlight={handleRenameTimeHighlight}
+                        lineDisplay={highlightLineDisplay}
+                        onSetLineDisplay={setHighlightLineDisplay}
                         chartType={chartType}
                     />
                 ) : (

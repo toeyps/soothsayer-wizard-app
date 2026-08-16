@@ -6,11 +6,6 @@ import type { DashboardRef } from '../components/dashboard/Dashboard';
 
 // ── Child component mocks — capture props, expose trigger buttons ─────────
 
-const dataTableProps: any[] = [];
-vi.mock('../components/dashboard/DataTable', () => ({
-    default: (props: any) => { dataTableProps.push(props); return <div data-testid="data-table" />; },
-}));
-
 const chartProps: any[] = [];
 vi.mock('../components/charts', () => ({
     Chart: (props: any) => { chartProps.push(props); return <div data-testid="chart-mock" />; },
@@ -110,9 +105,6 @@ vi.mock('../components/dashboard/HighlightsPanel', () => ({
 const mockUseChartData = vi.fn((_query?: unknown) => ({ view: null, loading: false, error: null } as any));
 vi.mock('../hooks/useChartData', () => ({ useChartData: (query: unknown) => mockUseChartData(query) }));
 
-const mockUseTablePage = vi.fn((_query?: unknown) => ({ page: null, loading: false, error: null } as any));
-vi.mock('../hooks/useTablePage', () => ({ useTablePage: (query: unknown) => mockUseTablePage(query) }));
-
 const mockUseScatterSample = vi.fn(
     (_filter?: unknown, _max?: unknown, _active?: unknown) =>
         ({ rows: [], headers: [], total: 0, sampled: 0, loading: false, error: null } as any),
@@ -159,10 +151,8 @@ const { webviewWindowCalls, mockGetByLabel, MockWebviewWindow } = vi.hoisted(() 
 });
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ WebviewWindow: MockWebviewWindow }));
 
-const mockSave = vi.fn();
 const mockMessage = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tauri-apps/plugin-dialog', () => ({
-    save: (opts: unknown) => mockSave(opts),
     message: (text: string, opts: unknown) => mockMessage(text, opts),
 }));
 
@@ -225,7 +215,6 @@ function renderDashboard(props: Partial<React.ComponentProps<typeof Dashboard>> 
 }
 
 beforeEach(() => {
-    dataTableProps.length = 0;
     chartProps.length = 0;
     filterPanelProps.length = 0;
     sensorSelectionProps.length = 0;
@@ -235,13 +224,11 @@ beforeEach(() => {
     splitCalls.length = 0;
     listenCallbacks = {};
     mockUseChartData.mockClear().mockReturnValue({ view: null, loading: false, error: null });
-    mockUseTablePage.mockClear().mockReturnValue({ page: null, loading: false, error: null });
     mockUseScatterSample.mockClear().mockReturnValue({ rows: [], headers: [], total: 0, sampled: 0, loading: false, error: null });
     mockInvoke.mockClear().mockResolvedValue(undefined);
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockGetByLabel.mockClear().mockResolvedValue(null);
-    mockSave.mockClear();
     mockMessage.mockClear().mockResolvedValue(undefined);
     mockSaveWorkspaceData.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockClear().mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id }));
@@ -408,7 +395,7 @@ describe('Dashboard', () => {
     });
 
     describe('Highlights tab (time-window "By time" highlights)', () => {
-        it('renders HighlightsPanel when the Highlights tab is selected, alongside Selected Sensor / Data Insight / Filter', () => {
+        it('renders HighlightsPanel when the Highlights tab is selected, alongside Selected Sensor / Filter', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             expect(screen.queryByTestId('highlights-panel')).toBeNull();
             fireEvent.click(screen.getByText('Highlights'));
@@ -466,6 +453,35 @@ describe('Dashboard', () => {
 
             fireEvent.click(screen.getByText('Scatter'));
             expect(last(highlightsPanelProps).chartType).toBe('scatter');
+        });
+
+        it('seeds highlightLineDisplay from initialState (default \'band\' when absent) and forwards it to both HighlightsPanel and Chart', () => {
+            renderDashboard({
+                initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], highlightLineDisplay: 'line', chartType: 'line' }),
+            });
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(last(highlightsPanelProps).lineDisplay).toBe('line');
+            expect(last(chartProps).highlightDisplay).toBe('line');
+        });
+
+        it('defaults highlightLineDisplay to \'band\' when absent from initialState', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(last(highlightsPanelProps).lineDisplay).toBe('band');
+            expect(last(chartProps).highlightDisplay).toBe('band');
+        });
+
+        it('onSetLineDisplay updates state, forwarded to Chart, and persists via autosave', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
+            fireEvent.click(screen.getByText('Highlights'));
+
+            act(() => { last(highlightsPanelProps).onSetLineDisplay('line'); });
+            expect(last(highlightsPanelProps).lineDisplay).toBe('line');
+            expect(last(chartProps).highlightDisplay).toBe('line');
+
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
+            const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+            expect(saved.highlightLineDisplay).toBe('line');
         });
     });
 
@@ -679,35 +695,6 @@ describe('Dashboard', () => {
             await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenLastCalledWith(
                 expect.objectContaining({ name: 'Renamed Workspace' }),
             ));
-        });
-    });
-
-    describe('CSV export', () => {
-        it('is disabled with no data filter (nothing selected)', () => {
-            renderDashboard();
-            fireEvent.click(screen.getByText('Data Insight'));
-            expect((screen.getByTitle('Export to CSV') as HTMLButtonElement).disabled).toBe(true);
-        });
-
-        it('exports the visible (non-multi-op) columns via export_chart_csv', async () => {
-            mockUseTablePage.mockReturnValue({ page: { headers: ['TAG1'], rows: [], total_rows: 5 }, loading: false, error: null });
-            mockUseChartData.mockReturnValue({
-                view: { headers: ['TAG1'], timestamps: [], series: [[]], total_rows: 5, ts_min: null, ts_max: null },
-                loading: false, error: null,
-            });
-            mockSave.mockResolvedValue('C:/out.csv');
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            fireEvent.click(screen.getByText('Data Insight'));
-
-            await act(async () => {
-                fireEvent.click(screen.getByTitle('Export to CSV'));
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-            expect(mockInvoke).toHaveBeenCalledWith('export_chart_csv', expect.objectContaining({
-                filter: expect.objectContaining({ sensors: ['TAG1'] }),
-                path: 'C:/out.csv',
-            }));
         });
     });
 

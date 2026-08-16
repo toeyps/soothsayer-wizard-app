@@ -125,4 +125,17 @@ describe('Chart', () => {
         render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" timeHighlights={timeHighlights} />);
         expect(pairProps[0].timeHighlights).toBeUndefined();
     });
+
+    it('forwards highlightDisplay to Line only -- Scatter always rings regardless, Pair Plot has no highlights at all', () => {
+        const { unmount: unmountLine } = render(<Chart {...baseProps} sensors={['A']} chartType="line" highlightDisplay="line" />);
+        expect(lineProps[0].highlightDisplay).toBe('line');
+        unmountLine();
+
+        const { unmount: unmountScatter } = render(<Chart {...baseProps} sensors={['A', 'B']} chartType="scatter" highlightDisplay="line" />);
+        expect(scatterProps[0].highlightDisplay).toBeUndefined();
+        unmountScatter();
+
+        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" highlightDisplay="line" />);
+        expect(pairProps[0].highlightDisplay).toBeUndefined();
+    });
 });

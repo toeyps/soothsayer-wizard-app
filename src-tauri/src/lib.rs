@@ -116,7 +116,7 @@ fn validate_save_dir(p: &str) -> Result<(), String> {
 }
 
 /// Shared validation for frontend-supplied write destinations picked via
-/// the OS-native save dialog (`write_user_file`, `export_chart_csv`).
+/// the OS-native save dialog (`write_user_file`).
 ///
 /// The user picks the destination via the OS-native save dialog, so the
 /// path itself is trusted to the extent the OS dialog vetted it. These
@@ -2629,36 +2629,6 @@ fn get_table_page(
     ))
 }
 
-/// Export the full post-op / post-aggregation row set as CSV, streamed
-/// straight to the user-picked path. Returns the number of data rows
-/// written. Replaces the old frontend exporter, which built the entire
-/// CSV as one JS string (an OOM/freeze on multi-million-row datasets).
-#[tauri::command(rename_all = "snake_case")]
-fn export_chart_csv(
-    filter: DataFilter,
-    sampling: String,
-    operation: Option<chart_query::OperationConfig>,
-    path: String,
-    state: State<AppState>,
-) -> Result<usize, String> {
-    validate_user_write_path(&path)?;
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    let file = std::fs::File::create(&path)
-        .map_err(|e| format!("Failed to create {}: {}", path, e))?;
-    let mut writer = std::io::BufWriter::new(file);
-    let written = chart_query::export_csv(
-        &session.data,
-        &filter,
-        operation.as_ref(),
-        &sampling,
-        &mut writer,
-    )?;
-    use std::io::Write;
-    writer.flush().map_err(|e| e.to_string())?;
-    Ok(written)
-}
-
 /// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
 /// Seeded with a fixed constant so the same dataset + filter yields the SAME
 /// sample on every call — important so the scatter doesn't visibly reshuffle
@@ -3018,7 +2988,6 @@ pub fn run() {
             apply_sensor_mapping,
             get_chart_data,
             get_table_page,
-            export_chart_csv,
             evaluate_formula,
             validate_formula,
             train_individual_model,

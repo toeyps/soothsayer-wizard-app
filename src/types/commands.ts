@@ -119,8 +119,8 @@ export interface RelationshipTrainResult {
 
 /**
  * Shared dashboard filter shape (sensor projection + timestamp window +
- * value gates) accepted by `get_chart_data`, `get_table_page`,
- * `export_chart_csv`, and `get_scatter_sample`.
+ * value gates) accepted by `get_chart_data`, `get_table_page`, and
+ * `get_scatter_sample`.
  */
 export interface DashboardDataFilter {
   sensors: string[];
@@ -234,20 +234,6 @@ export type TauriCommands = {
       page_size: number;
     };
     returns: TablePageData;
-  };
-  /**
-   * Stream the full post-op/post-aggregation row set to a CSV file at the
-   * user-picked path (Rust-side write — the rows never enter the WebView).
-   * Returns the number of data rows written.
-   */
-  export_chart_csv: {
-    args: {
-      filter: DashboardDataFilter;
-      sampling: ChartSamplingMethod;
-      operation: SensorOperationConfig | null;
-      path: string;
-    };
-    returns: number;
   };
   get_all_sensors: {
     args: Record<string, never>;

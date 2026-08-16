@@ -2,18 +2,17 @@
 //!
 //! filter → operation transform → optional hourly aggregation → min/max
 //! downsample, all executed Rust-side over the columnar store. The frontend
-//! only ever receives O(max_points) chart points, one table page, or a CSV
-//! written straight to disk — never the full dataset. This replaces the old
-//! flow where `get_data` streamed every row to the WebView and React redid
-//! the transforms per render (duplicating the dataset in the JS heap and
-//! freezing the main thread on large CSVs).
+//! only ever receives O(max_points) chart points or one table page — never
+//! the full dataset. This replaces the old flow where `get_data` streamed
+//! every row to the WebView and React redid the transforms per render
+//! (duplicating the dataset in the JS heap and freezing the main thread on
+//! large CSVs).
 
 use crate::csv_processor::{micros_to_naive, ColumnarData, CsvRecord, TS_MISSING};
-use crate::{excel_safe, DataFilter, ResolvedFilter};
+use crate::{DataFilter, ResolvedFilter};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Write;
 
 /// Hard ceiling on `max_points` so a bad caller can't request a "sample"
 /// the size of the dataset and reintroduce the renderer OOM this module
@@ -587,76 +586,6 @@ pub fn build_table_page(
     }
 }
 
-/// Quote a CSV field if it contains a delimiter, quote, or newline —
-/// same rule the legacy frontend exporter applied.
-fn csv_field(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
-}
-
-/// Stream the full post-op / post-aggregation row set as CSV. Returns the
-/// number of data rows written. String cells (headers, timestamps) are
-/// passed through `excel_safe` (formula-injection defense); numeric cells
-/// are written bare.
-pub fn export_csv<W: Write>(
-    data: &ColumnarData,
-    filter: &DataFilter,
-    operation: Option<&OperationConfig>,
-    sampling: &str,
-    w: &mut W,
-) -> Result<usize, String> {
-    let ctx = resolve_ctx(data, filter, operation);
-    let n_out = ctx.n_out();
-
-    let mut header_line = String::from("Timestamp");
-    for h in &ctx.out_headers {
-        header_line.push(',');
-        header_line.push_str(&csv_field(&excel_safe(h)));
-    }
-    header_line.push('\n');
-    w.write_all(header_line.as_bytes()).map_err(|e| e.to_string())?;
-
-    let mut written = 0usize;
-    let mut line = String::with_capacity(64);
-
-    let mut write_row = |ts: &str, values: &mut dyn Iterator<Item = f64>,
-                         w: &mut W|
-     -> Result<(), String> {
-        line.clear();
-        line.push_str(&csv_field(&excel_safe(ts)));
-        for v in values {
-            line.push(',');
-            if !v.is_nan() {
-                line.push_str(&format!("{}", v));
-            }
-        }
-        line.push('\n');
-        w.write_all(line.as_bytes()).map_err(|e| e.to_string())
-    };
-
-    if sampling == "raw" {
-        for &r in &ctx.idx {
-            let r = r as usize;
-            let ts = data.timestamps[r].as_deref().unwrap_or("");
-            let mut vals = (0..n_out).map(|c| ctx.out_value(c, r));
-            write_row(ts, &mut vals, w)?;
-            written += 1;
-        }
-    } else {
-        let agg = aggregate_hourly(&ctx, sampling);
-        for k in 0..agg.timestamps.len() {
-            let mut vals = agg.rows[k].iter().copied();
-            write_row(&agg.timestamps[k], &mut vals, w)?;
-            written += 1;
-        }
-    }
-
-    Ok(written)
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -837,36 +766,6 @@ mod tests {
         let p = build_table_page(&d, &filter(&["A"]), None, "avg", 0, 50);
         assert_eq!(p.total_rows, 2);
         assert_eq!(p.rows[0].values, vec![Some(1.5)]);
-    }
-
-    #[test]
-    fn export_writes_csv_with_excel_safety() {
-        let ts: Vec<Option<String>> = vec![Some("2020-01-01T00:00:00".into())];
-        let d = ColumnarData::from_parts(
-            vec!["timestamp".into(), "=EVIL".into(), "a,b".into()],
-            ts,
-            vec![vec![f64::NAN], vec![1.5], vec![2.0]],
-        );
-        let mut buf: Vec<u8> = Vec::new();
-        let written =
-            export_csv(&d, &filter(&["=EVIL", "a,b"]), None, "raw", &mut buf).unwrap();
-        assert_eq!(written, 1);
-        let text = String::from_utf8(buf).unwrap();
-        let mut lines = text.lines();
-        // Formula-escaped and comma-quoted headers.
-        assert_eq!(lines.next().unwrap(), "Timestamp,'=EVIL,\"a,b\"");
-        assert_eq!(lines.next().unwrap(), "2020-01-01T00:00:00,1.5,2");
-    }
-
-    #[test]
-    fn export_aggregated_rows() {
-        let d = dataset();
-        let mut buf: Vec<u8> = Vec::new();
-        let written = export_csv(&d, &filter(&["A"]), None, "avg", &mut buf).unwrap();
-        assert_eq!(written, 2);
-        let text = String::from_utf8(buf).unwrap();
-        assert!(text.contains("2020-01-01T00:00:00,1.5"));
-        assert!(text.contains("2020-01-01T01:00:00,5"));
     }
 
     #[test]
