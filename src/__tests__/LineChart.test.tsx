@@ -1,9 +1,36 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { useEffect } from 'react';
+import { render, fireEvent, act } from '@testing-library/react';
 
 const capturedOptions: any[] = [];
+/** Fake echarts instance handed to `onChartReady`, exposing just enough of
+ *  the real API (getZr/containPixel/convertFromPixel) for the Tag Point
+ *  click-handling tests below. `zrClickHandler` captures the listener
+ *  LineChart registers via `getZr().on('click', ...)` so tests can invoke
+ *  it directly, the same way a real zrender canvas click would. */
+let zrClickHandler: ((event: any) => void) | null = null;
+const mockContainPixel = vi.fn(() => true);
+const mockConvertFromPixel = vi.fn(() => 0);
+const mockZr = {
+    on: vi.fn((evt: string, cb: (event: any) => void) => { if (evt === 'click') zrClickHandler = cb; }),
+    off: vi.fn(),
+};
+const mockChartInstance = {
+    getZr: () => mockZr,
+    containPixel: mockContainPixel,
+    convertFromPixel: mockConvertFromPixel,
+};
+
 vi.mock('../components/charts/ResponsiveECharts', () => ({
-    default: (props: any) => { capturedOptions.push(props.option); return <div data-testid="chart" />; },
+    default: (props: any) => {
+        capturedOptions.push(props.option);
+        // Mirrors the real component's mount-only effect — calling
+        // onChartReady synchronously during render would trip React's
+        // "setState while rendering a different component" guard.
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        useEffect(() => { props.onChartReady?.(mockChartInstance); }, []);
+        return <div data-testid="chart" />;
+    },
 }));
 
 class MockResizeObserver {
@@ -23,6 +50,11 @@ function columnarOf(headers: string[], length: number): ColumnarSeries {
 
 beforeEach(() => {
     capturedOptions.length = 0;
+    zrClickHandler = null;
+    mockContainPixel.mockClear().mockReturnValue(true);
+    mockConvertFromPixel.mockClear().mockReturnValue(0);
+    mockZr.on.mockClear();
+    mockZr.off.mockClear();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
     document.documentElement.removeAttribute('data-theme');
 });
@@ -467,5 +499,120 @@ describe('LineChart option building', () => {
         const option = capturedOptions[capturedOptions.length - 1];
         expect(option.xAxis.data).toEqual(['t0', 't1']);
         expect(option.series[0].data).toEqual([2, 4]);
+    });
+});
+
+describe('Tag Point (click a point on the chart to compare it with others)', () => {
+    const headers = ['A', 'B'];
+
+    it('renders the toolbox with a Tag toggle, off by default', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        const tools = container.querySelectorAll('.line-chart-tool');
+        expect(tools.length).toBe(1); // just the toggle — Clear all only appears once tags exist
+        expect(tools[0].className).not.toContain('active');
+    });
+
+    it('activates the toggle on click', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        expect(container.querySelectorAll('.line-chart-tool')[0].className).toContain('active');
+    });
+
+    it('does nothing on a chart click while tag mode is off', () => {
+        const columnar = columnarOf(headers, 5);
+        const onChange = vi.fn();
+        render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
+        expect(zrClickHandler).not.toBeNull();
+        onChange.mockClear();
+        act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); });
+        expect(onChange).not.toHaveBeenCalled();
+        expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
+    });
+
+    it('tags the nearest point on click while tag mode is on, reporting it via onLineTaggedPointsChange', () => {
+        const columnar = columnarOf(headers, 5);
+        const onChange = vi.fn();
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]); // enable tag mode
+        mockConvertFromPixel.mockReturnValue(2); // → index 2 (00:02)
+        act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
+        expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ timestamp: '2026-01-01T00:02:00' })]);
+        const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
+        expect(markPoint.data).toHaveLength(1);
+        expect(markPoint.data[0].coord[0]).toBe(2);
+        expect(markPoint.data[0].label.formatter).toContain('①');
+    });
+
+    it('ignores a click outside the plot grid (containPixel false)', () => {
+        const columnar = columnarOf(headers, 5);
+        const onChange = vi.fn();
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        mockContainPixel.mockReturnValue(false);
+        onChange.mockClear();
+        act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); });
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it('clicking an already-tagged point again removes it (toggle, not a separate badge click)', () => {
+        const columnar = columnarOf(headers, 5);
+        const onChange = vi.fn();
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        mockConvertFromPixel.mockReturnValue(1);
+        act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // tag
+        act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // untag
+        expect(onChange).toHaveBeenLastCalledWith([]);
+        expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
+    });
+
+    it('shows a Δ line vs the first tag for every tag after it', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        mockConvertFromPixel.mockReturnValue(0);
+        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
+        mockConvertFromPixel.mockReturnValue(3);
+        act(() => { zrClickHandler!({ offsetX: 2, offsetY: 2 }); });
+        const data = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
+        expect(data).toHaveLength(2);
+        expect(data[0].label.formatter).not.toContain('Δ');
+        expect(data[1].label.formatter).toContain('Δ vs ①');
+    });
+
+    it('caps at 8 tagged points (one per RANGE_PALETTE colour)', () => {
+        const columnar = columnarOf(headers, 10);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        for (let i = 0; i < 9; i++) {
+            mockConvertFromPixel.mockReturnValue(i);
+            act(() => { zrClickHandler!({ offsetX: i, offsetY: i }); });
+        }
+        expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data).toHaveLength(8);
+    });
+
+    it('seeds tagged points from the lineTaggedPoints prop on mount (persistence across chart-type switches)', () => {
+        const columnar = columnarOf(headers, 5);
+        const seeded = [{ id: 't1', timestamp: '2026-01-01T00:01:00', color: '#f59e0b' }];
+        render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seeded} />);
+        const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
+        expect(markPoint.data).toHaveLength(1);
+        expect(markPoint.data[0].itemStyle.color).toBe('#f59e0b');
+    });
+
+    it('shows "Clear all" only once a tag exists, and it clears every tag', () => {
+        const columnar = columnarOf(headers, 5);
+        const seeded = [{ id: 't1', timestamp: '2026-01-01T00:01:00', color: '#f59e0b' }];
+        const onChange = vi.fn();
+        const { container } = render(
+            <LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seeded} onLineTaggedPointsChange={onChange} />,
+        );
+        const tools = container.querySelectorAll('.line-chart-tool');
+        expect(tools.length).toBe(2); // toggle + Clear all
+        fireEvent.click(tools[1]);
+        expect(onChange).toHaveBeenLastCalledWith([]);
+        expect(container.querySelectorAll('.line-chart-tool').length).toBe(1); // Clear all disappears
     });
 });

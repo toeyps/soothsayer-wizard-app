@@ -1,9 +1,11 @@
-import { useMemo, memo, useRef, useState, useEffect } from 'react';
+import { useMemo, memo, useRef, useState, useEffect, useCallback } from 'react';
+import { Tag, Trash2 } from 'lucide-react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 import { formatDate, formatDateTime } from '../../utils/dateFormat';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
-import { hexToRgbaCss } from './pairPlotColors';
+import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
+import type { LineTaggedPoint } from '../../types';
 
 /** Index into `xData` (a category axis of timestamp strings) whose parsed
  *  time is closest to `targetMs` — ECharts' category axis needs an actual
@@ -96,7 +98,11 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
     return palette[Math.abs(hash) % palette.length];
 }
 
-function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetadata, timeHighlights, highlightDisplay }: ChartProps) {
+function LineChart({
+    data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange,
+    sensorMetadata, timeHighlights, highlightDisplay,
+    lineTaggedPoints: persistedTaggedPoints, onLineTaggedPointsChange,
+}: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
@@ -105,6 +111,85 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
     // and runtime "special" (calculated) sensors, since Dashboard.tsx merges
     // both into the same `sensorMetadata` array before it reaches here.
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+
+    // Tag Point — pin 2+ points on the chart to compare their values.
+    // Seeded from the persisted prop on mount, same reasoning as
+    // scatterAxisPins/criteriaSensor elsewhere in this codebase: Chart.tsx
+    // fully unmounts LineChart when chartType leaves 'line', so without this
+    // every tag would vanish the moment the user looked at Scatter/Pair Plot
+    // and came back.
+    const [taggedPoints, setTaggedPoints] = useState<LineTaggedPoint[]>(() => persistedTaggedPoints ?? []);
+    const [tagMode, setTagMode] = useState(false);
+    const [chartInstance, setChartInstance] = useState<any>(null);
+    const handleChartReady = useCallback((instance: any) => setChartInstance(instance), []);
+
+    useEffect(() => {
+        onLineTaggedPointsChange?.(taggedPoints);
+    }, [taggedPoints, onLineTaggedPointsChange]);
+
+    // xData is needed both by the option builder below and by the click
+    // handler (to resolve a clicked pixel back to a timestamp) — computed
+    // once here so neither has to duplicate or re-derive it.
+    const xData = useMemo(
+        () => (columnar ? columnar.timestamps : data.map(d => d.timestamp)),
+        [columnar, data],
+    );
+    // Refs so the zr click listener (attached once per chart instance, see
+    // below) always reads the CURRENT tagMode/xData instead of whatever was
+    // in scope when the listener was attached — avoids re-attaching the
+    // listener on every keystroke-unrelated render.
+    const tagModeRef = useRef(tagMode);
+    useEffect(() => { tagModeRef.current = tagMode; }, [tagMode]);
+    const xDataRef = useRef(xData);
+    useEffect(() => { xDataRef.current = xData; }, [xData]);
+
+    // Click-to-tag: attached at the zrender (canvas) level, not via
+    // ResponsiveECharts' onEvents, because the large-data rendering profile
+    // sets `silent: true` on the line series to skip per-pixel hit-testing
+    // (see isLargeData below) — an ECharts-level series click would simply
+    // never fire on exactly the data this feature is most useful for. A
+    // zrender click fires for any click on the canvas regardless of what's
+    // under it; convertFromPixel resolves it back to the nearest x-axis
+    // index ourselves, the same way containPixel/convertFromPixel are
+    // documented to be used together for this exact "click anywhere on the
+    // chart" pattern.
+    //
+    // Clicking an already-tagged point removes it (toggle), instead of a
+    // separate "click the badge" gesture — a badge is a tiny, precise
+    // target to hit inside a markPoint's rendered symbol, while re-clicking
+    // the same spot on the chart is exactly as easy as tagging it was.
+    useEffect(() => {
+        if (!chartInstance) return;
+        const zr = chartInstance.getZr?.();
+        if (!zr) return;
+        const handleZrClick = (event: any) => {
+            if (!tagModeRef.current) return;
+            const xd = xDataRef.current;
+            if (xd.length === 0) return;
+            const pixel = [event.offsetX, event.offsetY];
+            if (!chartInstance.containPixel({ gridIndex: 0 }, pixel)) return;
+            const rawIdx = chartInstance.convertFromPixel({ xAxisIndex: 0 }, pixel);
+            if (rawIdx == null || !isFinite(rawIdx)) return;
+            const idx = Math.max(0, Math.min(xd.length - 1, Math.round(rawIdx)));
+            const timestamp = xd[idx];
+            if (timestamp == null) return;
+            setTaggedPoints(prev => {
+                const existing = prev.find(t => {
+                    const ms = new Date(t.timestamp).getTime();
+                    return !isNaN(ms) && nearestXIndex(xd, ms) === idx;
+                });
+                if (existing) return prev.filter(t => t.id !== existing.id);
+                if (prev.length >= MAX_TAGGED_POINTS) return prev;
+                return [...prev, {
+                    id: `tag-${Date.now()}-${prev.length}`,
+                    timestamp: timestamp as string,
+                    color: rgbaToHex(RANGE_PALETTE[prev.length % RANGE_PALETTE.length]),
+                }];
+            });
+        };
+        zr.on('click', handleZrClick);
+        return () => { zr.off('click', handleZrClick); };
+    }, [chartInstance]);
 
     useEffect(() => {
         const el = wrapperRef.current;
@@ -152,11 +237,9 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
     const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
 
     const option = useMemo(() => {
-        // Columnar feed (from Rust's `get_chart_data`) is preferred: arrays
-        // drop straight into ECharts with no per-row mapping. The row-based
-        // `data` path remains for callers that stream full rows (e.g.
-        // PredictiveModelBuild's target chart).
-        const xData = columnar ? columnar.timestamps : data.map(d => d.timestamp);
+        // xData is computed once above (shared with the click handler) —
+        // columnar feed (from Rust's `get_chart_data`) is preferred there
+        // too: arrays drop straight into ECharts with no per-row mapping.
         const dataCount = xData.length;
         // Threshold for the "heavy" rendering profile (no smoothing / no
         // animation / hairline stroke / LTTB). The columnar dashboard feed is
@@ -282,6 +365,64 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
             return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
         };
 
+        // Tag Point markers — one per tagged point, attached to the first
+        // series only (same "only the first series carries it" convention
+        // as markArea above, for the same reason: this draws across the
+        // shared grid regardless of which series owns it, so attaching it
+        // to every series would just draw it N times over). Each entry's
+        // `coord` anchors the marker to series[0]'s own value at that
+        // index; the label lists every visible sensor's value (not just
+        // series[0]'s) plus a Δ line vs the first tag, for every tag after
+        // the first.
+        const valuesFor = (sensor: string): (number | null)[] => {
+            const sensorIdx = headers.indexOf(sensor);
+            return columnar ? (columnar.series[sensorIdx] ?? []) : data.map(d => d.values[sensorIdx] ?? null);
+        };
+        const taggedMarkPointData = dataCount > 0
+            ? taggedPoints
+                .map((tag, order) => {
+                    const tagMs = new Date(tag.timestamp).getTime();
+                    if (isNaN(tagMs)) return null;
+                    const idx = nearestXIndex(xData, tagMs);
+                    const perSensor = sensors.map(sensor => ({ sensor, value: valuesFor(sensor)[idx] ?? null }));
+                    const anchorValue = perSensor[0]?.value;
+                    // series[0] missing at this exact index (e.g. a NaN row) —
+                    // nothing to anchor the marker to; skip rather than plot
+                    // at a fabricated y value.
+                    if (anchorValue == null) return null;
+                    const badge = TAG_BADGES[order % TAG_BADGES.length];
+                    const lines = [`${badge}  ${formatDateTime(new Date(xData[idx] ?? ''))}`];
+                    perSensor.forEach(({ sensor, value }) => {
+                        const unit = sensorMetaMap.get(normalizeSensorTag(sensor))?.unit;
+                        lines.push(`${sensor}: ${value == null ? '—' : value.toFixed(3)}${unit ? ` ${unit}` : ''}`);
+                    });
+                    if (order > 0) {
+                        const baseTag = taggedPoints[0];
+                        const baseMs = new Date(baseTag.timestamp).getTime();
+                        const baseIdx = isNaN(baseMs) ? -1 : nearestXIndex(xData, baseMs);
+                        if (baseIdx >= 0) {
+                            const deltaParts = sensors
+                                .map(sensor => {
+                                    const values = valuesFor(sensor);
+                                    const v = values[idx];
+                                    const baseV = values[baseIdx];
+                                    if (v == null || baseV == null) return null;
+                                    const delta = v - baseV;
+                                    return `${sensor}: ${delta >= 0 ? '+' : ''}${delta.toFixed(3)}`;
+                                })
+                                .filter((v): v is string => v !== null);
+                            if (deltaParts.length > 0) lines.push(`Δ vs ${TAG_BADGES[0]}: ${deltaParts.join(', ')}`);
+                        }
+                    }
+                    return {
+                        coord: [idx, anchorValue],
+                        itemStyle: { color: tag.color, borderColor: markLabelBg, borderWidth: 2 },
+                        label: { formatter: lines.join('\n') },
+                    };
+                })
+                .filter((v): v is NonNullable<typeof v> => v !== null)
+            : [];
+
         const baseSeries = sensors.map((sensor, index) => {
             const sensorIdx = headers.indexOf(sensor);
             const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
@@ -354,6 +495,37 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
                 // to every series would be redundant.
                 ...(index === 0 && highlightAreas.length > 0
                     ? { markArea: { silent: true, data: highlightAreas } }
+                    : {}),
+                // Tag Point markers — same "first series only" convention.
+                // `silent: true`: clicks are handled entirely by the
+                // zrender-level handler above (click the same spot again to
+                // untag), not by markPoint's own hit-testing — keeping it
+                // silent avoids ECharts layering its own hover/tooltip
+                // behaviour on top of that.
+                ...(index === 0 && taggedMarkPointData.length > 0
+                    ? {
+                        markPoint: {
+                            silent: true,
+                            animation: false,
+                            symbol: 'circle',
+                            symbolSize: 12,
+                            data: taggedMarkPointData,
+                            label: {
+                                show: true,
+                                position: 'top' as const,
+                                color: txtPrimary,
+                                backgroundColor: markLabelBg,
+                                borderColor: tooltipBorder,
+                                borderWidth: 1,
+                                borderRadius: 6,
+                                padding: [6, 8],
+                                fontSize: 10,
+                                fontFamily: 'JetBrains Mono, monospace',
+                                lineHeight: 15,
+                                align: 'left' as const,
+                            },
+                        },
+                    }
                     : {}),
             };
         });
@@ -556,14 +728,44 @@ function LineChart({ data, columnar, sensors, headers, markLines, hideYSplitLine
             }),
             series: [...baseSeries, ...highlightOverlaySeries],
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints]);
 
     return (
-        <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0 }}>
+        <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
             {/* lazyUpdate batches consecutive setOption calls into one frame
                 (resize + data + theme changes coalesce instead of each
                 triggering its own full notMerge re-init). */}
-            <ResponsiveECharts option={option} lazyUpdate style={{ minHeight: '200px' }} />
+            <ResponsiveECharts option={option} lazyUpdate style={{ minHeight: '200px' }} onChartReady={handleChartReady} />
+            <div className="line-chart-toolbox">
+                <button
+                    type="button"
+                    onClick={() => setTagMode(m => !m)}
+                    className={`line-chart-tool${tagMode ? ' active' : ''}`}
+                    title={tagMode
+                        ? 'Tag point — click the chart to pin a point, click a pinned point again to remove it'
+                        : 'Tag point — compare 2+ points\' values side by side'}
+                >
+                    <Tag size={13} />
+                </button>
+                {taggedPoints.length > 0 && (
+                    <button
+                        type="button"
+                        onClick={() => setTaggedPoints([])}
+                        className="line-chart-tool"
+                        title="Clear all tags"
+                    >
+                        <Trash2 size={13} />
+                    </button>
+                )}
+            </div>
+            {tagMode && (
+                <div style={{
+                    position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
+                    fontSize: 10, fontStyle: 'italic', color: txtSecondary,
+                }}>
+                    Click the chart to tag a point — click a tag again to remove it
+                </div>
+            )}
         </div>
     );
 }

@@ -98,4 +98,15 @@ describe('ResponsiveECharts', () => {
         unmount();
         expect(disconnectSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('calls onChartReady once with the echarts instance after mount', () => {
+        const onChartReady = vi.fn();
+        render(<ResponsiveECharts option={{}} onChartReady={onChartReady} />);
+        expect(onChartReady).toHaveBeenCalledTimes(1);
+        expect(onChartReady).toHaveBeenCalledWith({ resize: mockResize });
+    });
+
+    it('does not throw when onChartReady is omitted', () => {
+        expect(() => render(<ResponsiveECharts option={{}} />)).not.toThrow();
+    });
 });

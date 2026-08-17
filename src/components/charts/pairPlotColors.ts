@@ -67,3 +67,33 @@ export const CANVAS_BG: Record<ThemeMode, [number, number, number, number]> = {
     dark: hexToRgba(CANVAS_BG_HEX.dark),
     light: hexToRgba(CANVAS_BG_HEX.light),
 };
+
+/** Distinct colours auto-assigned to new time highlights / tagged points —
+ *  shared across ScatterChart (time highlights, re-exported from there for
+ *  callers that already import it from that module) and LineChart (Tag
+ *  Point) for visual consistency across the app's range/lasso/tag-based
+ *  colouring features. Cycles if more items are added than colours. Lives
+ *  here (not in ScatterChart.tsx) specifically so LineChart.tsx doesn't
+ *  have to import ScatterChart.tsx just for this array — that would pull
+ *  regl-scatterplot's whole module graph into the Line chart's dependency
+ *  chain for a plain colour list. */
+export const RANGE_PALETTE: Array<[number, number, number, number]> = [
+    [0.99, 0.75, 0.18, 1.0],  // amber
+    [0.20, 0.83, 0.60, 1.0],  // emerald
+    [0.86, 0.40, 0.97, 1.0],  // fuchsia
+    [0.99, 0.45, 0.45, 1.0],  // rose
+    [0.40, 0.85, 0.99, 1.0],  // sky
+    [0.99, 0.55, 0.27, 1.0],  // orange
+    [0.65, 0.85, 0.40, 1.0],  // lime
+    [0.78, 0.66, 0.99, 1.0],  // violet
+];
+
+/** Numbered badges for tagged points (Line and Scatter's Tag Point
+ *  feature) — one per `RANGE_PALETTE` entry, so a chart never runs out of
+ *  distinct number+colour pairs before it runs out of tag slots. */
+export const TAG_BADGES = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
+
+/** One tag per palette colour, then stop — past this a new tag would have
+ *  to reuse a colour/number already on the chart, which reads as a bug
+ *  ("did tag ① move?") rather than a new tag. */
+export const MAX_TAGGED_POINTS = RANGE_PALETTE.length;

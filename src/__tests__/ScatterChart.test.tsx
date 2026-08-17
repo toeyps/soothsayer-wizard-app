@@ -440,4 +440,109 @@ describe('ScatterChart', () => {
             expect(container.querySelectorAll('.pair-regl-axis-label.hoverable').length).toBe(0);
         });
     });
+
+    describe('Tag Point (click a point to compare it with others — local/ephemeral, not persisted; see LineTaggedPoint\'s docstring for why)', () => {
+        function getCanvas(container: HTMLElement): HTMLElement {
+            return container.querySelector('[data-testid="scatter-main-canvas"]')!;
+        }
+
+        it('renders the toolbox with Reset View, Ruler, and Tag — Tag off by default', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            expect(screen.getByTitle(/compare 2\+ points/i)).toBeTruthy();
+        });
+
+        it('does nothing on canvas click while tag mode is off, even while hovering a point', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+            expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+        });
+
+        it('does nothing on canvas click while tag mode is on but nothing is hovered', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            fireEvent.click(getCanvas(container));
+            expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+        });
+
+        it('tags the hovered point on click while tag mode is on', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+
+            expect(container.querySelector('.scatter-tag-ring')).toBeTruthy();
+            expect(container.querySelector('.scatter-tag-badge')!.textContent).toBe('①');
+            const callout = container.querySelector('.scatter-tag-callout')!;
+            expect(callout.textContent).toContain('t0');
+            expect(callout.textContent).toContain('1.00'); // A's value for row 0
+            expect(callout.textContent).toContain('10.00'); // B's value for row 0
+        });
+
+        it('clicking an already-tagged point again removes it (toggle)', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container)); // tag
+            fireEvent.click(getCanvas(container)); // untag (still hovering the same point)
+            expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+        });
+
+        it('shows a Δ line vs the first tag for a second tagged point', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+            act(() => { lastInstance!.__subs['pointover'](1); });
+            fireEvent.click(getCanvas(container));
+
+            const callouts = container.querySelectorAll('.scatter-tag-callout');
+            expect(callouts).toHaveLength(2);
+            expect(callouts[1].textContent).toContain('Δ vs ①');
+        });
+
+        it('"Clear all" only appears once a tag exists, and clears every tag', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            expect(screen.queryByTitle('Clear all tags')).toBeNull();
+
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+            expect(screen.getByTitle('Clear all tags')).toBeTruthy();
+
+            fireEvent.click(screen.getByTitle('Clear all tags'));
+            expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+            expect(screen.queryByTitle('Clear all tags')).toBeNull();
+        });
+
+        it('clears every tag when the underlying data changes (sampled points have no stable identity across a refetch)', () => {
+            const { container, rerender } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+            expect(container.querySelector('.scatter-tag-ring')).toBeTruthy();
+
+            const newData = [{ timestamp: 't9', values: [9, 90] }] as any;
+            rerender(<ScatterChart data={newData} sensors={['A', 'B']} headers={headers} />);
+            expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+        });
+
+        it('clears every tag when the X/Y sensor pair changes', () => {
+            const threeSensors = ['A', 'B', 'C'];
+            const threeHeaders = ['A', 'B', 'C'];
+            const threeData = [
+                { timestamp: 't0', values: [1, 10, 100] },
+                { timestamp: 't1', values: [2, 20, 200] },
+            ] as any;
+            const { container } = render(<ScatterChart data={threeData} sensors={threeSensors} headers={threeHeaders} />);
+            fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+            act(() => { lastInstance!.__subs['pointover'](0); });
+            fireEvent.click(getCanvas(container));
+            expect(container.querySelector('.scatter-tag-ring')).toBeTruthy();
+
+            const [, ySelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
+            fireEvent.change(ySelect, { target: { value: 'C' } }); // Y: B -> C
+            expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+        });
+    });
 });

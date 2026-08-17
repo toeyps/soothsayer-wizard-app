@@ -10,6 +10,11 @@ interface ResponsiveEChartsProps {
     className?: string;
     opts?: any;
     onEvents?: Record<string, (...args: any[]) => void>;
+    /** Fired once with the underlying echarts instance after mount. For
+     *  callers that need APIs `onEvents` can't reach — e.g. `getZr()` for a
+     *  canvas-level click listener that fires regardless of series `silent`
+     *  state, or `convertFromPixel`/`convertToPixel` for coordinate math. */
+    onChartReady?: (instance: any) => void;
 }
 
 /**
@@ -26,10 +31,17 @@ export default function ResponsiveECharts({
     className,
     opts,
     onEvents,
+    onChartReady,
 }: ResponsiveEChartsProps) {
     const chartRef = useRef<ReactECharts>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const rafRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        const inst = chartRef.current?.getEchartsInstance();
+        if (inst) onChartReady?.(inst);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [onChartReady]);
 
     useEffect(() => {
         if (!containerRef.current) return;

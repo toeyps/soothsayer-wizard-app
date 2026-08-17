@@ -1,16 +1,22 @@
 import { useState, useEffect, useMemo, memo, useRef, useCallback } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
-import { RotateCcw, Ruler } from 'lucide-react';
+import { RotateCcw, Ruler, Tag, Trash2 } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
 import type { TimeHighlight } from '../../types';
 import { firstMatchingHighlight } from '../../utils/timeHighlights';
 import AxisLabel from './AxisLabel';
-import { hexToRgba } from './pairPlotColors';
+import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { useThemeMode } from '../../hooks/useThemeMode';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+
+// Re-exported so existing callers (Dashboard.tsx, charts/index.ts) that
+// import RANGE_PALETTE from this module keep working — the array itself
+// now lives in pairPlotColors.ts (dependency-free), so LineChart.tsx can
+// use it without pulling in regl-scatterplot. See that file for why.
+export { RANGE_PALETTE };
 
 /** WebGL can't read CSS custom properties, so the canvas clear color is
  *  recomputed per theme here (dark slate-900 / light white, matching
@@ -27,23 +33,6 @@ const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 
 /** Base point colour — the app's standard indigo accent at low alpha
  *  (density emerges via WebGL alpha blending). */
 const BASE_POINT_COLOR: [number, number, number, number] = [0.39, 0.58, 0.98, 0.55];
-
-/** Distinct colours auto-assigned to new time highlights — same palette as
- *  PairPlotChart's CLUSTER_PALETTE for visual consistency across the app's
- *  range/lasso-based colouring features. Cycles if the user adds more
- *  highlights than colours. Exported (via charts/index.ts) so
- *  Dashboard.tsx's `handleAddTimeHighlight` can assign a default colour to
- *  each new highlight. */
-export const RANGE_PALETTE: Array<[number, number, number, number]> = [
-    [0.99, 0.75, 0.18, 1.0],  // amber
-    [0.20, 0.83, 0.60, 1.0],  // emerald
-    [0.86, 0.40, 0.97, 1.0],  // fuchsia
-    [0.99, 0.45, 0.45, 1.0],  // rose
-    [0.40, 0.85, 0.99, 1.0],  // sky
-    [0.99, 0.55, 0.27, 1.0],  // orange
-    [0.65, 0.85, 0.40, 1.0],  // lime
-    [0.78, 0.66, 0.99, 1.0],  // violet
-];
 
 /**
  * Pixel padding around the WebGL canvas for the SVG axis overlay.
@@ -114,6 +103,35 @@ function ScatterChart({
     /** Point index currently under the cursor — drives the floating tooltip.
      *  Cleared on `pointout`. */
     const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+    /** Mirrors hoveredIdx for the click listener attached inside the canvas
+     *  creation effect (below) — that effect only re-runs on resize, so it
+     *  needs a ref to read the CURRENT hover target rather than whatever
+     *  was hovered when the listener was attached. */
+    const hoveredIdxRef = useRef<number | null>(null);
+    useEffect(() => { hoveredIdxRef.current = hoveredIdx; }, [hoveredIdx]);
+
+    /** Tag Point — click a point to pin it and compare its value against
+     *  others. Deliberately LOCAL, ephemeral state (not lifted to Dashboard
+     *  / WorkspaceState like scatterAxisPins or timeHighlights): a tagged
+     *  point is identified by its position in the CURRENTLY drawn buffer
+     *  (`pointIdx`, the same index `pointover`/`getScreenPosition` use),
+     *  which has no stable meaning across a refetch — Scatter's sample
+     *  comes from backend reservoir sampling (`get_scatter_sample`), so the
+     *  same row isn't guaranteed to even be in the next sample, let alone
+     *  at the same index. Reset below whenever the point SET can change. */
+    const [scatterTagMode, setScatterTagMode] = useState(false);
+    const scatterTagModeRef = useRef(false);
+    useEffect(() => { scatterTagModeRef.current = scatterTagMode; }, [scatterTagMode]);
+    const [scatterTags, setScatterTags] = useState<{ id: string; pointIdx: number; colorIdx: number }[]>([]);
+    // Clear tags whenever the drawn point SET can change — a new query
+    // result (`data`) or a different sensor pair (either can change which
+    // rows survive the NaN filter in the draw effect below) both shift what
+    // `pointIdx` values actually mean. Resize/pan/zoom/axis-pin changes are
+    // NOT in this list on purpose — none of them touch which points are
+    // drawn or their order, only how they're scaled/positioned.
+    useEffect(() => {
+        setScatterTags([]);
+    }, [data, scatterX, scatterY]);
     /** The regl-scatterplot instance kept in component state so the draw
      *  effect can react to its lifecycle (recreate on resize → redraw). */
     const [sc, setSc] = useState<any>(null);
@@ -380,11 +398,29 @@ function ScatterChart({
         canvas.addEventListener('webglcontextlost', onContextLost as EventListener);
         canvas.addEventListener('webglcontextrestored', onContextRestored as EventListener);
 
+        // Tag Point click — tied to this same canvas lifecycle (recreated
+        // alongside the instance on resize) rather than a separate effect,
+        // reading current mode/hover target via refs so it never needs to
+        // be re-attached on every tagMode toggle or hover change.
+        const onCanvasClick = () => {
+            if (!scatterTagModeRef.current) return;
+            const idx = hoveredIdxRef.current;
+            if (idx == null) return;
+            setScatterTags(prev => {
+                const existing = prev.find(t => t.pointIdx === idx);
+                if (existing) return prev.filter(t => t.id !== existing.id);
+                if (prev.length >= MAX_TAGGED_POINTS) return prev;
+                return [...prev, { id: `tag-${Date.now()}-${prev.length}`, pointIdx: idx, colorIdx: prev.length }];
+            });
+        };
+        canvas.addEventListener('click', onCanvasClick);
+
         setSc(inst);
 
         return () => {
             canvas.removeEventListener('webglcontextlost', onContextLost as EventListener);
             canvas.removeEventListener('webglcontextrestored', onContextRestored as EventListener);
+            canvas.removeEventListener('click', onCanvasClick);
             // Clear the draw queue FIRST: a draw interrupted by destroy() may
             // never settle, which would leave the queue stuck busy.
             resetDraw();
@@ -644,6 +680,53 @@ function ScatterChart({
         };
     }, [hoveredIdx, sc, data, scatterX, scatterY, headers, innerDims.width, innerDims.height]);
 
+    // Screen positions + callout content for every tagged point. Recomputes
+    // on every pan/zoom (visibleBounds changes on each `view` event) so the
+    // ring/badge/callout track the camera exactly the way the tooltip does
+    // above — `getScreenPosition` always reflects the CURRENT camera, not
+    // whatever it was when the point was tagged.
+    const tagOverlays = useMemo(() => {
+        if (!sc || scatterTags.length === 0) return [];
+        const xIdx = headers.indexOf(scatterX);
+        const yIdx = headers.indexOf(scatterY);
+        const baseTag = scatterTags[0];
+        const baseOrigIdx = origIndicesRef.current[baseTag.pointIdx];
+        const baseRow = baseOrigIdx != null ? data[baseOrigIdx] : null;
+        const baseX = baseRow && xIdx >= 0 ? baseRow.values[xIdx] : null;
+        const baseY = baseRow && yIdx >= 0 ? baseRow.values[yIdx] : null;
+
+        return scatterTags
+            .map((tag, order) => {
+                const origIdx = origIndicesRef.current[tag.pointIdx];
+                const row = origIdx != null ? data[origIdx] : null;
+                if (!row) return null;
+                let pos: [number, number] | undefined;
+                try {
+                    pos = sc.getScreenPosition(tag.pointIdx);
+                } catch {
+                    return null;
+                }
+                if (!pos) return null;
+                const xVal = xIdx >= 0 ? row.values[xIdx] : null;
+                const yVal = yIdx >= 0 ? row.values[yIdx] : null;
+                const color = rgbaToHex(RANGE_PALETTE[tag.colorIdx % RANGE_PALETTE.length]);
+                const delta = order > 0 && xVal != null && yVal != null && baseX != null && baseY != null
+                    ? { dx: (xVal as number) - (baseX as number), dy: (yVal as number) - (baseY as number) }
+                    : null;
+                return {
+                    id: tag.id,
+                    x: pos[0],
+                    y: pos[1],
+                    badge: TAG_BADGES[order % TAG_BADGES.length],
+                    color,
+                    xVal, yVal,
+                    timestamp: row.timestamp,
+                    delta,
+                };
+            })
+            .filter((v): v is NonNullable<typeof v> => v !== null);
+    }, [sc, scatterTags, data, scatterX, scatterY, headers, visibleBounds]);
+
     if (sensors.length < 2) {
         return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
@@ -682,7 +765,30 @@ function ScatterChart({
                 >
                     <Ruler size={13} />
                 </button>
+                <button
+                    onClick={() => setScatterTagMode(m => !m)}
+                    className={`scatter-regl-tool${scatterTagMode ? ' active' : ''}`}
+                    title={scatterTagMode
+                        ? 'Tag point — click a point to pin it, click a pinned point again to remove it'
+                        : "Tag point — compare 2+ points' values side by side"}
+                >
+                    <Tag size={13} />
+                </button>
+                {scatterTags.length > 0 && (
+                    <button
+                        onClick={() => setScatterTags([])}
+                        className="scatter-regl-tool"
+                        title="Clear all tags"
+                    >
+                        <Trash2 size={13} />
+                    </button>
+                )}
             </div>
+            {scatterTagMode && (
+                <div className="scatter-regl-hint" style={{ position: 'absolute', top: 44, right: 12, zIndex: 11 }}>
+                    Click a point to tag it — click it again to remove
+                </div>
+            )}
 
             {/* Axis-scale editor — pins X and/or Y to a fixed range instead of
                 auto-fitting to the data extent. Toggled by the same Ruler icon,
@@ -793,6 +899,29 @@ function ScatterChart({
                         )}
                     </div>
                 )}
+                {/* Tagged points — a ring (doesn't touch the dot's own fill
+                    colour, so it layers over criteria-range coloring
+                    without a conflict) + a small numbered badge + a callout
+                    with the tag's values and, from the second tag on, its
+                    delta vs the first. */}
+                {tagOverlays.map(t => (
+                    <div key={t.id}>
+                        <div className="scatter-tag-ring" style={{ left: t.x, top: t.y, borderColor: t.color }} />
+                        <div className="scatter-tag-badge" style={{ left: t.x + 9, top: t.y - 9, background: t.color }}>
+                            {t.badge}
+                        </div>
+                        <div className="scatter-tag-callout" style={{ left: t.x, top: t.y - 14 }}>
+                            {t.timestamp && <div className="scatter-tag-callout-ts">{t.timestamp}</div>}
+                            <div>{scatterX}: {t.xVal != null ? fmt(t.xVal as number) : '—'}</div>
+                            <div>{scatterY}: {t.yVal != null ? fmt(t.yVal as number) : '—'}</div>
+                            {t.delta && (
+                                <div className="scatter-tag-callout-delta">
+                                    Δ vs {TAG_BADGES[0]}: {t.delta.dx >= 0 ? '+' : ''}{fmt(t.delta.dx)}, {t.delta.dy >= 0 ? '+' : ''}{fmt(t.delta.dy)}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
                 {initError && (
                     <div style={{
                         position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',

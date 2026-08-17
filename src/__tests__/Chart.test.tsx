@@ -138,4 +138,20 @@ describe('Chart', () => {
         render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" highlightDisplay="line" />);
         expect(pairProps[0].highlightDisplay).toBeUndefined();
     });
+
+    it('forwards lineTaggedPoints/onLineTaggedPointsChange to Line only -- Scatter keeps its own tags local, Pair Plot has none', () => {
+        const lineTaggedPoints = [{ id: 't1', timestamp: '2026-01-01T00:00', color: '#f59e0b' }];
+        const onLineTaggedPointsChange = vi.fn();
+
+        const { unmount: unmountLine } = render(
+            <Chart {...baseProps} sensors={['A']} chartType="line" lineTaggedPoints={lineTaggedPoints} onLineTaggedPointsChange={onLineTaggedPointsChange} />,
+        );
+        expect(lineProps[0].lineTaggedPoints).toBe(lineTaggedPoints);
+        expect(lineProps[0].onLineTaggedPointsChange).toBe(onLineTaggedPointsChange);
+        unmountLine();
+
+        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="scatter" lineTaggedPoints={lineTaggedPoints} onLineTaggedPointsChange={onLineTaggedPointsChange} />);
+        expect(scatterProps[0].lineTaggedPoints).toBeUndefined();
+        expect(scatterProps[0].onLineTaggedPointsChange).toBeUndefined();
+    });
 });

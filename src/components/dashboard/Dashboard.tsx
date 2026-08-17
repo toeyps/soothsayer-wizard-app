@@ -5,7 +5,7 @@ import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../..
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay,
+    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, LineTaggedPoint,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -393,6 +393,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [scatterAxisPins, setScatterAxisPins] = useState<ScatterAxisPins>(initialState?.scatterAxisPins ?? {});
     const handleScatterAxisPinsChange = useCallback((pins: ScatterAxisPins) => {
         setScatterAxisPins(pins);
+    }, []);
+
+    // Line chart's tagged points ("Tag Point" feature) — same "lift out of
+    // the chart component" reasoning as scatterAxisPins above: LineChart
+    // unmounts on every chart-type switch, so its own local state would be
+    // lost the moment the user looked away and back. Scatter's own tagged
+    // points are deliberately NOT lifted here — see LineTaggedPoint's
+    // docstring in types.ts for why (no stable point identity across a
+    // resampled query).
+    const [lineTaggedPoints, setLineTaggedPoints] = useState<LineTaggedPoint[]>(initialState?.lineTaggedPoints ?? []);
+    const handleLineTaggedPointsChange = useCallback((points: LineTaggedPoint[]) => {
+        setLineTaggedPoints(points);
     }, []);
 
     // Time-window highlights ("Highlights" tab) — global across every chart
@@ -1122,13 +1134,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         scatterAxisPins,
         timeHighlights,
         highlightLineDisplay,
+        lineTaggedPoints,
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
-        relativeAmount, relativeUnit,
+        lineTaggedPoints, relativeAmount, relativeUnit,
     ]);
 
     // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
@@ -1369,6 +1382,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensorMetadata={sensorMetadata}
                         timeHighlights={timeHighlights}
                         highlightDisplay={highlightLineDisplay}
+                        lineTaggedPoints={lineTaggedPoints}
+                        onLineTaggedPointsChange={handleLineTaggedPointsChange}
                     />
                 ) : (
                     // Scatter / pair plot render the bounded Rust sample so

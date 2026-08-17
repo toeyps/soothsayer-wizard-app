@@ -213,6 +213,24 @@ export interface TimeHighlight {
  *  'band' (the original, pre-this-field default). */
 export type HighlightLineDisplay = 'band' | 'line';
 
+/** A single tagged point on the Line chart — "pin this exact point so I can
+ *  compare its value against another one." Identified by its x-axis
+ *  TIMESTAMP, not a raw array index: the query result's index-to-timestamp
+ *  mapping shifts whenever the time range/aggregation changes, so an
+ *  index-based reference would silently point at the wrong point after any
+ *  such change. Re-resolved to the nearest plotted index at render time via
+ *  the same `nearestXIndex` snapping `TimeHighlight` already uses.
+ *
+ *  Scatter chart's own tagged points are deliberately NOT modeled here (and
+ *  not persisted at all) — Scatter's sample comes from reservoir sampling
+ *  (`get_scatter_sample`), so a tagged point has no stable identity across a
+ *  refetch; ScatterChart keeps its tags as local, ephemeral state instead. */
+export interface LineTaggedPoint {
+    id: string;
+    timestamp: string;
+    color: string;
+}
+
 export interface WorkspaceState {
     id: string;
     name: string;
@@ -287,4 +305,8 @@ export interface WorkspaceState {
     timeHighlights?: TimeHighlight[];
     /** See `HighlightLineDisplay`. Absent = 'band'. */
     highlightLineDisplay?: HighlightLineDisplay;
+    /** Points tagged on the Line chart for side-by-side value comparison —
+     *  see `LineTaggedPoint`. Absent = no tags. Scatter's own tags are never
+     *  persisted here (see `LineTaggedPoint`'s docstring for why). */
+    lineTaggedPoints?: LineTaggedPoint[];
 }

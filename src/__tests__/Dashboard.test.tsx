@@ -485,6 +485,38 @@ describe('Dashboard', () => {
         });
     });
 
+    describe('lineTaggedPoints (Tag Point feature — persisted like scatterAxisPins/timeHighlights, since LineChart unmounts on chart-type switch)', () => {
+        it('seeds lineTaggedPoints from initialState and forwards it to Chart', () => {
+            const lineTaggedPoints = [{ id: 't1', timestamp: '2026-01-01T00:00', color: '#f59e0b' }];
+            renderDashboard({
+                initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line', lineTaggedPoints }),
+            });
+            expect(last(chartProps).lineTaggedPoints).toEqual(lineTaggedPoints);
+        });
+
+        it('defaults to an empty array when absent from initialState', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
+            expect(last(chartProps).lineTaggedPoints).toEqual([]);
+        });
+
+        it('onLineTaggedPointsChange updates state, forwarded to Chart, and persists via autosave', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
+            const newTags = [{ id: 't1', timestamp: '2026-01-01T00:00', color: '#f59e0b' }];
+
+            act(() => { last(chartProps).onLineTaggedPointsChange(newTags); });
+            expect(last(chartProps).lineTaggedPoints).toEqual(newTags);
+
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
+            const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+            expect(saved.lineTaggedPoints).toEqual(newTags);
+        });
+
+        it('is not forwarded to Scatter -- Scatter keeps its own tags local and unpersisted', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], chartType: 'scatter' }) });
+            expect(last(chartProps).lineTaggedPoints).toBeUndefined();
+        });
+    });
+
     describe('filters', () => {
         it('FilterPanel changes flow into the chart-data query filter', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
