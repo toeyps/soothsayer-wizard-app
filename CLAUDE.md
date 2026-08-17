@@ -86,6 +86,17 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 - Verify with `npx tsc --noEmit` + `npx vitest run` (frontend) and `cargo test` (Rust) before calling a task done.
 - Coverage reached 586 frontend tests / 45 files + 139 Rust unit tests as of 2026-08-10 specifically because this discipline was absent for most of the project's history — UI was reshaped multiple times (step-based onboarding, Failure Group panel moves, Class B persistence) while old tests sat untouched. They happened to still be accurate on inspection, but that was luck, not process — see `docs/PROJECT_HANDOVER.md` entry 2026-08-10 for the audit. Don't rely on luck going forward.
 
+## Post-task checklist — Notion sync + git push, required after every task, no exceptions, don't wait to be asked
+
+The user tracks all work in the Notion database **"wizard application plan improvement"** (`collection://39e959a6-c718-8039-b30b-000bbea5ca96`). Schema: `Project name` (title), `Status` (status type: `Not started` → `In progress` / `wait for advisor` / `waiting re design` → `Done`), `Note` (text), `technical stack` (multi-select: `UX/UI`, `algorithum`, `backend`, `Sequence UX/UI`).
+
+**Whenever a task finishes (whatever its origin — a Notion item the user pointed at, or something asked directly in chat that was never in Notion):**
+1. Query the database for an existing page matching the task (fuzzy-match `Project name`/`Note` against the task's subject — if genuinely ambiguous which page it is, ask rather than guess).
+2. If found, update it. If not found, create a new page (`Project name` = short task title, `Note` = 1-2 line summary, `technical stack` = best-guess tag(s) from the work's nature).
+3. **Never set `Status` to `Done` on your own judgment — not even after `tsc`/`vitest`/`cargo test` all pass.** Set it to `In progress` (or leave whatever in-progress-family status it already had) instead. Only flip it to `Done` when the user explicitly confirms they've checked the real running app and it's fine — this project's whole history is full of fixes that passed every automated check yet still needed 2-3 more rounds after real manual testing surfaced a regression (see `docs/PROJECT_HANDOVER.md`'s many "ยังไม่ได้ทดสอบบนแอปจริง" entries); a prematurely-"Done" Notion item would misrepresent that.
+4. **Design tasks — Figma only for genuinely new designs, Artifact is fine for small tweaks:** if the task is a full new design (a new screen/feature mockup the user wants to hand-edit themselves), push the actual design into a real Figma file via the Figma MCP tools (`create_new_file` / `use_figma` / `upload_assets`) — not just an Artifact — after the direction is validated in chat (per the confirm-before-implementing habit below). Set the Notion item's `Status` to **`waiting re design`** with the Figma file URL in `Note`, so it's visibly "in the user's court." When the user later says they've finished editing in Figma and it's ready to read back, re-fetch the Figma file (`get_design_context`/`get_screenshot`) before implementing, and move `Status` back to `In progress` (then `Done` per rule 3 once they confirm it works). If the task is just a small tweak/bug fix to an existing design (not a from-scratch design), an Artifact mockup is enough — don't push those to Figma. This is a different thing from `docs/figma/*.svg` in this repo — those are static reference mockups from earlier design rounds and are explicitly *not* kept in sync with code changes (don't touch them unprompted, per standing user feedback); this rule is about actively pushing genuinely new design work into Figma when the user wants to edit it there.
+5. **Commit and push the code, unasked, in the same pass.** Push only to the `personal` remote (`toeyps/soothsayer-wizard-app`) — **never** `origin` (`Alpha-Com-Thailand`), even though `origin` exists and tracks `main` and even though push access to it may work. This is the user's explicit decision, not a permissions issue. Follow the repo's standard commit-message conventions (see git history) and include the `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` trailer.
+
 ## Security constraints
 
 - 2 GB per-file CSV cap (`MAX_CSV_BYTES`).
@@ -95,17 +106,17 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 
 ## Agent Roles & File Ownership
 
-> Each agent must ONLY read and modify files within its own zone. Architectural decisions must be approved by the PM Agent.
+> Only for large, contract-clean features (new Tauri command + its consuming hook + UI, cleanly phased — e.g. the original Data Upload Page redesign and the Predictive Model Rust port, both in `docs/task.md`). Most work on this project is small, iterative, cross-cutting fixes done directly in the main session — see `multi_agent_orchestration_design.md` for the explicit criteria on when to spawn this pipeline at all. Each agent must ONLY read and modify **application code** within its own zone (test files are the one deliberate exception below). Architectural decisions must be approved by the PM Agent.
 
-| Agent            | Zone                                             | Responsibility                                  |
-|------------------|--------------------------------------------------|-------------------------------------------------|
-| `pm-agent`       | `docs/` (incl. `docs/task.md`)                   | Requirements, task breakdown, coordination      |
-| `fe-ui-agent`    | `src/components/`, `src/App.tsx`                 | React UI, Tailwind styling, charts              |
-| `fe-logic-agent` | `src/hooks/`, `src/types/`, `src/workspaceManager.ts` | Hooks, Tauri bindings, state management    |
-| `rust-agent`     | `src-tauri/src/`, `src-tauri/Cargo.toml`         | Tauri commands, CSV parsing, file I/O           |
-| `qa-agent`       | `src/__tests__/`, `src-tauri/tests/`             | Write and run tests upon completion             |
+| Agent            | Zone (app code)                                  | Also writes                    | Responsibility                                  |
+|------------------|---------------------------------------------------|---------------------------------|-------------------------------------------------|
+| `pm-agent`       | `docs/` (incl. `docs/task.md`)                   | —                               | Requirements, task breakdown, coordination, final sync-check |
+| `fe-ui-agent`    | `src/components/`, `src/App.tsx`                 | `src/__tests__/` (its own components) | React UI, Tailwind styling, charts        |
+| `fe-logic-agent` | `src/hooks/`, `src/types/`, `src/workspaceManager.ts` | `src/__tests__/` (its own hooks/types) | Hooks, Tauri bindings, state management |
+| `rust-agent`     | `src-tauri/src/`, `src-tauri/Cargo.toml`         | inline `#[cfg(test)]` in the same file | Tauri commands, CSV parsing, file I/O   |
+| `qa-agent`       | —                                                 | `src/__tests__/`, `src-tauri/tests/` | Final integration/regression sweep across everything workers built — not the sole test author |
 
-**Workflow**: pm-agent plans in `docs/task.md` → workers implement phase by phase → **contract-first**: backend-facing features update `src/types/commands.ts` before UI → workers report back for review. Load only files needed for the current task; do not scan the full repo.
+**Workflow**: pm-agent plans in `docs/task.md` → workers implement phase by phase, **each writing the tests for the code they just wrote in the same pass** (matches the "test with every change" rule above — don't defer your own unit tests to qa-agent) → **contract-first**: backend-facing features update `src/types/commands.ts` before UI → qa-agent runs last, writes cross-cutting integration tests, and re-runs the full suite → **pm-agent runs `npx tsc --noEmit` + `cargo check --lib` + the full frontend/Rust test suites itself before reporting to the user** — don't just trust workers' individual HANDOFF claims (a signature change in one zone silently broke a test file owned by another agent once already; see `docs/task.md`'s Feature 3 closing note). Load only files needed for the current task; do not scan the full repo.
 
 When your task is complete, output this block before stopping:
 

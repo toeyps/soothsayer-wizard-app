@@ -1,10 +1,58 @@
 # Multi-Agent Orchestration Design for Claude Code
 
+> **🔄 Redesigned 2026-08-17.** The original version of this doc (written early in
+> the project, ~2026-03) assumed a CLI mechanism (`claude --profile`, a bash
+> orchestrator spawning `claude` processes) that doesn't exist in the harness
+> this project is actually developed in. The pipeline itself was real and was
+> used successfully twice (Feature 1: Data Upload Page redesign, Feature 3:
+> Predictive Model Rust port — see `docs/task.md`), but then sat completely
+> unused for 3+ months because nothing ever prompted anyone to reach for it —
+> almost all real work here is small, iterative, cross-cutting fixes done
+> directly in the main session, which this pipeline is a poor fit for. This
+> revision (a) fixes the mechanism to match what this harness actually
+> supports, (b) states explicitly when to use this vs. not, and (c) fixes a
+> coordination gap that bit the one time this was used for real (see §"Lesson
+> from Feature 1/3" below).
+
 ## ปัญหา / โจทย์
 โปรเจค Tauri + React ถูก build มาระดับหนึ่งแล้ว ต้องการระบบที่:
-1. PM Agent อ่าน requirement ทั้งหมดของโปรเจค
-2. PM Agent แตก task แล้ว spawn worker agents (FE×2, BE, QA) ผ่าน Claude Code
-3. แต่ละ agent ทำงานใน **zone ของตัวเอง** ไม่ข้ามเขต
+1. PM Agent อ่าน requirement ของ feature ที่กำลังจะทำ
+2. PM Agent แตก task แล้ว spawn worker agents (FE-UI, FE-Logic, Rust, QA) ผ่าน Claude Code
+3. แต่ละ agent ทำงานใน **zone ของตัวเอง** ไม่ข้ามเขต (ยกเว้นเทสต์ของโค้ดตัวเอง — ดู §2)
+
+---
+
+## เมื่อไหร่ควรใช้ pipeline นี้ — และเมื่อไหร่ไม่ควร
+
+**ใช้เมื่อ** งานเข้าเกณฑ์ทั้งหมดนี้ (ตรงกับ Feature 1/3 ที่เคยสำเร็จมาแล้ว):
+- เป็น feature ก้อนใหญ่ ไม่ใช่ bug fix/UI tweak จุดเดียว
+- มี contract ระหว่าง Rust ↔ TypeScript ที่นิยามได้ชัดเจนตั้งแต่ต้น (Tauri command ใหม่ + shape ของมัน)
+- แยกเป็น phase ได้เป็นธรรมชาติ (contract → backend → frontend → test) โดยแต่ละ phase ไม่ต้องย้อนกลับไปแก้ phase ก่อนหน้าบ่อยๆ
+- ผู้ใช้พร้อมเขียน/อนุมัติ requirement เต็มรูปแบบไว้ล่วงหน้า ไม่ต้อง iterate ทีละจุดกับผลลัพธ์ระหว่างทาง
+
+**อย่าใช้ (ทำตรงในเซสชันหลักแทน — แบบที่ทำสำเร็จมาตลอด 3 เดือนหลัง) เมื่อ**:
+- เป็น bug report สั้นๆ หรือขอปรับ UI ทีละจุด (ทาง user มักส่ง screenshot + คำอธิบายสั้นๆ)
+- ต้อง "confirm before implementing" — โชว์แนวทางให้ผู้ใช้ดูก่อนแล้วค่อยแก้จริง (เป็น loop ที่ agent แยกเซสชันกันทำได้ไม่ดี เพราะ handoff แต่ละรอบมี latency)
+- การแก้ธรรมชาติของมันข้ามหลายโซนพร้อมกันในไฟล์เดียว/รอบเดียว (เช่น เพิ่ม prop ใหม่ที่ต้องแก้ `types.ts` + `ChartTypes.ts` + component + เทสต์ พร้อมกันเพื่อความถูกต้อง) — บังคับแยกเป็น agent คนละโซนจะเพิ่ม overhead โดยไม่ได้ประโยชน์
+- ต้องอาศัยการเห็นภาพรวมทั้ง component/ทั้งไฟล์เพื่อ "recheck existing patterns" ก่อนถือว่าเสร็จ (กฎมาตรฐานของโปรเจกต์นี้) — agent ที่เห็นแค่ zone ตัวเองจับ regression แบบนี้ไม่ได้
+
+Rule of thumb: ถ้าลังเลว่าจะ spawn PM-agent ดีไหม แปลว่าไม่ควร — งานที่เข้าเกณฑ์จริงจะชัดเจนในตัวมันเอง (feature ใหม่ทั้งก้อน มี spec ชัด ไม่ต้อง iterate)
+
+### Lesson from Feature 1/3 (ทำไม §2 ผ่อน zone ownership ในรอบนี้)
+
+ตอนทำ Feature 1 จริง `fe-logic-agent` เปลี่ยน signature ของ `apply_mapping`
+(Rust) กลางทาง — ทำให้ `csv_tests.rs` (เทสต์ที่เขียนไว้ก่อนหน้าโดยรอบอื่น)
+คอมไพล์ไม่ผ่าน ผลคือถูก flag ไว้ท้าย `docs/task.md` ว่า "out of scope for
+Feature 3" แล้วปล่อยพังค้างไว้ — ไม่มี agent ตัวไหนอยู่ในตำแหน่งที่เห็นทั้ง
+โค้ดที่เปลี่ยนและเทสต์ที่พังพร้อมกัน เพราะ zone ownership เดิมตัดขาด
+`src/__tests__/`/`src-tauri/tests/` ออกจาก worker ทุกตัว ยกให้ qa-agent เป็น
+เจ้าของเทสต์ทั้งหมดแต่เพียงผู้เดียว — qa-agent เองก็ไม่เคยถูกเรียกจริง
+หลัง Feature 1/3 เลย (งานที่เหลือของโปรเจกต์ทำ test เองในเซสชันหลักแทน
+ตามกฎ "write tests with every change" ที่กลายเป็นนิสัยมาตรฐานของ
+โปรเจกต์นี้อยู่แล้ว) — รอบนี้เลยแก้ให้ worker แต่ละตัวเขียนเทสต์ของโค้ด
+ที่ตัวเองเพิ่งแก้ไปเลยในตัว (เห็นทั้งสองด้านพร้อมกัน ตรงตามนิสัยจริงของ
+โปรเจกต์) ส่วน qa-agent เปลี่ยนบทบาทเป็น cross-cutting integration sweep
+รอบสุดท้ายแทน ไม่ใช่คนเขียนเทสต์ทุกไฟล์คนเดียว
 
 ---
 
@@ -12,51 +60,58 @@
 
 ```mermaid
 graph TD
-    USER["👤 User"] -->|"เขียน requirement ใน docs/requirements.md"| REQ["📋 docs/requirements.md"]
-    REQ --> PM["🎯 PM Agent<br/>(claude --profile pm)"]
-    PM -->|"สร้าง task breakdown"| TASK["📝 docs/task.md"]
-    PM -->|"spawn"| FE_UI["🎨 FE-UI Agent"]
-    PM -->|"spawn"| FE_LOGIC["⚙️ FE-Logic Agent"]
-    PM -->|"spawn"| RUST["🦀 Rust Agent"]
-    PM -->|"รอ workers เสร็จ แล้ว spawn"| QA["🧪 QA Agent"]
-    
-    FE_UI -->|"HANDOFF"| PM
-    FE_LOGIC -->|"HANDOFF"| PM
-    RUST -->|"HANDOFF"| PM
+    USER["👤 User"] -->|"เขียน requirement ใน docs/requirements.md (หรือบอก PM ตรงๆ ในพรอมต์)"| PM["🎯 PM Agent<br/>(spawned via the Agent tool, subagent_type: pm-agent)"]
+    PM -->|"สร้าง/อัปเดต task breakdown"| TASK["📝 docs/task.md"]
+    PM -->|"spawn via Agent tool"| FE_UI["🎨 FE-UI Agent"]
+    PM -->|"spawn via Agent tool"| FE_LOGIC["⚙️ FE-Logic Agent"]
+    PM -->|"spawn via Agent tool"| RUST["🦀 Rust Agent"]
+    PM -->|"รอ workers เสร็จ แล้ว spawn"| QA["🧪 QA Agent<br/>(integration sweep)"]
+
+    FE_UI -->|"HANDOFF + own tests"| PM
+    FE_LOGIC -->|"HANDOFF + own tests"| PM
+    RUST -->|"HANDOFF + inline tests"| PM
     QA -->|"HANDOFF"| PM
-    PM -->|"สรุปผล"| USER
+    PM -->|"รัน tsc/cargo check/full suite เองรอบสุดท้าย แล้วสรุปผล"| USER
 ```
 
 ---
 
-## Directory Structure ที่ต้องเพิ่ม
+## Directory Structure จริง (สิ่งที่มีอยู่แล้วในโปรเจกต์นี้)
 
 ```
-d:\Github\vibe\
+Soothsayer-wizard-app/
+├── CLAUDE.md                        # ← "Agent Roles & File Ownership" — source of truth สั้นๆ
 ├── .claude/
-│   ├── settings.json          # Claude Code project settings
-│   └── profiles/              # ← Agent Profiles (CLAUDE.md per agent)
-│       ├── pm.md              # PM Agent instructions
-│       ├── fe-ui.md           # FE UI Agent instructions  
-│       ├── fe-logic.md        # FE Logic Agent instructions
-│       ├── rust.md            # Rust/BE Agent instructions
-│       └── qa.md              # QA Agent instructions
+│   └── agents/                      # ← Agent definitions จริง (ใช้ผ่าน Agent tool, ไม่ใช่ --profile)
+│       ├── pm-agent.md
+│       ├── fe-ui-agent.md
+│       ├── fe-logic-agent.md
+│       ├── rust-agent.md
+│       └── qa-agent.md
 ├── docs/
-│   ├── requirements.md        # ← User เขียน requirement ที่นี่
-│   ├── task.md                # ← PM สร้าง task breakdown ที่นี่
+│   ├── requirements.md              # User เขียน requirement ที่นี่ (ไม่บังคับ — ดูด้านล่าง)
+│   ├── task.md                      # PM สร้าง/อัปเดต task breakdown ที่นี่
 │   └── contracts/
-│       └── interface.md       # ← Contract ระหว่าง FE ↔ BE
-└── scripts/
-    └── orchestrate.sh         # ← Script สำหรับ run PM agent
+│       └── interface.md             # Contract ระหว่าง FE ↔ BE
+└── multi_agent_orchestration_design.md  # เอกสารนี้
 ```
+
+ไม่มี `scripts/orchestrate.sh` และไม่ต้องมี — orchestration ทำผ่าน Agent
+tool ของ Claude Code ตรงๆ ไม่ใช่ shell script เรียก CLI แยกโปรเซส
 
 ---
 
-## Step 1: File-Based Communication Protocol
+## Step 1: File-Based Communication Protocol (ไม่เปลี่ยนจากเดิม — ใช้ได้จริง)
 
-> Agent คุยกันผ่าน **ไฟล์** ไม่ใช่ memory — นี่คือ design หลักของ multi-agent ใน Claude Code
+> Agent คุยกันผ่าน **ไฟล์** ไม่ใช่ memory — ยังเป็น design หลักเหมือนเดิม
+> เพราะแต่ละ subagent เป็น context แยกกัน ไม่มี shared memory จริง
 
-### 1.1 `docs/requirements.md` — User เขียน requirement
+### 1.1 `docs/requirements.md` — User เขียน requirement (ไม่บังคับต้องมีไฟล์ก่อนเริ่ม)
+
+ถ้าผู้ใช้ให้ requirement มาเป็นข้อความสั้นๆ ในพรอมต์แทนที่จะเขียนไฟล์นี้ไว้
+ก่อน ให้ pm-agent เขียนไฟล์นี้เองจากสิ่งที่ผู้ใช้บอกในขั้นแรกของ workflow
+(ดู §pm-agent) — ไม่ต้องรอให้ผู้ใช้เขียนเองเสมอไป จุดคอขวดเดิมคือไม่มีใคร
+เขียนไฟล์นี้เลยตั้งแต่ Feature 3 จบ
 
 ```markdown
 # Requirements: [Feature Name]
@@ -78,18 +133,18 @@ As a [role], I want [capability] so that [benefit].
 # Task Breakdown: [Feature Name]
 
 ## Phase 1: Contract Definition
-- [ ] [fe-logic-agent] Update `src/types/commands.ts` with new command types
-- [ ] [rust-agent] Implement Tauri commands matching contract
+- [ ] [fe-logic-agent] Update `src/types/commands.ts` with new command types + write/update its own test
+- [ ] [rust-agent] Implement Tauri commands matching contract + inline `#[cfg(test)]`
 
-## Phase 2: Implementation  
-- [ ] [fe-ui-agent] Build UI component `src/components/NewFeature.tsx`
-- [ ] [fe-logic-agent] Create hook `src/hooks/useNewFeature.ts`
+## Phase 2: Implementation
+- [ ] [fe-ui-agent] Build UI component `src/components/NewFeature.tsx` + `src/__tests__/NewFeature.test.tsx`
+- [ ] [fe-logic-agent] Create hook `src/hooks/useNewFeature.ts` + `src/__tests__/useNewFeature.test.ts`
 
-## Phase 3: Testing
-- [ ] [qa-agent] Write tests for new component and command
+## Phase 3: Integration sweep
+- [ ] [qa-agent] Cross-cutting/regression tests, full suite re-run
 ```
 
-### 1.3 `docs/contracts/interface.md` — Interface contract
+### 1.3 `docs/contracts/interface.md` — Interface contract (ไม่เปลี่ยนจากเดิม)
 
 ```markdown
 # Interface Contract: [Feature Name]
@@ -105,179 +160,48 @@ As a [role], I want [capability] so that [benefit].
 
 ---
 
-## Step 2: Agent Profiles (`.claude/profiles/`)
+## Step 2: Agent Definitions — อยู่ที่ `.claude/agents/*.md` แล้ว (ไม่ซ้ำเนื้อหาที่นี่)
 
-Claude Code รองรับ `--profile` flag ที่โหลด custom system prompt ให้แต่ละ agent
+เนื้อหาเต็มของแต่ละ agent (role, tech context, file access, coding
+standards, HANDOFF format) อยู่ใน `.claude/agents/{pm,fe-ui,fe-logic,rust,qa}-agent.md`
+โดยตรง — เป็น **source of truth ตัวเดียว** ที่ Claude Code โหลดจริงตอน
+spawn สรุปย่อ (ดูรายละเอียดในไฟล์จริง อย่าแก้ตารางนี้โดยไม่ sync กับไฟล์):
 
-### PM Agent (`.claude/profiles/pm.md`)
-
-```markdown
-# You are the PM Agent
-
-## Your Role
-- Read `docs/requirements.md` for new requirements
-- Create task breakdown in `docs/task.md`
-- Coordinate worker agents by spawning them via subagent tool
-- Review HANDOFF blocks from workers
-- You MUST NOT write any application code
-
-## Your Workflow
-1. Read `docs/requirements.md` and `CLAUDE.md`
-2. Create `docs/task.md` with phased task breakdown
-3. If fullstack: create `docs/contracts/interface.md` first
-4. Spawn agents in this order:
-   a. Contract phase: `fe-logic-agent` + `rust-agent` (parallel)
-   b. UI phase: `fe-ui-agent` (after contract is done)
-   c. Test phase: `qa-agent` (after all implementation)
-5. After all agents complete, verify HANDOFF reports
-6. Report summary to user
-
-## Spawning Agents
-Use this pattern:
-- `claude --profile fe-ui -p "Your task: [description]. Read docs/task.md for context. Only modify files in src/components/ and src/App.tsx."`
-- `claude --profile fe-logic -p "Your task: [description]. Read docs/task.md for context. Only modify files in src/hooks/ and src/types/."`
-- `claude --profile rust -p "Your task: [description]. Read docs/task.md for context. Only modify files in src-tauri/src/."`
-- `claude --profile qa -p "Your task: [description]. Read docs/task.md for context. Run existing tests and write new ones."`
-
-## File Access
-- READ: `docs/`, `CLAUDE.md`, `src/types/` (for reference)
-- WRITE: `docs/task.md`, `docs/contracts/`
-```
-
-### FE-UI Agent (`.claude/profiles/fe-ui.md`)
-
-```markdown
-# You are the FE-UI Agent
-
-## Your Role
-- Build React UI components with Tailwind CSS
-- Read `docs/task.md` and `docs/contracts/interface.md` for your tasks
-- Use hooks from `src/hooks/` — do NOT create hooks yourself
-
-## File Access
-- READ: `docs/`, `src/types/`, `src/hooks/`, `CLAUDE.md`
-- WRITE: `src/components/`, `src/App.tsx`, `src/App.css`
-
-## On Completion
-Output a HANDOFF block:
-\```
-## HANDOFF
-- Completed: [what was built]
-- Files changed: [list]
-- Needs qa-agent: yes — test [component name] rendering and interaction
-\```
-```
-
-### FE-Logic Agent (`.claude/profiles/fe-logic.md`)
-
-```markdown
-# You are the FE-Logic Agent
-
-## Your Role
-- Create React hooks, type definitions, and Tauri command bindings
-- Read `docs/task.md` for your tasks
-- Define TypeScript interfaces before UI agent starts work
-
-## File Access
-- READ: `docs/`, `src/components/` (read-only), `CLAUDE.md`
-- WRITE: `src/hooks/`, `src/types/`, `src/workspaceManager.ts`
-
-## On Completion
-Output a HANDOFF block.
-```
-
-### Rust Agent (`.claude/profiles/rust.md`)
-
-```markdown
-# You are the Rust Backend Agent
-
-## Your Role  
-- Implement Tauri commands, CSV processing, file I/O
-- Match the contract defined in `docs/contracts/interface.md`
-- Use `rayon` for parallel processing where applicable
-
-## File Access
-- READ: `docs/`, `src/types/commands.ts` (for contract), `CLAUDE.md`
-- WRITE: `src-tauri/src/`, `src-tauri/Cargo.toml`
-
-## On Completion
-Output a HANDOFF block.
-```
-
-### QA Agent (`.claude/profiles/qa.md`)
-
-```markdown
-# You are the QA Agent
-
-## Your Role
-- Write and run tests for completed features
-- Read HANDOFF blocks from other agents in `docs/task.md`
-- Report test results back
-
-## File Access
-- READ: everything (for testing purposes)
-- WRITE: `src/__tests__/`, `src-tauri/tests/`
-
-## On Completion
-Output a HANDOFF block with test results.
-```
+| Agent            | Zone (app code)                         | Also writes                              |
+|------------------|-------------------------------------------|-------------------------------------------|
+| `pm-agent`       | `docs/`                                    | —                                          |
+| `fe-ui-agent`    | `src/components/`, `src/App.tsx`           | `src/__tests__/` (its own components)      |
+| `fe-logic-agent` | `src/hooks/`, `src/types/`, `src/workspaceManager.ts` | `src/__tests__/` (its own hooks/types) |
+| `rust-agent`     | `src-tauri/src/`, `src-tauri/Cargo.toml`   | inline `#[cfg(test)]` in the same file     |
+| `qa-agent`       | —                                           | `src/__tests__/`, `src-tauri/tests/` (integration sweep) |
 
 ---
 
-## Step 3: Orchestration — วิธี Run จริง
+## Step 3: Orchestration — วิธี Run จริงในนี้ (ไม่ใช่ CLI/bash)
 
-### Option A: Manual (simple, เริ่มจากตรงนี้)
+### วิธีเดียวที่ใช้ได้จริงในนี้: Agent tool, nested
 
-```bash
-# 1. User เขียน requirement
-# 2. Run PM agent
-claude --profile pm -p "New requirement in docs/requirements.md. Plan and coordinate."
+1. ผู้ใช้ (หรือเซสชันหลักที่กำลังคุยกับผู้ใช้อยู่) ตัดสินใจว่างานเข้าเกณฑ์
+   "ควรใช้ pipeline" ด้านบน
+2. เซสชันหลักเรียก **Agent tool** ด้วย `subagent_type: "pm-agent"` พร้อม
+   brief ของ feature (ไม่ต้องมี `docs/requirements.md` มาก่อนก็ได้ — ส่ง
+   requirement เป็นข้อความในพรอมต์ตรงๆ ได้เลย)
+3. pm-agent (มีสิทธิ์ใช้ทุก tool รวมถึง Agent tool เอง) จะ:
+   - เขียน/อัปเดต `docs/requirements.md` ถ้ายังไม่มี
+   - สร้าง `docs/task.md` + `docs/contracts/interface.md` (ถ้าเป็น fullstack)
+   - เรียก Agent tool ซ้อนเพื่อ spawn `fe-logic-agent` + `rust-agent`
+     **ในข้อความเดียวกัน** (parallel — ดู Agent tool's own guidance เรื่อง
+     "independent calls in the same response")
+   - รอ HANDOFF ทั้งสองแล้ว spawn `fe-ui-agent`
+   - spawn `qa-agent` เป็นรอบสุดท้ายสำหรับ integration sweep
+   - **รัน `npx tsc --noEmit` + `cargo check --lib` + full test suite เอง**
+     ก่อนสรุปผล — ไม่ใช่แค่เชื่อ HANDOFF ของ worker แต่ละตัวเฉยๆ (บทเรียน
+     จาก `apply_mapping`/`csv_tests.rs`)
+4. pm-agent สรุปผลกลับมาที่เซสชันหลัก → รายงานผู้ใช้
 
-# PM agent จะ:
-#   - อ่าน requirements.md
-#   - สร้าง task.md  
-#   - spawn worker agents ผ่าน subagent/tool calls
-```
-
-### Option B: Script Orchestrator (แนะนำ)
-
-```bash
-#!/bin/bash
-# scripts/orchestrate.sh
-
-echo "🎯 Starting PM Agent..."
-claude --profile pm -p "
-Read docs/requirements.md for the latest requirement.
-Create a task breakdown in docs/task.md.
-Then execute the plan by spawning worker agents:
-1. First: fe-logic + rust agents (contract phase)  
-2. Then: fe-ui agent (implementation phase)
-3. Finally: qa agent (testing phase)
-Report the final status.
-" --allowedTools "Bash(claude:*)" 
-```
-
-> [!IMPORTANT]
-> `--allowedTools "Bash(claude:*)"` อนุญาตให้ PM agent spawn sub-agents ผ่าน bash โดยเรียก `claude` command ได้
-
-### Option C: PM Agent Spawns Workers via Bash Tool
-
-PM Agent สามารถ spawn workers เองผ่าน Bash tool ภายใน Claude Code session:
-
-```bash
-# PM agent issues these commands internally:
-
-# Contract Phase (parallel)
-claude --profile fe-logic -p "$(cat docs/task.md | grep fe-logic)" &
-claude --profile rust -p "$(cat docs/task.md | grep rust-agent)" &
-wait
-
-# Implementation Phase
-claude --profile fe-ui -p "$(cat docs/task.md | grep fe-ui)"
-
-# QA Phase
-claude --profile qa -p "$(cat docs/task.md | grep qa-agent)"
-```
+ไม่มี `claude --profile`, ไม่มี bash spawn `claude -p`, ไม่มี
+`scripts/orchestrate.sh` — ทั้งหมดเป็น native Agent tool calls ซ้อนกัน
+ภายใน harness เดียว
 
 ---
 
@@ -286,32 +210,34 @@ claude --profile qa -p "$(cat docs/task.md | grep qa-agent)"
 ```mermaid
 sequenceDiagram
     participant U as User
+    participant M as Main session
     participant PM as PM Agent
     participant FL as FE-Logic Agent
     participant R as Rust Agent
     participant FU as FE-UI Agent
     participant QA as QA Agent
 
-    U->>PM: "เพิ่ม feature X" (เขียนใน requirements.md)
-    PM->>PM: อ่าน requirements.md + CLAUDE.md
-    PM->>PM: สร้าง task.md (task breakdown)
-    PM->>PM: สร้าง contracts/interface.md
-    
-    Note over PM,R: Phase 1: Contract (Parallel)
-    PM->>FL: spawn: "Update types/commands.ts"
-    PM->>R: spawn: "Implement Tauri command"
-    FL-->>PM: HANDOFF ✅
-    R-->>PM: HANDOFF ✅
-    
+    U->>M: "เพิ่ม feature X" (ก้อนใหญ่ contract ชัด)
+    M->>PM: Agent tool spawn (subagent_type: pm-agent)
+    PM->>PM: เขียน/อ่าน requirements.md, สร้าง task.md + contracts/interface.md
+
+    Note over PM,R: Phase 1: Contract (spawn พร้อมกันในข้อความเดียว)
+    PM->>FL: spawn: "Update types/commands.ts" + เขียนเทสต์ของตัวเอง
+    PM->>R: spawn: "Implement Tauri command" + inline #[cfg(test)]
+    FL-->>PM: HANDOFF ✅ (พร้อมเทสต์)
+    R-->>PM: HANDOFF ✅ (พร้อมเทสต์)
+
     Note over PM,FU: Phase 2: UI Implementation
-    PM->>FU: spawn: "Build component using new hooks"
-    FU-->>PM: HANDOFF ✅
-    
-    Note over PM,QA: Phase 3: Testing
-    PM->>QA: spawn: "Test new feature"
-    QA-->>PM: HANDOFF ✅ (test results)
-    
-    PM->>U: Summary report ✅
+    PM->>FU: spawn: "Build component" + เขียนเทสต์ของตัวเอง
+    FU-->>PM: HANDOFF ✅ (พร้อมเทสต์)
+
+    Note over PM,QA: Phase 3: Integration sweep
+    PM->>QA: spawn: "Cross-cutting tests + full regression run"
+    QA-->>PM: HANDOFF ✅ (integration test results)
+
+    PM->>PM: รัน tsc --noEmit + cargo check + full suite เองอีกรอบ
+    PM->>M: Summary report ✅
+    M->>U: สรุปผล
 ```
 
 ---
@@ -320,22 +246,24 @@ sequenceDiagram
 
 | Decision | Rationale |
 |----------|-----------|
-| **File-based communication** | Claude Code agents ไม่มี shared memory; ไฟล์คือ "shared state" |
-| **Profile-based isolation** | แต่ละ agent มี system prompt ของตัวเอง ป้องกันการแก้ไข zone อื่น |
-| **Phase-based execution** | Contract → Implementation → Testing ป้องกัน race conditions |
+| **File-based communication** | Claude Code subagents ไม่มี shared memory; ไฟล์คือ "shared state" |
+| **Agent tool, not CLI `--profile`** | กลไกจริงของ harness นี้ — ไม่มี `--profile` flag หรือ bash-spawnable `claude` process ให้ใช้ |
+| **Zone ownership, ยกเว้นเทสต์ของตัวเอง** | ป้องกันการแก้ไขข้าม zone โดยไม่ได้ตั้งใจ แต่ให้ worker เห็นทั้งโค้ดและเทสต์ของตัวเองพร้อมกัน กัน gap แบบ `apply_mapping`/`csv_tests.rs` |
+| **Phase-based execution** | Contract → Implementation → Integration sweep ป้องกัน race conditions |
 | **HANDOFF protocol** | Agent รายงานผลแบบ structured เพื่อให้ PM ตรวจสอบได้ |
-| **PM ไม่เขียน code** | Separation of concerns — PM วางแผนอย่างเดียว |
+| **PM ไม่เขียน application code, แต่รัน verification เองรอบสุดท้าย** | Separation of concerns สำหรับการเขียนโค้ด แต่ verification เป็นความรับผิดชอบร่วมที่ PM ต้องยืนยันเอง ไม่ใช่แค่เชื่อ worker |
+| **มีเกณฑ์ชัดว่าเมื่อไหร่ไม่ควรใช้เลย** | ป้องกันไม่ให้ pipeline นี้ถูกลืมอีกครั้งเพราะไม่มีใครรู้ว่าเมื่อไหร่ควรเรียก — เกณฑ์อยู่ที่ด้านบนของเอกสารนี้ |
 
 ---
 
-## สิ่งที่ต้องทำ (ถ้าจะ implement จริง)
+## สถานะปัจจุบัน (2026-08-17)
 
-1. **สร้าง `.claude/profiles/`** — 5 ไฟล์ profile ตามที่ออกแบบ
-2. **สร้าง `docs/` directory** — เตรียม requirements.md template + task.md
-3. **อัปเดต [CLAUDE.md](file:///d:/Github/vibe/CLAUDE.md)** — เพิ่ม section ชี้ไป profiles/ 
-4. **สร้าง `scripts/orchestrate.sh`** — script สำหรับ kickoff PM agent
-5. **ทดสอบ** — ลอง run PM agent กับ requirement ง่ายๆ ก่อน
-
-> [!NOTE]  
-> Claude Code profiles feature (`--profile`) ใช้ได้ใน Claude Code CLI  
-> ถ้าใช้ผ่าน VS Code extension จะ spawn sub-agents ผ่าน terminal tool แทน
+- ✅ `.claude/agents/*.md` ทั้ง 5 ไฟล์ อัปเดตแล้วให้ตรงกับ design นี้ (test
+  co-location, qa-agent เป็น integration sweep, pm-agent มี sync-check
+  บังคับ)
+- ✅ `CLAUDE.md`'s "Agent Roles & File Ownership" sync กับตารางในเอกสารนี้แล้ว
+- ✅ ทดสอบแล้วว่า Agent tool มองเห็น agent ทั้ง 5 ตัวจริง (project path นิ่ง
+  แล้ว ไม่ติดปัญหา path-change-mid-session แบบที่เคยบันทึกไว้ก่อนหน้า)
+- ⬜ ยังไม่เคยลองรันจริงตาม design ที่แก้ใหม่นี้สักครั้ง — รอ feature ก้อน
+  ใหญ่ก้อนถัดไปที่เข้าเกณฑ์ (ดู "เมื่อไหร่ควรใช้" ด้านบน) เพื่อพิสูจน์ว่า
+  ใช้งานได้จริงตามที่ออกแบบ
