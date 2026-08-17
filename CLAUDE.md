@@ -66,10 +66,18 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 
 ## Release checklist — required before every `.exe`/installer build
 
-**Every time this app is built into an installer (`npm run tauri:build`, `installer:win`, or equivalent), `CHANGELOG.md` must get a new version entry in the same pass — no exceptions, don't wait to be asked.**
+**Every time this app is built into an installer (`npm run tauri:build`, `installer:win`, or equivalent), `docs/CHANGELOG.md` must get a new version entry in the same pass — no exceptions, don't wait to be asked.**
 
-1. Bump the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (all three must match) if this build represents new work since the last one that was actually packaged/shipped — not every commit needs a bump, but every *build* does.
-2. Before building, write a new `## [x.y.z] — YYYY-MM-DD` section at the top of `CHANGELOG.md` (newest first) summarizing what changed since the previous shipped version — pull from `git log <last-shipped-tag>..HEAD` and group into Breaking changes / Features / Bug fixes / Performance / Tests / Docs / Removed, matching the style of the existing 0.2.1 entry. Written for the end user, not just developers — explain user-visible symptoms fixed, not just function names touched.
+1. **Decide the version bump using this table** — look at every change accumulated since the last tag that was actually shipped, find the categories present (same categories as the changelog entry itself, step 2 below), and bump by the single highest-severity category found. Every real (non-dev) build bumps at least PATCH, even for a one-line fix, so no two shipped builds ever share a version number:
+
+   | Highest category present since last shipped tag | Bump |
+   |---|---|
+   | ⚠️ Breaking change (old workspace files stop working, a major feature is removed) | **MINOR** (reset patch to 0) — do **not** bump MAJOR for this; MAJOR stays `0` until the user explicitly declares the app has reached a "1.0, production-ready" milestone. That's a deliberate call the user makes, not something to infer from a changeset. |
+   | ✨ New feature / major improvement (no breaking change) | **MINOR** (reset patch to 0) |
+   | Only 🐛 Bug fixes / ⚡ Performance / 🧪 Tests / 📝 Docs / 🗑️ Removed (non-breaking) | **PATCH** |
+
+   Apply the resulting version to `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` — all three must match.
+2. Before building, write a new `## [x.y.z] — YYYY-MM-DD` section at the top of `docs/CHANGELOG.md` (newest first) summarizing what changed since the previous shipped version — pull from `git log <last-shipped-tag>..HEAD` and group into Breaking changes / Features / Bug fixes / Performance / Tests / Docs / Removed, matching the style of the existing 0.2.1 entry (this is also the exact category list step 1 reads from — decide the bump and write the note from the same pass over the same commit range, don't do them independently). Written for the end user, not just developers — explain user-visible symptoms fixed, not just function names touched.
 3. Run the build (`scripts/build-installer-windows.ps1` on Windows — verifies prerequisites, builds the Python sidecar if missing, then `tauri build`).
 4. After a successful build, tag the release (`git tag vX.Y.Z`) so the next changelog entry has an anchor to diff against.
 

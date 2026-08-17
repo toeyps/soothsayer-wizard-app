@@ -2,7 +2,7 @@
 
 บันทึกการเปลี่ยนแปลงของแอป Soothsayer Wizard ทุกครั้งที่ build เป็น .exe/installer — เรียงจากเวอร์ชันล่าสุดไปเก่าสุด
 
-> **กติกา**: ทุกครั้งที่ build app ต้องเพิ่ม section ใหม่ในไฟล์นี้ก่อนหรือพร้อมกับการ build เสมอ ห้ามข้าม — ดู [CLAUDE.md § Release checklist](CLAUDE.md) ประกอบ
+> **กติกา**: ทุกครั้งที่ build app ต้องเพิ่ม section ใหม่ในไฟล์นี้ก่อนหรือพร้อมกับการ build เสมอ ห้ามข้าม — version bump ใช้กฎ semver ตาม category ที่รุนแรงที่สุด (Breaking/Feature → MINOR, Bug fix/Perf/Tests/Docs/Removed อย่างเดียว → PATCH) ดู [CLAUDE.md § Release checklist](../CLAUDE.md) ประกอบ
 
 ---
 
