@@ -10,10 +10,19 @@ interface ResponsiveEChartsProps {
     className?: string;
     opts?: any;
     onEvents?: Record<string, (...args: any[]) => void>;
-    /** Fired once with the underlying echarts instance after mount. For
-     *  callers that need APIs `onEvents` can't reach — e.g. `getZr()` for a
-     *  canvas-level click listener that fires regardless of series `silent`
-     *  state, or `convertFromPixel`/`convertToPixel` for coordinate math. */
+    /** Fired once with the underlying echarts instance once it's actually
+     *  ready. For callers that need APIs `onEvents` can't reach — e.g.
+     *  `getZr()` for a canvas-level click listener that fires regardless of
+     *  series `silent` state, or `convertFromPixel`/`convertToPixel` for
+     *  coordinate math. Passed straight through to `echarts-for-react`'s own
+     *  `onChartReady` prop — do NOT try to grab the instance a different way
+     *  (e.g. `chartRef.current?.getEchartsInstance()` in a mount effect):
+     *  echarts-for-react's `componentDidMount` kicks off an ASYNC init that
+     *  creates a temporary instance, waits for its first `finished` render,
+     *  DISPOSES it, and creates the real one with the final measured
+     *  width/height — a synchronous effect right after mount observes the
+     *  disposed (or not-yet-created) instance, not the long-lived one. Its
+     *  own `onChartReady` prop is what correctly waits for that dance. */
     onChartReady?: (instance: any) => void;
 }
 
@@ -36,12 +45,6 @@ export default function ResponsiveECharts({
     const chartRef = useRef<ReactECharts>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const rafRef = useRef<number | null>(null);
-
-    useEffect(() => {
-        const inst = chartRef.current?.getEchartsInstance();
-        if (inst) onChartReady?.(inst);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [onChartReady]);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -83,6 +86,7 @@ export default function ResponsiveECharts({
                 theme={theme}
                 opts={opts}
                 onEvents={onEvents}
+                onChartReady={onChartReady}
                 style={{ height: '100%', width: '100%' }}
             />
         </div>

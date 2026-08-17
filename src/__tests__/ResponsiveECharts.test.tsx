@@ -99,11 +99,13 @@ describe('ResponsiveECharts', () => {
         expect(disconnectSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('calls onChartReady once with the echarts instance after mount', () => {
+    it('forwards onChartReady straight to echarts-for-react, not grabbed via a mount effect (regression: echarts-for-react initializes asynchronously -- it creates a temporary instance, disposes it once its first render finishes, then creates the real one; a synchronous effect right after mount would observe the temporary/disposed instance instead of the long-lived one, so this MUST be a plain prop the library itself calls once the real instance exists)', () => {
         const onChartReady = vi.fn();
         render(<ResponsiveECharts option={{}} onChartReady={onChartReady} />);
-        expect(onChartReady).toHaveBeenCalledTimes(1);
-        expect(onChartReady).toHaveBeenCalledWith({ resize: mockResize });
+        expect(receivedProps[0].onChartReady).toBe(onChartReady);
+        // Not called here — that's echarts-for-react's own job once its real
+        // (non-temporary) instance exists, which this mock doesn't simulate.
+        expect(onChartReady).not.toHaveBeenCalled();
     });
 
     it('does not throw when onChartReady is omitted', () => {
