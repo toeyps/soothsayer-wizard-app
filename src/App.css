@@ -8482,14 +8482,6 @@ body {
     font-family: 'JetBrains Mono', monospace;
 }
 
-.scatter-tag-callout .scatter-tag-callout-delta {
-    margin-top: 3px;
-    padding-top: 3px;
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
-    color: #94a3b8;
-    font-family: 'JetBrains Mono', monospace;
-}
-
 /* =============================================
    Pair plot (regl-scatterplot grid)
    ============================================= */

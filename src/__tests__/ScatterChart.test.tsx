@@ -488,7 +488,7 @@ describe('ScatterChart', () => {
             expect(container.querySelector('.scatter-tag-ring')).toBeNull();
         });
 
-        it('shows a Δ line vs the first tag for a second tagged point', () => {
+        it('does not show a delta comparison line for a second tagged point (removed per user feedback -- not used)', () => {
             const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
             fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
             act(() => { lastInstance!.__subs['pointover'](0); });
@@ -498,7 +498,7 @@ describe('ScatterChart', () => {
 
             const callouts = container.querySelectorAll('.scatter-tag-callout');
             expect(callouts).toHaveLength(2);
-            expect(callouts[1].textContent).toContain('Δ vs ①');
+            expect(callouts[1].textContent).not.toContain('Δ');
         });
 
         it('"Clear all" only appears once a tag exists, and clears every tag', () => {

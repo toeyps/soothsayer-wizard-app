@@ -689,11 +689,6 @@ function ScatterChart({
         if (!sc || scatterTags.length === 0) return [];
         const xIdx = headers.indexOf(scatterX);
         const yIdx = headers.indexOf(scatterY);
-        const baseTag = scatterTags[0];
-        const baseOrigIdx = origIndicesRef.current[baseTag.pointIdx];
-        const baseRow = baseOrigIdx != null ? data[baseOrigIdx] : null;
-        const baseX = baseRow && xIdx >= 0 ? baseRow.values[xIdx] : null;
-        const baseY = baseRow && yIdx >= 0 ? baseRow.values[yIdx] : null;
 
         return scatterTags
             .map((tag, order) => {
@@ -710,9 +705,6 @@ function ScatterChart({
                 const xVal = xIdx >= 0 ? row.values[xIdx] : null;
                 const yVal = yIdx >= 0 ? row.values[yIdx] : null;
                 const color = rgbaToHex(RANGE_PALETTE[tag.colorIdx % RANGE_PALETTE.length]);
-                const delta = order > 0 && xVal != null && yVal != null && baseX != null && baseY != null
-                    ? { dx: (xVal as number) - (baseX as number), dy: (yVal as number) - (baseY as number) }
-                    : null;
                 return {
                     id: tag.id,
                     x: pos[0],
@@ -721,7 +713,6 @@ function ScatterChart({
                     color,
                     xVal, yVal,
                     timestamp: row.timestamp,
-                    delta,
                 };
             })
             .filter((v): v is NonNullable<typeof v> => v !== null);
@@ -914,11 +905,6 @@ function ScatterChart({
                             {t.timestamp && <div className="scatter-tag-callout-ts">{t.timestamp}</div>}
                             <div>{scatterX}: {t.xVal != null ? fmt(t.xVal as number) : '—'}</div>
                             <div>{scatterY}: {t.yVal != null ? fmt(t.yVal as number) : '—'}</div>
-                            {t.delta && (
-                                <div className="scatter-tag-callout-delta">
-                                    Δ vs {TAG_BADGES[0]}: {t.delta.dx >= 0 ? '+' : ''}{fmt(t.delta.dx)}, {t.delta.dy >= 0 ? '+' : ''}{fmt(t.delta.dy)}
-                                </div>
-                            )}
                         </div>
                     </div>
                 ))}

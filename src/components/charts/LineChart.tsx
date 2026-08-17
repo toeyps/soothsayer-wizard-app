@@ -405,28 +405,26 @@ function LineChart({
                         const unit = sensorMetaMap.get(normalizeSensorTag(sensor))?.unit;
                         lines.push(`${sensor}: ${value == null ? '—' : value.toFixed(3)}${unit ? ` ${unit}` : ''}`);
                     });
-                    if (order > 0) {
-                        const baseTag = taggedPoints[0];
-                        const baseMs = new Date(baseTag.timestamp).getTime();
-                        const baseIdx = isNaN(baseMs) ? -1 : nearestXIndex(xData, baseMs);
-                        if (baseIdx >= 0) {
-                            const deltaParts = sensors
-                                .map(sensor => {
-                                    const values = valuesFor(sensor);
-                                    const v = values[idx];
-                                    const baseV = values[baseIdx];
-                                    if (v == null || baseV == null) return null;
-                                    const delta = v - baseV;
-                                    return `${sensor}: ${delta >= 0 ? '+' : ''}${delta.toFixed(3)}`;
-                                })
-                                .filter((v): v is string => v !== null);
-                            if (deltaParts.length > 0) lines.push(`Δ vs ${TAG_BADGES[0]}: ${deltaParts.join(', ')}`);
-                        }
-                    }
+
+                    // Flip the callout away from whichever edge it's closest
+                    // to, so it doesn't render partly off-canvas (ECharts
+                    // hard-clips labels at the canvas boundary, it doesn't
+                    // reflow them the way a DOM tooltip would). Horizontal:
+                    // based on the tag's position along the x-axis.
+                    // Vertical: based on where its value falls within the
+                    // anchor sensor's own data range — an approximation
+                    // (the actual y-axis includes a small auto-fit pad) but
+                    // close enough to matter only right at the edges.
+                    const rightFrac = xData.length > 1 ? idx / (xData.length - 1) : 0.5;
+                    const align: 'left' | 'right' | 'center' = rightFrac > 0.65 ? 'right' : rightFrac < 0.1 ? 'left' : 'center';
+                    const range = seriesMinMax(sensors[0]);
+                    const nearTop = range ? (anchorValue - range.min) / ((range.max - range.min) || 1) > 0.75 : false;
+                    const position: 'top' | 'bottom' = nearTop ? 'bottom' : 'top';
+
                     return {
                         coord: [idx, anchorValue],
                         itemStyle: { color: tag.color, borderColor: markLabelBg, borderWidth: 2 },
-                        label: { formatter: lines.join('\n') },
+                        label: { formatter: lines.join('\n'), position, align },
                     };
                 })
                 .filter((v): v is NonNullable<typeof v> => v !== null)
@@ -519,9 +517,11 @@ function LineChart({
                             symbol: 'circle',
                             symbolSize: 12,
                             data: taggedMarkPointData,
+                            // position/align are set per-item above (flipped
+                            // away from whichever canvas edge each tag is
+                            // closest to) — shared chrome only here.
                             label: {
                                 show: true,
-                                position: 'top' as const,
                                 color: txtPrimary,
                                 backgroundColor: markLabelBg,
                                 borderColor: tooltipBorder,
@@ -531,7 +531,6 @@ function LineChart({
                                 fontSize: 10,
                                 fontFamily: 'JetBrains Mono, monospace',
                                 lineHeight: 15,
-                                align: 'left' as const,
                             },
                         },
                     }

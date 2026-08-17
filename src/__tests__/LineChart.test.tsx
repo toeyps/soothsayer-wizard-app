@@ -584,7 +584,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
     });
 
-    it('shows a Δ line vs the first tag for every tag after it', () => {
+    it('does not show a delta comparison line for a second tag (removed per user feedback -- not used)', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
@@ -595,7 +595,43 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const data = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(data).toHaveLength(2);
         expect(data[0].label.formatter).not.toContain('Δ');
-        expect(data[1].label.formatter).toContain('Δ vs ①');
+        expect(data[1].label.formatter).not.toContain('Δ');
+    });
+
+    it('aligns the callout left for a tag at the left edge (its value there is also this series\' minimum, so no vertical flip is needed)', () => {
+        // columnarOf(headers, 10) -> series[0] (sensor 'A') is [0,1,...,9],
+        // monotonically increasing, so index 0 is simultaneously the
+        // leftmost x-position AND the series minimum.
+        const columnar = columnarOf(headers, 10);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        mockConvertFromPixel.mockReturnValue([0, 0]);
+        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
+        const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
+        expect(entry.label.align).toBe('left');
+        expect(entry.label.position).toBe('top'); // low value -- no clipping risk above it
+    });
+
+    it('flips the callout right-aligned and below the point for a tag at the right edge whose value is also this series\' maximum', () => {
+        const columnar = columnarOf(headers, 10);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        mockConvertFromPixel.mockReturnValue([9, 0]); // rightmost index, series[0]'s max value (9)
+        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
+        const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
+        expect(entry.label.align).toBe('right');
+        expect(entry.label.position).toBe('bottom'); // high value -- 'top' would clip above the chart
+    });
+
+    it('centres the callout (default top/center) for a tag away from every edge', () => {
+        const columnar = columnarOf(headers, 10);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        mockConvertFromPixel.mockReturnValue([5, 0]); // middle index
+        act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
+        const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
+        expect(entry.label.align).toBe('center');
+        expect(entry.label.position).toBe('top');
     });
 
     it('caps at 8 tagged points (one per RANGE_PALETTE colour)', () => {
