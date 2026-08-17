@@ -168,7 +168,16 @@ function LineChart({
             if (xd.length === 0) return;
             const pixel = [event.offsetX, event.offsetY];
             if (!chartInstance.containPixel({ gridIndex: 0 }, pixel)) return;
-            const rawIdx = chartInstance.convertFromPixel({ xAxisIndex: 0 }, pixel);
+            // `convertFromPixel({ xAxisIndex: 0 }, pixel)` looked like the
+            // obvious API for this and is what most write-ups show, but for
+            // a CATEGORY axis it returns NaN, always — confirmed empirically
+            // against the real echarts 6.0.0 package (a standalone
+            // echarts.init() + click harness outside React/Tauri, since this
+            // app can't be opened in a browser preview to debug live). The
+            // finder that actually works for a category axis is
+            // `{ seriesIndex: 0 }`, which returns `[categoryIndex, value]`.
+            const converted = chartInstance.convertFromPixel({ seriesIndex: 0 }, pixel);
+            const rawIdx = Array.isArray(converted) ? converted[0] : converted;
             if (rawIdx == null || !isFinite(rawIdx)) return;
             const idx = Math.max(0, Math.min(xd.length - 1, Math.round(rawIdx)));
             const timestamp = xd[idx];
