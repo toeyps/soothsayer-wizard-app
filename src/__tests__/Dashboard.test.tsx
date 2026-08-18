@@ -726,6 +726,27 @@ describe('Dashboard', () => {
             expect(webviewWindowCalls.some((c) => c.label === 'build-model-1')).toBe(true);
         });
 
+        it('two "open-build-model" events for the same group fired before the first getByLabel check resolves only spawn one window (race regression)', async () => {
+            let resolveGetByLabel: (v: any) => void;
+            mockGetByLabel.mockReturnValue(new Promise((resolve) => { resolveGetByLabel = resolve; }));
+            renderDashboard();
+
+            const cbs = listenCallbacks['open-build-model'] ?? [];
+            // Fire both "clicks" without awaiting in between, mirroring two
+            // near-simultaneous clicks (e.g. a section header + a model row
+            // both opening the same group) racing past the still-pending
+            // getByLabel lookup below.
+            const call1 = Promise.all(cbs.map((cb) => cb({ payload: { groupNo: 1 } })));
+            const call2 = Promise.all(cbs.map((cb) => cb({ payload: { groupNo: 1 } })));
+            await act(async () => {
+                resolveGetByLabel(null);
+                await call1;
+                await call2;
+            });
+
+            expect(webviewWindowCalls.filter((c) => c.label === 'build-model-1')).toHaveLength(1);
+        });
+
         it('a "request-build-model-overview-data" event responds with workspaceId and sensorMetadata', async () => {
             renderDashboard();
             mockEmit.mockClear();

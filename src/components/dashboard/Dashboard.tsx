@@ -968,9 +968,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => { if (unlisten) unlisten(); };
     }, [initialState, sensorHeaders, sensorMetadata, metadata]);
 
+    // Guards the gap between the `getByLabel` existence check and the
+    // `new WebviewWindow(...)` call below — both are async IPC round-trips,
+    // so two calls for the same label fired close together (e.g. a
+    // misclick, or a section header + a model row both opening the same
+    // group in the Overview window) can otherwise both see "no existing
+    // window" and both construct one, producing a real duplicate window
+    // (one populated, one perpetually blank) instead of a focus.
+    const pendingSpawnLabels = useRef<Set<string>>(new Set());
+
     const spawnBuildModel = useCallback(async (groupNo: number) => {
         if (!initialState) return;
         const label = `build-model-${groupNo}`;
+        if (pendingSpawnLabels.current.has(label)) return;
+        pendingSpawnLabels.current.add(label);
         try {
             const existing = await WebviewWindow.getByLabel(label);
             if (existing) {
@@ -993,6 +1004,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             webview.once('tauri://error', (e) => console.error('Failed to open build model window:', e));
         } catch (err) {
             console.error('Error opening build model window:', err);
+        } finally {
+            pendingSpawnLabels.current.delete(label);
         }
     }, [initialState, fgGroups]);
 
@@ -1032,6 +1045,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const spawnBuildModelOverview = useCallback(async () => {
         if (!initialState) return;
         const label = 'build-model-overview';
+        if (pendingSpawnLabels.current.has(label)) return;
+        pendingSpawnLabels.current.add(label);
         try {
             const existing = await WebviewWindow.getByLabel(label);
             if (existing) {
@@ -1053,6 +1068,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             webview.once('tauri://error', (e) => console.error('Failed to open build model overview window:', e));
         } catch (err) {
             console.error('Error opening build model overview window:', err);
+        } finally {
+            pendingSpawnLabels.current.delete(label);
         }
     }, [initialState]);
 
