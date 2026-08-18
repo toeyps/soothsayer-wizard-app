@@ -485,21 +485,16 @@ describe('Dashboard', () => {
         });
     });
 
-    describe('lineTaggedPoints (Tag Point feature — persisted like scatterAxisPins/timeHighlights, since LineChart unmounts on chart-type switch)', () => {
-        it('seeds lineTaggedPoints from initialState and forwards it to Chart', () => {
-            const lineTaggedPoints = [{ id: 't1', timestamp: '2026-01-01T00:00', color: '#f59e0b' }];
-            renderDashboard({
-                initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line', lineTaggedPoints }),
-            });
-            expect(last(chartProps).lineTaggedPoints).toEqual(lineTaggedPoints);
-        });
-
-        it('defaults to an empty array when absent from initialState', () => {
+    describe('lineTaggedPoints (Tag Point feature — in-memory only, per explicit user request: NOT saved to the workspace file, so it never survives closing and reopening the app; still lifted to Dashboard, not left as LineChart-local state, so it DOES survive switching chart type away and back within the same running session)', () => {
+        it('always starts empty, regardless of what initialState carries (regression: this field must never round-trip through the saved workspace)', () => {
+            // WorkspaceState no longer even has a lineTaggedPoints field, so
+            // there's nothing to pass here — the point of this test is that
+            // it's impossible to seed it from a loaded workspace at all.
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
             expect(last(chartProps).lineTaggedPoints).toEqual([]);
         });
 
-        it('onLineTaggedPointsChange updates state, forwarded to Chart, and persists via autosave', async () => {
+        it('onLineTaggedPointsChange updates state and forwards it to Chart, but does NOT include it in the autosaved workspace', async () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
             const newTags = [{ id: 't1', timestamp: '2026-01-01T00:00', color: '#f59e0b' }];
 
@@ -508,10 +503,10 @@ describe('Dashboard', () => {
 
             await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
             const saved = last(mockSaveWorkspaceData.mock.calls)[0];
-            expect(saved.lineTaggedPoints).toEqual(newTags);
+            expect(saved.lineTaggedPoints).toBeUndefined();
         });
 
-        it('is not forwarded to Scatter -- Scatter keeps its own tags local and unpersisted', () => {
+        it('is not forwarded to Scatter -- Scatter keeps its own tags local too, but for a different reason (no stable point identity across a resampled query, not the disk-persistence policy)', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], chartType: 'scatter' }) });
             expect(last(chartProps).lineTaggedPoints).toBeUndefined();
         });

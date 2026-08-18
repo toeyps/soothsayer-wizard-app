@@ -221,8 +221,15 @@ export type HighlightLineDisplay = 'band' | 'line';
  *  such change. Re-resolved to the nearest plotted index at render time via
  *  the same `nearestXIndex` snapping `TimeHighlight` already uses.
  *
- *  Scatter chart's own tagged points are deliberately NOT modeled here (and
- *  not persisted at all) — Scatter's sample comes from reservoir sampling
+ *  NOT part of `WorkspaceState` — per the user's explicit call, tags don't
+ *  need to survive closing and reopening the app. They're still lifted up
+ *  to Dashboard.tsx (not left as LineChart-local state) so they survive
+ *  switching chart type away and back to Line within the same running
+ *  session — Dashboard's in-memory state just never gets written to or
+ *  seeded from disk.
+ *
+ *  Scatter chart's own tagged points are deliberately NOT modeled here
+ *  either — Scatter's sample comes from reservoir sampling
  *  (`get_scatter_sample`), so a tagged point has no stable identity across a
  *  refetch; ScatterChart keeps its tags as local, ephemeral state instead. */
 export interface LineTaggedPoint {
@@ -305,8 +312,4 @@ export interface WorkspaceState {
     timeHighlights?: TimeHighlight[];
     /** See `HighlightLineDisplay`. Absent = 'band'. */
     highlightLineDisplay?: HighlightLineDisplay;
-    /** Points tagged on the Line chart for side-by-side value comparison —
-     *  see `LineTaggedPoint`. Absent = no tags. Scatter's own tags are never
-     *  persisted here (see `LineTaggedPoint`'s docstring for why). */
-    lineTaggedPoints?: LineTaggedPoint[];
 }

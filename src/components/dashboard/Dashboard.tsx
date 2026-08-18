@@ -395,14 +395,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setScatterAxisPins(pins);
     }, []);
 
-    // Line chart's tagged points ("Tag Point" feature) — same "lift out of
-    // the chart component" reasoning as scatterAxisPins above: LineChart
-    // unmounts on every chart-type switch, so its own local state would be
-    // lost the moment the user looked away and back. Scatter's own tagged
-    // points are deliberately NOT lifted here — see LineTaggedPoint's
-    // docstring in types.ts for why (no stable point identity across a
-    // resampled query).
-    const [lineTaggedPoints, setLineTaggedPoints] = useState<LineTaggedPoint[]>(initialState?.lineTaggedPoints ?? []);
+    // Line chart's tagged points ("Tag Point" feature) — lifted out of the
+    // chart component for the same reason as scatterAxisPins above:
+    // LineChart unmounts on every chart-type switch, so its own local state
+    // would be lost the moment the user looked away and back. Deliberately
+    // NOT seeded from `initialState`/included in `buildWorkspaceState` below
+    // — per explicit user request, tags should NOT survive closing and
+    // reopening the app, only an in-session chart-type switch. Scatter's own
+    // tagged points are lifted even less far — kept as local ScatterChart
+    // state, not here — see LineTaggedPoint's docstring in types.ts for why
+    // (no stable point identity across a resampled query).
+    const [lineTaggedPoints, setLineTaggedPoints] = useState<LineTaggedPoint[]>([]);
     const handleLineTaggedPointsChange = useCallback((points: LineTaggedPoint[]) => {
         setLineTaggedPoints(points);
     }, []);
@@ -1134,14 +1137,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         scatterAxisPins,
         timeHighlights,
         highlightLineDisplay,
-        lineTaggedPoints,
+        // lineTaggedPoints deliberately excluded — see the state's own
+        // comment above for why (not meant to survive app close/reopen).
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
-        lineTaggedPoints, relativeAmount, relativeUnit,
+        relativeAmount, relativeUnit,
     ]);
 
     // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
