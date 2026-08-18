@@ -183,12 +183,13 @@ describe('BuildModelWindow', () => {
     });
 
     describe('model list actions', () => {
-        it('toggling a model\'s status pill persists the change', async () => {
+        it('toggling a model\'s status pill persists the change without opening the edit form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Incomplete'));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].status).toBe(true);
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
         it('"Open in Predictive Model" emits launch-predictive-model with the model id, without opening the edit form', async () => {
@@ -196,13 +197,6 @@ describe('BuildModelWindow', () => {
             await deliverData();
             fireEvent.click(screen.getByText('Open in Predictive Model →'));
             expect(mockEmit).toHaveBeenCalledWith('launch-predictive-model', { modelId: 'm1' });
-            expect(screen.queryByTestId('add-model-form')).toBeNull();
-        });
-
-        it('the status pill toggles status without opening the edit form', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Incomplete'));
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
