@@ -101,6 +101,13 @@ describe('BuildModelWindow', () => {
         expect(screen.getByText('Model One')).toBeTruthy();
     });
 
+    it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to the sensor description', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] } });
+        expect(screen.getByText('Pump Pressure')).toBeTruthy();
+        expect(screen.queryByText('TAG1')).toBeNull(); // exact match — "Target: TAG1" in the sensor line doesn't count
+    });
+
     it('gives each model kind a distinct single-letter icon and color, not the same color for all', async () => {
         const ind = makeModel({ id: 'm1', name: 'Ind Model', kind: 'individual' });
         const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG3'] });

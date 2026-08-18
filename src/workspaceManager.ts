@@ -209,7 +209,11 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
             return {
                 id: row.id,
                 groupNo: row.groupNo,
-                name: row.conceptSensor || row.mappedSensorTag,
+                // Leave name empty rather than falling back to the raw tag —
+                // FailureGroupsPanel's display already falls back to the
+                // sensor's description when name is unset, which reads far
+                // better than permanently echoing the tag back as a "name".
+                name: row.conceptSensor ?? '',
                 kind,
                 category: null,
                 notes: row.modelNotes ?? '',

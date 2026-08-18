@@ -124,6 +124,19 @@ export default function BuildModelWindow() {
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
 
+    // Same fallback chain as FailureGroupsPanel's preview cards: the model's
+    // own name if the user set one — a name identical to its own target tag
+    // doesn't count, since legacy-migrated models default to that instead of
+    // being truly unset (see workspaceManager.ts's migration shim) — else
+    // the target sensor's description, else the raw tag, else a placeholder.
+    const modelDisplayLabel = useCallback((model: FailureModel) => {
+        const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        const trimmedName = model.name.trim();
+        if (trimmedName && trimmedName !== targetTag) return trimmedName;
+        if (!targetTag) return 'Untitled model';
+        return sensorMetaMap.get(normalizeSensorTag(targetTag))?.description || targetTag;
+    }, [sensorMetaMap]);
+
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', theme);
@@ -313,7 +326,7 @@ export default function BuildModelWindow() {
     const removeModel = () => {
         if (!editingModelId) return;
         const current = groupModels.find(m => m.id === editingModelId);
-        if (!confirm(`Remove model "${current?.name || 'Untitled'}"?`)) return;
+        if (!confirm(`Remove model "${current ? modelDisplayLabel(current) : 'Untitled'}"?`)) return;
         persist((models, groups) => ({ groups, models: models.filter(m => m.id !== editingModelId) }));
         resetForm();
     };
@@ -591,7 +604,7 @@ export default function BuildModelWindow() {
                                         <div className={`model-kind-icon model-kind-icon--${model.kind}`}>{KIND_ABBREV[model.kind]}</div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '3px' }}>
-                                                <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{model.name || 'Untitled model'}</span>
+                                                <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{modelDisplayLabel(model)}</span>
                                                 {model.category && (
                                                     <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
                                                         {CATEGORY_LABELS[model.category]}

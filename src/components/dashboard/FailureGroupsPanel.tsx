@@ -45,9 +45,17 @@ export default function FailureGroupsPanel({
     // description (clustering's "target" is its Y sensor, same convention
     // as component derivation elsewhere); falls back to the raw tag, then a
     // generic placeholder for a brand-new model with no sensor picked yet.
+    //
+    // A name that's identical to the target tag itself doesn't count as "the
+    // user set one" — legacy workspaces migrated from before this redesign
+    // default a model's name to its sensor tag when no concept-sensor label
+    // existed (see workspaceManager.ts's migration shim), so without this
+    // check every migrated model would permanently show its raw tag here
+    // instead of ever falling through to the sensor's description.
     const modelDisplayLabel = (model: FailureModel) => {
-        if (model.name.trim()) return model.name;
         const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        const trimmedName = model.name.trim();
+        if (trimmedName && trimmedName !== targetTag) return trimmedName;
         if (!targetTag) return 'Untitled model';
         return sensorMetaMap.get(normalizeSensorTag(targetTag))?.description || targetTag;
     };

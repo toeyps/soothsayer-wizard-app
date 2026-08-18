@@ -306,6 +306,27 @@ describe('loadWorkspaceData', () => {
             });
         });
 
+        it('leaves name empty (not the raw sensor tag) when the legacy row has no concept-sensor label', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    rows: [{
+                        id: 'row-1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1',
+                        mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false,
+                    }],
+                },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            const models = result?.failureGroupState?.models ?? [];
+            // Empty, not 'TAG1' — the display layer (FailureGroupsPanel/
+            // BuildModelWindow) falls back to the sensor's description when
+            // name is unset; defaulting name to the tag here would defeat
+            // that fallback (a non-empty name always wins over it).
+            expect(models[0].name).toBe('');
+        });
+
         it('infers relationship/clustering kind from the legacy free-text modelType field', async () => {
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',

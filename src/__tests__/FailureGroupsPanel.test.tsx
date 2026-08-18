@@ -87,6 +87,12 @@ describe('FailureGroupsPanel', () => {
             expect(screen.getByText('Pump Pressure')).toBeTruthy();
         });
 
+        it('treats a name identical to its own target tag as unset (legacy-migrated models default name to the tag) and falls back to the description', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] })} />);
+            expect(screen.getByText('Pump Pressure')).toBeTruthy();
+            expect(screen.queryByText('TAG1')).toBeNull();
+        });
+
         it('falls back to the raw sensor tag when no name and no metadata description is available', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG9' })] })} />);
             expect(screen.getByText('TAG9')).toBeTruthy();
