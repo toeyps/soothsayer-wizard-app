@@ -18,9 +18,9 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
 
 /**
  * Group-centric "preview" view for the Dashboard's Sensor panel — Failure
- * Groups tab. This is deliberately summary-only: each card shows just enough
- * (name, ID, description preview, model completion) to decide which group to
- * work on. All editing — description, recommendation, sensors, model config —
+ * Groups tab. Each card shows the group's name/ID and every model inside it
+ * (name + Complete/Incomplete status) so the whole group is scannable at a
+ * glance. All editing — description, recommendation, sensors, model config —
  * lives exclusively in the dedicated Build Model window opened by clicking a
  * card, so this view never duplicates state that window already owns.
  */
@@ -83,7 +83,6 @@ export default function FailureGroupsPanel({
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {realGroups.map(group => {
                     const groupModels = fgModels.filter(m => m.groupNo === group.no);
-                    const groupComplete = groupModels.filter(m => m.status).length;
                     const color = getGroupColor(group.no);
                     const isEditingName = editingGroupNo === group.no;
                     return (
@@ -128,20 +127,26 @@ export default function FailureGroupsPanel({
                             </div>
 
                             <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
-                                <div
-                                    style={{
-                                        color: group.description ? 'var(--text-secondary)' : 'var(--text-faint)',
-                                        fontStyle: group.description ? 'normal' : 'italic',
-                                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                    }}
-                                >
-                                    {group.description || 'No description yet'}
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
-                                    <span style={{ color: 'var(--text-faint)', fontSize: '0.66rem' }}>
-                                        {groupModels.length} model{groupModels.length === 1 ? '' : 's'}
-                                        {groupModels.length > 0 && ` · ${groupComplete}/${groupModels.length} complete`}
-                                    </span>
+                                {groupModels.length === 0 ? (
+                                    <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                        {groupModels.map(model => (
+                                            <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                                                    {model.name || 'Untitled model'}
+                                                </span>
+                                                <span
+                                                    className={`fg-status-pill fg-status-pill--${model.status ? 'ok' : 'neutral'}`}
+                                                    style={{ fontSize: '0.6rem', flexShrink: 0 }}
+                                                >
+                                                    {model.status ? 'Complete' : 'Incomplete'}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '6px' }}>
                                     <span className="fg-open-hint" style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.66rem', color: 'var(--accent-color)' }}>
                                         Build model <ArrowRight size={10} />
                                     </span>

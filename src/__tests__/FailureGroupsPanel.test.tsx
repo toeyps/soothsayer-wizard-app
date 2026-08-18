@@ -61,20 +61,28 @@ describe('FailureGroupsPanel', () => {
         expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['2', '1', '50%']);
     });
 
-    it('shows a per-group model count and completion summary', () => {
-        const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
+    it('lists every model in the group by name, with its Complete/Incomplete status', () => {
+        const fgModels = [makeModel({ id: 'm1', name: 'Bearing model', status: true }), makeModel({ id: 'm2', name: 'Temp model', status: false })];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
-        expect(screen.getByText('2 models · 1/2 complete')).toBeTruthy();
+        expect(screen.getByText('Bearing model')).toBeTruthy();
+        expect(screen.getByText('Temp model')).toBeTruthy();
+        expect(screen.getByText('Complete')).toBeTruthy();
+        expect(screen.getByText('Incomplete')).toBeTruthy();
     });
 
-    it('shows an italic placeholder when a group has no description', () => {
-        render(<FailureGroupsPanel {...makeProps()} />);
-        expect(screen.getByText('No description yet')).toBeTruthy();
+    it('falls back to "Untitled model" for a model with no name', () => {
+        render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '' })] })} />);
+        expect(screen.getByText('Untitled model')).toBeTruthy();
     });
 
-    it('shows the description preview when set', () => {
+    it('shows "No models yet" for an empty group', () => {
+        render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+        expect(screen.getByText('No models yet')).toBeTruthy();
+    });
+
+    it('does not show a description preview (reverted per user feedback)', () => {
         render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, { ...groupA, description: 'Bearing wear' }] })} />);
-        expect(screen.getByText('Bearing wear')).toBeTruthy();
+        expect(screen.queryByText('Bearing wear')).toBeNull();
         expect(screen.queryByText('No description yet')).toBeNull();
     });
 

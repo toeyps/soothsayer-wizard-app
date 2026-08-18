@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for windows that need full workspace I/O (main, predictive-model, failure-group, save-as). add-sensor uses a slimmer capability — see add-sensor.json.",
+  "description": "Capability for windows that need full workspace I/O (main, predictive-model, failure-group, save-as, build-model-*). add-sensor uses a slimmer capability — see add-sensor.json.",
   "windows": [
     "main",
     "predictive-model",
     "failure-group",
-    "save-as"
+    "save-as",
+    "build-model-*"
   ],
   "permissions": [
     "core:default",
