@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { X, Plus, ChevronRight } from "lucide-react";
+import { X, Plus } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
@@ -65,7 +65,7 @@ function makeDefaultModel(groupNo: number): FailureModel {
 function sensorSummary(model: FailureModel): string {
     if (model.kind === 'individual') return `Target: ${model.targetSensor || '—'}`;
     if (model.kind === 'relationship') return `Target: ${model.targetSensor || '—'} · Predictors: ${(model.predictorSensors ?? []).join(', ') || '—'}`;
-    return `X: ${model.xSensor || '—'} · Y: ${model.ySensor || '—'}${model.criteriaSensor ? ` · Criteria: ${model.criteriaSensor}` : ''}`;
+    return `X: ${model.xSensor || '—'} · Y (target): ${model.ySensor || '—'}${model.criteriaSensor ? ` · Criteria: ${model.criteriaSensor}` : ''}`;
 }
 
 /**
@@ -101,6 +101,8 @@ export default function BuildModelWindow() {
     const [loading, setLoading] = useState(true);
     const hydratedRef = useRef(false);
 
+    const [nameDraft, setNameDraft] = useState('');
+    const [nameError, setNameError] = useState('');
     const [descDraft, setDescDraft] = useState('');
     const [recDraft, setRecDraft] = useState('');
 
@@ -176,6 +178,7 @@ export default function BuildModelWindow() {
     useEffect(() => {
         if (descSeededRef.current || !group) return;
         descSeededRef.current = true;
+        setNameDraft(group.name);
         setDescDraft(group.description ?? '');
         setRecDraft(group.recommendation ?? '');
     }, [group]);
@@ -197,20 +200,31 @@ export default function BuildModelWindow() {
         }
     }, [workspaceId]);
 
-    // Debounced save of description/recommendation — mirrors
-    // PredictiveModelBuild's own 250ms config-save debounce.
+    // Debounced save of name/description/recommendation — mirrors
+    // PredictiveModelBuild's own 250ms config-save debounce. Name changes
+    // are guarded against duplicates the same way FailureGroupsPanel and
+    // SensorSelection already are, since this window bypasses Dashboard's
+    // own `renameGroup` (which carries that check) and writes directly.
     useEffect(() => {
         if (!hydratedRef.current || !group) return;
-        if (descDraft === (group.description ?? '') && recDraft === (group.recommendation ?? '')) return;
+        const trimmedName = nameDraft.trim();
+        if (trimmedName === group.name && descDraft === (group.description ?? '') && recDraft === (group.recommendation ?? '')) return;
         const timer = setTimeout(() => {
+            if (!trimmedName) return;
+            const isDuplicate = allGroups.some(g => g.no !== groupNo && g.no !== 0 && g.name.trim().toLowerCase() === trimmedName.toLowerCase());
+            if (isDuplicate) {
+                setNameError(`A failure group named "${trimmedName}" already exists`);
+                return;
+            }
+            setNameError('');
             persist((models, groups) => ({
                 models,
-                groups: groups.map(g => g.no === groupNo ? { ...g, description: descDraft, recommendation: recDraft } : g),
+                groups: groups.map(g => g.no === groupNo ? { ...g, name: trimmedName, description: descDraft, recommendation: recDraft } : g),
             }));
         }, 250);
         return () => clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [descDraft, recDraft, groupNo]);
+    }, [nameDraft, descDraft, recDraft, groupNo]);
 
     const resetForm = () => {
         setEditingModelId(null);
@@ -335,8 +349,13 @@ export default function BuildModelWindow() {
                         <div style={{ fontFamily: 'var(--mono)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>FG-{groupNo}</div>
                     </div>
                     <div>
-                        <div style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: '4px' }}>Name</div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{group.name}</div>
+                        <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: '4px' }}>Name</label>
+                        <input
+                            value={nameDraft}
+                            onChange={e => { setNameDraft(e.target.value); setNameError(''); }}
+                            style={{ width: '100%', fontSize: '0.85rem', fontWeight: 600, padding: '6px 8px', background: 'var(--input-bg)', border: `1px solid ${nameError ? 'var(--danger)' : 'var(--border)'}`, borderRadius: '6px', color: 'var(--text-primary)' }}
+                        />
+                        {nameError && <div style={{ fontSize: '0.68rem', color: 'var(--danger)', marginTop: '4px' }}>{nameError}</div>}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <label style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Description</label>
@@ -393,16 +412,14 @@ export default function BuildModelWindow() {
                                         </div>
                                     </div>
                                     <button
-                                        className={`fg-status-pill fg-status-pill--${model.status ? 'ok' : 'neutral'}`}
+                                        className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
                                         onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
-                                        style={{ cursor: 'pointer', flexShrink: 0 }}
                                     >
                                         {model.status ? 'Complete' : 'Incomplete'}
                                     </button>
                                     <button
-                                        className="fg-build-model-btn"
+                                        className="model-open-pm"
                                         onClick={e => { e.stopPropagation(); trainModel(model.id); }}
-                                        style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
                                     >
                                         Open in Predictive Model →
                                     </button>
@@ -449,21 +466,26 @@ export default function BuildModelWindow() {
                                 <div>
                                     <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Category</label></div>
                                     <div style={{ display: 'flex', gap: '6px' }}>
-                                        {(['performance', 'condition'] as ModelCategory[]).map(c => (
-                                            <button
-                                                key={c}
-                                                onClick={() => setFormCategory(c)}
-                                                style={{
-                                                    flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
-                                                    border: `1px solid ${formCategory === c ? 'var(--accent-color)' : 'var(--border)'}`,
-                                                    background: formCategory === c ? 'var(--accent-muted)' : 'none',
-                                                    color: formCategory === c ? 'var(--accent-color)' : 'var(--text-secondary)',
-                                                    fontWeight: formCategory === c ? 600 : 400,
-                                                }}
-                                            >
-                                                {CATEGORY_LABELS[c]}
-                                            </button>
-                                        ))}
+                                        {(['performance', 'condition'] as ModelCategory[]).map(c => {
+                                            const active = formCategory === c;
+                                            const activeColor = c === 'condition' ? 'var(--cond)' : 'var(--accent-color)';
+                                            const activeBg = c === 'condition' ? 'var(--cond-muted)' : 'var(--accent-muted)';
+                                            return (
+                                                <button
+                                                    key={c}
+                                                    onClick={() => setFormCategory(c)}
+                                                    style={{
+                                                        flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
+                                                        border: `1px solid ${active ? activeColor : 'var(--border)'}`,
+                                                        background: active ? activeBg : 'none',
+                                                        color: active ? activeColor : 'var(--text-secondary)',
+                                                        fontWeight: active ? 600 : 400,
+                                                    }}
+                                                >
+                                                    {CATEGORY_LABELS[c]}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
 
@@ -523,7 +545,7 @@ export default function BuildModelWindow() {
                                                 </select>
                                             </div>
                                             <div className="fg-inspector-field" style={{ flex: 1 }}>
-                                                <div className="fg-inspector-field-label-row"><label>Y sensor</label></div>
+                                                <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
                                                 <select className="fg-inspector-input" value={formY} onChange={e => setFormY(e.target.value)}>
                                                     <option value="">Select…</option>
                                                     {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
@@ -564,9 +586,12 @@ export default function BuildModelWindow() {
                                     </>
                                 )}
 
-                                {formComponentTarget && formComponent && (
-                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                        Component <ChevronRight size={11} /> <b style={{ color: 'var(--text-primary)' }}>{formComponent}</b>
+                                {formKind && (
+                                    <div className="fg-inspector-field">
+                                        <div className="fg-inspector-field-label-row"><label>Component</label></div>
+                                        <div className={`model-component-readout${formComponent ? '' : ' model-component-readout--placeholder'}`}>
+                                            {formComponent || 'Auto-filled from target sensor'}
+                                        </div>
                                     </div>
                                 )}
 

@@ -97,8 +97,39 @@ describe('BuildModelWindow', () => {
         render(<BuildModelWindow />);
         await deliverData();
         expect(screen.getAllByText(/FG-1/).length).toBeGreaterThan(0);
-        expect(screen.getAllByText('Group A').length).toBeGreaterThan(0);
+        expect(screen.getByDisplayValue('Group A')).toBeTruthy(); // editable Name field
         expect(screen.getByText('Model One')).toBeTruthy();
+    });
+
+    describe('group name', () => {
+        it('debounces a save of the name, matching mockup\'s editable Name field', async () => {
+            vi.useFakeTimers();
+            render(<BuildModelWindow />);
+            await deliverData();
+
+            const nameInput = screen.getByDisplayValue('Group A');
+            fireEvent.change(nameInput, { target: { value: 'Renamed Group' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.groups[0].name).toBe('Renamed Group');
+            vi.useRealTimers();
+        });
+
+        it('rejects renaming to a name already used by another group, with an inline error', async () => {
+            vi.useFakeTimers();
+            mockUpdateWorkspaceData.mockClear();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Other Group' })], models: [makeModel()] } });
+
+            const nameInput = screen.getByDisplayValue('Group A');
+            fireEvent.change(nameInput, { target: { value: 'other group' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(screen.getByText('A failure group named "other group" already exists')).toBeTruthy();
+            vi.useRealTimers();
+        });
     });
 
     describe('description / recommendation', () => {
@@ -271,6 +302,35 @@ describe('BuildModelWindow', () => {
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models.some((m: any) => m.name === 'New Model' && m.targetSensor === 'TAG2')).toBe(true);
             expect(screen.queryByPlaceholderText('e.g. Bearing vibration model')).toBeNull();
+        });
+
+        it('shows the Component readout with a placeholder as soon as a kind is picked, before any sensor is chosen', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+            expect(form.queryByText('Component')).toBeNull(); // no kind picked yet
+
+            fireEvent.click(form.getByText('Individual'));
+            expect(form.getByText('Component')).toBeTruthy();
+            expect(form.getByText('Auto-filled from target sensor')).toBeTruthy();
+
+            fireEvent.change(form.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG1' } });
+            expect(form.getByText('Pump')).toBeTruthy();
+            expect(form.queryByText('Auto-filled from target sensor')).toBeNull();
+        });
+
+        it('gives the Condition pill a distinct (purple) active color from Performance\'s accent color', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+
+            fireEvent.click(form.getByText('Condition'));
+            expect((form.getByText('Condition').closest('button') as HTMLButtonElement).style.color).toBe('var(--cond)');
+
+            fireEvent.click(form.getByText('Performance'));
+            expect((form.getByText('Performance').closest('button') as HTMLButtonElement).style.color).toBe('var(--accent-color)');
         });
 
         it('Cancel resets the form without persisting', async () => {

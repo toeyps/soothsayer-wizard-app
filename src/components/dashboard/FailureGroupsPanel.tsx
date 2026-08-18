@@ -148,7 +148,7 @@ export default function FailureGroupsPanel({
                                 )}
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '6px' }}>
                                     <span className="fg-open-hint" style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.66rem', color: 'var(--accent-color)' }}>
-                                        Build model <ArrowRight size={10} />
+                                        Click to open Build Model <ArrowRight size={10} />
                                     </span>
                                 </div>
                             </div>

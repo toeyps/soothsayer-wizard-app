@@ -9131,3 +9131,56 @@ body {
     color: var(--text-secondary);
     border: 1px solid var(--border);
 }
+
+.model-status-pill {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.model-status-pill--complete {
+    background: var(--perf-muted);
+    color: var(--perf);
+}
+
+.model-status-pill--incomplete {
+    background: var(--surface-hi);
+    color: var(--text-faint);
+}
+
+.model-open-pm {
+    font-size: 0.76rem;
+    color: var(--accent-hi);
+    background: var(--accent-muted);
+    border: 1px solid var(--accent-color);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.model-open-pm:hover {
+    background: var(--accent-color);
+    color: #06111f;
+}
+
+.model-component-readout {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font-family: var(--mono);
+}
+
+.model-component-readout--placeholder {
+    color: var(--text-faint);
+    font-style: italic;
+    font-family: 'Inter', sans-serif;
+}
