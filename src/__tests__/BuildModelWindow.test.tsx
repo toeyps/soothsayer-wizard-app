@@ -141,18 +141,54 @@ describe('BuildModelWindow', () => {
             expect(state.failureGroupState.models[0].status).toBe(true);
         });
 
-        it('Train emits launch-predictive-model with the model id', async () => {
+        it('"Open in Predictive Model" emits launch-predictive-model with the model id, without opening the edit form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Train'));
+            fireEvent.click(screen.getByText('Open in Predictive Model →'));
             expect(mockEmit).toHaveBeenCalledWith('launch-predictive-model', { modelId: 'm1' });
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('Remove confirms then persists the model list without it', async () => {
+        it('the status pill toggles status without opening the edit form', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Incomplete'));
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
+        });
+
+        it('clicking the row opens the edit form prefilled with the model\'s current values', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            const form = within(screen.getByTestId('add-model-form'));
+            expect((form.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Model One');
+            expect((form.getByText('Individual').closest('button') as HTMLButtonElement).style.color).toBe('var(--accent-color)');
+            expect((form.getByText('Performance').closest('button') as HTMLButtonElement).style.color).toBe('var(--accent-color)');
+            expect(form.getByDisplayValue('TAG1')).toBeTruthy();
+            expect(form.getByText('Save changes')).toBeTruthy();
+        });
+
+        it('saving the edit form persists changes into that specific model', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
+            fireEvent.click(form.getByText('Condition'));
+            fireEvent.click(form.getByText('Save changes'));
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            const saved = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+            expect(saved.name).toBe('Renamed');
+            expect(saved.category).toBe('condition');
+        });
+
+        it('"Remove model" inside the edit form confirms then persists the model list without it', async () => {
             vi.spyOn(window, 'confirm').mockReturnValue(true);
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Remove'));
+            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getByText('Remove model'));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models).toHaveLength(0);
         });

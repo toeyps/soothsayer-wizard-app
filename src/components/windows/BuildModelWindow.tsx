@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { X, Plus, Trash2, Play, ChevronRight } from "lucide-react";
+import { X, Plus, ChevronRight } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
@@ -17,6 +17,12 @@ const KIND_LABELS: Record<ModelKind, string> = {
     individual: 'Individual',
     relationship: 'Relationship',
     clustering: 'Clustering',
+};
+
+const KIND_ABBREV: Record<ModelKind, string> = {
+    individual: 'IND',
+    relationship: 'REL',
+    clustering: 'CLU',
 };
 
 const CATEGORY_LABELS: Record<ModelCategory, string> = {
@@ -56,6 +62,12 @@ function makeDefaultModel(groupNo: number): FailureModel {
     };
 }
 
+function sensorSummary(model: FailureModel): string {
+    if (model.kind === 'individual') return `Target: ${model.targetSensor || '—'}`;
+    if (model.kind === 'relationship') return `Target: ${model.targetSensor || '—'} · Predictors: ${(model.predictorSensors ?? []).join(', ') || '—'}`;
+    return `X: ${model.xSensor || '—'} · Y: ${model.ySensor || '—'}${model.criteriaSensor ? ` · Criteria: ${model.criteriaSensor}` : ''}`;
+}
+
 /**
  * Dedicated per-group window for managing a Failure Group's description,
  * recommendation, and the FailureModels inside it — the redesign's
@@ -63,6 +75,14 @@ function makeDefaultModel(groupNo: number): FailureModel {
  * (that panel is now preview-only; see its own doc comment). One OS window
  * per group (label `build-model-${groupNo}`, spawned from Dashboard.tsx), so
  * the user can compare two groups side by side.
+ *
+ * Model list rows are compact summaries (kind icon, name, category/component
+ * chips, sensor summary, status pill, "Open in Predictive Model" button) —
+ * clicking a row opens the same form used to add a model, prefilled, so
+ * editing an existing model's name/kind/category/sensors reuses one code
+ * path instead of two. This mirrors the approved mockup's model-card layout;
+ * see `docs/PROJECT_HANDOVER.md`'s 2026-08-18 entries for why an earlier
+ * version of this file drifted from it.
  *
  * Owns `failureGroupState` jointly with Dashboard and PredictiveModelBuild —
  * every write here is a read-modify-write against the full workspace file
@@ -84,7 +104,11 @@ export default function BuildModelWindow() {
     const [descDraft, setDescDraft] = useState('');
     const [recDraft, setRecDraft] = useState('');
 
-    const [showAddForm, setShowAddForm] = useState(false);
+    // Form serves both "+ Add Model" (editingModelId === null) and clicking
+    // an existing row to edit it (editingModelId === that model's id) — one
+    // form, one validation path, one commit path.
+    const [showForm, setShowForm] = useState(false);
+    const [editingModelId, setEditingModelId] = useState<string | null>(null);
     const [formName, setFormName] = useState('');
     const [formKind, setFormKind] = useState<ModelKind | null>(null);
     const [formCategory, setFormCategory] = useState<ModelCategory | null>(null);
@@ -189,6 +213,7 @@ export default function BuildModelWindow() {
     }, [descDraft, recDraft, groupNo]);
 
     const resetForm = () => {
+        setEditingModelId(null);
         setFormName('');
         setFormKind(null);
         setFormCategory(null);
@@ -198,7 +223,28 @@ export default function BuildModelWindow() {
         setFormY('');
         setFormCriteria('');
         setFormClusterRanges([]);
-        setShowAddForm(false);
+        setShowForm(false);
+    };
+
+    const openAddForm = () => {
+        resetForm();
+        setShowForm(true);
+    };
+
+    const openEditForm = (model: FailureModel) => {
+        setEditingModelId(model.id);
+        setFormName(model.name);
+        setFormKind(model.kind);
+        setFormCategory(model.category);
+        setFormTarget(model.targetSensor ?? '');
+        setFormPredictors(model.predictorSensors ?? []);
+        setFormX(model.xSensor ?? '');
+        setFormY(model.ySensor ?? '');
+        setFormCriteria(model.criteriaSensor ?? '');
+        setFormClusterRanges(model.clusterRanges?.length ? model.clusterRanges : [
+            { min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 },
+        ]);
+        setShowForm(true);
     };
 
     useEffect(() => {
@@ -218,10 +264,9 @@ export default function BuildModelWindow() {
         false
     );
 
-    const commitAddModel = () => {
+    const commitForm = () => {
         if (!formValid || !formKind || !formCategory) return;
-        const model: FailureModel = {
-            ...makeDefaultModel(groupNo),
+        const fields = {
             name: formName.trim(),
             kind: formKind,
             category: formCategory,
@@ -232,7 +277,15 @@ export default function BuildModelWindow() {
             criteriaSensor: formKind === 'clustering' ? formCriteria : '',
             clusterRanges: formKind === 'clustering' && formCriteria ? formClusterRanges : [],
         };
-        persist((models, groups) => ({ groups, models: [...models, model] }));
+        if (editingModelId) {
+            persist((models, groups) => ({
+                groups,
+                models: models.map(m => m.id === editingModelId ? { ...m, ...fields } : m),
+            }));
+        } else {
+            const model: FailureModel = { ...makeDefaultModel(groupNo), ...fields };
+            persist((models, groups) => ({ groups, models: [...models, model] }));
+        }
         resetForm();
     };
 
@@ -243,16 +296,12 @@ export default function BuildModelWindow() {
         }));
     };
 
-    const updateModelNotes = (modelId: string, notes: string) => {
-        persist((models, groups) => ({
-            groups,
-            models: models.map(m => m.id === modelId ? { ...m, notes } : m),
-        }));
-    };
-
-    const removeModel = (modelId: string, name: string) => {
-        if (!confirm(`Remove model "${name || 'Untitled'}"?`)) return;
-        persist((models, groups) => ({ groups, models: models.filter(m => m.id !== modelId) }));
+    const removeModel = () => {
+        if (!editingModelId) return;
+        const current = groupModels.find(m => m.id === editingModelId);
+        if (!confirm(`Remove model "${current?.name || 'Untitled'}"?`)) return;
+        persist((models, groups) => ({ groups, models: models.filter(m => m.id !== editingModelId) }));
+        resetForm();
     };
 
     const trainModel = (modelId: string) => {
@@ -266,8 +315,6 @@ export default function BuildModelWindow() {
     if (loading || !group) {
         return <div style={{ background: 'var(--bg-primary)', height: '100vh' }} />;
     }
-
-    const completeCount = groupModels.filter(m => m.status).length;
 
     return (
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
@@ -315,10 +362,9 @@ export default function BuildModelWindow() {
 
                 {/* Right: models */}
                 <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', borderBottom: '1px solid var(--border)', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                        <span><b style={{ color: 'var(--text-primary)' }}>{groupModels.length}</b> models</span>
-                        <span style={{ color: 'var(--border)' }}>·</span>
-                        <span><b style={{ color: 'var(--ok)' }}>{completeCount}</b>/{groupModels.length || 0} complete</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Models in this group</span>
+                        <span style={{ fontSize: '0.76rem', color: 'var(--text-faint)' }}>{groupModels.length} model{groupModels.length === 1 ? '' : 's'}</span>
                     </div>
 
                     <div className="flex-1 overflow-y-auto" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -326,50 +372,48 @@ export default function BuildModelWindow() {
                             const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
                             const component = targetTag ? getComponent(targetTag) : '';
                             return (
-                                <div key={model.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <span style={{ flex: 1, fontWeight: 600, fontSize: '0.82rem' }}>{model.name || 'Untitled model'}</span>
-                                        <button
-                                            className={`fg-status-pill fg-status-pill--${model.status ? 'ok' : 'neutral'}`}
-                                            onClick={() => toggleModelStatus(model.id)}
-                                            style={{ cursor: 'pointer' }}
-                                        >
-                                            {model.status ? 'Complete' : 'Incomplete'}
-                                        </button>
+                                <div
+                                    key={model.id}
+                                    onClick={() => openEditForm(model)}
+                                    style={{ cursor: 'pointer', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}
+                                >
+                                    <div className="model-kind-icon">{KIND_ABBREV[model.kind]}</div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '3px' }}>
+                                            <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{model.name || 'Untitled model'}</span>
+                                            {model.category && (
+                                                <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
+                                                    {CATEGORY_LABELS[model.category]}
+                                                </span>
+                                            )}
+                                            {component && <span className="model-chip model-chip--component">{component}</span>}
+                                        </div>
+                                        <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {sensorSummary(model)}
+                                        </div>
                                     </div>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '0.68rem', color: 'var(--text-secondary)' }}>
-                                        <span className="fg-group-badge">{KIND_LABELS[model.kind]}</span>
-                                        {model.category && <span className="fg-group-badge">{CATEGORY_LABELS[model.category]}</span>}
-                                        {component && <span className="fg-group-badge fg-group-badge--muted">{component}</span>}
-                                    </div>
-                                    <div style={{ fontSize: '0.72rem', fontFamily: 'var(--mono)', color: 'var(--text-secondary)' }}>
-                                        {model.kind === 'individual' && (model.targetSensor || '— no sensor —')}
-                                        {model.kind === 'relationship' && `${model.targetSensor || '—'} ← ${(model.predictorSensors ?? []).join(', ') || '—'}`}
-                                        {model.kind === 'clustering' && `x: ${model.xSensor || '—'} · y: ${model.ySensor || '—'}${model.criteriaSensor ? ` · criteria: ${model.criteriaSensor}` : ''}`}
-                                    </div>
-                                    <textarea
-                                        rows={2}
-                                        value={model.notes}
-                                        placeholder="Notes about training, features, thresholds…"
-                                        onChange={e => updateModelNotes(model.id, e.target.value)}
-                                        style={{ resize: 'vertical', padding: '5px 7px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.72rem' }}
-                                    />
-                                    <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
-                                        <button className="text-btn" style={{ flex: 1, fontSize: '0.7rem' }} onClick={() => removeModel(model.id, model.name)}>
-                                            <Trash2 size={11} /> Remove
-                                        </button>
-                                        <button className="fg-build-model-btn" style={{ flex: 1 }} onClick={() => trainModel(model.id)}>
-                                            <Play size={11} /> Train
-                                        </button>
-                                    </div>
+                                    <button
+                                        className={`fg-status-pill fg-status-pill--${model.status ? 'ok' : 'neutral'}`}
+                                        onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
+                                        style={{ cursor: 'pointer', flexShrink: 0 }}
+                                    >
+                                        {model.status ? 'Complete' : 'Incomplete'}
+                                    </button>
+                                    <button
+                                        className="fg-build-model-btn"
+                                        onClick={e => { e.stopPropagation(); trainModel(model.id); }}
+                                        style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                                    >
+                                        Open in Predictive Model →
+                                    </button>
                                 </div>
                             );
                         })}
-                        {groupModels.length === 0 && !showAddForm && (
+                        {groupModels.length === 0 && !showForm && (
                             <div className="no-results">No models yet</div>
                         )}
 
-                        {showAddForm ? (
+                        {showForm ? (
                             <div data-testid="add-model-form" style={{ border: '1px solid var(--border-strong, var(--border))', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                 <div className="fg-inspector-field">
                                     <div className="fg-inspector-field-label-row"><label>Model name</label></div>
@@ -425,7 +469,7 @@ export default function BuildModelWindow() {
 
                                 {formKind === 'individual' && (
                                     <div className="fg-inspector-field">
-                                        <div className="fg-inspector-field-label-row"><label>Sensor</label></div>
+                                        <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
                                         <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
                                             <option value="">Select a sensor…</option>
                                             {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
@@ -526,16 +570,21 @@ export default function BuildModelWindow() {
                                     </div>
                                 )}
 
-                                <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
-                                    <button className="text-btn" style={{ flex: 1 }} onClick={resetForm}>Cancel</button>
-                                    <button className="fg-build-model-btn" style={{ flex: 1 }} disabled={!formValid} onClick={commitAddModel}>
-                                        Create model
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                                    {editingModelId && (
+                                        <button className="text-btn" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={removeModel}>
+                                            Remove model
+                                        </button>
+                                    )}
+                                    <button className="text-btn" onClick={resetForm}>Cancel</button>
+                                    <button className="fg-build-model-btn" disabled={!formValid} onClick={commitForm}>
+                                        {editingModelId ? 'Save changes' : 'Create model'}
                                     </button>
                                 </div>
                             </div>
                         ) : (
                             <button
-                                onClick={() => setShowAddForm(true)}
+                                onClick={openAddForm}
                                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '9px 0', borderRadius: '8px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.75rem', cursor: 'pointer' }}
                             >
                                 <Plus size={14} /> Add Model

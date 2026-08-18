@@ -4460,6 +4460,11 @@ tr:hover {
     --ok: oklch(0.72 0.15 150);
     --warn: oklch(0.78 0.14 75);
     --danger: oklch(0.68 0.2 25);
+    /* Model category semantics (Build Model window) — Performance vs. Condition. */
+    --perf: #10b981;
+    --perf-muted: rgba(16, 185, 129, 0.14);
+    --cond: #8b5cf6;
+    --cond-muted: rgba(139, 92, 246, 0.14);
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -4482,6 +4487,10 @@ tr:hover {
     --ok: oklch(0.55 0.15 150);
     --warn: oklch(0.58 0.16 75);
     --danger: oklch(0.55 0.2 25);
+    --perf: #0a8f61;
+    --perf-muted: rgba(10, 143, 97, 0.1);
+    --cond: #6d3fc9;
+    --cond-muted: rgba(109, 63, 201, 0.1);
 }
 
 body {
@@ -9077,4 +9086,48 @@ body {
 
 .scatter-regl-btn-icon {
     padding: 3px 6px;
+}
+
+/* ── Build Model window — model card row (BuildModelWindow.tsx) ───────────
+ * Do NOT reuse `.fg-group-badge` here — that class is a fixed 20-22px
+ * circular digit avatar for a different, unrelated feature; putting a full
+ * word like "Individual" inside it overflows the box and overlaps
+ * neighboring text (this happened once — see PROJECT_HANDOVER.md). */
+.model-kind-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--accent-muted);
+    color: var(--accent-hi);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
+.model-chip {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.model-chip--perf {
+    background: var(--perf-muted);
+    color: var(--perf);
+}
+
+.model-chip--cond {
+    background: var(--cond-muted);
+    color: var(--cond);
+}
+
+.model-chip--component {
+    background: var(--surface-hi);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
 }
