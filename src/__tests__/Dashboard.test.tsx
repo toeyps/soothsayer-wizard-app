@@ -65,7 +65,7 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
                 <button onClick={() => props.onCreateEmptyGroup('Empty Group')}>create-empty-group</button>
                 <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group-fg</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
-                <button onClick={() => props.onOpenBuildModel(1)}>open-build-model</button>
+                <button onClick={() => props.onOpenBuildModelOverview()}>open-build-model-overview</button>
             </div>
         );
     },
@@ -690,30 +690,53 @@ describe('Dashboard', () => {
     });
 
     describe('Build Model', () => {
-        it('opening a group from the Failure Groups tab spawns its own build-model-<no> window', async () => {
+        it('clicking "Build Model" in the Failure Groups tab spawns the singleton build-model-overview window', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
             await act(async () => {
-                fireEvent.click(screen.getByText('open-build-model'));
+                fireEvent.click(screen.getByText('open-build-model-overview'));
                 await Promise.resolve();
                 await Promise.resolve();
             });
-            expect(webviewWindowCalls.some((c) => c.label === 'build-model-1')).toBe(true);
+            expect(webviewWindowCalls.some((c) => c.label === 'build-model-overview')).toBe(true);
         });
 
-        it('focuses an already-open build-model window instead of spawning a second one for the same group', async () => {
+        it('focuses an already-open build-model-overview window instead of spawning a second one', async () => {
             const existing = { setFocus: vi.fn().mockResolvedValue(undefined) };
             mockGetByLabel.mockResolvedValue(existing);
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
             await act(async () => {
-                fireEvent.click(screen.getByText('open-build-model'));
+                fireEvent.click(screen.getByText('open-build-model-overview'));
                 await Promise.resolve();
                 await Promise.resolve();
                 await Promise.resolve();
             });
             expect(existing.setFocus).toHaveBeenCalled();
-            expect(webviewWindowCalls.some((c) => c.label === 'build-model-1')).toBe(false);
+            expect(webviewWindowCalls.some((c) => c.label === 'build-model-overview')).toBe(false);
+        });
+
+        it('an "open-build-model" event (from the Overview window, or another Build Model window) spawns that group\'s build-model-<no> window', async () => {
+            renderDashboard();
+            await act(async () => {
+                for (const cb of listenCallbacks['open-build-model'] ?? []) {
+                    await cb({ payload: { groupNo: 1 } });
+                }
+            });
+            expect(webviewWindowCalls.some((c) => c.label === 'build-model-1')).toBe(true);
+        });
+
+        it('a "request-build-model-overview-data" event responds with workspaceId and sensorMetadata', async () => {
+            renderDashboard();
+            mockEmit.mockClear();
+            await act(async () => {
+                for (const cb of listenCallbacks['request-build-model-overview-data'] ?? []) {
+                    await cb({});
+                }
+            });
+            expect(mockEmit).toHaveBeenCalledWith('build-model-overview-data', expect.objectContaining({
+                workspaceId: expect.any(String),
+            }));
         });
 
         it('a "launch-predictive-model" event from a Build Model window loads that model from disk and spawns the (singleton) PM window', async () => {

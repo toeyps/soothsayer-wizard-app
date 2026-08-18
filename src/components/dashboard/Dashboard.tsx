@@ -996,6 +996,66 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     }, [initialState, fgGroups]);
 
+    // A per-group Build Model window (or the Overview window itself) asks
+    // Dashboard to open a specific group's window this way, since only
+    // Dashboard can actually spawn it (see spawnBuildModel above).
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen<{ groupNo: number }>('open-build-model', async (event) => {
+                await spawnBuildModel(event.payload.groupNo);
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
+    }, [spawnBuildModel]);
+
+    // ── Build Model Overview — singleton "browse before you build" window,
+    //    reached from the Failure Groups tab's "Build Model" button (which
+    //    replaced clicking a group card directly, per explicit user
+    //    request). Shows every group's models at once; doesn't need the raw
+    //    CSV sensor data BuildModelWindow does, just sensorMetadata for
+    //    "description (tag)" labels — it never adds/edits sensors itself.
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen('request-build-model-overview-data', async () => {
+                if (!initialState) return;
+                await emit('build-model-overview-data', {
+                    workspaceId: initialState.id,
+                    sensorMetadata,
+                });
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
+    }, [initialState, sensorMetadata]);
+
+    const spawnBuildModelOverview = useCallback(async () => {
+        if (!initialState) return;
+        const label = 'build-model-overview';
+        try {
+            const existing = await WebviewWindow.getByLabel(label);
+            if (existing) {
+                try { await existing.setFocus(); } catch { /* ignore */ }
+                return;
+            }
+            const screenW = window.screen.width;
+            const screenH = window.screen.height;
+            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
+            const webview = new WebviewWindow(label, {
+                url: '/?window=build-model-overview',
+                title: 'Build Model — Overview',
+                width: Math.round(screenW * 0.75),
+                height: Math.round(screenH * 0.85),
+                center: true,
+                maximized: true,
+                decorations: isMac,
+            });
+            webview.once('tauri://error', (e) => console.error('Failed to open build model overview window:', e));
+        } catch (err) {
+            console.error('Error opening build model overview window:', err);
+        }
+    }, [initialState]);
+
     // Scatter / pair plots are meaningless with fewer than two sensors, so
     // below that the two buttons are disabled — and if the selection drops
     // under two WHILE such a chart is active (unticking down to one), we
@@ -1932,7 +1992,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}
                         onCreateEmptyGroup={createEmptyGroup}
-                        onOpenBuildModel={spawnBuildModel}
+                        onOpenBuildModelOverview={spawnBuildModelOverview}
                     />
                 )}
             </div>

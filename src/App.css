@@ -5776,17 +5776,6 @@ body {
     display: inline-block;
 }
 
-/* Preview card in the Dashboard's Failure Groups tab — the whole card opens
- * Build Model on click, so the hint only needs to show on hover as a nudge. */
-.fg-open-hint {
-    opacity: 0;
-    transition: opacity 0.15s ease;
-}
-
-.fg-group-card:hover .fg-open-hint {
-    opacity: 1;
-}
-
 /* ── Sensor chip (compact card) ────────────────────────────────────── */
 
 .fg-sensor-chip {

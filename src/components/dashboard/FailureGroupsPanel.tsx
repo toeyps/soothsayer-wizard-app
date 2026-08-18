@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, ArrowRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Play } from 'lucide-react';
 import { FailureGroup, FailureModel, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
@@ -11,8 +11,10 @@ interface FailureGroupsPanelProps {
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
-    /** Opens the dedicated Build Model window for this group. */
-    onOpenBuildModel: (groupNo: number) => void;
+    /** Opens the Build Model Overview window (all groups/models, groupable
+     *  by Failure Group or Component) — the sole entry point into building
+     *  models now; cards themselves no longer open anything on click. */
+    onOpenBuildModelOverview: () => void;
 }
 
 const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: number) =>
@@ -24,14 +26,17 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * — the model's own name if one was set, otherwise the target sensor's
  * description — so the whole group is scannable at a glance. Complete/
  * Incomplete status is deliberately NOT shown here (only in the Build Model
- * window) per explicit user request. All editing — description,
+ * window) per explicit user request. Cards are read-only display only (no
+ * click-to-open) — the "Build Model" button at the bottom of the panel is
+ * the sole way in, leading to the Overview window first rather than
+ * straight into a specific group's editor. All editing — description,
  * recommendation, sensors, model config — lives exclusively in the
- * dedicated Build Model window opened by clicking a card, so this view
- * never duplicates state that window already owns.
+ * per-group Build Model window (reached via the Overview), so this view
+ * never duplicates state those windows already own.
  */
 export default function FailureGroupsPanel({
     fgGroups, fgModels, sensorMetadata, getGroupColor,
-    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModel,
+    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModelOverview,
 }: FailureGroupsPanelProps) {
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
     const [editGroupDraft, setEditGroupDraft] = useState('');
@@ -111,13 +116,12 @@ export default function FailureGroupsPanel({
                         <div
                             key={group.no}
                             className={`fg-group-color-${color} fg-group-card`}
-                            onClick={() => { if (!isEditingName) onOpenBuildModel(group.no); }}
-                            style={{ border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden', cursor: isEditingName ? 'default' : 'pointer' }}
+                            style={{ border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}
                         >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
                                 <span className="fg-group-dot" />
                                 {isEditingName ? (
-                                    <div style={{ flex: 1, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
                                         <input
                                             autoFocus
                                             value={editGroupDraft}
@@ -134,7 +138,7 @@ export default function FailureGroupsPanel({
                                     </span>
                                 )}
                                 <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>FG-{group.no}</span>
-                                <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: '3px' }}>
+                                <div style={{ display: 'flex', gap: '3px' }}>
                                     <button className="fg-icon-btn fg-icon-btn-edit" title="Rename group" onClick={() => { setEditingGroupNo(group.no); setEditGroupDraft(group.name); setEditGroupError(''); }}>
                                         <Pencil size={11} />
                                     </button>
@@ -160,11 +164,6 @@ export default function FailureGroupsPanel({
                                         ))}
                                     </div>
                                 )}
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '6px' }}>
-                                    <span className="fg-open-hint" style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.66rem', color: 'var(--accent-color)' }}>
-                                        Click to open Build Model <ArrowRight size={10} />
-                                    </span>
-                                </div>
                             </div>
                         </div>
                     );
@@ -200,6 +199,14 @@ export default function FailureGroupsPanel({
                 {realGroups.length === 0 && !showNewGroup && (
                     <div className="no-results">No failure groups yet</div>
                 )}
+
+                <button
+                    className="fg-build-model-btn"
+                    onClick={onOpenBuildModelOverview}
+                    style={{ marginTop: '2px' }}
+                >
+                    <Play size={12} /> Build Model
+                </button>
             </div>
         </div>
     );
