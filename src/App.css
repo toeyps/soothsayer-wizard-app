@@ -4465,6 +4465,12 @@ tr:hover {
     --perf-muted: rgba(16, 185, 129, 0.14);
     --cond: #8b5cf6;
     --cond-muted: rgba(139, 92, 246, 0.14);
+    --warn-muted: oklch(0.78 0.14 75 / 0.16);
+    /* Model kind identity (Build Model window) — deliberately distinct from
+     * --perf/--cond above (those mean category, a different axis) so a
+     * card's kind icon and category chip never share a color. */
+    --kind-clu: oklch(0.72 0.12 200);
+    --kind-clu-muted: oklch(0.72 0.12 200 / 0.16);
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -4491,6 +4497,9 @@ tr:hover {
     --perf-muted: rgba(10, 143, 97, 0.1);
     --cond: #6d3fc9;
     --cond-muted: rgba(109, 63, 201, 0.1);
+    --warn-muted: oklch(0.58 0.16 75 / 0.12);
+    --kind-clu: oklch(0.5 0.1 200);
+    --kind-clu-muted: oklch(0.5 0.1 200 / 0.12);
 }
 
 body {
@@ -9097,14 +9106,31 @@ body {
     width: 30px;
     height: 30px;
     border-radius: 8px;
-    background: var(--accent-muted);
-    color: var(--accent-hi);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    font-size: 0.68rem;
+    font-size: 0.78rem;
     font-weight: 700;
+}
+
+/* One distinct color per kind so the icon reads at a glance without having
+ * to read the abbreviation letter — and deliberately different hues from
+ * --perf/--cond (category chips on the same card) so the two axes never
+ * look like they're saying the same thing. */
+.model-kind-icon--individual {
+    background: var(--accent-muted);
+    color: var(--accent-hi);
+}
+
+.model-kind-icon--relationship {
+    background: var(--warn-muted);
+    color: var(--warn);
+}
+
+.model-kind-icon--clustering {
+    background: var(--kind-clu-muted);
+    color: var(--kind-clu);
 }
 
 .model-chip {

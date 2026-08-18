@@ -101,6 +101,25 @@ describe('BuildModelWindow', () => {
         expect(screen.getByText('Model One')).toBeTruthy();
     });
 
+    it('gives each model kind a distinct single-letter icon and color, not the same color for all', async () => {
+        const ind = makeModel({ id: 'm1', name: 'Ind Model', kind: 'individual' });
+        const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG3'] });
+        const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG2', ySensor: 'TAG3' });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind, rel, clu] } });
+
+        expect(screen.getByText('I')).toBeTruthy();
+        expect(screen.getByText('R')).toBeTruthy();
+        expect(screen.getByText('C')).toBeTruthy();
+        const indColor = (screen.getByText('I').closest('.model-kind-icon') as HTMLElement).className;
+        const relColor = (screen.getByText('R').closest('.model-kind-icon') as HTMLElement).className;
+        const cluColor = (screen.getByText('C').closest('.model-kind-icon') as HTMLElement).className;
+        expect(indColor).toContain('model-kind-icon--individual');
+        expect(relColor).toContain('model-kind-icon--relationship');
+        expect(cluColor).toContain('model-kind-icon--clustering');
+        expect(new Set([indColor, relColor, cluColor]).size).toBe(3); // three distinct classes = three distinct colors
+    });
+
     describe('group name', () => {
         it('debounces a save of the name, matching mockup\'s editable Name field', async () => {
             vi.useFakeTimers();

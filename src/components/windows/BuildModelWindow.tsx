@@ -20,9 +20,9 @@ const KIND_LABELS: Record<ModelKind, string> = {
 };
 
 const KIND_ABBREV: Record<ModelKind, string> = {
-    individual: 'IND',
-    relationship: 'REL',
-    clustering: 'CLU',
+    individual: 'I',
+    relationship: 'R',
+    clustering: 'C',
 };
 
 const CATEGORY_LABELS: Record<ModelCategory, string> = {
@@ -588,7 +588,7 @@ export default function BuildModelWindow() {
                                         onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
                                         style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px' }}
                                     >
-                                        <div className="model-kind-icon">{KIND_ABBREV[model.kind]}</div>
+                                        <div className={`model-kind-icon model-kind-icon--${model.kind}`}>{KIND_ABBREV[model.kind]}</div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '3px' }}>
                                                 <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{model.name || 'Untitled model'}</span>
