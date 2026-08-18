@@ -187,6 +187,29 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
+        it('clicking the same row again closes its edit form (toggle), instead of requiring a different row to close it', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
+        });
+
+        it('clicking a different row while one is being edited switches the form to the new row', async () => {
+            const first = makeModel({ id: 'm1', name: 'First Model' });
+            const second = makeModel({ id: 'm2', name: 'Second Model', targetSensor: 'TAG2' });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [first, second] } });
+
+            fireEvent.click(screen.getByText('First Model'));
+            expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('First Model');
+
+            fireEvent.click(screen.getByText('Second Model'));
+            expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Second Model');
+        });
+
         it('the edit form appears right under the row that was clicked, not always at the bottom of the list', async () => {
             const first = makeModel({ id: 'm1', name: 'First Model' });
             const second = makeModel({ id: 'm2', name: 'Second Model', targetSensor: 'TAG2' });

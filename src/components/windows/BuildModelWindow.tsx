@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { X, Plus } from "lucide-react";
@@ -331,7 +331,7 @@ export default function BuildModelWindow() {
     // fixed spot detached from the row that opened it, which used to make
     // editing the wrong-looking model when the list had more than one row.
     const renderModelForm = () => (
-        <div data-testid="add-model-form" style={{ border: '1px solid var(--border-strong, var(--border))', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div data-testid="add-model-form" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div className="fg-inspector-field">
                 <div className="fg-inspector-field-label-row"><label>Model name</label></div>
                 <input
@@ -575,15 +575,18 @@ export default function BuildModelWindow() {
                             const component = targetTag ? getComponent(targetTag) : '';
                             const isEditingThis = showForm && editingModelId === model.id;
                             return (
-                                <Fragment key={model.id}>
+                                // One continuous bordered box per card (row +,
+                                // when editing, the form below a divider) —
+                                // NOT two separately-bordered boxes stacked,
+                                // which left a visible seam at the corners
+                                // where the two borders didn't quite align.
+                                <div
+                                    key={model.id}
+                                    style={{ border: `1px solid ${isEditingThis ? 'var(--accent-color)' : 'var(--border)'}`, borderRadius: '10px', overflow: 'hidden' }}
+                                >
                                     <div
-                                        onClick={() => { if (!isEditingThis) openEditForm(model); }}
-                                        style={{
-                                            cursor: isEditingThis ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
-                                            border: `1px solid ${isEditingThis ? 'var(--accent-color)' : 'var(--border)'}`,
-                                            borderRadius: isEditingThis ? '10px 10px 0 0' : '10px', padding: '12px 14px',
-                                            borderBottom: isEditingThis ? 'none' : undefined,
-                                        }}
+                                        onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
+                                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px' }}
                                     >
                                         <div className="model-kind-icon">{KIND_ABBREV[model.kind]}</div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -614,18 +617,22 @@ export default function BuildModelWindow() {
                                         </button>
                                     </div>
                                     {isEditingThis && (
-                                        <div style={{ border: '1px solid var(--accent-color)', borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '0 2px 2px' }}>
+                                        <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                                             {renderModelForm()}
                                         </div>
                                     )}
-                                </Fragment>
+                                </div>
                             );
                         })}
                         {groupModels.length === 0 && !showForm && (
                             <div className="no-results">No models yet</div>
                         )}
 
-                        {showForm && editingModelId === null && renderModelForm()}
+                        {showForm && editingModelId === null && (
+                            <div style={{ border: '1px solid var(--border-strong, var(--border))', borderRadius: '8px', padding: '12px' }}>
+                                {renderModelForm()}
+                            </div>
+                        )}
                         {!showForm && (
                             <button
                                 onClick={openAddForm}
