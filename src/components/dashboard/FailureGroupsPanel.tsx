@@ -199,11 +199,12 @@ export default function FailureGroupsPanel({
                 {realGroups.length === 0 && !showNewGroup && (
                     <div className="no-results">No failure groups yet</div>
                 )}
+            </div>
 
+            <div style={{ padding: '8px', borderTop: '1px solid var(--border)' }}>
                 <button
                     className="fg-build-model-btn"
                     onClick={onOpenBuildModelOverview}
-                    style={{ marginTop: '2px' }}
                 >
                     <Play size={12} /> Build Model
                 </button>
