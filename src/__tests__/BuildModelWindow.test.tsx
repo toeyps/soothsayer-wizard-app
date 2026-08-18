@@ -187,6 +187,22 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
+        it('the edit form appears right under the row that was clicked, not always at the bottom of the list', async () => {
+            const first = makeModel({ id: 'm1', name: 'First Model' });
+            const second = makeModel({ id: 'm2', name: 'Second Model', targetSensor: 'TAG2' });
+            const third = makeModel({ id: 'm3', name: 'Third Model', targetSensor: 'TAG3' });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [first, second, third] } });
+
+            fireEvent.click(screen.getByText('Second Model'));
+            const form = screen.getByTestId('add-model-form');
+            const thirdRow = screen.getByText('Third Model');
+            // The form (attached to the 2nd model) must precede the 3rd
+            // model's row in DOM order — if it were always appended after
+            // the whole list, the 3rd row would come BEFORE the form.
+            expect(form.compareDocumentPosition(thirdRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        });
+
         it('clicking the row opens the edit form prefilled with the model\'s current values', async () => {
             render(<BuildModelWindow />);
             await deliverData();

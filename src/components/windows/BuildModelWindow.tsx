@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { X, Plus } from "lucide-react";
@@ -326,6 +326,189 @@ export default function BuildModelWindow() {
         await getCurrentWindow().close();
     };
 
+    // Rendered inline directly under whichever row is being edited (or at
+    // the bottom of the list when adding a brand-new model) — never in a
+    // fixed spot detached from the row that opened it, which used to make
+    // editing the wrong-looking model when the list had more than one row.
+    const renderModelForm = () => (
+        <div data-testid="add-model-form" style={{ border: '1px solid var(--border-strong, var(--border))', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="fg-inspector-field">
+                <div className="fg-inspector-field-label-row"><label>Model name</label></div>
+                <input
+                    className="fg-inspector-input"
+                    value={formName}
+                    placeholder="e.g. Bearing vibration model"
+                    onChange={e => setFormName(e.target.value)}
+                />
+            </div>
+
+            <div>
+                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Model kind</label></div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                    {(['individual', 'relationship', 'clustering'] as ModelKind[]).map(k => (
+                        <button
+                            key={k}
+                            onClick={() => setFormKind(k)}
+                            style={{
+                                flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
+                                border: `1px solid ${formKind === k ? 'var(--accent-color)' : 'var(--border)'}`,
+                                background: formKind === k ? 'var(--accent-muted)' : 'none',
+                                color: formKind === k ? 'var(--accent-color)' : 'var(--text-secondary)',
+                                fontWeight: formKind === k ? 600 : 400,
+                            }}
+                        >
+                            {KIND_LABELS[k]}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div>
+                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Category</label></div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                    {(['performance', 'condition'] as ModelCategory[]).map(c => {
+                        const active = formCategory === c;
+                        const activeColor = c === 'condition' ? 'var(--cond)' : 'var(--accent-color)';
+                        const activeBg = c === 'condition' ? 'var(--cond-muted)' : 'var(--accent-muted)';
+                        return (
+                            <button
+                                key={c}
+                                onClick={() => setFormCategory(c)}
+                                style={{
+                                    flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
+                                    border: `1px solid ${active ? activeColor : 'var(--border)'}`,
+                                    background: active ? activeBg : 'none',
+                                    color: active ? activeColor : 'var(--text-secondary)',
+                                    fontWeight: active ? 600 : 400,
+                                }}
+                            >
+                                {CATEGORY_LABELS[c]}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {formKind === 'individual' && (
+                <div className="fg-inspector-field">
+                    <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
+                    <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
+                        <option value="">Select a sensor…</option>
+                        {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                </div>
+            )}
+
+            {formKind === 'relationship' && (
+                <>
+                    <div className="fg-inspector-field">
+                        <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
+                        <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
+                            <option value="">Select a sensor…</option>
+                            {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                    <div className="fg-inspector-field">
+                        <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
+                        <select
+                            className="fg-inspector-input"
+                            value=""
+                            onChange={e => { if (e.target.value) setFormPredictors(prev => prev.includes(e.target.value) ? prev : [...prev, e.target.value]); }}
+                        >
+                            <option value="">Add a predictor…</option>
+                            {allSensors.filter(s => s !== formTarget && !formPredictors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        {formPredictors.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                                {formPredictors.map(p => (
+                                    <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', padding: '2px 6px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
+                                        {p}
+                                        <button onClick={() => setFormPredictors(prev => prev.filter(x => x !== p))} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                                            <X size={9} />
+                                        </button>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
+
+            {formKind === 'clustering' && (
+                <>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <div className="fg-inspector-field" style={{ flex: 1 }}>
+                            <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
+                            <select className="fg-inspector-input" value={formX} onChange={e => setFormX(e.target.value)}>
+                                <option value="">Select…</option>
+                                {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+                        <div className="fg-inspector-field" style={{ flex: 1 }}>
+                            <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
+                            <select className="fg-inspector-input" value={formY} onChange={e => setFormY(e.target.value)}>
+                                <option value="">Select…</option>
+                                {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    <div className="fg-inspector-field">
+                        <div className="fg-inspector-field-label-row"><label>Criteria sensor (optional)</label></div>
+                        <select className="fg-inspector-input" value={formCriteria} onChange={e => setFormCriteria(e.target.value)}>
+                            <option value="">None</option>
+                            {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                    {formCriteria && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div className="fg-inspector-field-label-row"><label>Cluster ranges</label></div>
+                            {formClusterRanges.map((r, i) => (
+                                <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', width: '16px' }}>{i + 1}</span>
+                                    <input
+                                        type="number"
+                                        className="fg-inspector-input"
+                                        value={r.min ?? ''}
+                                        placeholder="min"
+                                        onChange={e => setFormClusterRanges(prev => prev.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row))}
+                                    />
+                                    <input
+                                        type="number"
+                                        className="fg-inspector-input"
+                                        value={r.max ?? ''}
+                                        placeholder="max"
+                                        onChange={e => setFormClusterRanges(prev => prev.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row))}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </>
+            )}
+
+            {formKind && (
+                <div className="fg-inspector-field">
+                    <div className="fg-inspector-field-label-row"><label>Component</label></div>
+                    <div className={`model-component-readout${formComponent ? '' : ' model-component-readout--placeholder'}`}>
+                        {formComponent || 'Auto-filled from target sensor'}
+                    </div>
+                </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                {editingModelId && (
+                    <button className="text-btn" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={removeModel}>
+                        Remove model
+                    </button>
+                )}
+                <button className="text-btn" onClick={resetForm}>Cancel</button>
+                <button className="fg-build-model-btn" disabled={!formValid} onClick={commitForm}>
+                    {editingModelId ? 'Save changes' : 'Create model'}
+                </button>
+            </div>
+        </div>
+    );
+
     if (loading || !group) {
         return <div style={{ background: 'var(--bg-primary)', height: '100vh' }} />;
     }
@@ -390,224 +573,60 @@ export default function BuildModelWindow() {
                         {groupModels.map(model => {
                             const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
                             const component = targetTag ? getComponent(targetTag) : '';
+                            const isEditingThis = showForm && editingModelId === model.id;
                             return (
-                                <div
-                                    key={model.id}
-                                    onClick={() => openEditForm(model)}
-                                    style={{ cursor: 'pointer', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}
-                                >
-                                    <div className="model-kind-icon">{KIND_ABBREV[model.kind]}</div>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '3px' }}>
-                                            <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{model.name || 'Untitled model'}</span>
-                                            {model.category && (
-                                                <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
-                                                    {CATEGORY_LABELS[model.category]}
-                                                </span>
-                                            )}
-                                            {component && <span className="model-chip model-chip--component">{component}</span>}
+                                <Fragment key={model.id}>
+                                    <div
+                                        onClick={() => { if (!isEditingThis) openEditForm(model); }}
+                                        style={{
+                                            cursor: isEditingThis ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
+                                            border: `1px solid ${isEditingThis ? 'var(--accent-color)' : 'var(--border)'}`,
+                                            borderRadius: isEditingThis ? '10px 10px 0 0' : '10px', padding: '12px 14px',
+                                            borderBottom: isEditingThis ? 'none' : undefined,
+                                        }}
+                                    >
+                                        <div className="model-kind-icon">{KIND_ABBREV[model.kind]}</div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '3px' }}>
+                                                <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{model.name || 'Untitled model'}</span>
+                                                {model.category && (
+                                                    <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
+                                                        {CATEGORY_LABELS[model.category]}
+                                                    </span>
+                                                )}
+                                                {component && <span className="model-chip model-chip--component">{component}</span>}
+                                            </div>
+                                            <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {sensorSummary(model)}
+                                            </div>
                                         </div>
-                                        <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                            {sensorSummary(model)}
-                                        </div>
+                                        <button
+                                            className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
+                                            onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
+                                        >
+                                            {model.status ? 'Complete' : 'Incomplete'}
+                                        </button>
+                                        <button
+                                            className="model-open-pm"
+                                            onClick={e => { e.stopPropagation(); trainModel(model.id); }}
+                                        >
+                                            Open in Predictive Model →
+                                        </button>
                                     </div>
-                                    <button
-                                        className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
-                                        onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
-                                    >
-                                        {model.status ? 'Complete' : 'Incomplete'}
-                                    </button>
-                                    <button
-                                        className="model-open-pm"
-                                        onClick={e => { e.stopPropagation(); trainModel(model.id); }}
-                                    >
-                                        Open in Predictive Model →
-                                    </button>
-                                </div>
+                                    {isEditingThis && (
+                                        <div style={{ border: '1px solid var(--accent-color)', borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '0 2px 2px' }}>
+                                            {renderModelForm()}
+                                        </div>
+                                    )}
+                                </Fragment>
                             );
                         })}
                         {groupModels.length === 0 && !showForm && (
                             <div className="no-results">No models yet</div>
                         )}
 
-                        {showForm ? (
-                            <div data-testid="add-model-form" style={{ border: '1px solid var(--border-strong, var(--border))', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                <div className="fg-inspector-field">
-                                    <div className="fg-inspector-field-label-row"><label>Model name</label></div>
-                                    <input
-                                        className="fg-inspector-input"
-                                        value={formName}
-                                        placeholder="e.g. Bearing vibration model"
-                                        onChange={e => setFormName(e.target.value)}
-                                    />
-                                </div>
-
-                                <div>
-                                    <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Model kind</label></div>
-                                    <div style={{ display: 'flex', gap: '6px' }}>
-                                        {(['individual', 'relationship', 'clustering'] as ModelKind[]).map(k => (
-                                            <button
-                                                key={k}
-                                                onClick={() => setFormKind(k)}
-                                                style={{
-                                                    flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
-                                                    border: `1px solid ${formKind === k ? 'var(--accent-color)' : 'var(--border)'}`,
-                                                    background: formKind === k ? 'var(--accent-muted)' : 'none',
-                                                    color: formKind === k ? 'var(--accent-color)' : 'var(--text-secondary)',
-                                                    fontWeight: formKind === k ? 600 : 400,
-                                                }}
-                                            >
-                                                {KIND_LABELS[k]}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Category</label></div>
-                                    <div style={{ display: 'flex', gap: '6px' }}>
-                                        {(['performance', 'condition'] as ModelCategory[]).map(c => {
-                                            const active = formCategory === c;
-                                            const activeColor = c === 'condition' ? 'var(--cond)' : 'var(--accent-color)';
-                                            const activeBg = c === 'condition' ? 'var(--cond-muted)' : 'var(--accent-muted)';
-                                            return (
-                                                <button
-                                                    key={c}
-                                                    onClick={() => setFormCategory(c)}
-                                                    style={{
-                                                        flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
-                                                        border: `1px solid ${active ? activeColor : 'var(--border)'}`,
-                                                        background: active ? activeBg : 'none',
-                                                        color: active ? activeColor : 'var(--text-secondary)',
-                                                        fontWeight: active ? 600 : 400,
-                                                    }}
-                                                >
-                                                    {CATEGORY_LABELS[c]}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-
-                                {formKind === 'individual' && (
-                                    <div className="fg-inspector-field">
-                                        <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
-                                        <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
-                                            <option value="">Select a sensor…</option>
-                                            {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                                        </select>
-                                    </div>
-                                )}
-
-                                {formKind === 'relationship' && (
-                                    <>
-                                        <div className="fg-inspector-field">
-                                            <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
-                                            <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
-                                                <option value="">Select a sensor…</option>
-                                                {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="fg-inspector-field">
-                                            <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
-                                            <select
-                                                className="fg-inspector-input"
-                                                value=""
-                                                onChange={e => { if (e.target.value) setFormPredictors(prev => prev.includes(e.target.value) ? prev : [...prev, e.target.value]); }}
-                                            >
-                                                <option value="">Add a predictor…</option>
-                                                {allSensors.filter(s => s !== formTarget && !formPredictors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
-                                            </select>
-                                            {formPredictors.length > 0 && (
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-                                                    {formPredictors.map(p => (
-                                                        <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', padding: '2px 6px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
-                                                            {p}
-                                                            <button onClick={() => setFormPredictors(prev => prev.filter(x => x !== p))} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                                                                <X size={9} />
-                                                            </button>
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </>
-                                )}
-
-                                {formKind === 'clustering' && (
-                                    <>
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            <div className="fg-inspector-field" style={{ flex: 1 }}>
-                                                <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
-                                                <select className="fg-inspector-input" value={formX} onChange={e => setFormX(e.target.value)}>
-                                                    <option value="">Select…</option>
-                                                    {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                                                </select>
-                                            </div>
-                                            <div className="fg-inspector-field" style={{ flex: 1 }}>
-                                                <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
-                                                <select className="fg-inspector-input" value={formY} onChange={e => setFormY(e.target.value)}>
-                                                    <option value="">Select…</option>
-                                                    {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <div className="fg-inspector-field">
-                                            <div className="fg-inspector-field-label-row"><label>Criteria sensor (optional)</label></div>
-                                            <select className="fg-inspector-input" value={formCriteria} onChange={e => setFormCriteria(e.target.value)}>
-                                                <option value="">None</option>
-                                                {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                                            </select>
-                                        </div>
-                                        {formCriteria && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                <div className="fg-inspector-field-label-row"><label>Cluster ranges</label></div>
-                                                {formClusterRanges.map((r, i) => (
-                                                    <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                                        <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', width: '16px' }}>{i + 1}</span>
-                                                        <input
-                                                            type="number"
-                                                            className="fg-inspector-input"
-                                                            value={r.min ?? ''}
-                                                            placeholder="min"
-                                                            onChange={e => setFormClusterRanges(prev => prev.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row))}
-                                                        />
-                                                        <input
-                                                            type="number"
-                                                            className="fg-inspector-input"
-                                                            value={r.max ?? ''}
-                                                            placeholder="max"
-                                                            onChange={e => setFormClusterRanges(prev => prev.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row))}
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-
-                                {formKind && (
-                                    <div className="fg-inspector-field">
-                                        <div className="fg-inspector-field-label-row"><label>Component</label></div>
-                                        <div className={`model-component-readout${formComponent ? '' : ' model-component-readout--placeholder'}`}>
-                                            {formComponent || 'Auto-filled from target sensor'}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                                    {editingModelId && (
-                                        <button className="text-btn" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={removeModel}>
-                                            Remove model
-                                        </button>
-                                    )}
-                                    <button className="text-btn" onClick={resetForm}>Cancel</button>
-                                    <button className="fg-build-model-btn" disabled={!formValid} onClick={commitForm}>
-                                        {editingModelId ? 'Save changes' : 'Create model'}
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
+                        {showForm && editingModelId === null && renderModelForm()}
+                        {!showForm && (
                             <button
                                 onClick={openAddForm}
                                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '9px 0', borderRadius: '8px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.75rem', cursor: 'pointer' }}
