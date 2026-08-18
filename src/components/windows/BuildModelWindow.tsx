@@ -62,10 +62,16 @@ function makeDefaultModel(groupNo: number): FailureModel {
     };
 }
 
-function sensorSummary(model: FailureModel): string {
-    if (model.kind === 'individual') return `Target: ${model.targetSensor || '—'}`;
-    if (model.kind === 'relationship') return `Target: ${model.targetSensor || '—'} · Predictors: ${(model.predictorSensors ?? []).join(', ') || '—'}`;
-    return `X: ${model.xSensor || '—'} · Y (target): ${model.ySensor || '—'}${model.criteriaSensor ? ` · Criteria: ${model.criteriaSensor}` : ''}`;
+// `label` renders a tag as "description (tag)" when metadata has a
+// description, else the bare tag — see BuildModelWindow's `sensorLabel`.
+function sensorSummary(model: FailureModel, label: (tag: string) => string): string {
+    if (model.kind === 'individual') return `Target: ${model.targetSensor ? label(model.targetSensor) : '—'}`;
+    if (model.kind === 'relationship') {
+        const predictors = (model.predictorSensors ?? []).map(label).join(', ') || '—';
+        return `Target: ${model.targetSensor ? label(model.targetSensor) : '—'} · Predictors: ${predictors}`;
+    }
+    const criteria = model.criteriaSensor ? ` · Criteria: ${label(model.criteriaSensor)}` : '';
+    return `X: ${model.xSensor ? label(model.xSensor) : '—'} · Y (target): ${model.ySensor ? label(model.ySensor) : '—'}${criteria}`;
 }
 
 /**
@@ -123,19 +129,28 @@ export default function BuildModelWindow() {
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
+    // "description (tag)" everywhere a sensor is shown to the user (picker
+    // options, predictor chips, the summary line) — the raw tag alone
+    // (e.g. "11TE1210.PV") isn't enough to recognize a sensor by; falls
+    // back to the bare tag when no mapping/description exists for it.
+    const sensorLabel = useCallback((tag: string) => {
+        const desc = sensorMetaMap.get(normalizeSensorTag(tag))?.description;
+        return desc ? `${desc} (${tag})` : tag;
+    }, [sensorMetaMap]);
 
     // Same fallback chain as FailureGroupsPanel's preview cards: the model's
     // own name if the user set one — a name identical to its own target tag
     // doesn't count, since legacy-migrated models default to that instead of
     // being truly unset (see workspaceManager.ts's migration shim) — else
-    // the target sensor's description, else the raw tag, else a placeholder.
+    // "description (tag)" for the target sensor (via sensorLabel, same
+    // format used everywhere else a sensor is shown), else a placeholder.
     const modelDisplayLabel = useCallback((model: FailureModel) => {
         const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
         const trimmedName = model.name.trim();
         if (trimmedName && trimmedName !== targetTag) return trimmedName;
         if (!targetTag) return 'Untitled model';
-        return sensorMetaMap.get(normalizeSensorTag(targetTag))?.description || targetTag;
-    }, [sensorMetaMap]);
+        return sensorLabel(targetTag);
+    }, [sensorLabel]);
 
     useEffect(() => {
         const theme = localStorage.getItem('theme') || 'dark';
@@ -407,7 +422,7 @@ export default function BuildModelWindow() {
                     <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
                     <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
                         <option value="">Select a sensor…</option>
-                        {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                        {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                     </select>
                 </div>
             )}
@@ -418,7 +433,7 @@ export default function BuildModelWindow() {
                         <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
                         <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
                             <option value="">Select a sensor…</option>
-                            {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                            {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                         </select>
                     </div>
                     <div className="fg-inspector-field">
@@ -429,13 +444,13 @@ export default function BuildModelWindow() {
                             onChange={e => { if (e.target.value) setFormPredictors(prev => prev.includes(e.target.value) ? prev : [...prev, e.target.value]); }}
                         >
                             <option value="">Add a predictor…</option>
-                            {allSensors.filter(s => s !== formTarget && !formPredictors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
+                            {allSensors.filter(s => s !== formTarget && !formPredictors.includes(s)).map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                         </select>
                         {formPredictors.length > 0 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
                                 {formPredictors.map(p => (
                                     <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', padding: '2px 6px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
-                                        {p}
+                                        {sensorLabel(p)}
                                         <button onClick={() => setFormPredictors(prev => prev.filter(x => x !== p))} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
                                             <X size={9} />
                                         </button>
@@ -454,14 +469,14 @@ export default function BuildModelWindow() {
                             <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
                             <select className="fg-inspector-input" value={formX} onChange={e => setFormX(e.target.value)}>
                                 <option value="">Select…</option>
-                                {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                             </select>
                         </div>
                         <div className="fg-inspector-field" style={{ flex: 1 }}>
                             <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
                             <select className="fg-inspector-input" value={formY} onChange={e => setFormY(e.target.value)}>
                                 <option value="">Select…</option>
-                                {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                             </select>
                         </div>
                     </div>
@@ -469,7 +484,7 @@ export default function BuildModelWindow() {
                         <div className="fg-inspector-field-label-row"><label>Criteria sensor (optional)</label></div>
                         <select className="fg-inspector-input" value={formCriteria} onChange={e => setFormCriteria(e.target.value)}>
                             <option value="">None</option>
-                            {allSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                            {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                         </select>
                     </div>
                     {formCriteria && (
@@ -613,7 +628,7 @@ export default function BuildModelWindow() {
                                                 {component && <span className="model-chip model-chip--component">{component}</span>}
                                             </div>
                                             <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                {sensorSummary(model)}
+                                                {sensorSummary(model, sensorLabel)}
                                             </div>
                                         </div>
                                         <button

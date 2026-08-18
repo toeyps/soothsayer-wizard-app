@@ -57,7 +57,8 @@ export default function FailureGroupsPanel({
         const trimmedName = model.name.trim();
         if (trimmedName && trimmedName !== targetTag) return trimmedName;
         if (!targetTag) return 'Untitled model';
-        return sensorMetaMap.get(normalizeSensorTag(targetTag))?.description || targetTag;
+        const desc = sensorMetaMap.get(normalizeSensorTag(targetTag))?.description;
+        return desc ? `${desc} (${targetTag})` : targetTag;
     };
 
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups

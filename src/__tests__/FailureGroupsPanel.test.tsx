@@ -79,17 +79,17 @@ describe('FailureGroupsPanel', () => {
         it('shows the model name when one is set', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'Bearing model', targetSensor: 'TAG1' })] })} />);
             expect(screen.getByText('Bearing model')).toBeTruthy();
-            expect(screen.queryByText('Pump Pressure')).toBeNull();
+            expect(screen.queryByText('Pump Pressure (TAG1)')).toBeNull();
         });
 
-        it('falls back to the target sensor\'s description when the model has no name', () => {
+        it('falls back to "description (tag)" for the target sensor when the model has no name', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG1' })] })} />);
-            expect(screen.getByText('Pump Pressure')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         });
 
-        it('treats a name identical to its own target tag as unset (legacy-migrated models default name to the tag) and falls back to the description', () => {
+        it('treats a name identical to its own target tag as unset (legacy-migrated models default name to the tag) and falls back to "description (tag)"', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] })} />);
-            expect(screen.getByText('Pump Pressure')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
             expect(screen.queryByText('TAG1')).toBeNull();
         });
 
@@ -101,7 +101,7 @@ describe('FailureGroupsPanel', () => {
         it('uses the Y sensor (not the target) for a clustering model, matching component derivation elsewhere', () => {
             const model = makeModel({ name: '', kind: 'clustering', targetSensor: '', xSensor: 'TAG9', ySensor: 'TAG1' });
             render(<FailureGroupsPanel {...makeProps({ fgModels: [model] })} />);
-            expect(screen.getByText('Pump Pressure')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         });
 
         it('falls back to "Untitled model" for a model with no name and no sensor picked yet', () => {

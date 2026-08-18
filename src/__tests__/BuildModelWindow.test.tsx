@@ -101,11 +101,31 @@ describe('BuildModelWindow', () => {
         expect(screen.getByText('Model One')).toBeTruthy();
     });
 
-    it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to the sensor description', async () => {
+    it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to "description (tag)"', async () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] } });
-        expect(screen.getByText('Pump Pressure')).toBeTruthy();
+        expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         expect(screen.queryByText('TAG1')).toBeNull(); // exact match — "Target: TAG1" in the sensor line doesn't count
+    });
+
+    it('shows sensors as "description (tag)" everywhere — summary line, predictor chips, and sensor pickers — falling back to the bare tag when a sensor has no mapped description', async () => {
+        const rel = makeModel({ id: 'm1', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'] });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+
+        // Summary line: target + predictors all show "description (tag)",
+        // TAG3 (no mapped description in this fixture) falls back to bare tag.
+        expect(screen.getByText('Target: Pump Pressure (TAG1) · Predictors: Pump Temp (TAG2), TAG3')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('Rel Model'));
+        const form = within(screen.getByTestId('add-model-form'));
+        // Predictor chips use the same "description (tag)" formatting — each
+        // text appears twice: once as a Target-sensor <select> option, once
+        // as its own predictor chip.
+        expect(form.getAllByText('Pump Temp (TAG2)').length).toBe(2);
+        expect(form.getAllByText('TAG3').length).toBe(2);
+        // The sensor picker <select> options do too.
+        expect(form.getByText('Pump Pressure (TAG1)')).toBeTruthy();
     });
 
     it('gives each model kind a distinct single-letter icon and color, not the same color for all', async () => {
@@ -254,7 +274,7 @@ describe('BuildModelWindow', () => {
             expect((form.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Model One');
             expect((form.getByText('Individual').closest('button') as HTMLButtonElement).style.color).toBe('var(--accent-color)');
             expect((form.getByText('Performance').closest('button') as HTMLButtonElement).style.color).toBe('var(--accent-color)');
-            expect(form.getByDisplayValue('TAG1')).toBeTruthy();
+            expect(form.getByDisplayValue('Pump Pressure (TAG1)')).toBeTruthy(); // "description (tag)"
             expect(form.getByText('Save changes')).toBeTruthy();
         });
 
