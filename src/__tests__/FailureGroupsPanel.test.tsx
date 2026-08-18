@@ -32,7 +32,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
         onCreateEmptyGroup: vi.fn(),
-        onOpenBuildModelOverview: vi.fn(),
+        onOpenBuildModel: vi.fn(),
         ...overrides,
     };
 }
@@ -127,17 +127,17 @@ describe('FailureGroupsPanel', () => {
     });
 
     it('clicking on a card does nothing (cards are read-only; no click-to-open anymore)', () => {
-        const onOpenBuildModelOverview = vi.fn();
-        render(<FailureGroupsPanel {...makeProps({ onOpenBuildModelOverview })} />);
+        const onOpenBuildModel = vi.fn();
+        render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
         fireEvent.click(screen.getByText('Group A'));
-        expect(onOpenBuildModelOverview).not.toHaveBeenCalled();
+        expect(onOpenBuildModel).not.toHaveBeenCalled();
     });
 
-    it('the bottom "Build Model" button opens the Build Model Overview window', () => {
-        const onOpenBuildModelOverview = vi.fn();
-        render(<FailureGroupsPanel {...makeProps({ onOpenBuildModelOverview })} />);
+    it('the bottom "Build Model" button opens the Build Model window', () => {
+        const onOpenBuildModel = vi.fn();
+        render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
         fireEvent.click(screen.getByText('Build Model'));
-        expect(onOpenBuildModelOverview).toHaveBeenCalledTimes(1);
+        expect(onOpenBuildModel).toHaveBeenCalledTimes(1);
     });
 
     describe('renaming a group', () => {
@@ -162,10 +162,10 @@ describe('FailureGroupsPanel', () => {
         });
 
         it('does not open Build Model Overview when clicking into the rename input', () => {
-            const onOpenBuildModelOverview = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onOpenBuildModelOverview })} />);
+            const onOpenBuildModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
             fireEvent.click(screen.getByTitle('Rename group'));
-            expect(onOpenBuildModelOverview).not.toHaveBeenCalled();
+            expect(onOpenBuildModel).not.toHaveBeenCalled();
         });
 
         it('rejects renaming to a name already used by another group (case-insensitive), with an inline error', () => {
@@ -207,10 +207,10 @@ describe('FailureGroupsPanel', () => {
         });
 
         it('does not open Build Model Overview when clicking delete', () => {
-            const onOpenBuildModelOverview = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onOpenBuildModelOverview })} />);
+            const onOpenBuildModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
             fireEvent.click(screen.getByTitle('Delete group'));
-            expect(onOpenBuildModelOverview).not.toHaveBeenCalled();
+            expect(onOpenBuildModel).not.toHaveBeenCalled();
         });
     });
 

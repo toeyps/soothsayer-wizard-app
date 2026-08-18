@@ -11,10 +11,11 @@ interface FailureGroupsPanelProps {
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
-    /** Opens the Build Model Overview window (all groups/models, groupable
-     *  by Failure Group or Component) — the sole entry point into building
-     *  models now; cards themselves no longer open anything on click. */
-    onOpenBuildModelOverview: () => void;
+    /** Opens the (singleton) Build Model window, which starts on its
+     *  overview page (all groups/models, groupable by Failure Group or
+     *  Component) — the sole entry point into building models now; cards
+     *  themselves no longer open anything on click. */
+    onOpenBuildModel: () => void;
 }
 
 const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: number) =>
@@ -28,15 +29,15 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * Incomplete status is deliberately NOT shown here (only in the Build Model
  * window) per explicit user request. Cards are read-only display only (no
  * click-to-open) — the "Build Model" button at the bottom of the panel is
- * the sole way in, leading to the Overview window first rather than
- * straight into a specific group's editor. All editing — description,
- * recommendation, sensors, model config — lives exclusively in the
- * per-group Build Model window (reached via the Overview), so this view
- * never duplicates state those windows already own.
+ * the sole way in, opening the Build Model window on its overview page
+ * rather than straight into a specific group's editor. All editing —
+ * description, recommendation, sensors, model config — lives exclusively
+ * in that window's detail page, so this view never duplicates state it
+ * already owns.
  */
 export default function FailureGroupsPanel({
     fgGroups, fgModels, sensorMetadata, getGroupColor,
-    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModelOverview,
+    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModel,
 }: FailureGroupsPanelProps) {
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
     const [editGroupDraft, setEditGroupDraft] = useState('');
@@ -204,7 +205,7 @@ export default function FailureGroupsPanel({
             <div style={{ padding: '8px', borderTop: '1px solid var(--border)' }}>
                 <button
                     className="fg-build-model-btn"
-                    onClick={onOpenBuildModelOverview}
+                    onClick={onOpenBuildModel}
                 >
                     <Play size={12} /> Build Model
                 </button>

@@ -947,11 +947,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Build Model — spawns the dedicated Build Model window for one
-    //    group. Unlike PM, this is intentionally multi-instance (one window
-    //    per groupNo, per the user's own request to compare groups side by
-    //    side) — label includes groupNo so re-clicking the same group
-    //    focuses its window while a different group opens a separate one.
+    // ── Build Model — singleton window (label `build-model`) reached from
+    //    the Failure Groups tab's "Build Model" button. Was two OS windows
+    //    (an Overview browser + one per-group window per groupNo, spawned
+    //    on demand) until the user asked to cut the total window count down
+    //    to just Dashboard + this one — the window itself now handles
+    //    overview/detail navigation internally as in-window pages, so there
+    //    is only ever this one label to spawn or focus. This also means the
+    //    duplicate-window race that used to exist between the "check if a
+    //    per-group window already exists" and "create it" steps can't
+    //    happen anymore for group-switching (it's local state now); it's
+    //    still guarded here for the singleton spawn itself.
     useEffect(() => {
         let unlisten: (() => void) | undefined;
         (async () => {
@@ -969,17 +975,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [initialState, sensorHeaders, sensorMetadata, metadata]);
 
     // Guards the gap between the `getByLabel` existence check and the
-    // `new WebviewWindow(...)` call below — both are async IPC round-trips,
-    // so two calls for the same label fired close together (e.g. a
-    // misclick, or a section header + a model row both opening the same
-    // group in the Overview window) can otherwise both see "no existing
-    // window" and both construct one, producing a real duplicate window
-    // (one populated, one perpetually blank) instead of a focus.
+    // `new WebviewWindow(...)` call below (both async IPC round-trips) so
+    // two rapid clicks on the "Build Model" button can't both see "no
+    // existing window" and both construct one.
     const pendingSpawnLabels = useRef<Set<string>>(new Set());
 
-    const spawnBuildModel = useCallback(async (groupNo: number) => {
+    const spawnBuildModel = useCallback(async () => {
         if (!initialState) return;
-        const label = `build-model-${groupNo}`;
+        const label = 'build-model';
         if (pendingSpawnLabels.current.has(label)) return;
         pendingSpawnLabels.current.add(label);
         try {
@@ -991,10 +994,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const screenW = window.screen.width;
             const screenH = window.screen.height;
             const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-            const group = fgGroups.find(g => g.no === groupNo);
             const webview = new WebviewWindow(label, {
-                url: `/?window=build-model&groupNo=${groupNo}`,
-                title: `Build Model — FG-${groupNo}${group ? ' · ' + group.name : ''}`,
+                url: '/?window=build-model',
+                title: 'Build Model',
                 width: Math.round(screenW * 0.75),
                 height: Math.round(screenH * 0.85),
                 center: true,
@@ -1004,70 +1006,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             webview.once('tauri://error', (e) => console.error('Failed to open build model window:', e));
         } catch (err) {
             console.error('Error opening build model window:', err);
-        } finally {
-            pendingSpawnLabels.current.delete(label);
-        }
-    }, [initialState, fgGroups]);
-
-    // A per-group Build Model window (or the Overview window itself) asks
-    // Dashboard to open a specific group's window this way, since only
-    // Dashboard can actually spawn it (see spawnBuildModel above).
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen<{ groupNo: number }>('open-build-model', async (event) => {
-                await spawnBuildModel(event.payload.groupNo);
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, [spawnBuildModel]);
-
-    // ── Build Model Overview — singleton "browse before you build" window,
-    //    reached from the Failure Groups tab's "Build Model" button (which
-    //    replaced clicking a group card directly, per explicit user
-    //    request). Shows every group's models at once; doesn't need the raw
-    //    CSV sensor data BuildModelWindow does, just sensorMetadata for
-    //    "description (tag)" labels — it never adds/edits sensors itself.
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen('request-build-model-overview-data', async () => {
-                if (!initialState) return;
-                await emit('build-model-overview-data', {
-                    workspaceId: initialState.id,
-                    sensorMetadata,
-                });
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, [initialState, sensorMetadata]);
-
-    const spawnBuildModelOverview = useCallback(async () => {
-        if (!initialState) return;
-        const label = 'build-model-overview';
-        if (pendingSpawnLabels.current.has(label)) return;
-        pendingSpawnLabels.current.add(label);
-        try {
-            const existing = await WebviewWindow.getByLabel(label);
-            if (existing) {
-                try { await existing.setFocus(); } catch { /* ignore */ }
-                return;
-            }
-            const screenW = window.screen.width;
-            const screenH = window.screen.height;
-            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-            const webview = new WebviewWindow(label, {
-                url: '/?window=build-model-overview',
-                title: 'Build Model — Overview',
-                width: Math.round(screenW * 0.75),
-                height: Math.round(screenH * 0.85),
-                center: true,
-                maximized: true,
-                decorations: isMac,
-            });
-            webview.once('tauri://error', (e) => console.error('Failed to open build model overview window:', e));
-        } catch (err) {
-            console.error('Error opening build model overview window:', err);
         } finally {
             pendingSpawnLabels.current.delete(label);
         }
@@ -2009,7 +1947,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}
                         onCreateEmptyGroup={createEmptyGroup}
-                        onOpenBuildModelOverview={spawnBuildModelOverview}
+                        onOpenBuildModel={spawnBuildModel}
                     />
                 )}
             </div>
