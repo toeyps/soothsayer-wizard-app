@@ -149,6 +149,11 @@ interface PredictiveModelData {
     workspaceId: string;
     targetSensor: string;
     predictorSensors: string[];
+    /** Which FailureModel this session's config belongs to — config is
+     *  persisted into that specific model in `failureGroupState.models`
+     *  rather than a single global slot, so training one model can never
+     *  discard another's config (see FailureModel's own doc comment). */
+    modelId: string;
     sensorHeaders: string[];
     sensorMetadata: SensorMetadata[] | null;
     metadata: CsvMetadata;
@@ -163,6 +168,9 @@ export default function PredictiveModelBuild() {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
+    // Which FailureModel this session's config is persisted into — see
+    // PredictiveModelData's own doc comment.
+    const [pmModelId, setPmModelId] = useState<string>('');
 
     // Data from previous page
     const [targetSensor, setTargetSensor] = useState<string>("");
@@ -533,14 +541,18 @@ export default function PredictiveModelBuild() {
                 setWorkspaceId(d.workspaceId);
                 setAllSensors(d.sensorHeaders);
                 setSensorMetadata(d.sensorMetadata);
+                setPmModelId(d.modelId);
                 if (d.dashboardSnapshot) setDashboardSnapshot(d.dashboardSnapshot);
 
-                // Hydrate model config from workspace if a slice exists; otherwise fall back to incoming payload.
+                // Hydrate model config from this specific FailureModel if it
+                // still exists on disk; otherwise fall back to the incoming
+                // payload. FailureModel extends PredictiveModelStateSlice, so
+                // the model record itself IS the slice.
                 let slice: PredictiveModelStateSlice | undefined;
                 try {
                     const ws = await loadWorkspaceData(d.workspaceId);
                     if (ws?.name) setWorkspaceName(ws.name);
-                    slice = ws?.predictiveModelState;
+                    slice = ws?.failureGroupState?.models.find(m => m.id === d.modelId);
                     if (ws?.dashboardSnapshot && !d.dashboardSnapshot) setDashboardSnapshot(ws.dashboardSnapshot);
                     // Hydrate the remembered save folder so the next picker
                     // defaults to wherever the user last picked.
@@ -631,12 +643,17 @@ export default function PredictiveModelBuild() {
         return () => { if (unlisten) unlisten(); };
     }, []);
 
-    // Persist predictive-model slice back into the workspace file on change.
-    // Config only — fit results (relPreview / subModels / clusteringPreview)
-    // are deliberately excluded so workspace JSONs stay small even with many
-    // target sensors. Re-opening forces the user to click Apply again.
+    // Persist config back into THIS model's own record in
+    // failureGroupState.models (not a global slot) so training one model can
+    // never discard another's config — the redesign's fix for the old
+    // single-slot `predictiveModelState`. Config only — fit results
+    // (relPreview / subModels / clusteringPreview) are deliberately excluded
+    // so workspace JSONs stay small even with many target sensors. Re-opening
+    // forces the user to click Apply again. Broadcasts
+    // `failure-group-state-changed` afterward so Dashboard/BuildModelWindow
+    // (separate OS windows) never see stale data.
     useEffect(() => {
-        if (!workspaceId || !hydratedRef.current) return;
+        if (!workspaceId || !hydratedRef.current || !pmModelId) return;
         const timer = setTimeout(() => {
             const slice: PredictiveModelStateSlice = {
                 targetSensor,
@@ -654,15 +671,24 @@ export default function PredictiveModelBuild() {
                 filterTimeEnd,
                 pmSensorFilters,
             };
-            updateWorkspaceData(workspaceId, (prev) => ({
-                ...prev,
-                lastRoute: 'predictive-model',
-                predictiveModelState: slice,
-            })).catch(e => console.error('Failed to persist predictive-model state:', e));
+            (async () => {
+                const next = await updateWorkspaceData(workspaceId, (prev) => ({
+                    ...prev,
+                    lastRoute: 'predictive-model',
+                    lastPmModelId: pmModelId,
+                    failureGroupState: {
+                        groups: prev.failureGroupState?.groups ?? [],
+                        models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
+                    },
+                }));
+                if (next?.failureGroupState) {
+                    await emit('failure-group-state-changed', next.failureGroupState);
+                }
+            })().catch(e => console.error('Failed to persist predictive-model state:', e));
         }, 250);
         return () => clearTimeout(timer);
     }, [
-        workspaceId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
+        workspaceId, pmModelId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
         clusterRanges, filterTimeStart, filterTimeEnd, pmSensorFilters,
     ]);

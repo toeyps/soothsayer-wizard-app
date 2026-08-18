@@ -1,7 +1,7 @@
 import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
-import { WorkspaceState, WorkspaceMetadata } from './types';
+import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, ModelKind } from './types';
 
 const STORE_FILE = 'settings.json';
 
@@ -151,12 +151,107 @@ export async function updateWorkspaceData(
     return next;
 }
 
+// Default PM build config for a model that never had one — mirrors
+// Dashboard.tsx's `spawnPredictiveModel` seed defaults so a freshly-migrated
+// model behaves identically to a brand-new one until the user configures it.
+const DEFAULT_PM_SLICE = {
+    individualChecked: true,
+    rcMode: null as 'relationship' | 'clustering' | null,
+    scatterXSensor: '',
+    relModelName: '',
+    relStiffness: 100_000,
+    clusterModelName: '',
+    numClusters: 3,
+    criteriaSensor: '',
+    clusterRanges: [
+        { min: 0, max: 33 },
+        { min: 33, max: 66 },
+        { min: 66, max: 100 },
+    ],
+    filterTimeStart: '',
+    filterTimeEnd: '',
+    pmSensorFilters: [],
+};
+
+/** Best-effort detection of the new `ModelKind` from the old free-text
+ *  `modelType` field, so migrated rows land in the right kind instead of
+ *  dumping everything into `individual` and making the user re-classify
+ *  every model by hand. Falls back to `individual` when nothing matches. */
+function inferModelKind(modelType: string): ModelKind {
+    const t = (modelType || '').toLowerCase();
+    if (t.includes('relationship') || t.includes('relation')) return 'relationship';
+    if (t.includes('cluster')) return 'clustering';
+    return 'individual';
+}
+
+/**
+ * One-time shim for workspaces saved before the Failure Group / Predictive
+ * Model redesign: old `failureGroupState.rows: FailureSensorRow[]` +
+ * global `predictiveModelState` become `failureGroupState.models: FailureModel[]`
+ * with PM config folded per-model. No-ops once a workspace has already been
+ * migrated (i.e. `failureGroupState.models` already exists).
+ */
+function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
+    const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[] } | undefined;
+    if (!fg || Array.isArray(fg.models)) return state;
+
+    const legacyRows = Array.isArray(fg.rows) ? fg.rows : [];
+    const pm = state.predictiveModelState;
+
+    const models: FailureModel[] = legacyRows
+        .filter(row => !!row.mappedSensorTag)
+        .map(row => {
+            // Only the one model that was actually open in the (single,
+            // global) PM slice inherits its config — every other migrated
+            // model gets fresh defaults rather than someone else's settings.
+            const matchesPm = !!pm && pm.targetSensor === row.mappedSensorTag;
+            const kind = inferModelKind(row.modelType);
+            return {
+                id: row.id,
+                groupNo: row.groupNo,
+                name: row.conceptSensor || row.mappedSensorTag,
+                kind,
+                category: null,
+                notes: row.modelNotes ?? '',
+                status: !!row.status,
+                targetSensor: kind === 'clustering' ? '' : row.mappedSensorTag,
+                predictorSensors: matchesPm ? (pm!.predictorSensors ?? []) : [],
+                xSensor: kind === 'clustering' ? row.mappedSensorTag : '',
+                ySensor: '',
+                ...(matchesPm
+                    ? {
+                        individualChecked: pm!.individualChecked,
+                        rcMode: pm!.rcMode,
+                        scatterXSensor: pm!.scatterXSensor,
+                        relModelName: pm!.relModelName,
+                        relStiffness: pm!.relStiffness,
+                        clusterModelName: pm!.clusterModelName,
+                        numClusters: pm!.numClusters,
+                        criteriaSensor: pm!.criteriaSensor,
+                        clusterRanges: pm!.clusterRanges,
+                        filterTimeStart: pm!.filterTimeStart,
+                        filterTimeEnd: pm!.filterTimeEnd,
+                        pmSensorFilters: pm!.pmSensorFilters,
+                    }
+                    : DEFAULT_PM_SLICE),
+            };
+        });
+
+    return {
+        ...state,
+        failureGroupState: {
+            groups: (fg.groups as FailureGroup[] | undefined) ?? [],
+            models,
+        },
+    };
+}
+
 export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
     console.log("Loading Workspace Data for ID:", id);
     try {
         const recent = await getRecentWorkspaces();
         const meta = recent.find(w => w.id === id);
-        
+
         let filePath = '';
         if (meta) {
             filePath = meta.filePath;
@@ -166,9 +261,10 @@ export async function loadWorkspaceData(id: string): Promise<WorkspaceState | nu
 
         const fileExists = await exists(filePath, { baseDir: BaseDirectory.AppData });
         if (!fileExists) return null;
-        
+
         const content = await readTextFile(filePath, { baseDir: BaseDirectory.AppData });
-        return JSON.parse(content) as WorkspaceState;
+        const parsed = JSON.parse(content) as WorkspaceState;
+        return migrateFailureGroupState(parsed);
     } catch (e) {
         console.error("Failed to load workspace data:", e);
         return null;

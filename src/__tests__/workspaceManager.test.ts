@@ -260,6 +260,116 @@ describe('loadWorkspaceData', () => {
         const { loadWorkspaceData } = await freshModule();
         expect(await loadWorkspaceData('ws1')).toBeNull();
     });
+
+    describe('legacy failure-group migration', () => {
+        beforeEach(() => {
+            mockStoreGet.mockResolvedValue([]);
+            mockExists.mockResolvedValue(true);
+        });
+
+        it('is a no-op when there is no failureGroupState at all', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            expect(result?.failureGroupState).toBeUndefined();
+        });
+
+        it('is a no-op when failureGroupState.models already exists (already migrated)', async () => {
+            const models = [{ id: 'm1', groupNo: 1, kind: 'individual' }];
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: { groups: [], models },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            expect(result?.failureGroupState?.models).toEqual(models);
+        });
+
+        it('converts legacy rows into individual-kind models by default', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    rows: [{
+                        id: 'row-1', groupNo: 1, conceptSensor: 'Vibration', mappedSensorTag: 'TAG1',
+                        mappedSensorName: 'Tag One', modelType: '', modelNotes: 'note', additionalNotes: '', status: true,
+                    }],
+                },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            const models = result?.failureGroupState?.models;
+            expect(models).toHaveLength(1);
+            expect(models![0]).toMatchObject({
+                id: 'row-1', groupNo: 1, name: 'Vibration', kind: 'individual', category: null,
+                notes: 'note', status: true, targetSensor: 'TAG1',
+            });
+        });
+
+        it('infers relationship/clustering kind from the legacy free-text modelType field', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    rows: [
+                        { id: 'r1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1', mappedSensorName: '', modelType: 'Relationship model', modelNotes: '', additionalNotes: '', status: false },
+                        { id: 'r2', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG2', mappedSensorName: '', modelType: 'Clustering', modelNotes: '', additionalNotes: '', status: false },
+                        { id: 'r3', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG3', mappedSensorName: '', modelType: 'something else', modelNotes: '', additionalNotes: '', status: false },
+                    ],
+                },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            const models = result?.failureGroupState?.models ?? [];
+            expect(models.find(m => m.id === 'r1')?.kind).toBe('relationship');
+            expect(models.find(m => m.id === 'r2')?.kind).toBe('clustering');
+            expect(models.find(m => m.id === 'r2')?.xSensor).toBe('TAG2');
+            expect(models.find(m => m.id === 'r3')?.kind).toBe('individual');
+        });
+
+        it('drops rows with no sensor tag assigned yet', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    rows: [{ id: 'blank', groupNo: 1, conceptSensor: '', mappedSensorTag: '', mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false }],
+                },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            expect(result?.failureGroupState?.models).toEqual([]);
+        });
+
+        it('only carries the old global predictiveModelState onto the ONE model it belonged to, defaulting every other model', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                predictiveModelState: {
+                    targetSensor: 'TAG1', predictorSensors: ['TAG9'], individualChecked: false,
+                    rcMode: 'relationship', scatterXSensor: 'TAG9', relModelName: 'My Model',
+                    relStiffness: 500, clusterModelName: '', numClusters: 5, criteriaSensor: '',
+                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                },
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    rows: [
+                        { id: 'r1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1', mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false },
+                        { id: 'r2', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG2', mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false },
+                    ],
+                },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            const models = result?.failureGroupState?.models ?? [];
+            const matched = models.find(m => m.id === 'r1')!;
+            const unmatched = models.find(m => m.id === 'r2')!;
+            expect(matched.relModelName).toBe('My Model');
+            expect(matched.predictorSensors).toEqual(['TAG9']);
+            expect(matched.numClusters).toBe(5);
+            expect(unmatched.relModelName).toBe('');
+            expect(unmatched.numClusters).toBe(3);
+            expect(unmatched.predictorSensors).toEqual([]);
+        });
+    });
 });
 
 describe('updateWorkspaceData', () => {

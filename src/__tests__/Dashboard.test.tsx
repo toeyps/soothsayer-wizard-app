@@ -62,19 +62,10 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
         fgPanelProps.push(props);
         return (
             <div data-testid="fg-panel">
-                <button onClick={() => props.onToggleGroupCollapse(1)}>toggle-collapse</button>
                 <button onClick={() => props.onCreateEmptyGroup('Empty Group')}>create-empty-group</button>
-                <button onClick={() => props.onAddBlankRow(1)}>add-blank-row</button>
-                <button onClick={() => props.onUpdateRow('r1', 'status', true)}>update-row</button>
-                <button onClick={() => props.onRemoveRow('r1')}>remove-row</button>
-                <button
-                    onClick={() => props.onBuildModel({
-                        id: 'r1', groupNo: 1, mappedSensorTag: 'TAG1', conceptSensor: '',
-                        mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false,
-                    })}
-                >
-                    build-model
-                </button>
+                <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group-fg</button>
+                <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
+                <button onClick={() => props.onOpenBuildModel(1)}>open-build-model</button>
             </div>
         );
     },
@@ -523,29 +514,38 @@ describe('Dashboard', () => {
     });
 
     describe('failure-group wiring (from the Sensor tab quick-assign)', () => {
-        it('toggling a sensor into a group persists via updateWorkspaceData with the new row', () => {
+        it('toggling a sensor into a group persists via updateWorkspaceData with a new individual-kind model', () => {
             renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], rows: [] } }),
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
             });
             fireEvent.click(screen.getByText('toggle-group'));
             const patchResult = last(mockUpdateWorkspaceData.mock.results)!.value;
             return patchResult.then((state: any) => {
-                expect(state.failureGroupState.rows).toHaveLength(1);
-                expect(state.failureGroupState.rows[0]).toMatchObject({ mappedSensorTag: 'TAG1', groupNo: 1 });
+                expect(state.failureGroupState.models).toHaveLength(1);
+                expect(state.failureGroupState.models[0]).toMatchObject({ kind: 'individual', targetSensor: 'TAG1', groupNo: 1 });
             });
         });
 
-        it('creating a group for a sensor adds both the group and its row', async () => {
+        it('creating a group for a sensor adds both the group and its model', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('create-group-for-sensor'));
             const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups.map((g: any) => g.name)).toContain('New Group');
-            expect(state.failureGroupState.rows[0].mappedSensorTag).toBe('TAG1');
+            expect(state.failureGroupState.models[0].targetSensor).toBe('TAG1');
+        });
+
+        it('does not create a duplicate-named group for a sensor', async () => {
+            renderDashboard({
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'New Group', isCollapsed: false }], models: [] } }),
+            });
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(screen.getByText('create-group-for-sensor')); // sensor mock always uses 'New Group'
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
         it('renaming and deleting a group updates fgGroups accordingly', async () => {
             renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], rows: [] } }),
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
             });
             fireEvent.click(screen.getByText('rename-group'));
             let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
@@ -557,26 +557,29 @@ describe('Dashboard', () => {
         });
     });
 
-    describe('Failure Groups tab (group-centric manage view)', () => {
-        it('addBlankRow / updateRow / removeRow round-trip through fgRows', async () => {
+    describe('Failure Groups tab (group-centric preview)', () => {
+        it('create-empty-group round-trips through updateWorkspaceData', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
 
-            fireEvent.click(screen.getByText('add-blank-row'));
-            let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
-            expect(state.failureGroupState.rows).toHaveLength(1);
-
-            fireEvent.click(screen.getByText('update-row'));
-            state = await last(mockUpdateWorkspaceData.mock.results)!.value;
-            // update-row targets id 'r1' which doesn't exist yet (blank row got
-            // an id-`${Date.now()}...`), so this exercises the no-op-match path
-            // without throwing — the real id-targeted case is covered by
-            // FailureGroupsPanel's own tests.
-            expect(state.failureGroupState.rows).toHaveLength(1);
-
             fireEvent.click(screen.getByText('create-empty-group'));
-            state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups.map((g: any) => g.name)).toContain('Empty Group');
+        });
+
+        it('rename/delete from the preview panel itself also round-trip', async () => {
+            renderDashboard({
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
+            });
+            fireEvent.click(screen.getByText('Failure Groups'));
+
+            fireEvent.click(screen.getByText('rename-group-fg'));
+            let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.groups[0].name).toBe('Renamed');
+
+            fireEvent.click(screen.getByText('delete-group-fg'));
+            state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.groups).toHaveLength(0);
         });
     });
 
@@ -687,29 +690,63 @@ describe('Dashboard', () => {
     });
 
     describe('Build Model', () => {
-        it('spawns the predictive-model window and persists the target/predictors', async () => {
+        it('opening a group from the Failure Groups tab spawns its own build-model-<no> window', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
             await act(async () => {
-                fireEvent.click(screen.getByText('build-model'));
+                fireEvent.click(screen.getByText('open-build-model'));
                 await Promise.resolve();
                 await Promise.resolve();
             });
-            expect(webviewWindowCalls.some((c) => c.label === 'predictive-model')).toBe(true);
+            expect(webviewWindowCalls.some((c) => c.label === 'build-model-1')).toBe(true);
         });
 
-        it('focuses an already-open predictive-model window instead of spawning a second one', async () => {
+        it('focuses an already-open build-model window instead of spawning a second one for the same group', async () => {
             const existing = { setFocus: vi.fn().mockResolvedValue(undefined) };
             mockGetByLabel.mockResolvedValue(existing);
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
             await act(async () => {
-                fireEvent.click(screen.getByText('build-model'));
+                fireEvent.click(screen.getByText('open-build-model'));
                 await Promise.resolve();
                 await Promise.resolve();
                 await Promise.resolve();
             });
             expect(existing.setFocus).toHaveBeenCalled();
+            expect(webviewWindowCalls.some((c) => c.label === 'build-model-1')).toBe(false);
+        });
+
+        it('a "launch-predictive-model" event from a Build Model window loads that model from disk and spawns the (singleton) PM window', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                id: 'ws1',
+                failureGroupState: {
+                    groups: [],
+                    models: [{
+                        id: 'm1', groupNo: 1, name: 'My Model', kind: 'individual', category: null,
+                        targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '', notes: '', status: false,
+                        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                        relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                    }],
+                },
+            });
+            renderDashboard();
+            await act(async () => {
+                for (const cb of listenCallbacks['launch-predictive-model'] ?? []) {
+                    await cb({ payload: { modelId: 'm1' } });
+                }
+            });
+            expect(webviewWindowCalls.some((c) => c.label === 'predictive-model')).toBe(true);
+        });
+
+        it('does nothing when the launched model no longer exists on disk', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({ id: 'ws1', failureGroupState: { groups: [], models: [] } });
+            renderDashboard();
+            await act(async () => {
+                for (const cb of listenCallbacks['launch-predictive-model'] ?? []) {
+                    await cb({ payload: { modelId: 'gone' } });
+                }
+            });
             expect(webviewWindowCalls.some((c) => c.label === 'predictive-model')).toBe(false);
         });
     });

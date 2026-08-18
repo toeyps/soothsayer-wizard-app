@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { AddSensorWindow, PredictiveModelBuild, SaveAsWindow } from "./components/windows";
+import { AddSensorWindow, PredictiveModelBuild, SaveAsWindow, BuildModelWindow } from "./components/windows";
 import "./App.css";
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -15,6 +15,8 @@ if (windowType === "add-sensor") {
   RootComponent = PredictiveModelBuild;
 } else if (windowType === "save-as") {
   RootComponent = SaveAsWindow;
+} else if (windowType === "build-model") {
+  RootComponent = BuildModelWindow;
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

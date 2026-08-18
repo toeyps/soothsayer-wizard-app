@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import SensorSelection from '../components/dashboard/SensorSelection';
-import type { FailureGroup, FailureSensorRow, SensorMetadata } from '../types';
+import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
 
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmH: 90 },
@@ -9,9 +9,12 @@ const sensorMetadata: SensorMetadata[] = [
 ];
 
 const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
-const rowTag1InGroupA: FailureSensorRow = {
-    id: 'r1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1',
-    mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false,
+const modelTag1InGroupA: FailureModel = {
+    id: 'm1', groupNo: 1, name: '', kind: 'individual', category: null, notes: '', status: false,
+    targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+    individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+    relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
 };
 
 function makeProps(overrides: Partial<React.ComponentProps<typeof SensorSelection>> = {}) {
@@ -21,7 +24,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof SensorSelectio
         onSensorChange: vi.fn(),
         sensorMetadata,
         fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }, groupA],
-        fgRows: [rowTag1InGroupA],
+        fgModels: [modelTag1InGroupA],
         getGroupColor: () => 'blue',
         onToggleSensorGroup: vi.fn(),
         onCreateGroupForSensor: vi.fn(),
@@ -290,6 +293,18 @@ describe('SensorSelection', () => {
             fireEvent.change(input, { target: { value: 'Via Enter' } });
             fireEvent.keyDown(input, { key: 'Enter' });
             expect(onCreateGroupForSensor).toHaveBeenCalledWith('TAG1', 'Via Enter');
+        });
+
+        it('rejects a duplicate group name (case-insensitive), with an inline error, and does not call onCreateGroupForSensor', () => {
+            const onCreateGroupForSensor = vi.fn();
+            render(<SensorSelection {...makeProps({ onCreateGroupForSensor })} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
+            const input = screen.getByPlaceholderText('New group name');
+            fireEvent.change(input, { target: { value: 'group a' } });
+            fireEvent.click(screen.getByText('Create'));
+            expect(onCreateGroupForSensor).not.toHaveBeenCalled();
+            expect(screen.getByText('A failure group named "group a" already exists')).toBeTruthy();
         });
     });
 });

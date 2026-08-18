@@ -5,7 +5,7 @@ import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../..
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureSensorRow, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, LineTaggedPoint,
+    FailureGroup, FailureModel, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, LineTaggedPoint,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -206,103 +206,139 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     );
 
     // ── Failure group assignment (Sensor tab quick-assign + Failure Groups
-    //    tab manage view) ────────────────────────────────────────────────
-    // Owns WorkspaceState.failureGroupState in full — the standalone
-    // FailureGroupCreation.tsx window that used to own this slice has been
-    // deleted; everything failure-group-related lives here now, split
-    // across two views in the same Sensor panel: SensorSelection.tsx's
-    // per-sensor quick-assign (FolderPlus icon) and FailureGroupsPanel.tsx's
-    // group-centric manage tab. Persisted via `updateWorkspaceData`
+    //    tab preview) ─────────────────────────────────────────────────────
+    // Owns WorkspaceState.failureGroupState in full. Sensor-level "which
+    // group(s) is this sensor in" (SensorSelection.tsx's per-sensor
+    // quick-assign, FolderPlus icon) creates/removes individual-kind
+    // FailureModels here; everything else — description, recommendation,
+    // per-model kind/category/sensors, PM build config — is owned and edited
+    // exclusively by the separate Build Model window (BuildModelWindow.tsx,
+    // one OS window per group). FailureGroupsPanel.tsx here is preview-only
+    // (see its own doc comment) so this file never duplicates state that
+    // window already owns. Persisted via `updateWorkspaceData`
     // (read-modify-write) rather than Dashboard's own full-overwrite
-    // autosave so a burst of quick edits can't race each other.
+    // autosave so this window and any open Build Model window(s) editing
+    // *different* groups can't clobber each other.
     //
     // A sensor can belong to multiple groups at once, so membership is
-    // "does a row exist for (tag, groupNo)" rather than one row per tag.
-    // toggleSensorGroup below adds/removes the specific row for a
-    // (tag, groupNo) pair without touching the sensor's rows in any other
-    // group; FailureGroupsPanel's addBlankRowToGroup/updateFgRow (further
-    // down) cover the group-first editing path.
+    // "does an individual model exist for (tag, groupNo)" rather than one
+    // model per tag.
     const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
         initialState?.failureGroupState?.groups ?? [{ no: 0, name: 'Not in Group', isCollapsed: false }]
     );
-    const [fgRows, setFgRows] = useState<FailureSensorRow[]>(
-        initialState?.failureGroupState?.rows ?? []
+    const [fgModels, setFgModels] = useState<FailureModel[]>(
+        initialState?.failureGroupState?.models ?? []
     );
 
-    const persistFailureGroupState = useCallback((groups: FailureGroup[], rows: FailureSensorRow[]) => {
+    const persistFailureGroupState = useCallback((groups: FailureGroup[], models: FailureModel[]) => {
         if (!initialState) return;
         updateWorkspaceData(initialState.id, prev => ({
             ...prev,
-            failureGroupState: { groups, rows },
+            failureGroupState: { groups, models },
         })).catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
     }, [initialState]);
 
+    // BuildModelWindow and PredictiveModelBuild persist failureGroupState
+    // independently (their own updateWorkspaceData read-modify-write calls)
+    // since they're separate OS windows. Without this listener, this
+    // window's own fgGroups/fgModels would go stale the moment either of
+    // them writes — and Dashboard's full-overwrite autosave below (which
+    // saves `{groups: fgGroups, models: fgModels}` alongside everything
+    // else it owns) would then clobber their fresher on-disk data on its
+    // next tick. Both windows broadcast this event after every persist so
+    // this copy never drifts.
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen<{ groups: FailureGroup[]; models: FailureModel[] }>('failure-group-state-changed', (event) => {
+                setFgGroups(event.payload.groups);
+                setFgModels(event.payload.models);
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
+    }, []);
+
+    // Default PM build config for a freshly created model — mirrors
+    // spawnPredictiveModel's own seed defaults below so a model behaves
+    // identically whether it was created here or from Build Model.
+    const makeDefaultModel = useCallback((tag: string, groupNo: number): FailureModel => ({
+        id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        groupNo,
+        name: getSensorMeta(tag)?.description || tag,
+        kind: 'individual',
+        category: null,
+        notes: '',
+        status: false,
+        targetSensor: tag,
+        predictorSensors: [],
+        xSensor: '',
+        ySensor: '',
+        individualChecked: true,
+        rcMode: null,
+        scatterXSensor: '',
+        relModelName: '',
+        relStiffness: 100_000,
+        clusterModelName: '',
+        numClusters: 3,
+        criteriaSensor: '',
+        clusterRanges: [
+            { min: 0, max: 33 },
+            { min: 33, max: 66 },
+            { min: 66, max: 100 },
+        ],
+        filterTimeStart: '',
+        filterTimeEnd: '',
+        pmSensorFilters: [],
+    }), [getSensorMeta]);
+
+    const isDuplicateGroupName = useCallback((name: string, excludeNo?: number) =>
+        fgGroups.some(g => g.no !== 0 && g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase()),
+    [fgGroups]);
+
     const toggleSensorGroup = useCallback((tag: string, groupNo: number) => {
-        const isMember = fgRows.some(r => r.mappedSensorTag.toLowerCase() === tag.toLowerCase() && r.groupNo === groupNo);
-        const nextRows = isMember
-            ? fgRows.filter(r => !(r.mappedSensorTag.toLowerCase() === tag.toLowerCase() && r.groupNo === groupNo))
-            : [...fgRows, {
-                id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                groupNo,
-                conceptSensor: '',
-                mappedSensorTag: tag,
-                mappedSensorName: getSensorMeta(tag)?.description ?? tag,
-                modelType: '',
-                modelNotes: '',
-                additionalNotes: '',
-                status: false,
-            }];
-        setFgRows(nextRows);
-        persistFailureGroupState(fgGroups, nextRows);
-    }, [fgRows, fgGroups, getSensorMeta, persistFailureGroupState]);
+        const isMember = fgModels.some(m => m.kind === 'individual' && m.groupNo === groupNo && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase());
+        const nextModels = isMember
+            ? fgModels.filter(m => !(m.kind === 'individual' && m.groupNo === groupNo && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase()))
+            : [...fgModels, makeDefaultModel(tag, groupNo)];
+        setFgModels(nextModels);
+        persistFailureGroupState(fgGroups, nextModels);
+    }, [fgModels, fgGroups, makeDefaultModel, persistFailureGroupState]);
 
     const createGroupForSensor = useCallback((tag: string, name: string) => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (!trimmed || isDuplicateGroupName(trimmed)) return;
         const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
         const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed, isCollapsed: false }];
-        const newRows = [...fgRows, {
-            id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            groupNo: maxNo + 1,
-            conceptSensor: '',
-            mappedSensorTag: tag,
-            mappedSensorName: getSensorMeta(tag)?.description ?? tag,
-            modelType: '',
-            modelNotes: '',
-            additionalNotes: '',
-            status: false,
-        }];
+        const newModels = [...fgModels, makeDefaultModel(tag, maxNo + 1)];
         setFgGroups(newGroups);
-        setFgRows(newRows);
-        persistFailureGroupState(newGroups, newRows);
-    }, [fgGroups, fgRows, getSensorMeta, persistFailureGroupState]);
+        setFgModels(newModels);
+        persistFailureGroupState(newGroups, newModels);
+    }, [fgGroups, fgModels, isDuplicateGroupName, makeDefaultModel, persistFailureGroupState]);
 
-    // Renaming/deleting a group is global (not tied to one sensor's row), so
-    // these operate on fgGroups/fgRows directly rather than through
-    // toggleSensorGroup. Deleting removes every row across every sensor that
-    // belonged to that group — mirrors FailureGroupCreation.tsx's own
-    // `removeGroup`, which also has no confirmation step.
+    // Renaming/deleting a group is global (not tied to one sensor's model),
+    // so these operate on fgGroups/fgModels directly rather than through
+    // toggleSensorGroup. Deleting removes every model across every sensor
+    // that belonged to that group, with no confirmation step here — the UI
+    // callers (FailureGroupsPanel, BuildModelWindow) confirm first.
     const renameGroup = useCallback((groupNo: number, name: string) => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (!trimmed || isDuplicateGroupName(trimmed, groupNo)) return;
         const newGroups = fgGroups.map(g => g.no === groupNo ? { ...g, name: trimmed } : g);
         setFgGroups(newGroups);
-        persistFailureGroupState(newGroups, fgRows);
-    }, [fgGroups, fgRows, persistFailureGroupState]);
+        persistFailureGroupState(newGroups, fgModels);
+    }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
 
     const deleteGroup = useCallback((groupNo: number) => {
         if (groupNo === 0) return;
         const newGroups = fgGroups.filter(g => g.no !== groupNo);
-        const newRows = fgRows.filter(r => r.groupNo !== groupNo);
+        const newModels = fgModels.filter(m => m.groupNo !== groupNo);
         setFgGroups(newGroups);
-        setFgRows(newRows);
-        persistFailureGroupState(newGroups, newRows);
-    }, [fgGroups, fgRows, persistFailureGroupState]);
+        setFgModels(newModels);
+        persistFailureGroupState(newGroups, newModels);
+    }, [fgGroups, fgModels, persistFailureGroupState]);
 
-    // ── Failure Groups tab (group-centric manage view) ──────────────────
-    // Everything below supports FailureGroupsPanel.tsx, the Dashboard-native
-    // replacement for the standalone FailureGroupCreation.tsx window (deleted
-    // — see PROJECT_HANDOVER.md). Reuses fgGroups/fgRows/
+    // ── Failure Groups tab (group-centric preview) ───────────────────────
+    // Supports FailureGroupsPanel.tsx. Reuses fgGroups/fgModels/
     // persistFailureGroupState above; toggleSensorGroup/createGroupForSensor
     // (also above) remain the entry points used by SensorSelection.tsx's
     // per-sensor quick-assign, unchanged.
@@ -310,61 +346,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         initialState?.lastRoute === 'failure-group' ? 'failure-groups' : 'sensor'
     );
 
-    const toggleGroupCollapse = useCallback((groupNo: number) => {
-        setFgGroups(prev => prev.map(g => g.no === groupNo ? { ...g, isCollapsed: !g.isCollapsed } : g));
-        // Collapse state is cosmetic (not worth a disk write on its own), but
-        // persisting keeps it consistent with everything else in this slice —
-        // cheap given updateWorkspaceData's read-modify-write already runs on
-        // every other mutation here.
-        persistFailureGroupState(
-            fgGroups.map(g => g.no === groupNo ? { ...g, isCollapsed: !g.isCollapsed } : g),
-            fgRows,
-        );
-    }, [fgGroups, fgRows, persistFailureGroupState]);
-
     const createEmptyGroup = useCallback((name: string) => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (!trimmed || isDuplicateGroupName(trimmed)) return;
         const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
         const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed, isCollapsed: false }];
         setFgGroups(newGroups);
-        persistFailureGroupState(newGroups, fgRows);
-    }, [fgGroups, fgRows, persistFailureGroupState]);
-
-    // Creates a row with no sensor tag yet — the panel immediately expands
-    // it into a tag picker. Id is computed and returned synchronously (not
-    // read back from state) so the caller can expand it in the same tick.
-    const addBlankRowToGroup = useCallback((groupNo: number): string => {
-        const id = `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const newRows = [...fgRows, {
-            id, groupNo, conceptSensor: '', mappedSensorTag: '', mappedSensorName: '',
-            modelType: '', modelNotes: '', additionalNotes: '', status: false,
-        }];
-        setFgRows(newRows);
-        persistFailureGroupState(fgGroups, newRows);
-        return id;
-    }, [fgGroups, fgRows, persistFailureGroupState]);
-
-    const updateFgRow = useCallback((
-        rowId: string,
-        field: 'mappedSensorTag' | 'conceptSensor' | 'modelType' | 'modelNotes' | 'status',
-        value: string | boolean,
-    ) => {
-        const newRows = fgRows.map(r => {
-            if (r.id !== rowId) return r;
-            const updated = { ...r, [field]: value };
-            if (field === 'mappedSensorTag') updated.mappedSensorName = getSensorMeta(value as string)?.description ?? (value as string);
-            return updated;
-        });
-        setFgRows(newRows);
-        persistFailureGroupState(fgGroups, newRows);
-    }, [fgGroups, fgRows, getSensorMeta, persistFailureGroupState]);
-
-    const removeFgRowById = useCallback((rowId: string) => {
-        const newRows = fgRows.filter(r => r.id !== rowId);
-        setFgRows(newRows);
-        persistFailureGroupState(fgGroups, newRows);
-    }, [fgGroups, fgRows, persistFailureGroupState]);
+        persistFailureGroupState(newGroups, fgModels);
+    }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
 
     // Per-sensor line-color override and pinned Y-axis bounds, set from the
     // "Selected Sensor" tab.
@@ -827,13 +816,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
-    // ── Build Model — spawns the Predictive Model window directly ───────
+    // ── Predictive Model — spawns the (singleton) PM window directly ────
     // Previously FailureGroupCreation.tsx's job (its `spawnPMHelper` +
-    // `request-predictive-data` responder); reproduced here verbatim since
-    // that window no longer exists. PM itself has no idea who spawned it —
-    // it just broadcasts `request-predictive-data` on mount and consumes
-    // whatever answers on `predictive-model-data` (see PredictiveModelBuild.tsx).
-    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[] } | null>(null);
+    // `request-predictive-data` responder); reproduced here since that
+    // window no longer exists. PM broadcasts `request-predictive-data` on
+    // mount and consumes whatever answers on `predictive-model-data` (see
+    // PredictiveModelBuild.tsx) — this also works when PM is spawned by the
+    // separate Build Model window (BuildModelWindow.tsx) instead of directly
+    // from here, since only Dashboard holds the raw CSV sensor data PM needs
+    // and the request/response event bus is global across windows.
+    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[]; modelId: string } | null>(null);
     const autoResumedPmRef = useRef(false);
 
     const buildDashboardSnapshot = useCallback(() => ({
@@ -849,6 +841,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     workspaceId: initialState.id,
                     targetSensor: pendingModelDataRef.current.targetSensor,
                     predictorSensors: pendingModelDataRef.current.predictorSensors,
+                    modelId: pendingModelDataRef.current.modelId,
                     sensorHeaders,
                     sensorMetadata,
                     metadata,
@@ -859,43 +852,32 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => { if (unlisten) unlisten(); };
     }, [initialState, sensorHeaders, sensorMetadata, metadata, buildDashboardSnapshot]);
 
-    const spawnPredictiveModel = useCallback(async (target: string, predictors: string[]) => {
+    // Opens PM for one specific FailureModel. Sensor requirements are
+    // derived from the model's kind: individual/relationship hand PM their
+    // target + predictors as-is; clustering maps ySensor → PM's "target" and
+    // xSensor → its sole predictor (PM's scatterXSensor then defaults to it).
+    const spawnPredictiveModel = useCallback(async (model: FailureModel) => {
         if (!initialState) return;
-        pendingModelDataRef.current = { targetSensor: target, predictorSensors: predictors };
+        const target = model.kind === 'clustering' ? model.ySensor : (model.targetSensor ?? '');
+        if (!target) return;
+        const predictors = model.kind === 'relationship'
+            ? (model.predictorSensors ?? [])
+            : model.kind === 'clustering'
+                ? [model.xSensor].filter((s): s is string => !!s)
+                : [];
+
+        pendingModelDataRef.current = { targetSensor: target, predictorSensors: predictors, modelId: model.id };
 
         await updateWorkspaceData(initialState.id, prev => ({
             ...prev,
             lastRoute: 'predictive-model',
-            predictiveModelState: {
-                ...(prev.predictiveModelState ?? {
-                    individualChecked: true,
-                    rcMode: null,
-                    scatterXSensor: '',
-                    relModelName: '',
-                    // Default λ corresponds to the "Standard" stiffness preset
-                    // in PredictiveModelBuild — kept in sync with the
-                    // STIFFNESS_OPTIONS set there (copied from
-                    // FailureGroupCreation.tsx's own default, now deleted).
-                    relStiffness: 100_000,
-                    clusterModelName: '',
-                    numClusters: 3,
-                    criteriaSensor: '',
-                    clusterRanges: [
-                        { min: 0, max: 33 },
-                        { min: 33, max: 66 },
-                        { min: 66, max: 100 },
-                    ],
-                    filterTimeStart: '',
-                    filterTimeEnd: '',
-                    pmSensorFilters: [],
-                }),
-                targetSensor: target,
-                predictorSensors: predictors,
-            },
+            lastPmModelId: model.id,
         }));
 
         try {
-            // Idempotency: focus instead of respawning if PM is already open.
+            // Idempotency: PM stays a singleton window — focus instead of
+            // respawning if it's already open (even for a different model;
+            // matches prior behaviour, unchanged by this redesign).
             const existingPM = await WebviewWindow.getByLabel('predictive-model');
             if (existingPM) {
                 try { await existingPM.setFocus(); } catch { /* ignore */ }
@@ -906,7 +888,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
             const webview = new WebviewWindow('predictive-model', {
                 url: '/?window=predictive-model',
-                title: `Predictive Model — ${target}`,
+                title: `Predictive Model — ${model.name || target}`,
                 width: Math.round(screenW * 0.75),
                 height: Math.round(screenH * 0.85),
                 center: true,
@@ -931,33 +913,88 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     }, [initialState]);
 
-    const handleBuildModel = useCallback(async (row: FailureSensorRow) => {
-        if (!row.mappedSensorTag || !initialState) return;
-        // Preserve previously chosen predictors when reopening Build Model on
-        // the same target — only reset when the target changes.
-        const prevState = (await loadWorkspaceData(initialState.id))?.predictiveModelState;
-        const sameTarget = prevState?.targetSensor === row.mappedSensorTag;
-        const carriedPredictors = sameTarget ? (prevState?.predictorSensors ?? []) : [];
-        await spawnPredictiveModel(row.mappedSensorTag, carriedPredictors);
+    // BuildModelWindow (a separate OS window) can't call spawnPredictiveModel
+    // directly, so it asks for PM via this event instead. Model data is
+    // re-read from disk rather than from this window's own (possibly stale)
+    // fgModels, since BuildModelWindow persists its edits independently.
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen<{ modelId: string }>('launch-predictive-model', async (event) => {
+                if (!initialState) return;
+                const ws = await loadWorkspaceData(initialState.id);
+                const model = ws?.failureGroupState?.models.find(m => m.id === event.payload.modelId);
+                if (!model) return;
+                await spawnPredictiveModel(model);
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
     }, [initialState, spawnPredictiveModel]);
 
     // Recent-workspace resume: if this workspace's lastRoute is
-    // 'predictive-model' (set the last time Build Model was clicked),
-    // auto-reopen PM once on mount instead of leaving the user stranded on
-    // Dashboard with no visible link to the model they were configuring.
-    // DataUploadPage.tsx used to hand this off to FailureGroupCreation.tsx's
-    // own cascade; now Dashboard does it directly since FG no longer exists.
+    // 'predictive-model' (set the last time PM was opened), auto-reopen it
+    // once on mount on the same model instead of leaving the user stranded
+    // on Dashboard with no visible link to what they were configuring.
     useEffect(() => {
         if (autoResumedPmRef.current) return;
         if (initialState?.lastRoute !== 'predictive-model') return;
-        const target = initialState.predictiveModelState?.targetSensor;
-        if (!target) return;
+        const model = initialState.failureGroupState?.models.find(m => m.id === initialState.lastPmModelId);
+        if (!model) return;
         autoResumedPmRef.current = true;
-        spawnPredictiveModel(target, initialState.predictiveModelState?.predictorSensors ?? []);
+        spawnPredictiveModel(model);
         // Intentionally run once on mount only — initialState is a stable
         // prop for this window's lifetime.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // ── Build Model — spawns the dedicated Build Model window for one
+    //    group. Unlike PM, this is intentionally multi-instance (one window
+    //    per groupNo, per the user's own request to compare groups side by
+    //    side) — label includes groupNo so re-clicking the same group
+    //    focuses its window while a different group opens a separate one.
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            unlisten = await listen('request-build-model-data', async () => {
+                if (!initialState) return;
+                await emit('build-model-data', {
+                    workspaceId: initialState.id,
+                    sensorHeaders,
+                    sensorMetadata,
+                    metadata,
+                });
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
+    }, [initialState, sensorHeaders, sensorMetadata, metadata]);
+
+    const spawnBuildModel = useCallback(async (groupNo: number) => {
+        if (!initialState) return;
+        const label = `build-model-${groupNo}`;
+        try {
+            const existing = await WebviewWindow.getByLabel(label);
+            if (existing) {
+                try { await existing.setFocus(); } catch { /* ignore */ }
+                return;
+            }
+            const screenW = window.screen.width;
+            const screenH = window.screen.height;
+            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
+            const group = fgGroups.find(g => g.no === groupNo);
+            const webview = new WebviewWindow(label, {
+                url: `/?window=build-model&groupNo=${groupNo}`,
+                title: `Build Model — FG-${groupNo}${group ? ' · ' + group.name : ''}`,
+                width: Math.round(screenW * 0.75),
+                height: Math.round(screenH * 0.85),
+                center: true,
+                maximized: true,
+                decorations: isMac,
+            });
+            webview.once('tauri://error', (e) => console.error('Failed to open build model window:', e));
+        } catch (err) {
+            console.error('Error opening build model window:', err);
+        }
+    }, [initialState, fgGroups]);
 
     // Scatter / pair plots are meaningless with fewer than two sensors, so
     // below that the two buttons are disabled — and if the selection drops
@@ -1123,12 +1160,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         samplingMethod,
         collapsedPanels: Array.from(collapsedPanels),
         layoutSizes,
-        // Carry the LATEST fgGroups/fgRows (kept current by toggleSensorGroup/
-        // createGroupForSensor), not the stale failureGroupState captured in
-        // `initialState` at mount — otherwise this full-overwrite autosave
-        // would silently erase what was just written via their own
-        // read-modify-write persistence.
-        failureGroupState: { groups: fgGroups, rows: fgRows },
+        // Carry the LATEST fgGroups/fgModels (kept current by
+        // toggleSensorGroup/createGroupForSensor, and by the
+        // 'failure-group-state-changed' listener above whenever
+        // BuildModelWindow or PredictiveModelBuild persist independently),
+        // not the stale failureGroupState captured in `initialState` at
+        // mount — otherwise this full-overwrite autosave would silently
+        // erase what was just written via read-modify-write elsewhere.
+        failureGroupState: { groups: fgGroups, models: fgModels },
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
         extraSensorMetadata,
@@ -1143,7 +1182,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
-        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgRows, alarmLinesEnabled, scatterAxes,
+        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
         relativeAmount, relativeUnit,
     ]);
@@ -1875,7 +1914,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         maxSelectable={chartType === 'pair' ? MAX_PAIR_PLOT_SENSORS : undefined}
                         sensorMetadata={sensorMetadata}
                         fgGroups={fgGroups}
-                        fgRows={fgRows}
+                        fgModels={fgModels}
                         getGroupColor={getFgGroupColor}
                         onToggleSensorGroup={toggleSensorGroup}
                         onCreateGroupForSensor={createGroupForSensor}
@@ -1886,19 +1925,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     />
                 ) : (
                     <FailureGroupsPanel
-                        allSensors={sensorHeaders}
-                        sensorMetadata={sensorMetadata}
                         fgGroups={fgGroups}
-                        fgRows={fgRows}
+                        fgModels={fgModels}
                         getGroupColor={getFgGroupColor}
-                        onToggleGroupCollapse={toggleGroupCollapse}
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}
                         onCreateEmptyGroup={createEmptyGroup}
-                        onAddBlankRow={addBlankRowToGroup}
-                        onUpdateRow={updateFgRow}
-                        onRemoveRow={removeFgRowById}
-                        onBuildModel={handleBuildModel}
+                        onOpenBuildModel={spawnBuildModel}
                     />
                 )}
             </div>

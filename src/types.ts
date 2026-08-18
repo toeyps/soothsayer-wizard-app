@@ -78,8 +78,14 @@ export interface FailureGroup {
     no: number;
     name: string;
     isCollapsed: boolean;
+    /** Free-text description of the failure mode this group tracks. */
+    description?: string;
+    /** Free-text recommended action/response for this failure mode. */
+    recommendation?: string;
 }
 
+/** @deprecated Replaced by `FailureModel`. Kept only so the legacy-workspace
+ *  migration shim in `workspaceManager.ts` has a type to read old data as. */
 export interface FailureSensorRow {
     id: string;
     groupNo: number;
@@ -92,10 +98,13 @@ export interface FailureSensorRow {
     status: boolean;
 }
 
-export interface FailureGroupStateSlice {
-    groups: FailureGroup[];
-    rows: FailureSensorRow[];
-}
+export type ModelKind = 'individual' | 'relationship' | 'clustering';
+
+/** Performance = model predicts throughput/output quality; Condition = model
+ *  predicts equipment health/degradation. `null` = not yet classified (e.g.
+ *  a model migrated from a pre-redesign workspace, where no source field maps
+ *  to this — the user is expected to set it explicitly afterward). */
+export type ModelCategory = 'performance' | 'condition';
 
 /**
  * A single cluster's criteria range. `null` = unbounded in that
@@ -107,6 +116,13 @@ export interface PredictiveClusterRange {
     max: number | null;
 }
 
+/**
+ * Predictive-model build config. Historically this was a single slot on
+ * `WorkspaceState` shared by every model in the workspace (the root cause of
+ * "editing one model's config silently discards another's" — see Notion).
+ * It is now embedded directly in each `FailureModel` so every model carries
+ * its own config and configuring one can never clobber another's.
+ */
 export interface PredictiveModelStateSlice {
     targetSensor: string;
     predictorSensors: string[];
@@ -134,6 +150,42 @@ export interface PredictiveModelStateSlice {
      * `value_filters` payload format is reused (no new commands needed).
      */
     pmSensorFilters: WorkspaceSensorFilter[];
+}
+
+/**
+ * One model inside a Failure Group. Sensor requirements depend on `kind`:
+ * - individual: `targetSensor` only.
+ * - relationship: `targetSensor` (the target) + `predictorSensors` (>=1).
+ * - clustering: `xSensor` + `ySensor`; `criteriaSensor` is optional but if
+ *   set, `clusterRanges` must be configured (length === numClusters).
+ *
+ * `component` is intentionally NOT stored here — it's derived at read time
+ * from `SensorMetadata.component` of the model's target sensor (`targetSensor`
+ * for individual/relationship, `ySensor` for clustering), since sensor
+ * metadata is re-derived from the CSV mapping each session rather than
+ * persisted per-model. See `getModelTargetSensor` / component lookups at
+ * call sites.
+ *
+ * Extends `PredictiveModelStateSlice` so a model's full PM build config
+ * travels with it as one self-contained record.
+ */
+export interface FailureModel extends PredictiveModelStateSlice {
+    id: string;
+    groupNo: number;
+    name: string;
+    kind: ModelKind;
+    category: ModelCategory | null;
+    notes: string;
+    status: boolean;
+    /** Clustering only: the X-axis sensor. */
+    xSensor: string;
+    /** Clustering only: the Y-axis sensor (acts as this model's "target"). */
+    ySensor: string;
+}
+
+export interface FailureGroupStateSlice {
+    groups: FailureGroup[];
+    models: FailureModel[];
 }
 
 export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group' | 'predictive-model';
@@ -258,7 +310,15 @@ export interface WorkspaceState {
     mappingKeyColumn?: string | null;
     dashboardSnapshot?: DashboardSnapshot;
     failureGroupState?: FailureGroupStateSlice;
+    /** @deprecated Legacy global PM slot from before PM config was folded
+     *  into each `FailureModel`. Only read by the workspace-load migration
+     *  shim (`workspaceManager.ts`) to seed the one model it used to belong
+     *  to; never written by current code. */
     predictiveModelState?: PredictiveModelStateSlice;
+    /** Id of the `FailureModel` last opened in the (singleton) Predictive
+     *  Model window, kept only so Dashboard can auto-reopen PM on the same
+     *  model when the workspace is resumed with `lastRoute: 'predictive-model'`. */
+    lastPmModelId?: string;
     /** Last folder the user picked in the Save Model dialog. Used as the
      *  `defaultPath` for the next folder-picker invocation so they don't have
      *  to re-navigate to the same place every save. The actual save still

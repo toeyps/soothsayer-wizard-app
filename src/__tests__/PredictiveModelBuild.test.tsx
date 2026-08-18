@@ -74,6 +74,7 @@ function makePayload(overrides: Record<string, any> = {}) {
         workspaceId: 'ws1',
         targetSensor: 'TARGET1',
         predictorSensors: [] as string[],
+        modelId: 'm1',
         sensorHeaders: ['TARGET1', 'PRED1', 'PRED2'],
         sensorMetadata,
         metadata: csvMetadata,
@@ -149,24 +150,29 @@ describe('PredictiveModelBuild', () => {
         expect(screen.getByText('Predictor One')).toBeTruthy(); // hydrated predictor chip
     });
 
-    it('a persisted predictiveModelState slice overrides the incoming payload', async () => {
+    it('a persisted FailureModel record overrides the incoming payload', async () => {
         mockLoadWorkspaceData.mockResolvedValue({
             name: 'WS',
-            predictiveModelState: {
-                targetSensor: 'TARGET1',
-                predictorSensors: ['PRED2'],
-                individualChecked: false,
-                rcMode: 'relationship',
-                scatterXSensor: 'PRED2',
-                relModelName: 'Saved Model',
-                relStiffness: 100000,
-                clusterModelName: '',
-                numClusters: 3,
-                criteriaSensor: '',
-                clusterRanges: [{ min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 }],
-                filterTimeStart: '',
-                filterTimeEnd: '',
-                pmSensorFilters: [],
+            failureGroupState: {
+                groups: [],
+                models: [{
+                    id: 'm1', groupNo: 1, name: 'Saved Model', kind: 'relationship', category: null, notes: '', status: false,
+                    targetSensor: 'TARGET1',
+                    predictorSensors: ['PRED2'],
+                    xSensor: '', ySensor: '',
+                    individualChecked: false,
+                    rcMode: 'relationship',
+                    scatterXSensor: 'PRED2',
+                    relModelName: 'Saved Model',
+                    relStiffness: 100000,
+                    clusterModelName: '',
+                    numClusters: 3,
+                    criteriaSensor: '',
+                    clusterRanges: [{ min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 }],
+                    filterTimeStart: '',
+                    filterTimeEnd: '',
+                    pmSensorFilters: [],
+                }],
             },
         });
         render(<PredictiveModelBuild />);
@@ -416,18 +422,56 @@ describe('PredictiveModelBuild', () => {
     });
 
     describe('persistence', () => {
-        it('debounces a predictiveModelState write after a mode toggle', async () => {
+        function makeStoredModel(overrides: Record<string, any> = {}) {
+            return {
+                id: 'm1', groupNo: 1, name: 'A', kind: 'individual', category: null, notes: '', status: false,
+                targetSensor: 'TARGET1', predictorSensors: [], xSensor: '', ySensor: '',
+                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                ...overrides,
+            };
+        }
+
+        it('debounces a write into this model\'s own FailureModel record (not a global slot) after a mode toggle', async () => {
+            const onDiskModel = makeStoredModel();
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
             vi.useFakeTimers();
             render(<PredictiveModelBuild />);
             await deliverPredictiveData();
             mockUpdateWorkspaceData.mockClear();
+            mockEmit.mockClear();
 
             fireEvent.click(screen.getByText('Individual'));
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.predictiveModelState.individualChecked).toBe(false);
+            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').individualChecked).toBe(false);
+            // Broadcast so Dashboard/BuildModelWindow (separate OS windows) refresh too.
+            await act(async () => { await Promise.resolve(); });
+            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', state.failureGroupState);
+            vi.useRealTimers();
+        });
+
+        it('does not touch another model in the same group when this one changes', async () => {
+            const sibling = makeStoredModel({ id: 'm2', targetSensor: 'PRED1', relModelName: 'Untouched' });
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } }));
+            vi.useFakeTimers();
+            render(<PredictiveModelBuild />);
+            await deliverPredictiveData();
+            mockUpdateWorkspaceData.mockClear();
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } }));
+
+            fireEvent.click(screen.getByText('Individual'));
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            const other = state.failureGroupState.models.find((m: any) => m.id === 'm2');
+            expect(other.relModelName).toBe('Untouched');
             vi.useRealTimers();
         });
     });

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, FolderPlus, X, Plus, Pencil, Trash2, Check, Bell } from 'lucide-react';
-import { SensorMetadata, FailureGroup, FailureSensorRow, AlarmLevel } from '../../types';
+import { SensorMetadata, FailureGroup, FailureModel, AlarmLevel } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { ALARM_LEVELS, ALARM_LABELS, isCriticalAlarmLevel, alarmLevelColor, hasAlarmSetpoints } from '../../utils/alarmLevels';
 
@@ -19,7 +19,7 @@ interface SensorSelectionProps {
     maxSelectable?: number;
     sensorMetadata: SensorMetadata[] | null;
     fgGroups: FailureGroup[];
-    fgRows: FailureSensorRow[];
+    fgModels: FailureModel[];
     getGroupColor: (groupNo: number) => string;
     onToggleSensorGroup: (tag: string, groupNo: number) => void;
     onCreateGroupForSensor: (tag: string, name: string) => void;
@@ -39,7 +39,7 @@ export default function SensorSelection({
     maxSelectable,
     sensorMetadata,
     fgGroups,
-    fgRows,
+    fgModels,
     getGroupColor,
     onToggleSensorGroup,
     onCreateGroupForSensor,
@@ -58,6 +58,7 @@ export default function SensorSelection({
     // so this is a toggleable checklist, not a single-select assignment.
     const [groupMenuFor, setGroupMenuFor] = useState<string | null>(null);
     const [newGroupDraft, setNewGroupDraft] = useState('');
+    const [newGroupError, setNewGroupError] = useState('');
     // Which sensor's alarm-setpoint checkbox list is open. Closed by default
     // for every sensor — the icon only appears when the sensor actually HAS
     // a setpoint (see `hasAlarmSetpoints` below), and clicking it is the only
@@ -71,6 +72,21 @@ export default function SensorSelection({
     const [editGroupDraft, setEditGroupDraft] = useState('');
 
     const atSelectionCap = maxSelectable !== undefined && selectedSensors.length >= maxSelectable;
+
+    const isDuplicateGroupName = (name: string) =>
+        fgGroups.some(g => g.no !== 0 && g.name.trim().toLowerCase() === name.trim().toLowerCase());
+
+    const commitCreateGroup = (sensor: string) => {
+        const trimmed = newGroupDraft.trim();
+        if (!trimmed) return;
+        if (isDuplicateGroupName(trimmed)) {
+            setNewGroupError(`A failure group named "${trimmed}" already exists`);
+            return;
+        }
+        onCreateGroupForSensor(sensor, trimmed);
+        setNewGroupDraft('');
+        setNewGroupError('');
+    };
 
     const handleSensorToggle = (sensor: string) => {
         if (selectedSensors.includes(sensor)) {
@@ -139,7 +155,7 @@ export default function SensorSelection({
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
         const memberGroups = fgGroups.filter(g =>
-            g.no !== 0 && fgRows.some(r => r.groupNo === g.no && r.mappedSensorTag.toLowerCase() === sensor.toLowerCase())
+            g.no !== 0 && fgModels.some(m => m.kind === 'individual' && m.groupNo === g.no && (m.targetSensor ?? '').toLowerCase() === sensor.toLowerCase())
         );
         const menuOpen = groupMenuFor === sensor;
         // The bell only appears at all when the sensor has at least one
@@ -366,32 +382,34 @@ export default function SensorSelection({
                                 No failure groups yet
                             </div>
                         )}
-                        <div style={{ display: 'flex', gap: '4px', marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '6px' }}>
-                            <input
-                                type="text"
-                                placeholder="New group name"
-                                value={newGroupDraft}
-                                onChange={(e) => setNewGroupDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        onCreateGroupForSensor(sensor, newGroupDraft);
-                                        setNewGroupDraft('');
-                                    }
-                                }}
-                                style={{
-                                    flex: 1, minWidth: 0, padding: '4px 6px',
-                                    background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                    borderRadius: '4px', color: 'var(--text-primary)',
-                                    fontSize: '0.75rem', outline: 'none',
-                                }}
-                            />
-                            <button
-                                className="text-btn"
-                                onClick={() => { onCreateGroupForSensor(sensor, newGroupDraft); setNewGroupDraft(''); }}
-                                disabled={!newGroupDraft.trim()}
-                            >
-                                Create
-                            </button>
+                        <div style={{ marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '6px' }}>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                                <input
+                                    type="text"
+                                    placeholder="New group name"
+                                    value={newGroupDraft}
+                                    onChange={(e) => { setNewGroupDraft(e.target.value); setNewGroupError(''); }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') commitCreateGroup(sensor);
+                                    }}
+                                    style={{
+                                        flex: 1, minWidth: 0, padding: '4px 6px',
+                                        background: 'var(--input-bg)', border: `1px solid ${newGroupError ? 'var(--danger)' : 'var(--border)'}`,
+                                        borderRadius: '4px', color: 'var(--text-primary)',
+                                        fontSize: '0.75rem', outline: 'none',
+                                    }}
+                                />
+                                <button
+                                    className="text-btn"
+                                    onClick={() => commitCreateGroup(sensor)}
+                                    disabled={!newGroupDraft.trim()}
+                                >
+                                    Create
+                                </button>
+                            </div>
+                            {newGroupError && (
+                                <div style={{ fontSize: '0.68rem', color: 'var(--danger)', marginTop: '3px' }}>{newGroupError}</div>
+                            )}
                         </div>
                     </div>
                 )}

@@ -1,0 +1,259 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
+
+const mockClose = vi.fn().mockResolvedValue(undefined);
+vi.mock('@tauri-apps/api/window', () => ({
+    getCurrentWindow: () => ({ close: mockClose }),
+}));
+
+let listenCallbacks: Record<string, Array<(e: any) => void>> = {};
+const mockListen = vi.fn((event: string, cb: (e: any) => void) => {
+    (listenCallbacks[event] ??= []).push(cb);
+    return Promise.resolve(() => {
+        listenCallbacks[event] = (listenCallbacks[event] ?? []).filter((c) => c !== cb);
+    });
+});
+const mockEmit = vi.fn().mockResolvedValue(undefined);
+vi.mock('@tauri-apps/api/event', () => ({
+    listen: (event: string, cb: any) => mockListen(event, cb),
+    emit: (event: string, payload?: any) => mockEmit(event, payload),
+}));
+
+const mockUpdateWorkspaceData = vi.fn();
+const mockLoadWorkspaceData = vi.fn();
+vi.mock('../workspaceManager', () => ({
+    updateWorkspaceData: (id: string, patch: any) => mockUpdateWorkspaceData(id, patch),
+    loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
+}));
+
+import BuildModelWindow from '../components/windows/BuildModelWindow';
+
+function makeGroup(overrides: Record<string, any> = {}) {
+    return { no: 1, name: 'Group A', isCollapsed: false, description: '', recommendation: '', ...overrides };
+}
+
+function makeModel(overrides: Record<string, any> = {}) {
+    return {
+        id: 'm1', groupNo: 1, name: 'Model One', kind: 'individual', category: 'performance', notes: '', status: false,
+        targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+        relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+        ...overrides,
+    };
+}
+
+async function deliverData(overrides: Record<string, any> = {}) {
+    const payload = {
+        workspaceId: 'ws1',
+        sensorHeaders: ['TAG1', 'TAG2', 'TAG3'],
+        sensorMetadata: [
+            { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
+            { tag: 'TAG2', description: 'Pump Temp', unit: 'C', component: 'Pump' },
+        ],
+        metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100 },
+    };
+    mockLoadWorkspaceData.mockResolvedValue({
+        id: 'ws1',
+        failureGroupState: { groups: [makeGroup()], models: [makeModel()] },
+        ...overrides,
+    });
+    await act(async () => {
+        for (const cb of listenCallbacks['build-model-data'] ?? []) cb({ payload });
+        await Promise.resolve();
+        await Promise.resolve();
+    });
+}
+
+function withGroupNo(no = 1) {
+    window.history.pushState({}, '', `/?window=build-model&groupNo=${no}`);
+}
+
+beforeEach(() => {
+    withGroupNo(1);
+    listenCallbacks = {};
+    mockListen.mockClear();
+    mockEmit.mockClear().mockResolvedValue(undefined);
+    mockClose.mockClear().mockResolvedValue(undefined);
+    mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
+        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()] } };
+        return patch(prev);
+    });
+    mockLoadWorkspaceData.mockReset();
+});
+
+afterEach(() => {
+    cleanup();
+});
+
+describe('BuildModelWindow', () => {
+    it('reads groupNo from the URL and requests build-model-data on mount', async () => {
+        render(<BuildModelWindow />);
+        await act(async () => { await Promise.resolve(); });
+        expect(mockEmit).toHaveBeenCalledWith('request-build-model-data', undefined);
+    });
+
+    it('shows the group id, name, and its models once hydrated', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        expect(screen.getAllByText(/FG-1/).length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Group A').length).toBeGreaterThan(0);
+        expect(screen.getByText('Model One')).toBeTruthy();
+    });
+
+    describe('description / recommendation', () => {
+        it('debounces a save of the description into this group only', async () => {
+            vi.useFakeTimers();
+            render(<BuildModelWindow />);
+            await deliverData();
+
+            const textarea = screen.getByPlaceholderText('What failure mode does this group track?');
+            fireEvent.change(textarea, { target: { value: 'Bearing wear' } });
+
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.groups[0].description).toBe('Bearing wear');
+            vi.useRealTimers();
+        });
+
+        it('broadcasts failure-group-state-changed after persisting', async () => {
+            vi.useFakeTimers();
+            render(<BuildModelWindow />);
+            await deliverData();
+            mockEmit.mockClear();
+
+            fireEvent.change(screen.getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'X' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            await act(async () => { await Promise.resolve(); });
+
+            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.any(Object));
+            vi.useRealTimers();
+        });
+    });
+
+    describe('model list actions', () => {
+        it('toggling a model\'s status pill persists the change', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Incomplete'));
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].status).toBe(true);
+        });
+
+        it('Train emits launch-predictive-model with the model id', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Train'));
+            expect(mockEmit).toHaveBeenCalledWith('launch-predictive-model', { modelId: 'm1' });
+        });
+
+        it('Remove confirms then persists the model list without it', async () => {
+            vi.spyOn(window, 'confirm').mockReturnValue(true);
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Remove'));
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models).toHaveLength(0);
+        });
+    });
+
+    describe('add model form', () => {
+        it('Create model is disabled until name + kind + category + an individual sensor are all set', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+
+            const create = form.getByText('Create model').closest('button') as HTMLButtonElement;
+            expect(create.disabled).toBe(true);
+
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'New Model' } });
+            expect(create.disabled).toBe(true);
+
+            fireEvent.click(form.getByText('Individual'));
+            expect(create.disabled).toBe(true);
+
+            fireEvent.click(form.getByText('Performance'));
+            expect(create.disabled).toBe(true); // still missing a sensor
+
+            const sensorSelect = form.getByDisplayValue('Select a sensor…');
+            fireEvent.change(sensorSelect, { target: { value: 'TAG2' } });
+            expect(create.disabled).toBe(false);
+        });
+
+        it('requires at least one predictor for a relationship model', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Rel Model' } });
+            fireEvent.click(form.getByText('Relationship'));
+            fireEvent.click(form.getByText('Condition'));
+
+            const create = form.getByText('Create model').closest('button') as HTMLButtonElement;
+            expect(create.disabled).toBe(true); // no target/predictors yet
+
+            const [targetSelect] = form.getAllByDisplayValue('Select a sensor…');
+            fireEvent.change(targetSelect, { target: { value: 'TAG1' } });
+            expect(create.disabled).toBe(true); // target set, but no predictors
+
+            fireEvent.change(form.getByDisplayValue('Add a predictor…'), { target: { value: 'TAG2' } });
+            expect(create.disabled).toBe(false);
+        });
+
+        it('requires both X and Y sensors for a clustering model', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
+            fireEvent.click(form.getByText('Clustering'));
+            fireEvent.click(form.getByText('Condition'));
+
+            const create = form.getByText('Create model').closest('button') as HTMLButtonElement;
+            expect(create.disabled).toBe(true);
+
+            const selects = form.getAllByText('Select…').map(o => o.closest('select')!) as HTMLSelectElement[];
+            fireEvent.change(selects[0], { target: { value: 'TAG1' } });
+            expect(create.disabled).toBe(true);
+            fireEvent.change(selects[1], { target: { value: 'TAG2' } });
+            expect(create.disabled).toBe(false);
+        });
+
+        it('creating a model persists it and resets/closes the form', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'New Model' } });
+            fireEvent.click(form.getByText('Individual'));
+            fireEvent.click(form.getByText('Performance'));
+            fireEvent.change(form.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
+            fireEvent.click(form.getByText('Create model'));
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models.some((m: any) => m.name === 'New Model' && m.targetSensor === 'TAG2')).toBe(true);
+            expect(screen.queryByPlaceholderText('e.g. Bearing vibration model')).toBeNull();
+        });
+
+        it('Cancel resets the form without persisting', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Discarded' } });
+            fireEvent.click(form.getByText('Cancel'));
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(screen.queryByPlaceholderText('e.g. Bearing vibration model')).toBeNull();
+        });
+    });
+
+    it('Close calls the Tauri window close API', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        fireEvent.click(screen.getByTitle('Close'));
+        expect(mockClose).toHaveBeenCalled();
+    });
+});

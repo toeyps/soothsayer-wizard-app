@@ -1,55 +1,50 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
-import type { FailureGroup, FailureSensorRow } from '../types';
+import type { FailureGroup, FailureModel } from '../types';
 
-function makeRow(overrides: Partial<FailureSensorRow> = {}): FailureSensorRow {
+function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
-        id: 'r1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1',
-        mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '',
-        status: false,
+        id: 'm1', groupNo: 1, name: 'Model 1', kind: 'individual', category: null,
+        notes: '', status: false,
+        targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+        relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
         ...overrides,
     };
 }
 
 const notInGroup: FailureGroup = { no: 0, name: 'Not in Group', isCollapsed: false };
 const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
+const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
 
 function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsPanel>> = {}) {
     return {
-        allSensors: ['TAG1', 'TAG2'],
-        sensorMetadata: [{ tag: 'TAG2', description: 'Desc Two', unit: 'C', component: 'X' }],
         fgGroups: [notInGroup, groupA],
-        fgRows: [makeRow()],
+        fgModels: [makeModel()],
         getGroupColor: () => 'blue',
-        onToggleGroupCollapse: vi.fn(),
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
         onCreateEmptyGroup: vi.fn(),
-        onAddBlankRow: vi.fn(() => 'new-row-id'),
-        onUpdateRow: vi.fn(),
-        onRemoveRow: vi.fn(),
-        onBuildModel: vi.fn(),
+        onOpenBuildModel: vi.fn(),
         ...overrides,
     };
 }
 
 let confirmSpy: ReturnType<typeof vi.spyOn>;
-let alertSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
     confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
 });
 
 afterEach(() => {
     confirmSpy.mockRestore();
-    alertSpy.mockRestore();
 });
 
 describe('FailureGroupsPanel', () => {
     it('shows the empty state when there are no real groups', () => {
-        render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup], fgRows: [] })} />);
+        render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup], fgModels: [] })} />);
         expect(screen.getByText('No failure groups yet')).toBeTruthy();
     });
 
@@ -59,28 +54,40 @@ describe('FailureGroupsPanel', () => {
         expect(screen.getByText('Group A')).toBeTruthy();
     });
 
-    it('computes header stats: sensor count, group count, completion %', () => {
-        const rows = [makeRow({ id: 'r1', status: true }), makeRow({ id: 'r2', status: false })];
-        const { container } = render(<FailureGroupsPanel {...makeProps({ fgRows: rows })} />);
+    it('computes header stats: model count, group count, completion %', () => {
+        const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
+        const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
         const statBolds = container.querySelectorAll('b');
         expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['2', '1', '50%']);
     });
 
-    it('clicking the group header toggles collapse via the callback', () => {
-        const onToggleGroupCollapse = vi.fn();
-        render(<FailureGroupsPanel {...makeProps({ onToggleGroupCollapse })} />);
+    it('shows a per-group model count and completion summary', () => {
+        const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
+        render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+        expect(screen.getByText('2 models · 1/2 complete')).toBeTruthy();
+    });
+
+    it('shows an italic placeholder when a group has no description', () => {
+        render(<FailureGroupsPanel {...makeProps()} />);
+        expect(screen.getByText('No description yet')).toBeTruthy();
+    });
+
+    it('shows the description preview when set', () => {
+        render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, { ...groupA, description: 'Bearing wear' }] })} />);
+        expect(screen.getByText('Bearing wear')).toBeTruthy();
+        expect(screen.queryByText('No description yet')).toBeNull();
+    });
+
+    it('shows the FG-{no} id badge', () => {
+        render(<FailureGroupsPanel {...makeProps()} />);
+        expect(screen.getByText('FG-1')).toBeTruthy();
+    });
+
+    it('clicking anywhere on the card opens Build Model for that group', () => {
+        const onOpenBuildModel = vi.fn();
+        render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
         fireEvent.click(screen.getByText('Group A'));
-        expect(onToggleGroupCollapse).toHaveBeenCalledWith(1);
-    });
-
-    it('hides a group’s rows when it is collapsed', () => {
-        render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, { ...groupA, isCollapsed: true }] })} />);
-        expect(screen.queryByText('TAG1')).toBeNull();
-    });
-
-    it('shows "No sensors yet" for an expanded empty group', () => {
-        render(<FailureGroupsPanel {...makeProps({ fgRows: [] })} />);
-        expect(screen.getByText('No sensors yet')).toBeTruthy();
+        expect(onOpenBuildModel).toHaveBeenCalledWith(1);
     });
 
     describe('renaming a group', () => {
@@ -103,6 +110,33 @@ describe('FailureGroupsPanel', () => {
             fireEvent.blur(input);
             expect(onRenameGroup).toHaveBeenCalledWith(1, 'Blurred Name');
         });
+
+        it('does not open Build Model when clicking into the rename input', () => {
+            const onOpenBuildModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
+            fireEvent.click(screen.getByTitle('Rename group'));
+            expect(onOpenBuildModel).not.toHaveBeenCalled();
+        });
+
+        it('rejects renaming to a name already used by another group (case-insensitive), with an inline error', () => {
+            const onRenameGroup = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], onRenameGroup })} />);
+            fireEvent.click(screen.getAllByTitle('Rename group')[0]);
+            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'group b' } });
+            fireEvent.keyDown(input, { key: 'Enter' });
+            expect(onRenameGroup).not.toHaveBeenCalled();
+            expect(screen.getByText('A failure group named "group b" already exists')).toBeTruthy();
+        });
+
+        it('allows renaming a group to its own current name unchanged', () => {
+            const onRenameGroup = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], onRenameGroup })} />);
+            fireEvent.click(screen.getAllByTitle('Rename group')[0]);
+            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
+            fireEvent.keyDown(input, { key: 'Enter' });
+            expect(onRenameGroup).toHaveBeenCalledWith(1, 'Group A');
+        });
     });
 
     describe('deleting a group', () => {
@@ -121,135 +155,12 @@ describe('FailureGroupsPanel', () => {
             fireEvent.click(screen.getByTitle('Delete group'));
             expect(onDeleteGroup).not.toHaveBeenCalled();
         });
-    });
 
-    it('"Add sensor" creates a blank row and auto-expands it into the tag picker', () => {
-        const onAddBlankRow = vi.fn(() => 'new-row-id');
-        const rows = [makeRow({ id: 'new-row-id', mappedSensorTag: '' })];
-        render(<FailureGroupsPanel {...makeProps({ fgRows: rows, onAddBlankRow })} />);
-        fireEvent.click(screen.getByTitle('Add sensor'));
-        expect(onAddBlankRow).toHaveBeenCalledWith(1);
-        expect(screen.getByPlaceholderText('Search sensor…')).toBeTruthy();
-    });
-
-    describe('row expand/collapse', () => {
-        it('expanding a row with a tag shows the inspector fields', () => {
-            render(<FailureGroupsPanel {...makeProps()} />);
-            fireEvent.click(screen.getByText('TAG1'));
-            expect(screen.getByPlaceholderText('e.g. crankcase vibration')).toBeTruthy();
-        });
-
-        it('clicking the same row again collapses it', () => {
-            render(<FailureGroupsPanel {...makeProps()} />);
-            fireEvent.click(screen.getByText('TAG1'));
-            expect(screen.getByPlaceholderText('e.g. crankcase vibration')).toBeTruthy();
-            fireEvent.click(screen.getByText('TAG1'));
-            expect(screen.queryByPlaceholderText('e.g. crankcase vibration')).toBeNull();
-        });
-
-        it('the status pill toggles status without expanding the row (stops propagation)', () => {
-            const onUpdateRow = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onUpdateRow })} />);
-            fireEvent.click(screen.getByText('Incomplete'));
-            expect(onUpdateRow).toHaveBeenCalledWith('r1', 'status', true);
-            expect(screen.queryByPlaceholderText('e.g. crankcase vibration')).toBeNull();
-        });
-    });
-
-    describe('blank-row tag picker', () => {
-        const blankRows = [makeRow({ id: 'r1', mappedSensorTag: '' })];
-
-        it('lists all sensors with descriptions when metadata is available', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgRows: blankRows })} />);
-            fireEvent.click(screen.getByText('— no tag —'));
-            expect(screen.getByText('TAG2')).toBeTruthy();
-            expect(screen.getByText('Desc Two')).toBeTruthy();
-        });
-
-        it('filters options by tag or description text', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgRows: blankRows })} />);
-            fireEvent.click(screen.getByText('— no tag —'));
-            fireEvent.change(screen.getByPlaceholderText('Search sensor…'), { target: { value: 'Two' } });
-            expect(screen.queryByText('TAG1')).toBeNull();
-            expect(screen.getByText('TAG2')).toBeTruthy();
-        });
-
-        it('shows "No sensors found" when the filter matches nothing', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgRows: blankRows })} />);
-            fireEvent.click(screen.getByText('— no tag —'));
-            fireEvent.change(screen.getByPlaceholderText('Search sensor…'), { target: { value: 'zzz' } });
-            expect(screen.getByText('No sensors found')).toBeTruthy();
-        });
-
-        it('selecting a tag assigns it via onUpdateRow', () => {
-            const onUpdateRow = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgRows: blankRows, onUpdateRow })} />);
-            fireEvent.click(screen.getByText('— no tag —'));
-            fireEvent.click(screen.getByText('TAG2'));
-            expect(onUpdateRow).toHaveBeenCalledWith('r1', 'mappedSensorTag', 'TAG2');
-        });
-
-        it('rejects a tag already used elsewhere in the same group, with an alert', () => {
-            const onUpdateRow = vi.fn();
-            const rows = [makeRow({ id: 'r1', mappedSensorTag: '' }), makeRow({ id: 'r2', mappedSensorTag: 'TAG2' })];
-            const { container } = render(<FailureGroupsPanel {...makeProps({ fgRows: rows, onUpdateRow })} />);
-            fireEvent.click(screen.getByText('— no tag —'));
-            const option = Array.from(container.querySelectorAll('button.text-btn')).find(
-                (b) => b.textContent?.startsWith('TAG2'),
-            )!;
-            fireEvent.click(option);
-            expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('TAG2'));
-            expect(onUpdateRow).not.toHaveBeenCalled();
-        });
-
-        it('Cancel removes the blank row', () => {
-            const onRemoveRow = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgRows: blankRows, onRemoveRow })} />);
-            fireEvent.click(screen.getByText('— no tag —'));
-            fireEvent.click(screen.getByText('Cancel — remove this row'));
-            expect(onRemoveRow).toHaveBeenCalledWith('r1');
-        });
-    });
-
-    describe('filled-row inspector', () => {
-        it('editing Concept sensor / Model type / Model notes calls onUpdateRow per field', () => {
-            const onUpdateRow = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onUpdateRow })} />);
-            fireEvent.click(screen.getByText('TAG1'));
-
-            fireEvent.change(screen.getByPlaceholderText('e.g. crankcase vibration'), { target: { value: 'Vibration' } });
-            expect(onUpdateRow).toHaveBeenCalledWith('r1', 'conceptSensor', 'Vibration');
-
-            fireEvent.change(screen.getByPlaceholderText('e.g. I + R'), { target: { value: 'ARIMA' } });
-            expect(onUpdateRow).toHaveBeenCalledWith('r1', 'modelType', 'ARIMA');
-
-            fireEvent.change(screen.getByPlaceholderText('Notes about training, features, thresholds…'), { target: { value: 'note' } });
-            expect(onUpdateRow).toHaveBeenCalledWith('r1', 'modelNotes', 'note');
-        });
-
-        it('the Complete checkbox toggles status', () => {
-            const onUpdateRow = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onUpdateRow })} />);
-            fireEvent.click(screen.getByText('TAG1'));
-            fireEvent.click(screen.getByRole('checkbox'));
-            expect(onUpdateRow).toHaveBeenCalledWith('r1', 'status', true);
-        });
-
-        it('Remove calls onRemoveRow', () => {
-            const onRemoveRow = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onRemoveRow })} />);
-            fireEvent.click(screen.getByText('TAG1'));
-            fireEvent.click(screen.getByText('Remove'));
-            expect(onRemoveRow).toHaveBeenCalledWith('r1');
-        });
-
-        it('Build model calls onBuildModel with the full row', () => {
-            const onBuildModel = vi.fn();
-            const row = makeRow();
-            render(<FailureGroupsPanel {...makeProps({ fgRows: [row], onBuildModel })} />);
-            fireEvent.click(screen.getByText('TAG1'));
-            fireEvent.click(screen.getByText('Build model'));
-            expect(onBuildModel).toHaveBeenCalledWith(row);
+        it('does not open Build Model when clicking delete', () => {
+            const onOpenBuildModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
+            fireEvent.click(screen.getByTitle('Delete group'));
+            expect(onOpenBuildModel).not.toHaveBeenCalled();
         });
     });
 
@@ -287,6 +198,18 @@ describe('FailureGroupsPanel', () => {
             fireEvent.keyDown(input, { key: 'Escape' });
             expect(onCreateEmptyGroup).not.toHaveBeenCalled();
             expect(screen.queryByPlaceholderText('New group name')).toBeNull();
+        });
+
+        it('rejects a duplicate name (case-insensitive) with an inline error and keeps the form open', () => {
+            const onCreateEmptyGroup = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], onCreateEmptyGroup })} />);
+            fireEvent.click(screen.getByText('Add failure group'));
+            const input = screen.getByPlaceholderText('New group name');
+            fireEvent.change(input, { target: { value: 'group a' } });
+            fireEvent.click(screen.getByText('Create'));
+            expect(onCreateEmptyGroup).not.toHaveBeenCalled();
+            expect(screen.getByText('A failure group named "group a" already exists')).toBeTruthy();
+            expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
         });
     });
 });
