@@ -1927,6 +1927,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <FailureGroupsPanel
                         fgGroups={fgGroups}
                         fgModels={fgModels}
+                        sensorMetadata={sensorMetadata}
                         getGroupColor={getFgGroupColor}
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}

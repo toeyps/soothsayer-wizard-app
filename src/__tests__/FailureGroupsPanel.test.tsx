@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
-import type { FailureGroup, FailureModel } from '../types';
+import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -19,10 +19,15 @@ const notInGroup: FailureGroup = { no: 0, name: 'Not in Group', isCollapsed: fal
 const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
 const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
 
+const sensorMetadata: SensorMetadata[] = [
+    { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
+];
+
 function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsPanel>> = {}) {
     return {
         fgGroups: [notInGroup, groupA],
         fgModels: [makeModel()],
+        sensorMetadata,
         getGroupColor: () => 'blue',
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
@@ -54,25 +59,49 @@ describe('FailureGroupsPanel', () => {
         expect(screen.getByText('Group A')).toBeTruthy();
     });
 
-    it('computes header stats: model count, group count, completion %', () => {
+    it('computes header stats: model count, group count (no completion % anymore — status lives only in Build Model)', () => {
         const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
         const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
         const statBolds = container.querySelectorAll('b');
-        expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['2', '1', '50%']);
+        expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['2', '1']);
     });
 
-    it('lists every model in the group by name, with its Complete/Incomplete status', () => {
+    it('lists every model in the group by name, without any Complete/Incomplete status (removed per user request)', () => {
         const fgModels = [makeModel({ id: 'm1', name: 'Bearing model', status: true }), makeModel({ id: 'm2', name: 'Temp model', status: false })];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
         expect(screen.getByText('Bearing model')).toBeTruthy();
         expect(screen.getByText('Temp model')).toBeTruthy();
-        expect(screen.getByText('Complete')).toBeTruthy();
-        expect(screen.getByText('Incomplete')).toBeTruthy();
+        expect(screen.queryByText('Complete')).toBeNull();
+        expect(screen.queryByText('Incomplete')).toBeNull();
     });
 
-    it('falls back to "Untitled model" for a model with no name', () => {
-        render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '' })] })} />);
-        expect(screen.getByText('Untitled model')).toBeTruthy();
+    describe('model display label fallback chain', () => {
+        it('shows the model name when one is set', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'Bearing model', targetSensor: 'TAG1' })] })} />);
+            expect(screen.getByText('Bearing model')).toBeTruthy();
+            expect(screen.queryByText('Pump Pressure')).toBeNull();
+        });
+
+        it('falls back to the target sensor\'s description when the model has no name', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG1' })] })} />);
+            expect(screen.getByText('Pump Pressure')).toBeTruthy();
+        });
+
+        it('falls back to the raw sensor tag when no name and no metadata description is available', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG9' })] })} />);
+            expect(screen.getByText('TAG9')).toBeTruthy();
+        });
+
+        it('uses the Y sensor (not the target) for a clustering model, matching component derivation elsewhere', () => {
+            const model = makeModel({ name: '', kind: 'clustering', targetSensor: '', xSensor: 'TAG9', ySensor: 'TAG1' });
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [model] })} />);
+            expect(screen.getByText('Pump Pressure')).toBeTruthy();
+        });
+
+        it('falls back to "Untitled model" for a model with no name and no sensor picked yet', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: '' })] })} />);
+            expect(screen.getByText('Untitled model')).toBeTruthy();
+        });
     });
 
     it('shows "No models yet" for an empty group', () => {

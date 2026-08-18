@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Plus, Pencil, Trash2, ArrowRight } from 'lucide-react';
-import { FailureGroup, FailureModel } from '../../types';
+import { FailureGroup, FailureModel, SensorMetadata } from '../../types';
+import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 interface FailureGroupsPanelProps {
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
+    sensorMetadata: SensorMetadata[] | null;
     getGroupColor: (groupNo: number) => string;
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
@@ -19,13 +21,16 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
 /**
  * Group-centric "preview" view for the Dashboard's Sensor panel — Failure
  * Groups tab. Each card shows the group's name/ID and every model inside it
- * (name + Complete/Incomplete status) so the whole group is scannable at a
- * glance. All editing — description, recommendation, sensors, model config —
- * lives exclusively in the dedicated Build Model window opened by clicking a
- * card, so this view never duplicates state that window already owns.
+ * — the model's own name if one was set, otherwise the target sensor's
+ * description — so the whole group is scannable at a glance. Complete/
+ * Incomplete status is deliberately NOT shown here (only in the Build Model
+ * window) per explicit user request. All editing — description,
+ * recommendation, sensors, model config — lives exclusively in the
+ * dedicated Build Model window opened by clicking a card, so this view
+ * never duplicates state that window already owns.
  */
 export default function FailureGroupsPanel({
-    fgGroups, fgModels, getGroupColor,
+    fgGroups, fgModels, sensorMetadata, getGroupColor,
     onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModel,
 }: FailureGroupsPanelProps) {
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
@@ -35,14 +40,24 @@ export default function FailureGroupsPanel({
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
 
+    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    // Model name if the user set one; otherwise the target sensor's
+    // description (clustering's "target" is its Y sensor, same convention
+    // as component derivation elsewhere); falls back to the raw tag, then a
+    // generic placeholder for a brand-new model with no sensor picked yet.
+    const modelDisplayLabel = (model: FailureModel) => {
+        if (model.name.trim()) return model.name;
+        const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        if (!targetTag) return 'Untitled model';
+        return sensorMetaMap.get(normalizeSensorTag(targetTag))?.description || targetTag;
+    };
+
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
     // for backward compatibility, but nothing in the Dashboard-native
     // assignment model ever creates a model for it — so there's nothing
     // meaningful to render for it here.
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModels = fgModels.length;
-    const completeCount = fgModels.filter(m => m.status).length;
-    const completionPct = totalModels > 0 ? Math.round((completeCount / totalModels) * 100) : 0;
 
     const commitGroupRename = () => {
         if (editingGroupNo === null) return;
@@ -76,8 +91,6 @@ export default function FailureGroupsPanel({
                 <span><b style={{ color: 'var(--text-primary)' }}>{totalModels}</b> models</span>
                 <span style={{ color: 'var(--border)' }}>·</span>
                 <span><b style={{ color: 'var(--text-primary)' }}>{realGroups.length}</b> groups</span>
-                <span style={{ color: 'var(--border)' }}>·</span>
-                <span><b style={{ color: 'var(--ok)' }}>{completionPct}%</b> complete</span>
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -132,16 +145,8 @@ export default function FailureGroupsPanel({
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                         {groupModels.map(model => (
-                                            <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                                                    {model.name || 'Untitled model'}
-                                                </span>
-                                                <span
-                                                    className={`fg-status-pill fg-status-pill--${model.status ? 'ok' : 'neutral'}`}
-                                                    style={{ fontSize: '0.6rem', flexShrink: 0 }}
-                                                >
-                                                    {model.status ? 'Complete' : 'Incomplete'}
-                                                </span>
+                                            <div key={model.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                                                {modelDisplayLabel(model)}
                                             </div>
                                         ))}
                                     </div>
