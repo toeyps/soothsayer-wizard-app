@@ -234,20 +234,6 @@ describe('BuildModelWindow', () => {
             expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
         });
 
-        it('shows a "FG-{no} · {group name}" breadcrumb inside the opened form, so its group stays identifiable even once the group header has scrolled out of view (regression: an expanded model looked like it belonged to a different group)', async () => {
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [makeModel({ groupNo: 2 })] } });
-            fireEvent.click(screen.getByText('Model One'));
-            expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
-        });
-
-        it('also shows the group breadcrumb inside a blank "+ Add Model" form', async () => {
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [] } });
-            fireEvent.click(screen.getByText('Add Model'));
-            expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
-        });
-
         it('clicking the same row again closes its form (toggle)', async () => {
             render(<BuildModelWindow />);
             await deliverData();

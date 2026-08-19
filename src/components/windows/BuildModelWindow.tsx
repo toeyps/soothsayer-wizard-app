@@ -42,22 +42,6 @@ const FG_GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
 const getFgGroupColor = (no: number): string =>
     no === 0 ? 'slate' : FG_GROUP_PALETTE[(no - 1) % FG_GROUP_PALETTE.length];
 
-// Same oklch values as .fg-group-color-{name} in App.css (duplicated as
-// plain JS here rather than relied on via CSS inheritance, since a model
-// row's accent needs to work identically in the Component-grouped view,
-// where rows aren't nested inside a `.fg-group-color-*` element at all).
-// Used to tie an expanded model's accordion back to its own group's color
-// even once that group's header has scrolled out of view — per explicit
-// user request after a model that had scrolled past its group's header
-// looked like it belonged to the group above instead.
-const FG_ACCENT: Record<string, { dot: string; tint: string; tintStrong: string }> = {
-    amber: { dot: 'oklch(0.78 0.14 75)', tint: 'oklch(0.78 0.14 75 / 0.1)', tintStrong: 'oklch(0.78 0.14 75 / 0.22)' },
-    violet: { dot: 'oklch(0.7 0.15 310)', tint: 'oklch(0.7 0.15 310 / 0.1)', tintStrong: 'oklch(0.7 0.15 310 / 0.22)' },
-    green: { dot: 'oklch(0.72 0.15 150)', tint: 'oklch(0.72 0.15 150 / 0.1)', tintStrong: 'oklch(0.72 0.15 150 / 0.22)' },
-    blue: { dot: 'oklch(0.68 0.17 245)', tint: 'oklch(0.68 0.17 245 / 0.1)', tintStrong: 'oklch(0.68 0.17 245 / 0.22)' },
-    slate: { dot: 'var(--text-faint)', tint: 'transparent', tintStrong: 'var(--surface-hi)' },
-};
-
 function makeDefaultModel(groupNo: number): FailureModel {
     return {
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -600,38 +584,19 @@ export default function BuildModelWindow() {
         return Array.from(byComp.entries()).sort(([a], [b]) => a.localeCompare(b));
     })();
 
-    // A small pill repeating "FG-{no} · {group name}" — placed inside an
-    // open accordion form so its group is always identifiable regardless
-    // of whether that group's own header has scrolled out of view.
-    const groupBreadcrumb = (groupNo: number, group: FailureGroup | undefined, accent: typeof FG_ACCENT[string]) => (
-        <div style={{ display: 'inline-flex', alignSelf: 'flex-start', alignItems: 'center', gap: '6px', fontSize: '0.7rem', padding: '3px 9px 3px 7px', borderRadius: '999px', background: accent.tintStrong, color: 'var(--text-primary)' }}>
-            <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: accent.dot, flexShrink: 0 }} />
-            FG-{groupNo}{group ? ` · ${group.name}` : ''}
-        </div>
-    );
-
     // One row per model, with its own add/edit form directly beneath it
     // when active (accordion) — used by both the FG-grouped and
-    // Component-grouped views. When open, the whole row+form block gets a
-    // left accent bar and tinted background in the model's own group color
-    // (not inherited from a `.fg-group-color-*` ancestor via CSS custom
-    // properties, since Component view rows aren't nested inside one) so
-    // it's still visually tied to its group even scrolled away from that
-    // group's header.
+    // Component-grouped views.
     const overviewModelRow = (model: FailureModel, showFgTag: boolean) => {
         const g = allGroups.find(x => x.no === model.groupNo);
         const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
         const component = targetTag ? getComponent(targetTag) : '';
         const isEditingThis = showForm && editingModelId === model.id;
-        const accent = FG_ACCENT[getFgGroupColor(model.groupNo)];
         return (
-            <div key={model.id} style={{ position: 'relative', borderTop: '1px solid var(--border)', background: isEditingThis ? accent.tint : undefined }}>
-                {isEditingThis && (
-                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: accent.dot }} />
-                )}
+            <div key={model.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <div
                     onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
-                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px', paddingLeft: isEditingThis ? '21px' : '18px' }}
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px' }}
                 >
                     <div className={`model-kind-icon model-kind-icon--${model.kind}`} style={{ width: '24px', height: '24px', fontSize: '0.62rem' }}>
                         {KIND_ABBREV[model.kind]}
@@ -669,8 +634,7 @@ export default function BuildModelWindow() {
                     </button>
                 </div>
                 {isEditingThis && (
-                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px 12px 21px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        {groupBreadcrumb(model.groupNo, g, accent)}
+                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                         {renderModelForm()}
                     </div>
                 )}
@@ -803,8 +767,7 @@ export default function BuildModelWindow() {
                                         </button>
                                     </div>
                                     {isAddingHere && (
-                                        <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '12px', background: FG_ACCENT[color].tint }}>
-                                            {groupBreadcrumb(g.no, g, FG_ACCENT[color])}
+                                        <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                                             {renderModelForm()}
                                         </div>
                                     )}
