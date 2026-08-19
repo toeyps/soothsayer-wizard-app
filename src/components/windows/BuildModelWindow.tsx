@@ -766,13 +766,21 @@ export default function BuildModelWindow() {
 
                                 {/* Stays visible (doesn't get replaced by the form) so it can
                                     also act as the close trigger — same toggle as clicking a
-                                    model row again. */}
-                                <button
-                                    onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
-                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '8px 0', borderTop: '1px solid var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
-                                >
-                                    <Plus size={12} /> Add Model
-                                </button>
+                                    model row again. Matches FailureGroupsPanel's own
+                                    "+ Add failure group" button (dashed rounded button, not a
+                                    bare divider-adjacent text link) — the button previously had
+                                    no explicit width, so unlike the row `<div>`s above it (which
+                                    are block-level and fill the card automatically) it shrank to
+                                    its own content, leaving its border-top divider looking
+                                    short/inconsistent against the full-width row dividers. */}
+                                <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
+                                    <button
+                                        onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
+                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%', padding: '8px 0', borderRadius: '7px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
+                                    >
+                                        <Plus size={13} /> Add Model
+                                    </button>
+                                </div>
                                 {isAddingHere && (
                                     <div ref={formRef} style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                                         {renderModelForm()}

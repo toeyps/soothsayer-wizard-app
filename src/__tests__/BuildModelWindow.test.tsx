@@ -271,6 +271,13 @@ describe('BuildModelWindow', () => {
             expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Second Model');
         });
 
+        it('"+ Add Model" spans the full row width, not shrunk to its own content (regression: unlike the row divs above it, a bare button doesn\'t stretch by default, leaving its divider looking short/inconsistent)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            const addBtn = screen.getByText('Add Model').closest('button') as HTMLButtonElement;
+            expect(addBtn.style.width).toBe('100%');
+        });
+
         it('"+ Add Model" opens a blank form under that group, closing any other open form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
