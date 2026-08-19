@@ -265,6 +265,15 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
+        it('Save/Create shares the button row instead of stretching full-width over Cancel/Remove (regression: .fg-build-model-btn\'s width:100% overlapping siblings)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
+            expect(saveBtn.style.width).not.toBe('100%');
+            expect(saveBtn.style.flex).toBe('1 1 0%');
+        });
+
         it('saving an edit persists it and closes the form, showing the change immediately', async () => {
             render(<BuildModelWindow />);
             await deliverData();

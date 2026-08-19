@@ -555,7 +555,13 @@ export default function BuildModelWindow() {
                     </button>
                 )}
                 <button className="text-btn" onClick={resetForm}>Cancel</button>
-                <button className="fg-build-model-btn" disabled={!formValid} onClick={commitForm}>
+                {/* .fg-build-model-btn has `width: 100%` for its other use as a
+                    standalone full-width panel button — inside this row that
+                    would blow past its siblings, so override with `flex: 1`
+                    (an explicit flex-basis, which wins over the width-derived
+                    one) to make it share the row instead of overlapping Cancel
+                    and Remove model. */}
+                <button className="fg-build-model-btn" style={{ flex: 1, width: 'auto' }} disabled={!formValid} onClick={commitForm}>
                     {editingModelId ? 'Save changes' : 'Create model'}
                 </button>
             </div>
