@@ -151,6 +151,13 @@ export default function BuildModelWindow() {
     const [formY, setFormY] = useState('');
     const [formCriteria, setFormCriteria] = useState('');
     const [formClusterRanges, setFormClusterRanges] = useState<{ min: number | null; max: number | null }[]>([]);
+    // Attached to whichever accordion form is currently open (a model row's
+    // edit form, or a group's "+ Add Model" form) — a form can be taller
+    // than the visible window (e.g. a Relationship kind with several
+    // fields), so opening one auto-scrolls its bottom (where Save/Remove
+    // model live) into view instead of leaving the user to discover on
+    // their own that the list still scrolls further down.
+    const formRef = useRef<HTMLDivElement>(null);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
@@ -324,6 +331,15 @@ export default function BuildModelWindow() {
         if (formKind !== 'clustering') return;
         setFormClusterRanges(prev => prev.length === 3 ? prev : DEFAULT_CLUSTER_RANGES);
     }, [formKind]);
+
+    // Scroll the newly-opened accordion form's bottom (Save/Remove model)
+    // into view — the group list does scroll correctly, but a tall form
+    // opening below the currently-visible area gave no indication that
+    // scrolling further down was needed.
+    useEffect(() => {
+        if (!showForm) return;
+        formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, [showForm, editingModelId, formGroupNo]);
 
     const formComponentTarget = formKind === 'clustering' ? formY : formTarget;
     const formComponent = formComponentTarget ? getComponent(formComponentTarget) : '';
@@ -634,7 +650,7 @@ export default function BuildModelWindow() {
                     </button>
                 </div>
                 {isEditingThis && (
-                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
+                    <div ref={formRef} style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                         {renderModelForm()}
                     </div>
                 )}
@@ -758,7 +774,7 @@ export default function BuildModelWindow() {
                                     <Plus size={12} /> Add Model
                                 </button>
                                 {isAddingHere && (
-                                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
+                                    <div ref={formRef} style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                                         {renderModelForm()}
                                     </div>
                                 )}

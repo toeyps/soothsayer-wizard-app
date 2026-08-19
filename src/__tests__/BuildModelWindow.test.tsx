@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
 
+// jsdom doesn't implement scrollIntoView — the component calls it when an
+// accordion form opens (see the `formRef` effect), so it needs a stub or
+// every such test throws "scrollIntoView is not a function".
+Element.prototype.scrollIntoView = vi.fn();
+
 const mockClose = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tauri-apps/api/window', () => ({
     getCurrentWindow: () => ({ close: mockClose }),
@@ -223,6 +228,15 @@ describe('BuildModelWindow', () => {
     });
 
     describe('model accordion (inline, no page navigation)', () => {
+        it('scrolls the opened form into view (regression: a tall form opening below the fold gave no cue to scroll down)', async () => {
+            const scrollIntoView = vi.fn();
+            Element.prototype.scrollIntoView = scrollIntoView;
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'end' }));
+        });
+
         it('clicking a model row expands its edit form directly beneath it, without navigating away', async () => {
             render(<BuildModelWindow />);
             await deliverData();
