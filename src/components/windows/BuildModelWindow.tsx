@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { X, Plus, ChevronLeft } from "lucide-react";
@@ -31,6 +31,9 @@ const CATEGORY_LABELS: Record<ModelCategory, string> = {
 };
 
 const UNCATEGORIZED = 'Uncategorized';
+const DEFAULT_CLUSTER_RANGES = [
+    { min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 },
+];
 
 // Mirrors Dashboard.tsx's own FG_GROUP_PALETTE/getFgGroupColor exactly
 // (duplicated, not imported — sub-windows don't share a components module)
@@ -60,54 +63,40 @@ function makeDefaultModel(groupNo: number): FailureModel {
         clusterModelName: '',
         numClusters: 3,
         criteriaSensor: '',
-        clusterRanges: [
-            { min: 0, max: 33 },
-            { min: 33, max: 66 },
-            { min: 66, max: 100 },
-        ],
+        clusterRanges: DEFAULT_CLUSTER_RANGES,
         filterTimeStart: '',
         filterTimeEnd: '',
         pmSensorFilters: [],
     };
 }
 
-// `label` renders a tag as "description (tag)" when metadata has a
-// description, else the bare tag — see this component's own `sensorLabel`.
-function sensorSummary(model: FailureModel, label: (tag: string) => string): string {
-    if (model.kind === 'individual') return `Target: ${model.targetSensor ? label(model.targetSensor) : '—'}`;
-    if (model.kind === 'relationship') {
-        const predictors = (model.predictorSensors ?? []).map(label).join(', ') || '—';
-        return `Target: ${model.targetSensor ? label(model.targetSensor) : '—'} · Predictors: ${predictors}`;
-    }
-    const criteria = model.criteriaSensor ? ` · Criteria: ${label(model.criteriaSensor)}` : '';
-    return `X: ${model.xSensor ? label(model.xSensor) : '—'} · Y (target): ${model.ySensor ? label(model.ySensor) : '—'}${criteria}`;
-}
-
 type GroupBy = 'fg' | 'component';
-type Page = 'overview' | 'detail';
+type Page = 'overview' | 'model';
 
 /**
  * The single Build Model window — a singleton (label `build-model`) opened
- * from the Failure Groups tab's "Build Model" button. Two in-window pages
- * instead of two separate OS windows, per explicit user request to cut the
- * total window count down to just Dashboard + this one (an earlier version
- * of this redesign spawned a standalone `BuildModelOverviewWindow` plus one
- * OS window per Failure Group, which added up fast):
+ * from the Failure Groups tab's "Build Model" button. Two in-window pages,
+ * per explicit user request to cut the total window count down to just
+ * Dashboard + this one:
  *
  *   - "overview": every model from every Failure Group, groupable by FG or
- *     by Component (was the standalone BuildModelOverviewWindow.tsx).
- *   - "detail": one Failure Group's description/recommendation + its
- *     FailureModel list, add/edit form (was this same file's old per-group,
- *     multi-instance window — multi-instance because it let the user
- *     compare two groups side by side; that capability was deliberately
- *     dropped in this merge, a tradeoff the user explicitly chose, since
- *     only one group's detail page can be shown at a time in a single
- *     window — see docs/PROJECT_HANDOVER.md's entry for this merge).
+ *     by Component. In FG-grouped view, each group's Name is inline-
+ *     editable (click to rename) and its Description/Recommendation are
+ *     editable in an expandable panel under the group header — editing a
+ *     group's own details never requires leaving this page (per explicit
+ *     user request: "editing a failure group's detail shouldn't require
+ *     clicking into another page").
+ *   - "model": one FailureModel's add/edit form, full page. Clicking a
+ *     model row (or "+ Add Model" for a group) on the overview jumps
+ *     straight here — there is deliberately no intermediate "list of this
+ *     group's models" page anymore, since the overview already lists every
+ *     group's models and a second per-group list page was just extra
+ *     clicks to reach a single model's detail (also per explicit user
+ *     request).
  *
- * Clicking a group/model row on the overview page navigates to its detail
- * page via local state (no window spawn — this is what makes the earlier
- * "two Build Model windows for the same group" race structurally
- * impossible now); "← Back" returns to the overview.
+ * All navigation between the two pages is local state — no window spawn —
+ * which is also what makes the earlier "two Build Model windows for the
+ * same group" race structurally impossible now.
  *
  * Owns `failureGroupState` jointly with Dashboard and PredictiveModelBuild —
  * every write here is a read-modify-write against the full workspace file
@@ -124,18 +113,21 @@ export default function BuildModelWindow() {
     const hydratedRef = useRef(false);
 
     const [page, setPage] = useState<Page>('overview');
-    const [selectedGroupNo, setSelectedGroupNo] = useState<number | null>(null);
     const [groupBy, setGroupBy] = useState<GroupBy>('fg');
+    // Which group a model on the "model" page belongs to — needed both to
+    // create a new model against the right group and to show its FG-{no}
+    // breadcrumb.
+    const [selectedGroupNo, setSelectedGroupNo] = useState<number | null>(null);
 
-    const [nameDraft, setNameDraft] = useState('');
-    const [nameError, setNameError] = useState('');
-    const [descDraft, setDescDraft] = useState('');
-    const [recDraft, setRecDraft] = useState('');
+    // ---- Overview page: inline group-detail editing (FG-grouped view) ----
+    const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
+    const [groupNameDraft, setGroupNameDraft] = useState('');
+    const [groupNameError, setGroupNameError] = useState('');
+    const [expandedGroupNo, setExpandedGroupNo] = useState<number | null>(null);
+    const [groupDescDraft, setGroupDescDraft] = useState('');
+    const [groupRecDraft, setGroupRecDraft] = useState('');
 
-    // Form serves both "+ Add Model" (editingModelId === null) and clicking
-    // an existing row to edit it (editingModelId === that model's id) — one
-    // form, one validation path, one commit path.
-    const [showForm, setShowForm] = useState(false);
+    // ---- Model page: the add/edit form ----
     const [editingModelId, setEditingModelId] = useState<string | null>(null);
     const [formName, setFormName] = useState('');
     const [formKind, setFormKind] = useState<ModelKind | null>(null);
@@ -237,104 +229,110 @@ export default function BuildModelWindow() {
         }
     }, [workspaceId]);
 
-    const resetForm = () => {
-        setEditingModelId(null);
-        setFormName('');
-        setFormKind(null);
-        setFormCategory(null);
-        setFormTarget('');
-        setFormPredictors([]);
-        setFormX('');
-        setFormY('');
-        setFormCriteria('');
-        setFormClusterRanges([]);
-        setShowForm(false);
+    // ---- Inline group rename (overview page) ----
+    const startRenameGroup = (g: FailureGroup) => {
+        setEditingGroupNo(g.no);
+        setGroupNameDraft(g.name);
+        setGroupNameError('');
     };
 
-    // Navigating to a group's detail page always starts from a clean slate
-    // — matches the old per-group window's behavior, where each group got
-    // its own freshly-mounted window instance with fresh local state.
-    const openGroup = (groupNo: number) => {
-        const targetGroup = allGroups.find(g => g.no === groupNo);
+    const commitRenameGroup = () => {
+        if (editingGroupNo === null) return;
+        const trimmed = groupNameDraft.trim();
+        if (!trimmed) { setEditingGroupNo(null); return; }
+        const isDuplicate = allGroups.some(g => g.no !== editingGroupNo && g.no !== 0 && g.name.trim().toLowerCase() === trimmed.toLowerCase());
+        if (isDuplicate) {
+            setGroupNameError(`A failure group named "${trimmed}" already exists`);
+            return;
+        }
+        persist((models, groups) => ({
+            models,
+            groups: groups.map(g => g.no === editingGroupNo ? { ...g, name: trimmed } : g),
+        }));
+        setEditingGroupNo(null);
+        setGroupNameError('');
+    };
+
+    // ---- Inline group description/recommendation panel (overview page) ----
+    const toggleGroupDetails = (g: FailureGroup) => {
+        if (expandedGroupNo === g.no) {
+            setExpandedGroupNo(null);
+            return;
+        }
+        setExpandedGroupNo(g.no);
+        setGroupDescDraft(g.description ?? '');
+        setGroupRecDraft(g.recommendation ?? '');
+    };
+
+    // Debounced save, mirrors PredictiveModelBuild's own 250ms config-save
+    // debounce. `toggleGroupDetails` seeds the drafts to match the group's
+    // current values on expand, so this naturally no-ops until the user
+    // actually changes something.
+    useEffect(() => {
+        if (!hydratedRef.current || expandedGroupNo === null) return;
+        const g = allGroups.find(x => x.no === expandedGroupNo);
+        if (!g) return;
+        if (groupDescDraft === (g.description ?? '') && groupRecDraft === (g.recommendation ?? '')) return;
+        const timer = setTimeout(() => {
+            persist((models, groups) => ({
+                models,
+                groups: groups.map(x => x.no === expandedGroupNo ? { ...x, description: groupDescDraft, recommendation: groupRecDraft } : x),
+            }));
+        }, 250);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groupDescDraft, groupRecDraft, expandedGroupNo]);
+
+    // ---- Model page navigation ----
+    // Jumps straight to a single model's full-page form — either an
+    // existing model (prefilled) or a brand-new one for `groupNo` (blank).
+    const openModelPage = (groupNo: number, model?: FailureModel) => {
         setSelectedGroupNo(groupNo);
-        setNameDraft(targetGroup?.name ?? '');
-        setNameError('');
-        setDescDraft(targetGroup?.description ?? '');
-        setRecDraft(targetGroup?.recommendation ?? '');
-        resetForm();
-        setPage('detail');
+        if (model) {
+            setEditingModelId(model.id);
+            setFormName(model.name);
+            setFormKind(model.kind);
+            setFormCategory(model.category);
+            setFormTarget(model.targetSensor ?? '');
+            setFormPredictors(model.predictorSensors ?? []);
+            setFormX(model.xSensor ?? '');
+            setFormY(model.ySensor ?? '');
+            setFormCriteria(model.criteriaSensor ?? '');
+            setFormClusterRanges(model.clusterRanges?.length ? model.clusterRanges : DEFAULT_CLUSTER_RANGES);
+        } else {
+            setEditingModelId(null);
+            setFormName('');
+            setFormKind(null);
+            setFormCategory(null);
+            setFormTarget('');
+            setFormPredictors([]);
+            setFormX('');
+            setFormY('');
+            setFormCriteria('');
+            setFormClusterRanges([]);
+        }
+        setPage('model');
     };
 
     const backToOverview = () => setPage('overview');
 
     useEffect(() => {
         if (formKind !== 'clustering') return;
-        setFormClusterRanges(prev => prev.length === 3 ? prev : [
-            { min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 },
-        ]);
+        setFormClusterRanges(prev => prev.length === 3 ? prev : DEFAULT_CLUSTER_RANGES);
     }, [formKind]);
 
-    const group = page === 'detail' && selectedGroupNo !== null ? allGroups.find(g => g.no === selectedGroupNo) ?? null : null;
-    const groupModels = useMemo(
-        () => selectedGroupNo === null ? [] : allModels.filter(m => m.groupNo === selectedGroupNo),
-        [allModels, selectedGroupNo],
-    );
+    const modelPageGroup = selectedGroupNo !== null ? allGroups.find(g => g.no === selectedGroupNo) ?? null : null;
+    const currentEditingModel = editingModelId ? allModels.find(m => m.id === editingModelId) ?? null : null;
 
     // Keep the OS window title reflecting whichever page is showing, same
     // as when these were two separate windows with their own static titles.
     useEffect(() => {
         const title = page === 'overview'
             ? 'Build Model — Overview'
-            : `Build Model — FG-${selectedGroupNo}${group ? ' · ' + group.name : ''}`;
+            : `Build Model — ${currentEditingModel ? modelDisplayLabel(currentEditingModel) : 'New Model'} (FG-${selectedGroupNo})`;
         getCurrentWindow().setTitle(title).catch(() => { /* ignore */ });
-    }, [page, selectedGroupNo, group]);
-
-    // Debounced save of name/description/recommendation — mirrors
-    // PredictiveModelBuild's own 250ms config-save debounce. Guarded to the
-    // detail page only: `openGroup` seeds the drafts to match the group's
-    // current values on entry, so this naturally no-ops until the user
-    // actually changes something.
-    useEffect(() => {
-        if (!hydratedRef.current || page !== 'detail' || !group || selectedGroupNo === null) return;
-        const trimmedName = nameDraft.trim();
-        if (trimmedName === group.name && descDraft === (group.description ?? '') && recDraft === (group.recommendation ?? '')) return;
-        const timer = setTimeout(() => {
-            if (!trimmedName) return;
-            const isDuplicate = allGroups.some(g => g.no !== selectedGroupNo && g.no !== 0 && g.name.trim().toLowerCase() === trimmedName.toLowerCase());
-            if (isDuplicate) {
-                setNameError(`A failure group named "${trimmedName}" already exists`);
-                return;
-            }
-            setNameError('');
-            persist((models, groups) => ({
-                models,
-                groups: groups.map(g => g.no === selectedGroupNo ? { ...g, name: trimmedName, description: descDraft, recommendation: recDraft } : g),
-            }));
-        }, 250);
-        return () => clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [nameDraft, descDraft, recDraft, selectedGroupNo, page]);
-
-    const openAddForm = () => {
-        resetForm();
-        setShowForm(true);
-    };
-
-    const openEditForm = (model: FailureModel) => {
-        setEditingModelId(model.id);
-        setFormName(model.name);
-        setFormKind(model.kind);
-        setFormCategory(model.category);
-        setFormTarget(model.targetSensor ?? '');
-        setFormPredictors(model.predictorSensors ?? []);
-        setFormX(model.xSensor ?? '');
-        setFormY(model.ySensor ?? '');
-        setFormCriteria(model.criteriaSensor ?? '');
-        setFormClusterRanges(model.clusterRanges?.length ? model.clusterRanges : [
-            { min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 },
-        ]);
-        setShowForm(true);
-    };
+    }, [page, selectedGroupNo, currentEditingModel]);
 
     const formComponentTarget = formKind === 'clustering' ? formY : formTarget;
     const formComponent = formComponentTarget ? getComponent(formComponentTarget) : '';
@@ -368,7 +366,7 @@ export default function BuildModelWindow() {
             const model: FailureModel = { ...makeDefaultModel(selectedGroupNo), ...fields };
             persist((models, groups) => ({ groups, models: [...models, model] }));
         }
-        resetForm();
+        backToOverview();
     };
 
     const toggleModelStatus = (modelId: string) => {
@@ -380,10 +378,9 @@ export default function BuildModelWindow() {
 
     const removeModel = () => {
         if (!editingModelId) return;
-        const current = groupModels.find(m => m.id === editingModelId);
-        if (!confirm(`Remove model "${current ? modelDisplayLabel(current) : 'Untitled'}"?`)) return;
+        if (!confirm(`Remove model "${currentEditingModel ? modelDisplayLabel(currentEditingModel) : 'Untitled'}"?`)) return;
         persist((models, groups) => ({ groups, models: models.filter(m => m.id !== editingModelId) }));
-        resetForm();
+        backToOverview();
     };
 
     const trainModel = (modelId: string) => {
@@ -394,9 +391,6 @@ export default function BuildModelWindow() {
         await getCurrentWindow().close();
     };
 
-    // Rendered inline directly under whichever row is being edited (or at
-    // the bottom of the list when adding a brand-new model) — never in a
-    // fixed spot detached from the row that opened it.
     const renderModelForm = () => (
         <div data-testid="add-model-form" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div className="fg-inspector-field">
@@ -568,7 +562,7 @@ export default function BuildModelWindow() {
                         Remove model
                     </button>
                 )}
-                <button className="text-btn" onClick={resetForm}>Cancel</button>
+                <button className="text-btn" onClick={backToOverview}>Cancel</button>
                 <button className="fg-build-model-btn" disabled={!formValid} onClick={commitForm}>
                     {editingModelId ? 'Save changes' : 'Create model'}
                 </button>
@@ -598,7 +592,7 @@ export default function BuildModelWindow() {
         return (
             <div
                 key={model.id}
-                onClick={() => openGroup(model.groupNo)}
+                onClick={() => openModelPage(model.groupNo, model)}
                 style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 14px 9px 18px', cursor: 'pointer', borderTop: '1px solid var(--border)' }}
             >
                 <div className={`model-kind-icon model-kind-icon--${model.kind}`} style={{ width: '24px', height: '24px', fontSize: '0.62rem' }}>
@@ -671,20 +665,75 @@ export default function BuildModelWindow() {
                             ) : realGroups.map(g => {
                                 const models = allModels.filter(m => m.groupNo === g.no);
                                 const color = getFgGroupColor(g.no);
+                                const isEditingName = editingGroupNo === g.no;
+                                const isExpanded = expandedGroupNo === g.no;
                                 return (
                                     <div key={g.no} className={`fg-group-color-${color}`} style={{ border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
-                                        <div
-                                            onClick={() => openGroup(g.no)}
-                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px', cursor: 'pointer' }}
-                                        >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                             <span className="fg-group-dot" />
-                                            <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1 }}>{g.name}</span>
+                                            {isEditingName ? (
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <input
+                                                        autoFocus
+                                                        value={groupNameDraft}
+                                                        onChange={e => { setGroupNameDraft(e.target.value); setGroupNameError(''); }}
+                                                        onKeyDown={e => { if (e.key === 'Enter') commitRenameGroup(); if (e.key === 'Escape') { setEditingGroupNo(null); setGroupNameError(''); } }}
+                                                        onBlur={commitRenameGroup}
+                                                        style={{ width: '100%', padding: '4px 7px', background: 'var(--input-bg)', border: `1px solid ${groupNameError ? 'var(--danger)' : 'var(--border)'}`, borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 600 }}
+                                                    />
+                                                    {groupNameError && <div style={{ fontSize: '0.66rem', color: 'var(--danger)', marginTop: '2px' }}>{groupNameError}</div>}
+                                                </div>
+                                            ) : (
+                                                <span
+                                                    onClick={() => startRenameGroup(g)}
+                                                    title="Click to rename"
+                                                    style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1, cursor: 'text' }}
+                                                >
+                                                    {g.name}
+                                                </span>
+                                            )}
                                             <span style={{ fontFamily: 'var(--mono)', fontSize: '0.68rem', color: 'var(--text-faint)' }}>FG-{g.no}</span>
                                             <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{models.length} model{models.length === 1 ? '' : 's'}</span>
+                                            <button className="text-btn" style={{ fontSize: '0.7rem' }} onClick={() => toggleGroupDetails(g)}>
+                                                {isExpanded ? 'Hide details' : 'Edit details'}
+                                            </button>
                                         </div>
+
+                                        {isExpanded && (
+                                            <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    <label style={{ fontSize: '0.66rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Description</label>
+                                                    <textarea
+                                                        rows={2}
+                                                        value={groupDescDraft}
+                                                        placeholder="What failure mode does this group track?"
+                                                        onChange={e => setGroupDescDraft(e.target.value)}
+                                                        style={{ resize: 'vertical', padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.76rem' }}
+                                                    />
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    <label style={{ fontSize: '0.66rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Recommendation</label>
+                                                    <textarea
+                                                        rows={2}
+                                                        value={groupRecDraft}
+                                                        placeholder="Recommended action when this failure is detected"
+                                                        onChange={e => setGroupRecDraft(e.target.value)}
+                                                        style={{ resize: 'vertical', padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.76rem' }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {models.length === 0 ? (
                                             <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                                         ) : models.map(m => overviewModelRow(m, false))}
+
+                                        <button
+                                            onClick={() => openModelPage(g.no)}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '8px 0', borderTop: '1px solid var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
+                                        >
+                                            <Plus size={12} /> Add Model
+                                        </button>
                                     </div>
                                 );
                             })
@@ -709,7 +758,7 @@ export default function BuildModelWindow() {
                         )}
                     </div>
                 </>
-            ) : group && (
+            ) : (
                 <>
                     <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
@@ -717,7 +766,7 @@ export default function BuildModelWindow() {
                                 <ChevronLeft size={14} />
                             </button>
                             <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                Build Model — FG-{selectedGroupNo} · {group.name}
+                                {currentEditingModel ? modelDisplayLabel(currentEditingModel) : 'New Model'}
                             </h2>
                         </div>
                         <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
@@ -725,124 +774,27 @@ export default function BuildModelWindow() {
                         </button>
                     </div>
 
-                    <div className="flex-1 flex min-h-0 overflow-hidden">
-                        {/* Left: group meta */}
-                        <div className="flex flex-col shrink-0 overflow-y-auto" style={{ width: '300px', borderRight: '1px solid var(--border)', padding: '16px', gap: '14px', display: 'flex' }}>
-                            <div>
-                                <div style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: '4px' }}>Failure Group ID</div>
-                                <div style={{ fontFamily: 'var(--mono)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>FG-{selectedGroupNo}</div>
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: '4px' }}>Name</label>
-                                <input
-                                    value={nameDraft}
-                                    onChange={e => { setNameDraft(e.target.value); setNameError(''); }}
-                                    style={{ width: '100%', fontSize: '0.85rem', fontWeight: 600, padding: '6px 8px', background: 'var(--input-bg)', border: `1px solid ${nameError ? 'var(--danger)' : 'var(--border)'}`, borderRadius: '6px', color: 'var(--text-primary)' }}
-                                />
-                                {nameError && <div style={{ fontSize: '0.68rem', color: 'var(--danger)', marginTop: '4px' }}>{nameError}</div>}
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Description</label>
-                                <textarea
-                                    rows={4}
-                                    value={descDraft}
-                                    placeholder="What failure mode does this group track?"
-                                    onChange={e => setDescDraft(e.target.value)}
-                                    style={{ resize: 'vertical', padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.78rem' }}
-                                />
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Recommendation</label>
-                                <textarea
-                                    rows={4}
-                                    value={recDraft}
-                                    placeholder="Recommended action when this failure is detected"
-                                    onChange={e => setRecDraft(e.target.value)}
-                                    style={{ resize: 'vertical', padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.78rem' }}
-                                />
-                            </div>
-                        </div>
-
-                        {/* Right: models */}
-                        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
-                                <span style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Models in this group</span>
-                                <span style={{ fontSize: '0.76rem', color: 'var(--text-faint)' }}>{groupModels.length} model{groupModels.length === 1 ? '' : 's'}</span>
+                    <div className="flex-1 overflow-y-auto" style={{ padding: '20px', display: 'flex', justifyContent: 'center' }}>
+                        <div style={{ width: '100%', maxWidth: '560px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                            <div style={{ fontFamily: 'var(--mono)', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+                                FG-{selectedGroupNo}{modelPageGroup ? ` · ${modelPageGroup.name}` : ''}
                             </div>
 
-                            <div className="flex-1 overflow-y-auto" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {groupModels.map(model => {
-                                    const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
-                                    const component = targetTag ? getComponent(targetTag) : '';
-                                    const isEditingThis = showForm && editingModelId === model.id;
-                                    return (
-                                        // One continuous bordered box per card (row +,
-                                        // when editing, the form below a divider) —
-                                        // NOT two separately-bordered boxes stacked,
-                                        // which left a visible seam at the corners
-                                        // where the two borders didn't quite align.
-                                        <div
-                                            key={model.id}
-                                            style={{ border: `1px solid ${isEditingThis ? 'var(--accent-color)' : 'var(--border)'}`, borderRadius: '10px', overflow: 'hidden' }}
-                                        >
-                                            <div
-                                                onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
-                                                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px' }}
-                                            >
-                                                <div className={`model-kind-icon model-kind-icon--${model.kind}`}>{KIND_ABBREV[model.kind]}</div>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '3px' }}>
-                                                        <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{modelDisplayLabel(model)}</span>
-                                                        {model.category && (
-                                                            <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
-                                                                {CATEGORY_LABELS[model.category]}
-                                                            </span>
-                                                        )}
-                                                        {component && <span className="model-chip model-chip--component">{component}</span>}
-                                                    </div>
-                                                    <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                        {sensorSummary(model, sensorLabel)}
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
-                                                    onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
-                                                >
-                                                    {model.status ? 'Complete' : 'Incomplete'}
-                                                </button>
-                                                <button
-                                                    className="model-open-pm"
-                                                    onClick={e => { e.stopPropagation(); trainModel(model.id); }}
-                                                >
-                                                    Open in Predictive Model →
-                                                </button>
-                                            </div>
-                                            {isEditingThis && (
-                                                <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
-                                                    {renderModelForm()}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                                {groupModels.length === 0 && !showForm && (
-                                    <div className="no-results">No models yet</div>
-                                )}
-
-                                {showForm && editingModelId === null && (
-                                    <div style={{ border: '1px solid var(--border-strong, var(--border))', borderRadius: '8px', padding: '12px' }}>
-                                        {renderModelForm()}
-                                    </div>
-                                )}
-                                {!showForm && (
+                            {currentEditingModel && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <button
-                                        onClick={openAddForm}
-                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '9px 0', borderRadius: '8px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.75rem', cursor: 'pointer' }}
+                                        className={`model-status-pill model-status-pill--${currentEditingModel.status ? 'complete' : 'incomplete'}`}
+                                        onClick={() => toggleModelStatus(currentEditingModel.id)}
                                     >
-                                        <Plus size={14} /> Add Model
+                                        {currentEditingModel.status ? 'Complete' : 'Incomplete'}
                                     </button>
-                                )}
-                            </div>
+                                    <button className="model-open-pm" onClick={() => trainModel(currentEditingModel.id)}>
+                                        Open in Predictive Model →
+                                    </button>
+                                </div>
+                            )}
+
+                            {renderModelForm()}
                         </div>
                     </div>
                 </>
