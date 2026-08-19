@@ -9184,6 +9184,26 @@ body {
     color: #06111f;
 }
 
+.model-remove-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.76rem;
+    color: var(--danger);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.model-remove-btn:hover {
+    background: oklch(0.68 0.2 25 / 0.12);
+    border-color: var(--danger);
+}
+
 .model-component-readout {
     font-size: 0.8rem;
     color: var(--text-secondary);

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { X, Plus } from "lucide-react";
+import { X, Plus, Trash2 } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
@@ -548,20 +548,20 @@ export default function BuildModelWindow() {
                 </div>
             )}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+            {/* No "Cancel" button — closing the form is already just re-clicking
+                whatever opened it (the model row, or "+ Add Model"), same
+                toggle everywhere, per explicit user feedback that a separate
+                Cancel was redundant with that. `.fg-build-model-btn` defaults
+                to `width: 100%` for its other use as a standalone full-width
+                panel button, so it's explicitly sized here instead of left to
+                stretch across the whole row. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: editingModelId ? 'space-between' : 'flex-end', gap: '8px', marginTop: '4px' }}>
                 {editingModelId && (
-                    <button className="text-btn" style={{ color: 'var(--danger)', marginRight: 'auto' }} onClick={removeModel}>
-                        Remove model
+                    <button className="model-remove-btn" onClick={removeModel}>
+                        <Trash2 size={12} /> Remove model
                     </button>
                 )}
-                <button className="text-btn" onClick={resetForm}>Cancel</button>
-                {/* .fg-build-model-btn has `width: 100%` for its other use as a
-                    standalone full-width panel button — inside this row that
-                    would blow past its siblings, so override with `flex: 1`
-                    (an explicit flex-basis, which wins over the width-derived
-                    one) to make it share the row instead of overlapping Cancel
-                    and Remove model. */}
-                <button className="fg-build-model-btn" style={{ flex: 1, width: 'auto' }} disabled={!formValid} onClick={commitForm}>
+                <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
                     {editingModelId ? 'Save changes' : 'Create model'}
                 </button>
             </div>
@@ -736,17 +736,19 @@ export default function BuildModelWindow() {
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                                 ) : models.map(m => overviewModelRow(m, false))}
 
-                                {isAddingHere ? (
+                                {/* Stays visible (doesn't get replaced by the form) so it can
+                                    also act as the close trigger — same toggle as clicking a
+                                    model row again. */}
+                                <button
+                                    onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '8px 0', borderTop: '1px solid var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
+                                >
+                                    <Plus size={12} /> Add Model
+                                </button>
+                                {isAddingHere && (
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                                         {renderModelForm()}
                                     </div>
-                                ) : (
-                                    <button
-                                        onClick={() => openAddForm(g.no)}
-                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '8px 0', borderTop: '1px solid var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
-                                    >
-                                        <Plus size={12} /> Add Model
-                                    </button>
                                 )}
                             </div>
                         );

@@ -253,25 +253,36 @@ describe('BuildModelWindow', () => {
             expect((form.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('');
         });
 
-        it('Cancel closes the form without persisting', async () => {
+        it('has no separate Cancel button — re-clicking the row that opened it discards changes and closes the form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             mockUpdateWorkspaceData.mockClear();
             fireEvent.click(screen.getByText('Model One'));
+            expect(screen.queryByText('Cancel')).toBeNull();
             const form = within(screen.getByTestId('add-model-form'));
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Discarded' } });
-            fireEvent.click(form.getByText('Cancel'));
+            fireEvent.click(screen.getByText('Model One'));
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('Save/Create shares the button row instead of stretching full-width over Cancel/Remove (regression: .fg-build-model-btn\'s width:100% overlapping siblings)', async () => {
+        it('"+ Add Model" also toggles closed on a second click, discarding the blank form', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Add Model'));
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
+            fireEvent.click(screen.getByText('Add Model'));
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
+        });
+
+        it('Save/Create is a normal-sized button, not stretched full-width over Remove model (regression: .fg-build-model-btn\'s width:100% overlapping siblings)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
             const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
             expect(saveBtn.style.width).not.toBe('100%');
-            expect(saveBtn.style.flex).toBe('1 1 0%');
+            const removeBtn = screen.getByText('Remove model').closest('button') as HTMLButtonElement;
+            expect(removeBtn.className).toContain('model-remove-btn');
         });
 
         it('saving an edit persists it and closes the form, showing the change immediately', async () => {
