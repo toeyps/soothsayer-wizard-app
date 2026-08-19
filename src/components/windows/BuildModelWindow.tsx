@@ -682,7 +682,14 @@ export default function BuildModelWindow() {
                 </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* `minHeight: 0` is required here — without it, a `flex: 1` item in
+                a flex column defaults to `min-height: auto` and refuses to
+                shrink below its own content's height, so a tall expanded
+                accordion form just grows this div past the window's bottom
+                edge instead of scrolling internally (the classic flexbox
+                scroll-container bug). This was the real cause of the button
+                row repeatedly looking "cut off" — not a width issue. */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {groupBy === 'fg' ? (
                     realGroups.length === 0 ? (
                         <div className="no-results">No failure groups yet</div>

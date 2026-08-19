@@ -95,6 +95,14 @@ describe('BuildModelWindow', () => {
         expect(root.style.backgroundColor).toBe('var(--card-bg)');
     });
 
+    it('the scrollable group list has minHeight: 0 (regression: without it, a tall expanded accordion form grows past the window instead of scrolling — the actual cause of the button row repeatedly looking cut off)', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        const scrollRegion = screen.getByText('Group A').closest('[style*="overflow-y: auto"]') as HTMLElement;
+        expect(scrollRegion).toBeTruthy();
+        expect(scrollRegion.style.minHeight).toBe('0px');
+    });
+
     it('shows the group, its FG-{no} badge, and its models once hydrated', async () => {
         render(<BuildModelWindow />);
         await deliverData();
