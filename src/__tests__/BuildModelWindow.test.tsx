@@ -234,6 +234,18 @@ describe('BuildModelWindow', () => {
             expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
         });
 
+        it('the Save changes / Remove model footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own buttons, requiring exactly the right page scroll position to reach them)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+
+            const fields = screen.getByTestId('add-model-form-fields');
+            expect(fields.style.maxHeight).toBeTruthy();
+            expect(fields.style.overflowY).toBe('auto');
+            expect(within(fields).queryByText('Save changes')).toBeNull(); // footer isn't nested inside the scrollable fields box
+            expect(screen.getByText('Save changes')).toBeTruthy(); // but it's still rendered, right alongside it
+        });
+
         it('clicking the same row again closes its form (toggle)', async () => {
             render(<BuildModelWindow />);
             await deliverData();

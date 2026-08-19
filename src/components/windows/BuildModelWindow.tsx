@@ -383,8 +383,17 @@ export default function BuildModelWindow() {
         await getCurrentWindow().close();
     };
 
-    const renderModelForm = () => (
-        <div data-testid="add-model-form" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+    // Split into fields (own bounded, independently-scrollable box) + a
+    // footer (Remove model / Save changes) that is never inside that box —
+    // a tall form (e.g. Relationship kind with several fields) used to be
+    // one long flow relying on the whole page's scroll position to reach
+    // its own buttons, which repeatedly left Save/Remove unreachable or
+    // looking "missing" depending on exactly where the page happened to be
+    // scrolled. The footer is now structurally always rendered directly
+    // under the fields box, at a fixed, predictable position, regardless
+    // of how tall the fields are or how the surrounding list is scrolled.
+    const renderModelFormFields = () => (
+        <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
             <div className="fg-inspector-field">
                 <div className="fg-inspector-field-label-row"><label>Model name</label></div>
                 <input
@@ -547,24 +556,35 @@ export default function BuildModelWindow() {
                     </div>
                 </div>
             )}
+        </div>
+    );
 
-            {/* No "Cancel" button — closing the form is already just re-clicking
-                whatever opened it (the model row, or "+ Add Model"), same
-                toggle everywhere, per explicit user feedback that a separate
-                Cancel was redundant with that. `.fg-build-model-btn` defaults
-                to `width: 100%` for its other use as a standalone full-width
-                panel button, so it's explicitly sized here instead of left to
-                stretch across the whole row. */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: editingModelId ? 'space-between' : 'flex-end', gap: '8px', marginTop: '4px' }}>
-                {editingModelId && (
-                    <button className="model-remove-btn" onClick={removeModel}>
-                        <Trash2 size={12} /> Remove model
-                    </button>
-                )}
-                <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
-                    {editingModelId ? 'Save changes' : 'Create model'}
+    // No "Cancel" button — closing the form is already just re-clicking
+    // whatever opened it (the model row, or "+ Add Model"), same toggle
+    // everywhere, per explicit user feedback that a separate Cancel was
+    // redundant with that. `.fg-build-model-btn` defaults to `width: 100%`
+    // for its other use as a standalone full-width panel button, so it's
+    // explicitly sized here instead of left to stretch across the whole
+    // row.
+    const renderModelFormFooter = () => (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: editingModelId ? 'space-between' : 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+            {editingModelId && (
+                <button className="model-remove-btn" onClick={removeModel}>
+                    <Trash2 size={12} /> Remove model
                 </button>
-            </div>
+            )}
+            <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
+                {editingModelId ? 'Save changes' : 'Create model'}
+            </button>
+        </div>
+    );
+
+    // Both halves together — fields in their own bounded, independently
+    // scrollable box, footer always visible directly beneath it.
+    const renderModelForm = () => (
+        <div data-testid="add-model-form">
+            {renderModelFormFields()}
+            {renderModelFormFooter()}
         </div>
     );
 
@@ -634,7 +654,7 @@ export default function BuildModelWindow() {
                     </button>
                 </div>
                 {isEditingThis && (
-                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
+                    <div style={{ borderTop: '1px solid var(--border)' }}>
                         {renderModelForm()}
                     </div>
                 )}
@@ -767,7 +787,7 @@ export default function BuildModelWindow() {
                                         </button>
                                     </div>
                                     {isAddingHere && (
-                                        <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
+                                        <div style={{ borderTop: '1px solid var(--border)' }}>
                                             {renderModelForm()}
                                         </div>
                                     )}
