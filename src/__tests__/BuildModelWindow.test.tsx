@@ -88,6 +88,13 @@ describe('BuildModelWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('request-build-model-data', undefined);
     });
 
+    it('uses --card-bg for its background, matching the Dashboard\'s own Failure Groups card surface (not --bg-primary, the page canvas)', async () => {
+        const { container } = render(<BuildModelWindow />);
+        await deliverData();
+        const root = container.firstElementChild as HTMLElement;
+        expect(root.style.backgroundColor).toBe('var(--card-bg)');
+    });
+
     it('shows the group, its FG-{no} badge, and its models once hydrated', async () => {
         render(<BuildModelWindow />);
         await deliverData();

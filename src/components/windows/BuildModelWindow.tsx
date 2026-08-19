@@ -569,7 +569,7 @@ export default function BuildModelWindow() {
     );
 
     if (loading) {
-        return <div style={{ background: 'var(--bg-primary)', height: '100vh' }} />;
+        return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
     }
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
@@ -643,8 +643,13 @@ export default function BuildModelWindow() {
     };
 
     return (
-        <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-            <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
+        // Matches the Dashboard's own card surfaces (`.widget-section`/
+        // `.chart-section-large`, which use `--card-bg`) rather than
+        // `--bg-primary` — this window's content (the Failure Groups list)
+        // is the same content as the Dashboard's own Failure Groups card, so
+        // it should read as the same surface tone, not the page canvas one.
+        <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
+            <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--card-bg)', borderBottom: '1px solid var(--border)' }}>
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     Build Model — Overview
                 </h2>
