@@ -2,9 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
-const mockSetTitle = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tauri-apps/api/window', () => ({
-    getCurrentWindow: () => ({ close: mockClose, setTitle: mockSetTitle }),
+    getCurrentWindow: () => ({ close: mockClose }),
 }));
 
 let listenCallbacks: Record<string, Array<(e: any) => void>> = {};
@@ -71,7 +70,6 @@ beforeEach(() => {
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
-    mockSetTitle.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
         const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()] } };
         return patch(prev);
@@ -90,185 +88,172 @@ describe('BuildModelWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('request-build-model-data', undefined);
     });
 
-    describe('overview page', () => {
-        it('is the page shown by default after hydration', async () => {
+    it('shows the group, its FG-{no} badge, and its models once hydrated', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        expect(screen.getByText('Build Model — Overview')).toBeTruthy();
+        expect(screen.getByText('Group A')).toBeTruthy();
+        expect(screen.getByText('FG-1')).toBeTruthy();
+        expect(screen.getByText('Model One')).toBeTruthy();
+    });
+
+    it('shows exactly one line per model — no duplicate description/description(tag) lines', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '', targetSensor: 'TAG1' })] } });
+        expect(screen.getAllByText('Pump Pressure (TAG1)')).toHaveLength(1);
+    });
+
+    it('switches to grouping by Component and shows an FG chip only in that view', async () => {
+        const models = [
+            makeModel({ id: 'm1', name: 'Bearing model', targetSensor: 'TAG1' }),
+            makeModel({ id: 'm2', name: 'Motor model', targetSensor: 'TAG2' }),
+        ];
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models } });
+        expect(screen.queryByText(/FG-1 · Group A/)).toBeNull();
+
+        fireEvent.click(screen.getByText('Group by Component'));
+        expect(screen.getAllByText('Pump').length).toBeGreaterThan(0); // section header + each model's own component chip
+        expect(screen.getByText('Bearing model')).toBeTruthy();
+        expect(screen.getByText('Motor model')).toBeTruthy();
+        expect(screen.getAllByText(/FG-1 · Group A/).length).toBe(2); // one chip per model row
+    });
+
+    it('groups a model with no target sensor under "Uncategorized" in Component view', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ targetSensor: '' })] } });
+        fireEvent.click(screen.getByText('Group by Component'));
+        expect(screen.getByText('Uncategorized')).toBeTruthy();
+    });
+
+    it('stays in sync with a failure-group-state-changed broadcast from another window', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        expect(screen.queryByText('New Model')).toBeNull();
+
+        await act(async () => {
+            for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
+                cb({ payload: { groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model' })] } });
+            }
+        });
+        expect(screen.getByText('New Model')).toBeTruthy();
+    });
+
+    it('Close calls the Tauri window close API', async () => {
+        render(<BuildModelWindow />);
+        await deliverData();
+        fireEvent.click(screen.getByTitle('Close'));
+        expect(mockClose).toHaveBeenCalled();
+    });
+
+    describe('group "Edit details" (Name + Description + Recommendation together)', () => {
+        it('the group name is plain text, not independently clickable-to-rename', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
-            expect(screen.getByText('Group A')).toBeTruthy();
-            expect(screen.getByText('FG-1')).toBeTruthy();
-            expect(screen.getByText('Model One')).toBeTruthy();
+            fireEvent.click(screen.getByText('Group A'));
+            // Clicking the bare name must NOT reveal a rename input on its own.
+            expect(screen.queryByDisplayValue('Group A')).toBeNull();
         });
 
-        it('shows exactly one line per model — no duplicate description/description(tag) lines', async () => {
+        it('"Edit details" reveals Name + Description + Recommendation together, seeded from the group', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '', targetSensor: 'TAG1' })] } });
-            expect(screen.getAllByText('Pump Pressure (TAG1)')).toHaveLength(1);
+            await deliverData({ failureGroupState: { groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Replace bearing' })], models: [makeModel()] } });
+            fireEvent.click(screen.getByText('Edit details'));
+
+            expect(screen.getByDisplayValue('Group A')).toBeTruthy();
+            expect(screen.getByDisplayValue('Bearing wear')).toBeTruthy();
+            expect(screen.getByDisplayValue('Replace bearing')).toBeTruthy();
         });
 
-        it('switches to grouping by Component and shows an FG chip only in that view', async () => {
-            const models = [
-                makeModel({ id: 'm1', name: 'Bearing model', targetSensor: 'TAG1' }),
-                makeModel({ id: 'm2', name: 'Motor model', targetSensor: 'TAG2' }),
-            ];
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models } });
-            expect(screen.queryByText(/FG-1 · Group A/)).toBeNull();
-
-            fireEvent.click(screen.getByText('Group by Component'));
-            expect(screen.getByText('Pump')).toBeTruthy();
-            expect(screen.getByText('Bearing model')).toBeTruthy();
-            expect(screen.getByText('Motor model')).toBeTruthy();
-            expect(screen.getAllByText(/FG-1 · Group A/).length).toBe(2); // one chip per model row
-        });
-
-        it('groups a model with no target sensor under "Uncategorized" in Component view', async () => {
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ targetSensor: '' })] } });
-            fireEvent.click(screen.getByText('Group by Component'));
-            expect(screen.getByText('Uncategorized')).toBeTruthy();
-        });
-
-        it('stays in sync with a failure-group-state-changed broadcast from another window', async () => {
+        it('debounces a combined save of name/description/recommendation', async () => {
+            vi.useFakeTimers();
             render(<BuildModelWindow />);
             await deliverData();
-            expect(screen.queryByText('New Model')).toBeNull();
+            fireEvent.click(screen.getByText('Edit details'));
 
-            await act(async () => {
-                for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
-                    cb({ payload: { groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model' })] } });
-                }
-            });
-            expect(screen.getByText('New Model')).toBeTruthy();
+            fireEvent.change(screen.getByDisplayValue('Group A'), { target: { value: 'Renamed Group' } });
+            fireEvent.change(screen.getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'Bearing wear' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.groups[0].name).toBe('Renamed Group');
+            expect(state.failureGroupState.groups[0].description).toBe('Bearing wear');
+            vi.useRealTimers();
         });
 
-        describe('inline group rename', () => {
-            it('clicking the group name opens a prefilled input and commits on Enter', async () => {
-                render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Group A'));
-                const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-                fireEvent.change(input, { target: { value: 'Renamed Group' } });
-                fireEvent.keyDown(input, { key: 'Enter' });
+        it('rejects renaming to a name already used by another group, with an inline error', async () => {
+            vi.useFakeTimers();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Other Group' })], models: [makeModel()] } });
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(screen.getAllByText('Edit details')[0]);
 
-                const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-                expect(state.failureGroupState.groups[0].name).toBe('Renamed Group');
-            });
+            fireEvent.change(screen.getByDisplayValue('Group A'), { target: { value: 'other group' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
-            it('commits on blur too', async () => {
-                render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Group A'));
-                const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-                fireEvent.change(input, { target: { value: 'Blurred Name' } });
-                fireEvent.blur(input);
-
-                const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-                expect(state.failureGroupState.groups[0].name).toBe('Blurred Name');
-            });
-
-            it('rejects renaming to a name already used by another group, with an inline error', async () => {
-                render(<BuildModelWindow />);
-                await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Other Group' })], models: [makeModel()] } });
-                mockUpdateWorkspaceData.mockClear();
-                fireEvent.click(screen.getByText('Group A'));
-                const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-                fireEvent.change(input, { target: { value: 'other group' } });
-                fireEvent.keyDown(input, { key: 'Enter' });
-
-                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
-                expect(screen.getByText('A failure group named "other group" already exists')).toBeTruthy();
-            });
-
-            it('Escape cancels the rename without persisting', async () => {
-                render(<BuildModelWindow />);
-                await deliverData();
-                mockUpdateWorkspaceData.mockClear();
-                fireEvent.click(screen.getByText('Group A'));
-                const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-                fireEvent.change(input, { target: { value: 'Discarded' } });
-                fireEvent.keyDown(input, { key: 'Escape' });
-
-                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
-                expect(screen.getByText('Group A')).toBeTruthy();
-            });
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(screen.getByText('A failure group named "other group" already exists')).toBeTruthy();
+            vi.useRealTimers();
         });
 
-        describe('inline group description/recommendation', () => {
-            it('"Edit details" reveals description/recommendation fields seeded from the group, without navigating away', async () => {
-                render(<BuildModelWindow />);
-                await deliverData({ failureGroupState: { groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Replace bearing' })], models: [makeModel()] } });
-                fireEvent.click(screen.getByText('Edit details'));
+        it('"Hide details" collapses the panel', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Edit details'));
+            expect(screen.getByPlaceholderText('What failure mode does this group track?')).toBeTruthy();
 
-                expect(screen.getByDisplayValue('Bearing wear')).toBeTruthy();
-                expect(screen.getByDisplayValue('Replace bearing')).toBeTruthy();
-                expect(screen.getByText('Build Model — Overview')).toBeTruthy(); // still on overview
-            });
-
-            it('debounces a save of the description/recommendation', async () => {
-                vi.useFakeTimers();
-                render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Edit details'));
-
-                fireEvent.change(screen.getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'Bearing wear' } });
-                await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-
-                const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-                expect(state.failureGroupState.groups[0].description).toBe('Bearing wear');
-                vi.useRealTimers();
-            });
-
-            it('"Hide details" collapses the panel again', async () => {
-                render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Edit details'));
-                expect(screen.getByPlaceholderText('What failure mode does this group track?')).toBeTruthy();
-
-                fireEvent.click(screen.getByText('Hide details'));
-                expect(screen.queryByPlaceholderText('What failure mode does this group track?')).toBeNull();
-            });
-        });
-
-        describe('navigating to the model page', () => {
-            it('clicking a model row jumps directly to that model\'s detail page — not a list of the group\'s models', async () => {
-                const second = makeModel({ id: 'm2', name: 'Second Model', targetSensor: 'TAG2' });
-                render(<BuildModelWindow />);
-                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel(), second] } });
-                mockEmit.mockClear();
-
-                fireEvent.click(screen.getByText('Model One'));
-
-                expect(screen.getByTestId('add-model-form')).toBeTruthy();
-                expect(screen.queryByText('Second Model')).toBeNull(); // not showing the whole group's list
-                expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
-            });
-
-            it('"+ Add Model" jumps to a blank model page for that group', async () => {
-                render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Add Model'));
-
-                const form = within(screen.getByTestId('add-model-form'));
-                expect((form.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('');
-                expect(screen.getByText('New Model')).toBeTruthy();
-                expect(screen.getByText(/FG-1 · Group A/)).toBeTruthy();
-            });
+            fireEvent.click(screen.getByText('Hide details'));
+            expect(screen.queryByPlaceholderText('What failure mode does this group track?')).toBeNull();
         });
     });
 
-    describe('model page', () => {
-        it('"← Back to Overview" returns to the overview page without saving', async () => {
+    describe('model accordion (inline, no page navigation)', () => {
+        it('clicking a model row expands its edit form directly beneath it, without navigating away', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            mockUpdateWorkspaceData.mockClear();
+            mockEmit.mockClear();
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByTitle('Back to Overview'));
-            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
-            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
+            expect(screen.getByText('Build Model — Overview')).toBeTruthy(); // still on the same page
+            expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
         });
 
-        it('Cancel returns to the overview page without saving', async () => {
+        it('clicking the same row again closes its form (toggle)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
+        });
+
+        it('clicking a different row switches the form to the new row', async () => {
+            const first = makeModel({ id: 'm1', name: 'First Model' });
+            const second = makeModel({ id: 'm2', name: 'Second Model', targetSensor: 'TAG2' });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [first, second] } });
+
+            fireEvent.click(screen.getByText('First Model'));
+            expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('First Model');
+
+            fireEvent.click(screen.getByText('Second Model'));
+            expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Second Model');
+        });
+
+        it('"+ Add Model" opens a blank form under that group, closing any other open form', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Add Model'));
+            const form = within(screen.getByTestId('add-model-form'));
+            expect((form.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('');
+        });
+
+        it('Cancel closes the form without persisting', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             mockUpdateWorkspaceData.mockClear();
@@ -276,11 +261,11 @@ describe('BuildModelWindow', () => {
             const form = within(screen.getByTestId('add-model-form'));
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Discarded' } });
             fireEvent.click(form.getByText('Cancel'));
-            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('saving an edit persists it and returns to the overview, where the change is visible', async () => {
+        it('saving an edit persists it and closes the form, showing the change immediately', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
@@ -292,14 +277,15 @@ describe('BuildModelWindow', () => {
                 await Promise.resolve();
             });
 
-            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
             expect(screen.getByText('Renamed Model')).toBeTruthy();
         });
 
-        it('creating a new model persists it and returns to the overview', async () => {
+        it('creating a new model via "+ Add Model" persists it against the right group', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Add Model'));
+            await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Group B' })], models: [makeModel()] } });
+            const addButtons = screen.getAllByText('Add Model');
+            fireEvent.click(addButtons[1]); // Group B's Add Model
             const form = within(screen.getByTestId('add-model-form'));
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'New Model' } });
             fireEvent.click(form.getByText('Individual'));
@@ -311,67 +297,51 @@ describe('BuildModelWindow', () => {
                 await Promise.resolve();
             });
 
-            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
-            expect(screen.getByText('New Model')).toBeTruthy();
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            const created = state.failureGroupState.models.find((m: any) => m.name === 'New Model');
+            expect(created.groupNo).toBe(2);
         });
 
-        it('"Remove model" confirms, persists, and returns to the overview', async () => {
+        it('"Remove model" confirms, persists, and closes the form', async () => {
             vi.spyOn(window, 'confirm').mockReturnValue(true);
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
-            await act(async () => {
-                fireEvent.click(screen.getByText('Remove model'));
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
+            fireEvent.click(screen.getByText('Remove model'));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models).toHaveLength(0);
-            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('shows a clickable status pill and "Open in Predictive Model" for an existing model, but not for a new one', async () => {
+        it('toggling the status pill persists the change without opening the form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
-            expect(screen.getByText('Incomplete')).toBeTruthy();
-            expect(screen.getByText('Open in Predictive Model →')).toBeTruthy();
-
-            fireEvent.click(screen.getByTitle('Back to Overview'));
-            fireEvent.click(screen.getByText('Add Model'));
-            expect(screen.queryByText('Open in Predictive Model →')).toBeNull();
-        });
-
-        it('toggling the status pill persists the change immediately', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
             fireEvent.click(screen.getByText('Incomplete'));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].status).toBe(true);
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('"Open in Predictive Model" emits launch-predictive-model with the model id', async () => {
+        it('"Open in Predictive Model" emits launch-predictive-model without opening the form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
             fireEvent.click(screen.getByText('Open in Predictive Model →'));
             expect(mockEmit).toHaveBeenCalledWith('launch-predictive-model', { modelId: 'm1' });
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
         it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to "description (tag)"', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] } });
             expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
-            fireEvent.click(screen.getByText('Pump Pressure (TAG1)'));
-            expect(screen.getByTestId('add-model-form')).toBeTruthy();
         });
 
-        it('shows sensors as "description (tag)" in predictor chips and sensor pickers', async () => {
+        it('shows sensors as "description (tag)" in the summary line, predictor chips, and sensor pickers', async () => {
             const rel = makeModel({ id: 'm1', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'] });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            expect(screen.getByText('Target: Pump Pressure (TAG1) · Predictors: Pump Temp (TAG2), TAG3')).toBeTruthy();
+
             fireEvent.click(screen.getByText('Rel Model'));
             const form = within(screen.getByTestId('add-model-form'));
             expect(form.getAllByText('Pump Temp (TAG2)').length).toBe(2);
@@ -381,13 +351,18 @@ describe('BuildModelWindow', () => {
 
         it('gives each model kind a distinct single-letter icon and color', async () => {
             const ind = makeModel({ id: 'm1', name: 'Ind Model', kind: 'individual' });
+            const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG3'] });
+            const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG2', ySensor: 'TAG3' });
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind] } });
-            const indColor = (screen.getAllByText('I')[0].closest('.model-kind-icon') as HTMLElement).className;
-            expect(indColor).toContain('model-kind-icon--individual');
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind, rel, clu] } });
+
+            const indColor = (screen.getByText('I').closest('.model-kind-icon') as HTMLElement).className;
+            const relColor = (screen.getByText('R').closest('.model-kind-icon') as HTMLElement).className;
+            const cluColor = (screen.getByText('C').closest('.model-kind-icon') as HTMLElement).className;
+            expect(new Set([indColor, relColor, cluColor]).size).toBe(3);
         });
 
-        describe('add model form', () => {
+        describe('add model form validation', () => {
             it('Create model is disabled until name + kind + category + an individual sensor are all set', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
@@ -457,20 +432,5 @@ describe('BuildModelWindow', () => {
                 expect(form.queryByText('Auto-filled from target sensor')).toBeNull();
             });
         });
-
-        it('Close calls the Tauri window close API', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByTitle('Close'));
-            expect(mockClose).toHaveBeenCalled();
-        });
-    });
-
-    it('Close calls the Tauri window close API from the overview page too', async () => {
-        render(<BuildModelWindow />);
-        await deliverData();
-        fireEvent.click(screen.getByTitle('Close'));
-        expect(mockClose).toHaveBeenCalled();
     });
 });
