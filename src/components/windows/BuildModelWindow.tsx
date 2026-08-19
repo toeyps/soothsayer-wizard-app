@@ -566,8 +566,20 @@ export default function BuildModelWindow() {
     // for its other use as a standalone full-width panel button, so it's
     // explicitly sized here instead of left to stretch across the whole
     // row.
+    //
+    // `position: sticky, bottom: 0` — being structurally right after the
+    // fields box (rather than, say, inside a page-level modal) turned out
+    // not to be enough: a group deep in a long list, or a form long enough
+    // to fill the fields box's own max-height, could still place this
+    // footer's natural position below the currently-visible viewport, with
+    // no indication it existed at all. Sticky pins it to the bottom of the
+    // visible area the instant the form opens, regardless of where the
+    // page happens to be scrolled or how tall the fields above it are —
+    // it only lets go once the whole accordion block scrolls out of view.
+    // Requires no `overflow: hidden` on any ancestor between this and the
+    // page's own scroll container (see the group card wrappers above).
     const renderModelFormFooter = () => (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: editingModelId ? 'space-between' : 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: editingModelId ? 'space-between' : 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
             {editingModelId && (
                 <button className="model-remove-btn" onClick={removeModel}>
                     <Trash2 size={12} /> Remove model
@@ -718,8 +730,12 @@ export default function BuildModelWindow() {
                         const color = getFgGroupColor(g.no);
                         const isExpanded = expandedGroupNo === g.no;
                         const isAddingHere = showForm && editingModelId === null && formGroupNo === g.no;
+                        // No `overflow: hidden` on the card below (despite the rounded
+                        // corners) — it would clip the sticky Save/Remove footer instead
+                        // of letting it stick to the viewport; nothing inside this card
+                        // actually needs edge-to-edge clipping to look right without it.
                         return (
-                            <div key={g.no} className={`fg-group-color-${color}`} style={{ border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                            <div key={g.no} className={`fg-group-color-${color}`} style={{ border: '1px solid var(--border)', borderRadius: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                     <span className="fg-group-dot" />
                                     <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1 }}>{g.name}</span>
@@ -801,7 +817,7 @@ export default function BuildModelWindow() {
                     ) : componentSections.map(([comp, models]) => {
                         const initials = comp.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase();
                         return (
-                            <div key={comp} style={{ border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                            <div key={comp} style={{ border: '1px solid var(--border)', borderRadius: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                     <span style={{ width: '26px', height: '26px', borderRadius: '7px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
                                         {initials}

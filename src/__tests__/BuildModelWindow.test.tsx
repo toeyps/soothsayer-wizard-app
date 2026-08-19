@@ -246,6 +246,27 @@ describe('BuildModelWindow', () => {
             expect(screen.getByText('Save changes')).toBeTruthy(); // but it's still rendered, right alongside it
         });
 
+        it('the footer is sticky to the viewport bottom, not just structurally present (regression: a form deep in a long list, or with a fields box near its own max-height, could still place the footer below the visible area with the fields box alone not being enough)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+
+            const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
+            const footer = saveBtn.parentElement as HTMLElement;
+            expect(footer.style.position).toBe('sticky');
+            expect(footer.style.bottom).toBe('0px');
+        });
+
+        it('no group card in either grouping view clips its content with overflow:hidden (regression: that broke the footer\'s sticky positioning entirely)', async () => {
+            const { container } = render(<BuildModelWindow />);
+            await deliverData();
+            const cards = container.querySelectorAll('[style*="border-radius: 10px"]');
+            expect(cards.length).toBeGreaterThan(0);
+            cards.forEach(card => {
+                expect((card as HTMLElement).style.overflow).not.toBe('hidden');
+            });
+        });
+
         it('clicking the same row again closes its form (toggle)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
