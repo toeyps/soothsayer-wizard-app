@@ -167,13 +167,6 @@ export default function BuildModelWindow() {
     const [formY, setFormY] = useState('');
     const [formCriteria, setFormCriteria] = useState('');
     const [formClusterRanges, setFormClusterRanges] = useState<{ min: number | null; max: number | null }[]>([]);
-    // Attached to whichever accordion form is currently open (a model row's
-    // edit form, or a group's "+ Add Model" form) — a form can be taller
-    // than the visible window (e.g. a Relationship kind with several
-    // fields), so opening one auto-scrolls its bottom (where Save/Remove
-    // model live) into view instead of leaving the user to discover on
-    // their own that the list still scrolls further down.
-    const formRef = useRef<HTMLDivElement>(null);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
@@ -347,23 +340,6 @@ export default function BuildModelWindow() {
         if (formKind !== 'clustering') return;
         setFormClusterRanges(prev => prev.length === 3 ? prev : DEFAULT_CLUSTER_RANGES);
     }, [formKind]);
-
-    // Scroll the newly-opened accordion into view — the group list does
-    // scroll correctly, but a tall form opening below the currently-visible
-    // area gave no indication that scrolling further down was needed.
-    // `formRef` is on the OUTER block (row + form together, not just the
-    // form), and `block: 'start'` aligns that block's top edge — i.e. the
-    // row itself, showing the model's name/kind/status — with the top of
-    // the viewport. An earlier version used `block: 'end'` to guarantee the
-    // Save/Remove buttons were visible, but for a form taller than the
-    // viewport that scrolled the row (and the model's own name) out of
-    // view above the fold instead, which was worse: not knowing which
-    // model you're editing is a bigger problem than needing to scroll
-    // further down to reach Save.
-    useEffect(() => {
-        if (!showForm) return;
-        formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, [showForm, editingModelId, formGroupNo]);
 
     const formComponentTarget = formKind === 'clustering' ? formY : formTarget;
     const formComponent = formComponentTarget ? getComponent(formComponentTarget) : '';
@@ -649,7 +625,7 @@ export default function BuildModelWindow() {
         const isEditingThis = showForm && editingModelId === model.id;
         const accent = FG_ACCENT[getFgGroupColor(model.groupNo)];
         return (
-            <div key={model.id} ref={isEditingThis ? formRef : undefined} style={{ position: 'relative', borderTop: '1px solid var(--border)', background: isEditingThis ? accent.tint : undefined }}>
+            <div key={model.id} style={{ position: 'relative', borderTop: '1px solid var(--border)', background: isEditingThis ? accent.tint : undefined }}>
                 {isEditingThis && (
                     <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: accent.dot }} />
                 )}
@@ -817,7 +793,7 @@ export default function BuildModelWindow() {
                                     are block-level and fill the card automatically) it shrank to
                                     its own content, leaving its border-top divider looking
                                     short/inconsistent against the full-width row dividers. */}
-                                <div ref={isAddingHere ? formRef : undefined}>
+                                <div>
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
                                         <button
                                             onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
