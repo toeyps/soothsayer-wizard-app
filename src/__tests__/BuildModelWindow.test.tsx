@@ -228,13 +228,13 @@ describe('BuildModelWindow', () => {
     });
 
     describe('model accordion (inline, no page navigation)', () => {
-        it('scrolls the opened form into view (regression: a tall form opening below the fold gave no cue to scroll down)', async () => {
+        it('scrolls the opened row+form into view, aligned to the row\'s top (regression: aligning to the form\'s bottom instead could scroll the row\'s own name/kind/status out of view above the fold)', async () => {
             const scrollIntoView = vi.fn();
             Element.prototype.scrollIntoView = scrollIntoView;
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
-            expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'end' }));
+            expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }));
         });
 
         it('clicking a model row expands its edit form directly beneath it, without navigating away', async () => {
