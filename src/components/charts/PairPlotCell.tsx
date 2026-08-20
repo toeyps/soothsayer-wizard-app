@@ -230,11 +230,14 @@ function PairPlotCell({
                 opacity: 0.55,
                 backgroundColor: CANVAS_BG[themeMode],
                 lassoColor: [0.65, 0.73, 0.97, 0.8],
-                // Same fix as ScatterChart.tsx — regl-scatterplot auto-picks a
-                // black/white 2px point outline from canvas brightness, which
-                // dominates a dense pairplot cell's alpha-blended fill as a
-                // black mass on light theme's white canvas.
+                // pointOutlineWidth only affects lasso-selected points, kept
+                // at 0 as a documented no-op (see ScatterChart.tsx). The real
+                // fix for the dark ring around every point on light theme is
+                // antiAliasing: 0 — see ScatterChart.tsx for the full
+                // explanation (SDF-antialiased circle edges compounding into
+                // a visible dark ring at high point density).
                 pointOutlineWidth: 0,
+                antiAliasing: 0,
             });
         } catch (err) {
             reportError('pairplot-init', err);

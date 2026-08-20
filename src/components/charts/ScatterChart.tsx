@@ -345,16 +345,20 @@ function ScatterChart({
                 pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.6,
                 backgroundColor: CANVAS_BG[themeMode],
-                // regl-scatterplot auto-picks a black or white 2px outline
-                // per point based on canvas background brightness (black on
-                // light theme's white canvas). With thousands of overlapping
-                // points that outline dominates the density blend, reading
-                // as a solid black mass instead of the intended alpha-blended
-                // blue (the report that prompted this — dark theme's white
-                // outline was subtle enough to go unnoticed, light theme's
-                // black one wasn't). No outline at all keeps every theme
-                // showing plain alpha-blended density.
+                // pointOutlineWidth only affects lasso-SELECTED points (a
+                // feature this chart never uses — selectedPoints is always
+                // empty), so it's a documented no-op here, kept only in case
+                // selection is ever wired up later.
                 pointOutlineWidth: 0,
+                // Each point is drawn with a soft SDF-antialiased edge (see
+                // regl-scatterplot's FRAGMENT_SHADER$1). At pointSize:3 with
+                // thousands of overlapping points, that soft edge reads as a
+                // visible dark ring around every point on light theme's white
+                // canvas (the report that prompted this — a zoomed screenshot
+                // showed blue fill with a crisp black edge on every dot).
+                // Disabling antialiasing removes the soft edge entirely —
+                // points render as hard-edged circles instead.
+                antiAliasing: 0,
             });
         } catch (err) {
             reportError('scatter-init', err);
@@ -473,9 +477,9 @@ function ScatterChart({
                 // nothing to the page except the highlighted points
                 // themselves, painted underneath the main canvas.
                 backgroundColor: [0, 0, 0, 0],
-                // Same reasoning as the main instance's pointOutlineWidth — no
-                // auto black/white ring fighting the highlight colour itself.
+                // Same reasoning as the main instance — see its comments.
                 pointOutlineWidth: 0,
+                antiAliasing: 0,
             });
         } catch (err) {
             // Decorative layer only — if a second WebGL context genuinely
