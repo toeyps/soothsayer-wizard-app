@@ -36,7 +36,6 @@ vi.mock('../components/TitleBar', () => ({
         titleBarProps.push(props);
         return (
             <div data-testid="titlebar">
-                <button onClick={props.toggleTheme}>toggle-theme</button>
                 <button onClick={() => props.onRename?.('Renamed via TitleBar')}>trigger-rename</button>
             </div>
         );
@@ -134,22 +133,6 @@ describe('App', () => {
         expect(last(titleBarProps).workspaceName).toBeUndefined();
     });
 
-    describe('theme', () => {
-        it('defaults to dark when localStorage has no saved theme', () => {
-            render(<App />);
-            expect(last(titleBarProps).theme).toBe('dark');
-            expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-        });
-
-        it('toggling flips the theme and persists it to localStorage', () => {
-            render(<App />);
-            fireEvent.click(screen.getByText('toggle-theme'));
-            expect(last(titleBarProps).theme).toBe('light');
-            expect(window.localStorage.getItem('theme')).toBe('light');
-            expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-        });
-    });
-
     it('TitleBar\'s onRename updates the displayed name and forwards to the Dashboard ref', async () => {
         render(<App />);
         fireEvent.click(screen.getByText('trigger-data-ready'));
@@ -185,12 +168,6 @@ describe('App', () => {
             const before = last(titleBarProps).renameTrigger;
             act(() => { capturedMenuHandlers.onRename(); });
             expect(last(titleBarProps).renameTrigger).toBe(before + 1);
-        });
-
-        it('onToggleTheme flips the theme the same way the TitleBar button does', () => {
-            render(<App />);
-            act(() => { capturedMenuHandlers.onToggleTheme(); });
-            expect(last(titleBarProps).theme).toBe('light');
         });
 
         it('onAbout shows a version-stamped About dialog', async () => {

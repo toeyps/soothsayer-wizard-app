@@ -4,7 +4,6 @@ import { scaleLinear } from 'd3-scale';
 import type { CsvRecord } from '../../types';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
-import type { ThemeMode } from '../../hooks/useThemeMode';
 import { formatYearMonth } from '../../utils/dateFormat';
 import { CANVAS_BG, CANVAS_BG_HEX } from './pairPlotColors';
 
@@ -91,10 +90,6 @@ interface PairPlotCellProps {
      *  camera back to the full data extent. Allows a single toolbox
      *  button to broadcast a reset to every cell at once. */
     resetTick: number;
-    /** Read once from the parent (PairPlotChart) instead of each cell
-     *  running its own MutationObserver — a matrix can have dozens of
-     *  cells mounted at once. */
-    themeMode: ThemeMode;
 }
 
 /**
@@ -124,7 +119,7 @@ function makeTicks(min: number, max: number, count: number): number[] {
 function PairPlotCell({
     data, headers, sensorY, sensorX, isTimeAxis,
     showXAxis, showYAxis, showXLabel, showYLabel,
-    tool, clusters, onLasso, onHover, pointColor, resetTick, themeMode,
+    tool, clusters, onLasso, onHover, pointColor, resetTick,
 }: PairPlotCellProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -228,7 +223,7 @@ function PairPlotCell({
                 pointColorActive: [0.99, 0.75, 0.18, 1.0],
                 pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.55,
-                backgroundColor: CANVAS_BG[themeMode],
+                backgroundColor: CANVAS_BG,
                 lassoColor: [0.65, 0.73, 0.97, 0.8],
             });
         } catch (err) {
@@ -309,12 +304,8 @@ function PairPlotCell({
         // change identity every render and would force a costly recreate.
         // The latest props are captured via the closures below in newer
         // effects (selectedRows / tool sync).
-        // `themeMode` IS included below (unlike the callback props) — a theme
-        // toggle must recreate the instance, since `backgroundColor` is baked
-        // into a WebGL color texture at construction time and `.set()` never
-        // rebuilds it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [innerDims.width, innerDims.height, themeMode]);
+    }, [innerDims.width, innerDims.height]);
 
     // Push fresh data whenever the source rows / chosen sensors / instance
     // changes. Also (re)builds the row↔point lookups used by the linked
@@ -462,7 +453,7 @@ function PairPlotCell({
     const padTop = AXIS_PAD.top;
 
     return (
-        <div ref={containerRef} className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
+        <div ref={containerRef} className="pair-regl-cell" style={{ background: CANVAS_BG_HEX }}>
             <div
                 className="pair-regl-cell-canvas-wrap"
                 style={{

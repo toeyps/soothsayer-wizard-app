@@ -70,7 +70,6 @@ function findItem(submenu: any, id: string) {
 function makeHandlers(overrides: Partial<SubWindowMenuHandlers> = {}): SubWindowMenuHandlers {
     return {
         workspaceId: null,
-        onToggleTheme: vi.fn(),
         ...overrides,
     };
 }
@@ -93,12 +92,12 @@ beforeEach(() => {
 });
 
 describe('useSubWindowMenu', () => {
-    it('builds a File/Edit/View/Help menu and installs it', async () => {
+    it('builds a File/Edit/Help menu and installs it', async () => {
         renderHook(() => useSubWindowMenu(makeHandlers()));
         await waitFor(() => expect(mockSetAsAppMenu).toHaveBeenCalledTimes(1));
 
         const built = mockMenuNew.mock.calls[0][0];
-        expect(['File', 'Edit', 'View', 'Help']).toEqual(built.items.map((s: any) => s.text));
+        expect(['File', 'Edit', 'Help']).toEqual(built.items.map((s: any) => s.text));
     });
 
     it('disables workspace-scoped items when there is no workspace', async () => {
@@ -177,24 +176,5 @@ describe('useSubWindowMenu', () => {
         const closeWinItem = findItem(findSubmenu(built, 'File'), 'sub-close-win');
         await closeWinItem.action();
         expect(closeFn).toHaveBeenCalledTimes(1);
-    });
-
-    it('"Toggle Theme" always calls the latest handler via ref', async () => {
-        const firstToggle = vi.fn();
-        const { rerender } = renderHook(
-            ({ h }) => useSubWindowMenu(h),
-            { initialProps: { h: makeHandlers({ onToggleTheme: firstToggle }) } },
-        );
-        await waitFor(() => expect(mockMenuNew).toHaveBeenCalledTimes(1));
-        const built = mockMenuNew.mock.calls[0][0];
-        const themeItem = findItem(findSubmenu(built, 'View'), 'sub-theme');
-
-        const secondToggle = vi.fn();
-        rerender({ h: makeHandlers({ onToggleTheme: secondToggle }) });
-        expect(mockMenuNew).toHaveBeenCalledTimes(1); // no rebuild: hasWorkspace/hasLocalSave/label unchanged
-
-        themeItem.action();
-        expect(firstToggle).not.toHaveBeenCalled();
-        expect(secondToggle).toHaveBeenCalledTimes(1);
     });
 });

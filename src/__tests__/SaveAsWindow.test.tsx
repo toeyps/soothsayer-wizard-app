@@ -49,12 +49,6 @@ describe('SaveAsWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('request-save-as-data', undefined);
     });
 
-    it('applies the saved theme (or defaults to dark) to the document element', () => {
-        window.localStorage.setItem('theme', 'light');
-        render(<SaveAsWindow />);
-        expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    });
-
     describe('save-as mode (default)', () => {
         it('prefills the name with a "(Copy)" suffix and shows Save-Copy labeling', async () => {
             render(<SaveAsWindow />);

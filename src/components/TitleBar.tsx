@@ -1,11 +1,9 @@
 import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Sun, Moon } from "lucide-react";
+import { Minus, Square, X } from "lucide-react";
 import { useIsMacOS } from "../hooks/useIsMacOS";
 
 interface TitleBarProps {
-  theme: "light" | "dark";
-  toggleTheme: () => void;
   workspaceName?: string;
   onRename?: (newName: string) => void;
   // Increments when the app menu's "Rename Workspace" is invoked; entering edit mode here.
@@ -13,8 +11,6 @@ interface TitleBarProps {
 }
 
 export default function TitleBar({
-  theme,
-  toggleTheme,
   workspaceName,
   onRename,
   renameTrigger,
@@ -111,24 +107,9 @@ export default function TitleBar({
         )}
       </div>
       <div className="titlebar-actions">
-        <button
-          className="titlebar-button"
-          onClick={toggleTheme}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
         {/* Window controls: only shown on non-macOS (macOS uses native traffic lights) */}
         {!isMacOS && (
           <>
-            <div
-              style={{
-                width: "1px",
-                height: "16px",
-                background: "var(--border)",
-                margin: "auto 0",
-              }}
-            ></div>
             <button
               className="titlebar-button"
               onClick={() => {

@@ -796,37 +796,6 @@ describe('G. Empty-state hint + status bar', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// H. Theme observer
-// ═════════════════════════════════════════════════════════════════════════
-
-describe('H. Theme observer', () => {
-  it('H35. respects the initial data-theme=light attribute', () => {
-    document.documentElement.setAttribute('data-theme', 'light');
-
-    const { container } = render(<DataUploadPage onDataReady={onDataReady} />);
-    const root = container.firstChild as HTMLElement;
-
-    // LIGHT.bg = "#f6f6f7"
-    expect(root.style.background).toBe('rgb(246, 246, 247)');
-  });
-
-  it('H36. reacts to runtime data-theme changes via MutationObserver', async () => {
-    document.documentElement.setAttribute('data-theme', 'dark');
-
-    const { container } = render(<DataUploadPage onDataReady={onDataReady} />);
-    const root = container.firstChild as HTMLElement;
-    // DARK.bg = "#0a0a0b"
-    expect(root.style.background).toBe('rgb(10, 10, 11)');
-
-    document.documentElement.setAttribute('data-theme', 'light');
-
-    await waitFor(() => {
-      expect(root.style.background).toBe('rgb(246, 246, 247)');
-    });
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════════
 // I. Stale-report state (post-parse file edits)
 //   Regression coverage for two reported bugs:
 //     1. After parsing, editing the file list left no way to re-parse

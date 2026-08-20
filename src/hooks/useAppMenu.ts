@@ -7,7 +7,6 @@ export interface AppMenuHandlers {
     onNew: () => void;
     onCloseWorkspace: () => void;
     onRename: () => void;
-    onToggleTheme: () => void;
     onAbout: () => void;
 }
 
@@ -50,13 +49,6 @@ export function useAppMenu(handlers: AppMenuHandlers) {
                     }),
                 ];
 
-                const viewItems = [
-                    await MenuItem.new({
-                        id: 'menu-toggle-theme', text: 'Toggle Theme', accelerator: 'CmdOrCtrl+T',
-                        action: () => handlersRef.current.onToggleTheme(),
-                    }),
-                ];
-
                 const helpItems = [
                     await MenuItem.new({
                         id: 'menu-about', text: 'About Wizard',
@@ -68,7 +60,6 @@ export function useAppMenu(handlers: AppMenuHandlers) {
                     items: [
                         await Submenu.new({ text: 'File', items: fileItems }),
                         await Submenu.new({ text: 'Edit', items: editItems }),
-                        await Submenu.new({ text: 'View', items: viewItems }),
                         await Submenu.new({ text: 'Help', items: helpItems }),
                     ],
                 });

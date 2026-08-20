@@ -28,11 +28,9 @@ describe('hexToRgbaCss', () => {
 });
 
 describe('CANVAS_BG / CANVAS_BG_HEX', () => {
-    it('dark is pure black, light is pure white, and the two stay in sync', () => {
-        expect(CANVAS_BG_HEX.dark).toBe('#000000');
-        expect(CANVAS_BG_HEX.light).toBe('#ffffff');
-        expect(CANVAS_BG.dark).toEqual([0, 0, 0, 1]);
-        expect(CANVAS_BG.light).toEqual([1, 1, 1, 1]);
+    it('is pure black, and the two stay in sync', () => {
+        expect(CANVAS_BG_HEX).toBe('#000000');
+        expect(CANVAS_BG).toEqual([0, 0, 0, 1]);
     });
 });
 

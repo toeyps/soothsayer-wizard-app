@@ -40,7 +40,6 @@ function makeHandlers(overrides: Partial<AppMenuHandlers> = {}): AppMenuHandlers
         onNew: vi.fn(),
         onCloseWorkspace: vi.fn(),
         onRename: vi.fn(),
-        onToggleTheme: vi.fn(),
         onAbout: vi.fn(),
         ...overrides,
     };
@@ -57,12 +56,12 @@ beforeEach(() => {
 });
 
 describe('useAppMenu', () => {
-    it('builds a File/Edit/View/Help menu and installs it as the app + window menu', async () => {
+    it('builds a File/Edit/Help menu and installs it as the app + window menu', async () => {
         renderHook(() => useAppMenu(makeHandlers()));
         await waitFor(() => expect(mockSetAsAppMenu).toHaveBeenCalledTimes(1));
 
         const built = mockMenuNew.mock.calls[0][0];
-        expect(['File', 'Edit', 'View', 'Help']).toEqual(
+        expect(['File', 'Edit', 'Help']).toEqual(
             built.items.map((s: any) => s.text),
         );
         expect(mockSetAsWindowMenu).toHaveBeenCalledWith(mockGetCurrentWindow());

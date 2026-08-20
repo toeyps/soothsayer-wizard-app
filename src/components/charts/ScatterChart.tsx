@@ -9,7 +9,6 @@ import AxisLabel from './AxisLabel';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
-import { useThemeMode } from '../../hooks/useThemeMode';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 // Re-exported so existing callers (Dashboard.tsx, charts/index.ts) that
@@ -18,16 +17,9 @@ import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaM
 // use it without pulling in regl-scatterplot. See that file for why.
 export { RANGE_PALETTE };
 
-/** WebGL can't read CSS custom properties, so the canvas clear color is
- *  recomputed per theme here (dark slate-900 / light white, matching
- *  `--card-bg`). `pointColorHover` was pure white — invisible once the
- *  canvas itself goes light — so it's a fixed magenta instead of switching
- *  by theme: strong contrast against both a dark and a light background,
- *  no need to also react to `themeMode`. */
-const CANVAS_BG: Record<ReturnType<typeof useThemeMode>, [number, number, number, number]> = {
-    dark: [0.058, 0.094, 0.165, 1.0],
-    light: [1.0, 1.0, 1.0, 1.0],
-};
+// WebGL can't read CSS custom properties, so the canvas clear color is a
+// plain constant here (dark slate-900, matching `--card-bg`).
+const CANVAS_BG: [number, number, number, number] = [0.058, 0.094, 0.165, 1.0];
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
 /** Base point colour — the app's standard indigo accent at low alpha
@@ -58,7 +50,6 @@ function ScatterChart({
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
     sensorMetadata, timeHighlights,
 }: ChartProps) {
-    const themeMode = useThemeMode();
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getDescription = useCallback(
         (tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description || undefined,
@@ -344,7 +335,7 @@ function ScatterChart({
                 pointColor: BASE_POINT_COLOR,
                 pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.6,
-                backgroundColor: CANVAS_BG[themeMode],
+                backgroundColor: CANVAS_BG,
             });
         } catch (err) {
             reportError('scatter-init', err);
@@ -427,14 +418,7 @@ function ScatterChart({
             inst.destroy();
             setSc(null);
         };
-        // `themeMode` is included so a theme toggle rebuilds the instance.
-        // regl-scatterplot bakes `backgroundColor` into a WebGL color
-        // texture at construction time — calling `.set({backgroundColor})`
-        // on a live instance updates internal bookkeeping (lasso cursor
-        // colors) but never rebuilds that texture, so the canvas keeps
-        // showing its original background regardless of any later `.draw()`
-        // call. Recreating is the only way that's been confirmed to work.
-    }, [innerDims.width, innerDims.height, rebuildNonce, themeMode]);
+    }, [innerDims.width, innerDims.height, rebuildNonce]);
 
     /** Whether the halo layer has anything to show — recomputed each render
      *  from the (small) `timeHighlights` list rather than memoized; used
@@ -502,7 +486,7 @@ function ScatterChart({
             // a canvas's backing bitmap regardless of which API drew to it.
             if (haloCanvas) haloCanvas.width = haloCanvas.width;
         };
-    }, [innerDims.width, innerDims.height, rebuildNonce, themeMode, hasEnabledHighlights, resetHaloDraw]);
+    }, [innerDims.width, innerDims.height, rebuildNonce, hasEnabledHighlights, resetHaloDraw]);
 
     // Build points + normalise to [-1, 1] and push to the instance.
     // Runs whenever data / chosen sensors / the instance itself changes.

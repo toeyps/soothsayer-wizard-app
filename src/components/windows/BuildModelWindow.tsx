@@ -199,9 +199,6 @@ export default function BuildModelWindow() {
     }, [sensorMetaMap]);
 
     useEffect(() => {
-        const theme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', theme);
-
         let unlistenData: (() => void) | undefined;
         let unlistenChanged: (() => void) | undefined;
 

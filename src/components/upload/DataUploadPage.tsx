@@ -91,29 +91,6 @@ const DARK: Tokens = {
   s4: "oklch(0.7 0.15 310)",
 };
 
-const LIGHT: Tokens = {
-  bg: "#f6f6f7",
-  surface: "#ffffff",
-  surfaceHi: "#fafafa",
-  border: "rgba(10,10,15,0.08)",
-  borderStrong: "rgba(10,10,15,0.14)",
-  text: "#0a0a0b",
-  textMuted: "#64646d",
-  textFaint: "#94949c",
-  accent: "oklch(0.58 0.19 245)",
-  accentHi: "oklch(0.52 0.2 245)",
-  accentMuted: "oklch(0.58 0.19 245 / 0.1)",
-  ok: "oklch(0.58 0.17 150)",
-  warn: "oklch(0.68 0.16 70)",
-  danger: "oklch(0.58 0.2 25)",
-  hover: "rgba(10,10,15,0.04)",
-  chipBg: "rgba(10,10,15,0.04)",
-  s1: "oklch(0.55 0.2 245)",
-  s2: "oklch(0.55 0.17 155)",
-  s3: "oklch(0.65 0.16 70)",
-  s4: "oklch(0.55 0.18 310)",
-};
-
 const mono = 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace';
 
 const fmt = (n: number | undefined | null) =>
@@ -126,13 +103,7 @@ const fmt = (n: number | undefined | null) =>
 export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const dataUpload = useDataUpload();
   const mapping = useMappingData();
-  // Theme is owned by App.tsx via TitleBar — DataUploadPage just reads the
-  // current value off `<html data-theme=...>` and re-renders when it flips.
-  // The in-page toggle button was removed alongside the top command bar.
-  const [dark, setDark] = useState(() =>
-    (document.documentElement.getAttribute("data-theme") ?? "dark") !== "light"
-  );
-  const T = dark ? DARK : LIGHT;
+  const T = DARK;
 
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -150,17 +121,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const [projectDescription, setProjectDescription] = useState("");
   const [showRecentPicker, setShowRecentPicker] = useState(false);
   const canCreateProject = projectName.trim().length > 0;
-
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark((document.documentElement.getAttribute("data-theme") ?? "dark") !== "light");
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  }, []);
 
   const refreshWorkspaces = () => {
     getRecentWorkspaces().then(setWorkspaces).catch(console.error);
@@ -916,7 +876,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
           aria-live="polite"
           style={{
             position: "fixed", inset: 0, zIndex: 100,
-            background: dark ? "rgba(10,10,11,0.65)" : "rgba(246,246,247,0.7)",
+            background: "rgba(10,10,11,0.65)",
             backdropFilter: "blur(4px)",
             WebkitBackdropFilter: "blur(4px)",
             display: "flex", alignItems: "center", justifyContent: "center",

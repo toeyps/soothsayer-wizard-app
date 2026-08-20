@@ -28,9 +28,6 @@ function App() {
   const [initialWorkspaceState, setInitialWorkspaceState] = useState<WorkspaceState | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [renameTrigger, setRenameTrigger] = useState(0);
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
-  });
 
   const dashboardRef = useRef<DashboardRef>(null);
 
@@ -43,19 +40,10 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
-
   // No auto-resume: the app always boots into the Import page. Users navigate
   // into past work by clicking a Recent Workspace in the sidebar — that flow
   // lives in `DataUploadPage.handleLoadWorkspace`, which decides per-workspace
   // whether to land in Dashboard, Failure Group, or Predictive Model.
-
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-  };
 
   const handleBackToImport = () => {
     setMetadata(null);
@@ -76,7 +64,6 @@ function App() {
     onNew: handleBackToImport,
     onCloseWorkspace: handleBackToImport,
     onRename: () => setRenameTrigger(t => t + 1),
-    onToggleTheme: toggleTheme,
     onAbout: async () => {
         // Version comes from tauri.conf.json at runtime so this dialog can
         // never drift from the shipped bundle version again.
@@ -100,8 +87,6 @@ function App() {
     <>
       <ErrorBoundary>
         <TitleBar
-          theme={theme}
-          toggleTheme={toggleTheme}
           workspaceName={metadata ? workspaceName : undefined}
           onRename={handleRename}
           renameTrigger={renameTrigger}

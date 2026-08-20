@@ -13,7 +13,6 @@ import type { WorkspaceState } from '../types';
 
 export interface SubWindowMenuHandlers {
     workspaceId: string | null;
-    onToggleTheme: () => void;
     // Optional: extra local "Save" item (e.g. Save Groups as CSV). If provided, appears above
     // the File separator, distinct from the workspace-level Save.
     localSaveLabel?: string;
@@ -174,13 +173,6 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
                     }),
                 ];
 
-                const viewItems = [
-                    await MenuItem.new({
-                        id: 'sub-theme', text: 'Toggle Theme', accelerator: 'CmdOrCtrl+T',
-                        action: () => ref.current.onToggleTheme(),
-                    }),
-                ];
-
                 const helpItems = [
                     await MenuItem.new({
                         id: 'sub-about', text: 'About Wizard',
@@ -195,7 +187,6 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
                     items: [
                         await Submenu.new({ text: 'File', items: fileItems }),
                         await Submenu.new({ text: 'Edit', items: editItems }),
-                        await Submenu.new({ text: 'View', items: viewItems }),
                         await Submenu.new({ text: 'Help', items: helpItems }),
                     ],
                 });

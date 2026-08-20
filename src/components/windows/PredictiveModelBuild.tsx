@@ -529,9 +529,6 @@ export default function PredictiveModelBuild() {
     }, [reportMenuOpen]);
 
     useEffect(() => {
-        const theme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', theme);
-
         let unlistenData: (() => void) | undefined;
 
         const setup = async () => {
@@ -791,19 +788,7 @@ export default function PredictiveModelBuild() {
         return () => { cancelled = true; };
     }, [criteriaSensor, dashboardFilterKey]);
 
-    // Track theme so the Mean markLine stays visible in both dark & light modes.
-    const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
-        (document.documentElement.getAttribute('data-theme') as 'dark' | 'light') || 'dark'
-    );
-    useEffect(() => {
-        const obs = new MutationObserver(() => {
-            const t = document.documentElement.getAttribute('data-theme');
-            setThemeMode(t === 'light' ? 'light' : 'dark');
-        });
-        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-        return () => obs.disconnect();
-    }, []);
-    const meanColor = themeMode === 'light' ? '#0f172a' : '#f1f5f9';
+    const meanColor = '#f1f5f9';
 
     // Build markLines for mean / ±1σ / ±3σ to overlay on the LineChart.
     const targetMarkLines: ChartMarkLine[] = targetSensor && targetStats ? [
@@ -959,12 +944,11 @@ export default function PredictiveModelBuild() {
         const xIdx = predictorsAtApply.indexOf(effectiveScatterX);
         if (xIdx < 0) return null;
 
-        const isLight = themeMode === 'light';
-        const txtPrimary    = isLight ? '#0f172a' : '#f1f5f9';
-        const txtSecondary  = isLight ? '#475569' : '#94a3b8';
-        const gridLine      = isLight ? '#cbd5e1' : '#334155';
-        const tooltipBg     = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.95)';
-        const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+        const txtPrimary    = '#f1f5f9';
+        const txtSecondary  = '#94a3b8';
+        const gridLine      = '#334155';
+        const tooltipBg     = 'rgba(30,41,59,0.95)';
+        const tooltipBorder = '#334155';
 
         const rawPoints: [number, number][] = [];
         const modelPoints: [number, number][] = [];
@@ -1074,7 +1058,7 @@ export default function PredictiveModelBuild() {
                 },
             ],
         };
-    }, [relPreview, effectiveScatterX, targetSensor, themeMode]);
+    }, [relPreview, effectiveScatterX, targetSensor]);
 
     /**
      * Per-cluster palette — palette mirrors the multi-series colour set
@@ -1097,12 +1081,11 @@ export default function PredictiveModelBuild() {
         const { first_sensor, second_sensor, clusters, n_rows } = clusteringPreview;
         if (!clusters || clusters.length === 0 || n_rows === 0) return null;
 
-        const isLight = themeMode === 'light';
-        const txtPrimary    = isLight ? '#0f172a' : '#f1f5f9';
-        const txtSecondary  = isLight ? '#475569' : '#94a3b8';
-        const gridLine      = isLight ? '#cbd5e1' : '#334155';
-        const tooltipBg     = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.95)';
-        const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+        const txtPrimary    = '#f1f5f9';
+        const txtSecondary  = '#94a3b8';
+        const gridLine      = '#334155';
+        const tooltipBg     = 'rgba(30,41,59,0.95)';
+        const tooltipBorder = '#334155';
 
         // Density-based scatter tuning (mirrors relScatterOption).
         const totalPoints = clusters.reduce((acc, c) => acc + c.xs.length, 0);
@@ -1266,7 +1249,7 @@ export default function PredictiveModelBuild() {
             },
             series: [...scatterSeries, ...ellipseSeries],
         };
-    }, [clusteringPreview, themeMode]);
+    }, [clusteringPreview]);
 
     // Shake animation, triggered by a `predictive-model-shake` emit. Nothing
     // emits this event anymore — it was FailureGroupCreation.tsx's "focus PM
@@ -1479,12 +1462,11 @@ export default function PredictiveModelBuild() {
         const xIdx = predictors.indexOf(xSensor);
         if (xIdx < 0) return null;
 
-        const isLight = themeMode === 'light';
-        const txtPrimary    = isLight ? '#0f172a' : '#f1f5f9';
-        const txtSecondary  = isLight ? '#475569' : '#94a3b8';
-        const gridLine      = isLight ? '#cbd5e1' : '#334155';
-        const tooltipBg     = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.95)';
-        const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+        const txtPrimary    = '#f1f5f9';
+        const txtSecondary  = '#94a3b8';
+        const gridLine      = '#334155';
+        const tooltipBg     = 'rgba(30,41,59,0.95)';
+        const tooltipBorder = '#334155';
 
         const rawPoints: [number, number][] = [];
         const modelPoints: [number, number][] = [];
@@ -1581,7 +1563,7 @@ export default function PredictiveModelBuild() {
                 },
             ],
         };
-    }, [themeMode, targetSensor]);
+    }, [targetSensor]);
 
     const handleClusteringApply = async () => {
         if (!targetSensor) {
@@ -1891,12 +1873,6 @@ export default function PredictiveModelBuild() {
         // button + Preview modal — so users always see the "what's going to
         // be saved?" summary regardless of which Save Model trigger they use.
         onLocalSave: () => setConfirmSaveOpen(true),
-        onToggleTheme: () => {
-            const current = localStorage.getItem('theme') || 'dark';
-            const next = current === 'dark' ? 'light' : 'dark';
-            localStorage.setItem('theme', next);
-            document.documentElement.setAttribute('data-theme', next);
-        },
     });
 
     if (loading) {

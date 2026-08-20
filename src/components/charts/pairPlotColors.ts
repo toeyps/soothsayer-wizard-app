@@ -1,5 +1,3 @@
-import type { ThemeMode } from '../../hooks/useThemeMode';
-
 /** Hex `#rrggbb` → `[r, g, b, a]` in 0..1 space (alpha defaults to 1). */
 export function hexToRgba(hex: string, a = 1): [number, number, number, number] {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -53,20 +51,14 @@ export function correlationGradientHex(t: number): string {
     return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
-/** Cell background — pure black/white, deliberately NOT `--bg-primary`
- *  (`#0a0a0b` in dark mode). Every cell type (WebGL canvas clear colour,
- *  the histogram's own div, and the plain scatter cell's non-canvas margin
+/** Cell background — pure black, deliberately NOT `--bg-primary`
+ *  (`#0a0a0b`). Every cell type (WebGL canvas clear colour, the
+ *  histogram's own div, and the plain scatter cell's non-canvas margin
  *  area) must render this exact value or the grid shows visibly different
  *  shades in the padding strips and the 1px gaps between cells. */
-export const CANVAS_BG_HEX: Record<ThemeMode, string> = {
-    dark: '#000000',
-    light: '#ffffff',
-};
+export const CANVAS_BG_HEX = '#000000';
 
-export const CANVAS_BG: Record<ThemeMode, [number, number, number, number]> = {
-    dark: hexToRgba(CANVAS_BG_HEX.dark),
-    light: hexToRgba(CANVAS_BG_HEX.light),
-};
+export const CANVAS_BG: [number, number, number, number] = hexToRgba(CANVAS_BG_HEX);
 
 /** Distinct colours auto-assigned to new time highlights / tagged points —
  *  shared across ScatterChart (time highlights, re-exported from there for

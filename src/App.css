@@ -239,13 +239,6 @@ body {
     cursor: pointer;
 }
 
-/* The browser's native picker icon defaults to dark — invert(1) above flips
-   it to white so it's visible on this app's dark background. In light theme
-   the icon is already dark-on-light, so the same invert would flip it to
-   white-on-white (invisible) — cancel it. */
-[data-theme="light"] .date-input-wrapper input::-webkit-calendar-picker-indicator {
-    filter: none;
-}
 
 .separator {
     color: var(--text-secondary);
@@ -1630,10 +1623,6 @@ tr:hover {
     filter: invert(1);
     opacity: 0.5;
     cursor: pointer;
-}
-
-[data-theme="light"] .config-input::-webkit-calendar-picker-indicator {
-    filter: none;
 }
 
 .config-apply-btn {
@@ -4443,9 +4432,7 @@ tr:hover {
 
 :root {
     /* Drives native form-control chrome (number spinners, date/time
-     * pickers, checkboxes) app-wide, so per-element `colorScheme: 'dark'`
-     * overrides are no longer needed — those predated light theme and stayed
-     * dark even after switching to light (the report that prompted this). */
+     * pickers, checkboxes) app-wide. */
     color-scheme: dark;
     --bg-primary: #0a0a0b;
     --bg-secondary: #101012;
@@ -4477,35 +4464,6 @@ tr:hover {
     --kind-clu: oklch(0.72 0.12 200);
     --kind-clu-muted: oklch(0.72 0.12 200 / 0.16);
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-[data-theme="light"] {
-    color-scheme: light;
-    --bg-primary: #f6f6f7;
-    --bg-secondary: #ffffff;
-    --surface-hi: #fafafa;
-    --text-primary: #0a0a0b;
-    --text-secondary: #64646d;
-    --text-faint: #94949c;
-    --accent-color: oklch(0.58 0.19 245);
-    --accent-hi: oklch(0.52 0.2 245);
-    --accent-muted: oklch(0.58 0.19 245 / 0.1);
-    --border: rgba(10, 10, 15, 0.08);
-    --border-strong: rgba(10, 10, 15, 0.14);
-    --card-bg: #ffffff;
-    --input-bg: #fafafa;
-    --hover-bg: rgba(10, 10, 15, 0.04);
-    --chip-bg: rgba(10, 10, 15, 0.04);
-    --ok: oklch(0.55 0.15 150);
-    --warn: oklch(0.58 0.16 75);
-    --danger: oklch(0.55 0.2 25);
-    --perf: #0a8f61;
-    --perf-muted: rgba(10, 143, 97, 0.1);
-    --cond: #6d3fc9;
-    --cond-muted: rgba(109, 63, 201, 0.1);
-    --warn-muted: oklch(0.58 0.16 75 / 0.12);
-    --kind-clu: oklch(0.5 0.1 200);
-    --kind-clu-muted: oklch(0.5 0.1 200 / 0.12);
 }
 
 body {
@@ -4601,11 +4559,6 @@ body {
     background: rgba(255, 255, 255, 0.07);
     color: var(--text-primary);
     box-shadow: none;
-}
-
-[data-theme="light"] .chart-type-btn.active {
-    background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 /* Collapse button */

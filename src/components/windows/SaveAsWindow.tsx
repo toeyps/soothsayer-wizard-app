@@ -21,9 +21,6 @@ export default function SaveAsWindow() {
     const isRename = mode === 'rename';
 
     useEffect(() => {
-        const theme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', theme);
-
         let unlisten: (() => void) | undefined;
 
         const setup = async () => {

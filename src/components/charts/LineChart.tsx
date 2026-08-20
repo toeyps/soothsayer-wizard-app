@@ -249,25 +249,12 @@ function LineChart({
         };
     }, []);
 
-    // Track current theme (data-theme attribute on <html>) so text colors adapt.
-    const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-        (document.documentElement.getAttribute('data-theme') as 'dark' | 'light') || 'dark'
-    );
-    useEffect(() => {
-        const obs = new MutationObserver(() => {
-            const t = document.documentElement.getAttribute('data-theme');
-            setTheme(t === 'light' ? 'light' : 'dark');
-        });
-        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-        return () => obs.disconnect();
-    }, []);
-    const isLight = theme === 'light';
-    const txtPrimary  = isLight ? '#0f172a' : '#f1f5f9';
-    const txtSecondary = isLight ? '#475569' : '#94a3b8';
-    const gridLine    = isLight ? '#cbd5e1' : '#334155';
-    const markLabelBg = isLight ? 'rgba(248,250,252,0.9)' : 'rgba(15,23,42,0.82)';
-    const tooltipBg   = isLight ? 'rgba(248,250,252,0.96)' : 'rgba(30,41,59,0.9)';
-    const tooltipBorder = isLight ? '#cbd5e1' : '#334155';
+    const txtPrimary  = '#f1f5f9';
+    const txtSecondary = '#94a3b8';
+    const gridLine    = '#334155';
+    const markLabelBg = 'rgba(15,23,42,0.82)';
+    const tooltipBg   = 'rgba(30,41,59,0.9)';
+    const tooltipBorder = '#334155';
 
     const option = useMemo(() => {
         // xData is computed once above (shared with the click handler) —
@@ -760,13 +747,13 @@ function LineChart({
             }),
             series: [...baseSeries, ...highlightOverlaySeries],
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, theme, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
             {/* lazyUpdate batches consecutive setOption calls into one frame
-                (resize + data + theme changes coalesce instead of each
-                triggering its own full notMerge re-init). */}
+                (resize + data changes coalesce instead of each triggering
+                its own full notMerge re-init). */}
             <ResponsiveECharts option={option} lazyUpdate style={{ minHeight: '200px' }} onChartReady={handleChartReady} />
             <div className="line-chart-toolbox">
                 <button

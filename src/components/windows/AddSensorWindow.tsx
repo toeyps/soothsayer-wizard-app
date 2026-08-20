@@ -53,11 +53,6 @@ export default function AddSensorWindow() {
     }, []);
 
     useEffect(() => {
-        // Load theme from localStorage
-        const theme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', theme);
-
-
         let unlistenData: (() => void) | undefined;
 
         const setup = async () => {

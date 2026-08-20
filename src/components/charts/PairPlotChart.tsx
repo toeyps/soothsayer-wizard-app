@@ -5,7 +5,6 @@ import { writeUserTextFile } from '../../workspaceManager';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import AxisLabel from './AxisLabel';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
-import { useThemeMode, type ThemeMode } from '../../hooks/useThemeMode';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { formatDateTime } from '../../utils/dateFormat';
 import { ACCENT_HEX, CANVAS_BG_HEX, correlationGradientHex, hexToRgba, hexToRgbaCss, rgbaToHex } from './pairPlotColors';
@@ -48,7 +47,7 @@ const CLUSTER_PALETTE: Array<[number, number, number, number]> = [
  *  context just to draw 20 bars. Uses the same pixel padding as PairPlotCell
  *  (CELL_PAD) so the bordered frame matches scatter cells exactly. */
 function DiagonalHistogram({
-    values, sensor, isTopRow, themeMode,
+    values, sensor, isTopRow,
 }: {
     values: number[];
     sensor: string;
@@ -57,7 +56,6 @@ function DiagonalHistogram({
      *  row 0 already labeled at the top; repeating it there would be noise
      *  the "outer frame only" label scheme deliberately avoids. */
     isTopRow: boolean;
-    themeMode: ThemeMode;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dims, setDims] = useState({ width: 0, height: 0 });
@@ -97,7 +95,7 @@ function DiagonalHistogram({
     const innerH = Math.max(0, dims.height - CELL_PAD.top - CELL_PAD.bottom);
 
     return (
-        <div ref={containerRef} className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
+        <div ref={containerRef} className="pair-regl-cell" style={{ background: CANVAS_BG_HEX }}>
             <svg
                 width={dims.width}
                 height={dims.height}
@@ -166,7 +164,7 @@ const AXIS_LABEL_STYLE = {
 } as const;
 
 function CorrelationCell({
-    r, sensorY, sensorYDescription, showYLabel, themeMode,
+    r, sensorY, sensorYDescription, showYLabel,
 }: {
     r: number | null;
     sensorY: string;
@@ -176,7 +174,6 @@ function CorrelationCell({
      *  cell type. Correlation cells never sit in row 0, so they never carry
      *  a top/column label — row 0 already labeled that column. */
     showYLabel: boolean;
-    themeMode: ThemeMode;
 }) {
     // Diverging-by-magnitude, not by sign: weak (|r| near 0) reads red,
     // strong (|r| near 1) reads green regardless of direction — a strong
@@ -189,7 +186,7 @@ function CorrelationCell({
 
     return (
         <>
-            <div className="pair-regl-cell" style={{ background: CANVAS_BG_HEX[themeMode] }}>
+            <div className="pair-regl-cell" style={{ background: CANVAS_BG_HEX }}>
                 <div
                     style={{
                         position: 'absolute',
@@ -224,7 +221,6 @@ function fmt(n: number): string {
 }
 
 function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
-    const themeMode = useThemeMode();
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getDescription = useCallback(
         (tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description || undefined,
@@ -481,7 +477,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         values={sensorVals[i]}
                                         sensor={sensorY}
                                         isTopRow={false}
-                                        themeMode={themeMode}
                                     />
                                     {i === 0 && (
                                         <AxisLabel tag={sensorY} description={getDescription(sensorY)} style={AXIS_LABEL_STYLE.top} />
@@ -516,7 +511,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         onHover={setHover}
                                         pointColor={POINT_COLOR}
                                         resetTick={resetTick}
-                                        themeMode={themeMode}
                                     />
                                     {i === 0 && (
                                         <AxisLabel tag={sensorX} description={getDescription(sensorX)} style={AXIS_LABEL_STYLE.top} />
@@ -543,7 +537,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         sensorY={sensorY}
                                         sensorYDescription={getDescription(sensorY)}
                                         showYLabel={k === 0}
-                                        themeMode={themeMode}
                                     />
                                 </div>
                             );
@@ -572,7 +565,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                 onHover={setHover}
                                 pointColor={POINT_COLOR}
                                 resetTick={resetTick}
-                                themeMode={themeMode}
                             />
                             {i === 0 && (
                                 <AxisLabel tag="Time" style={AXIS_LABEL_STYLE.top} />
@@ -749,7 +741,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     values={sensorVals[sensors.indexOf(expanded.sensorY)] ?? []}
                                     sensor={expanded.sensorY}
                                     isTopRow={true}
-                                    themeMode={themeMode}
                                 />
                             ) : (
                                 <PairPlotCell
@@ -768,7 +759,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     onHover={setHover}
                                     pointColor={POINT_COLOR}
                                     resetTick={resetTick}
-                                    themeMode={themeMode}
                                 />
                             )}
                         </div>

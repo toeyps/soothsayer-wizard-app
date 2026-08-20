@@ -79,21 +79,17 @@ const baseProps = {
     tool: 'pan' as const, clusters: [] as Cluster[],
     onLasso: noop, onHover: noop,
     pointColor: [0.5, 0.5, 0.5, 1] as [number, number, number, number],
-    resetTick: 0, themeMode: 'dark' as const,
+    resetTick: 0,
 };
 
 describe('PairPlotCell', () => {
-    it('the container div background matches the WebGL canvas clear colour exactly (regression: used to fall through to --bg-primary, a different shade than pure black/white)', () => {
-        const { container: darkContainer } = render(<PairPlotCell {...baseProps} themeMode="dark" />);
-        expect((darkContainer.querySelector('.pair-regl-cell') as HTMLElement).style.background).toBe('rgb(0, 0, 0)');
-        cleanup();
-
-        const { container: lightContainer } = render(<PairPlotCell {...baseProps} themeMode="light" />);
-        expect((lightContainer.querySelector('.pair-regl-cell') as HTMLElement).style.background).toBe('rgb(255, 255, 255)');
+    it('the container div background matches the WebGL canvas clear colour exactly (regression: used to fall through to --bg-primary, a different shade than pure black)', () => {
+        const { container } = render(<PairPlotCell {...baseProps} />);
+        expect((container.querySelector('.pair-regl-cell') as HTMLElement).style.background).toBe('rgb(0, 0, 0)');
     });
 
-    it('creates a WebGL instance sized to the padded inner area, themed per prop', () => {
-        render(<PairPlotCell {...baseProps} themeMode="light" />);
+    it('creates a WebGL instance sized to the padded inner area', () => {
+        render(<PairPlotCell {...baseProps} />);
         expect(mockCreateScatterplot).toHaveBeenCalledTimes(1);
         const opts = mockCreateScatterplot.mock.calls[0][0];
         const expectedWidth = 200 - 36 - 4; // AXIS_PAD.left/right
@@ -106,7 +102,7 @@ describe('PairPlotCell', () => {
         // preserve, so this must match the canvas's own ratio to fill the
         // whole cell instead of showing black bars on the sides.
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
-        expect(opts.backgroundColor).toEqual([1.0, 1.0, 1.0, 1.0]);
+        expect(opts.backgroundColor).toEqual([0, 0, 0, 1]);
         expect(opts.pointColor).toEqual(baseProps.pointColor);
     });
 

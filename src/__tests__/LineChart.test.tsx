@@ -502,11 +502,10 @@ describe('LineChart option building', () => {
         expect(capturedOptions[capturedOptions.length - 1].yAxis[0].splitLine.show).toBe(false);
     });
 
-    it('reads the initial theme from documentElement data-theme and colors the axis accordingly', () => {
-        document.documentElement.setAttribute('data-theme', 'light');
+    it('colors the axis with the fixed dark palette', () => {
         const columnar = columnarOf(['A'], 3);
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
-        expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.color).toBe('#475569'); // light txtSecondary
+        expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.color).toBe('#94a3b8');
     });
 
     it('falls back to row-based `data`/`headers` indexing when no columnar feed is supplied', () => {
