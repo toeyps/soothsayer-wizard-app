@@ -74,7 +74,31 @@ export function buildLineColorPieces(
 
 // Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
 // show/default to the same palette a sensor would get without an override.
-export const LINE_CHART_COLORS = ["#3b82f6", "#10b981", "#6366f1", "#8b5cf6", "#f43f5e", "#f59e0b"];
+//
+// Ordered so every PREFIX stays maximally distinguishable, not just the full
+// set: the first 3 (blue/emerald/rose) are a primary-color triad for the
+// common case of a few selected sensors, and each later hue is a new one not
+// yet used. The near-duplicate-hue entries (teal vs emerald/cyan, indigo vs
+// blue/violet, pink vs rose) are pushed to the tail so they only appear once
+// 9+ sensors are selected simultaneously — an already-crowded chart where
+// some hue closeness beats the alternative of wrapping back to a color
+// already in use (`% LINE_CHART_COLORS.length` in Dashboard.tsx). Was 6
+// colors; doubled to 12 after a report that a 7th selected sensor reused the
+// 1st sensor's exact color.
+export const LINE_CHART_COLORS = [
+    "#3b82f6", // blue
+    "#10b981", // emerald
+    "#f43f5e", // rose
+    "#f59e0b", // amber
+    "#8b5cf6", // violet
+    "#06b6d4", // cyan
+    "#84cc16", // lime
+    "#d946ef", // fuchsia
+    "#f97316", // orange
+    "#14b8a6", // teal (near emerald/cyan)
+    "#6366f1", // indigo (near blue/violet)
+    "#ec4899", // pink (near rose)
+];
 
 /**
  * Deterministic default color for a sensor, keyed by its tag rather than its

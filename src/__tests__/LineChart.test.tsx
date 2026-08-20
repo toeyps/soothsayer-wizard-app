@@ -83,6 +83,20 @@ describe('defaultSensorColor', () => {
     });
 });
 
+describe('LINE_CHART_COLORS', () => {
+    it('has more than 6 entries (regression: a 7th selected sensor wrapped back to the 1st sensor\'s exact color)', () => {
+        expect(LINE_CHART_COLORS.length).toBeGreaterThan(6);
+    });
+
+    it('has no duplicate hex values', () => {
+        expect(new Set(LINE_CHART_COLORS).size).toBe(LINE_CHART_COLORS.length);
+    });
+
+    it('starts with a maximally-distinct blue/emerald/rose triad for the common few-sensor case', () => {
+        expect(LINE_CHART_COLORS.slice(0, 3)).toEqual(['#3b82f6', '#10b981', '#f43f5e']);
+    });
+});
+
 describe('buildLineColorPieces (visualMap piece construction for \'line\' display mode)', () => {
     it('returns nothing for zero data points or zero ranges', () => {
         expect(buildLineColorPieces(0, [{ startIdx: 0, endIdx: 2, color: '#f00' }])).toEqual([]);
