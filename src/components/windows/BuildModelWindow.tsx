@@ -648,55 +648,61 @@ export default function BuildModelWindow() {
         const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
         const component = targetTag ? getComponent(targetTag) : '';
         const isEditingThis = showForm && editingModelId === model.id;
+        const accent = FG_ACCENT[getFgGroupColor(model.groupNo)];
         return (
-            <div key={model.id} style={{ position: 'relative', borderTop: '1px solid var(--border)' }}>
-                {isEditingThis && (
-                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: FG_ACCENT[getFgGroupColor(model.groupNo)] }} />
-                )}
-                <div
-                    onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
-                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px', paddingLeft: isEditingThis ? '21px' : '18px' }}
-                >
-                    <div className={`model-kind-icon model-kind-icon--${model.kind}`} style={{ width: '24px', height: '24px', fontSize: '0.62rem' }}>
-                        {KIND_ABBREV[model.kind]}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
-                            {showFgTag && (
-                                <span className="model-chip model-chip--component" style={{ fontFamily: 'var(--mono)' }}>
-                                    FG-{model.groupNo}{g ? ` · ${g.name}` : ''}
-                                </span>
-                            )}
-                            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{modelDisplayLabel(model)}</span>
-                            {model.category && (
-                                <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
-                                    {CATEGORY_LABELS[model.category]}
-                                </span>
-                            )}
-                            {component && <span className="model-chip model-chip--component">{component}</span>}
-                        </div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {sensorSummary(model, sensorLabel)}
-                        </div>
-                    </div>
-                    <button
-                        className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
-                        onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
+            <div key={model.id} style={{ borderTop: '1px solid var(--border)' }}>
+                {/* A real border (not an absolutely-positioned left bar) so the
+                    boundary always encloses the sticky footer too — a sticky
+                    element can never paint outside its own parent's box, but an
+                    absolute-positioned bar is anchored to the row's un-scrolled
+                    flow position and visibly detaches from the footer once the
+                    page scrolls (the report that prompted this). */}
+                <div style={isEditingThis ? { border: `1.5px solid ${accent}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
+                    <div
+                        onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px' }}
                     >
-                        {model.status ? 'Complete' : 'Incomplete'}
-                    </button>
-                    <button
-                        className="model-open-pm"
-                        onClick={e => { e.stopPropagation(); trainModel(model.id); }}
-                    >
-                        Open in Predictive Model →
-                    </button>
+                        <div className={`model-kind-icon model-kind-icon--${model.kind}`} style={{ width: '24px', height: '24px', fontSize: '0.62rem' }}>
+                            {KIND_ABBREV[model.kind]}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
+                                {showFgTag && (
+                                    <span className="model-chip model-chip--component" style={{ fontFamily: 'var(--mono)' }}>
+                                        FG-{model.groupNo}{g ? ` · ${g.name}` : ''}
+                                    </span>
+                                )}
+                                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{modelDisplayLabel(model)}</span>
+                                {model.category && (
+                                    <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
+                                        {CATEGORY_LABELS[model.category]}
+                                    </span>
+                                )}
+                                {component && <span className="model-chip model-chip--component">{component}</span>}
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {sensorSummary(model, sensorLabel)}
+                            </div>
+                        </div>
+                        <button
+                            className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
+                            onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
+                        >
+                            {model.status ? 'Complete' : 'Incomplete'}
+                        </button>
+                        <button
+                            className="model-open-pm"
+                            onClick={e => { e.stopPropagation(); trainModel(model.id); }}
+                        >
+                            Open in Predictive Model →
+                        </button>
+                    </div>
+                    {isEditingThis && (
+                        <div style={{ borderTop: '1px solid var(--border)' }}>
+                            {renderModelForm()}
+                        </div>
+                    )}
                 </div>
-                {isEditingThis && (
-                    <div style={{ borderTop: '1px solid var(--border)' }}>
-                        {renderModelForm()}
-                    </div>
-                )}
             </div>
         );
     };
@@ -820,23 +826,25 @@ export default function BuildModelWindow() {
                                     are block-level and fill the card automatically) it shrank to
                                     its own content, leaving its border-top divider looking
                                     short/inconsistent against the full-width row dividers. */}
-                                <div style={{ position: 'relative' }}>
-                                    {isAddingHere && (
-                                        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: FG_ACCENT[color] }} />
-                                    )}
-                                    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
-                                        <button
-                                            onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%', padding: '8px 0', borderRadius: '7px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
-                                        >
-                                            <Plus size={13} /> Add Model
-                                        </button>
-                                    </div>
-                                    {isAddingHere && (
-                                        <div style={{ borderTop: '1px solid var(--border)' }}>
-                                            {renderModelForm()}
+                                <div>
+                                    {/* Same real-border treatment as overviewModelRow — see the
+                                        comment there for why an absolute-positioned bar visibly
+                                        detached from the sticky footer during scroll. */}
+                                    <div style={isAddingHere ? { border: `1.5px solid ${FG_ACCENT[color]}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
+                                        <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
+                                            <button
+                                                onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
+                                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%', padding: '8px 0', borderRadius: '7px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
+                                            >
+                                                <Plus size={13} /> Add Model
+                                            </button>
                                         </div>
-                                    )}
+                                        {isAddingHere && (
+                                            <div style={{ borderTop: '1px solid var(--border)' }}>
+                                                {renderModelForm()}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         );
