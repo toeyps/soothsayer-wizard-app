@@ -255,7 +255,7 @@ const iconButtonStyle: CSSProperties = {
     padding: '2px', display: 'flex', flexShrink: 0,
 };
 const pickerWrapStyle: CSSProperties = {
-    display: 'flex', justifyContent: 'flex-end', padding: '4px 0 8px',
+    display: 'flex', justifyContent: 'flex-start', padding: '4px 0 8px',
 };
 const pickerBoxStyle: CSSProperties = {
     padding: '10px', background: 'var(--input-bg)', border: '1px solid var(--border)',

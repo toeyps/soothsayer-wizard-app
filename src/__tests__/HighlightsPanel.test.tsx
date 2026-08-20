@@ -101,6 +101,18 @@ describe('HighlightsPanel', () => {
             expect(onRecolorTimeHighlight).toHaveBeenCalledWith('h1', '#123456');
         });
 
+        it('opens the ColorPlatePicker left-aligned, under the swatch button that triggers it (regression: it opened right-aligned, disconnected from the left-side swatch)', () => {
+            const timeHighlights: TimeHighlight[] = [
+                { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
+            ];
+            render(<HighlightsPanel {...makeProps({ timeHighlights })} />);
+
+            fireEvent.click(screen.getByTitle('Change colour'));
+            const pickerButton = screen.getByText('set-color-#ff0000');
+            const pickerWrap = pickerButton.parentElement?.parentElement as HTMLElement; // button -> pickerBoxStyle div -> pickerWrapStyle div
+            expect(pickerWrap.style.justifyContent).toBe('flex-start');
+        });
+
         it('shows the "applies to Line and Scatter, not Pair Plot" scope note', () => {
             render(<HighlightsPanel {...makeProps()} />);
             expect(screen.getByText(/Applies to Line and Scatter/)).toBeTruthy();
