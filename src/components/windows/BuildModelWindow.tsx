@@ -42,6 +42,22 @@ const FG_GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
 const getFgGroupColor = (no: number): string =>
     no === 0 ? 'slate' : FG_GROUP_PALETTE[(no - 1) % FG_GROUP_PALETTE.length];
 
+// Same oklch values as .fg-group-color-{name} in App.css, kept as plain JS
+// here rather than relied on via CSS inheritance — a Component-view row's
+// accordion isn't nested inside a `.fg-group-color-*` element at all. Ties
+// an open row/form back to its own group's color (a thin left accent bar)
+// plus a small text breadcrumb inside the form itself, so it's always
+// obvious which model's detail is on screen — per explicit user request,
+// a second time, now that the layout/scroll bugs that made an earlier
+// version of this feel cluttered are actually fixed.
+const FG_ACCENT: Record<string, string> = {
+    amber: 'oklch(0.78 0.14 75)',
+    violet: 'oklch(0.7 0.15 310)',
+    green: 'oklch(0.72 0.15 150)',
+    blue: 'oklch(0.68 0.17 245)',
+    slate: 'var(--text-faint)',
+};
+
 function makeDefaultModel(groupNo: number): FailureModel {
     return {
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -392,8 +408,15 @@ export default function BuildModelWindow() {
     // scrolled. The footer is now structurally always rendered directly
     // under the fields box, at a fixed, predictable position, regardless
     // of how tall the fields are or how the surrounding list is scrolled.
-    const renderModelFormFields = () => (
+    const renderModelFormFields = () => {
+        const formGroup = allGroups.find(g => g.no === formGroupNo);
+        const formAccent = FG_ACCENT[getFgGroupColor(formGroupNo ?? 0)];
+        return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: formAccent, flexShrink: 0 }} />
+                FG-{formGroupNo}{formGroup ? ` · ${formGroup.name}` : ''}
+            </div>
             <div className="fg-inspector-field">
                 <div className="fg-inspector-field-label-row"><label>Model name</label></div>
                 <input
@@ -557,7 +580,8 @@ export default function BuildModelWindow() {
                 </div>
             )}
         </div>
-    );
+        );
+    };
 
     // No "Cancel" button — closing the form is already just re-clicking
     // whatever opened it (the model row, or "+ Add Model"), same toggle
@@ -625,10 +649,13 @@ export default function BuildModelWindow() {
         const component = targetTag ? getComponent(targetTag) : '';
         const isEditingThis = showForm && editingModelId === model.id;
         return (
-            <div key={model.id} style={{ borderTop: '1px solid var(--border)' }}>
+            <div key={model.id} style={{ position: 'relative', borderTop: '1px solid var(--border)' }}>
+                {isEditingThis && (
+                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: FG_ACCENT[getFgGroupColor(model.groupNo)] }} />
+                )}
                 <div
                     onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
-                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px' }}
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px', paddingLeft: isEditingThis ? '21px' : '18px' }}
                 >
                     <div className={`model-kind-icon model-kind-icon--${model.kind}`} style={{ width: '24px', height: '24px', fontSize: '0.62rem' }}>
                         {KIND_ABBREV[model.kind]}
@@ -793,7 +820,10 @@ export default function BuildModelWindow() {
                                     are block-level and fill the card automatically) it shrank to
                                     its own content, leaving its border-top divider looking
                                     short/inconsistent against the full-width row dividers. */}
-                                <div>
+                                <div style={{ position: 'relative' }}>
+                                    {isAddingHere && (
+                                        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: FG_ACCENT[color] }} />
+                                    )}
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
                                         <button
                                             onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}

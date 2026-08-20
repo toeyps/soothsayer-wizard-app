@@ -234,6 +234,20 @@ describe('BuildModelWindow', () => {
             expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
         });
 
+        it('shows a "FG-{no} · {group name}" breadcrumb inside the opened form so it\'s always clear which model\'s group the visible detail/buttons belong to', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [makeModel({ groupNo: 2 })] } });
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
+        });
+
+        it('also shows the group breadcrumb inside a blank "+ Add Model" form', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [] } });
+            fireEvent.click(screen.getByText('Add Model'));
+            expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
+        });
+
         it('the Save changes / Remove model footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own buttons, requiring exactly the right page scroll position to reach them)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
