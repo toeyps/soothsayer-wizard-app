@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wizard Stack Sheet</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg: #f6f3ec;
+  --surface: #ffffff;
+  --surface-2: #efeade;
+  --border: #d9d2c0;
+  --text: #211d16;
+  --text-muted: #6b6353;
+  --text-faint: #9a917b;
+  --accent: #a3641a;
+  --accent-soft: #a3641a1a;
+  --tier-fe: #1c6f92;
+  --tier-fe-soft: #1c6f9214;
+  --tier-rust: #a1481f;
+  --tier-rust-soft: #a1481f14;
+  --tier-py: #3f7a52;
+  --tier-py-soft: #3f7a5214;
+  --good: #3f7a52;
+  --shadow: 0 1px 2px rgba(33,29,22,0.06), 0 8px 24px rgba(33,29,22,0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1013;
+    --surface: #171a1f;
+    --surface-2: #1d2126;
+    --border: #2c3138;
+    --text: #e9e6dd;
+    --text-muted: #9a9d9a;
+    --text-faint: #6b6f76;
+    --accent: #e2a552;
+    --accent-soft: #e2a55220;
+    --tier-fe: #6ec3e8;
+    --tier-fe-soft: #6ec3e81c;
+    --tier-rust: #e2895b;
+    --tier-rust-soft: #e2895b1c;
+    --tier-py: #74c398;
+    --tier-py-soft: #74c3981c;
+    --good: #74c398;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0e1013;
+  --surface: #171a1f;
+  --surface-2: #1d2126;
+  --border: #2c3138;
+  --text: #e9e6dd;
+  --text-muted: #9a9d9a;
+  --text-faint: #6b6f76;
+  --accent: #e2a552;
+  --accent-soft: #e2a55220;
+  --tier-fe: #6ec3e8;
+  --tier-fe-soft: #6ec3e81c;
+  --tier-rust: #e2895b;
+  --tier-rust-soft: #e2895b1c;
+  --tier-py: #74c398;
+  --tier-py-soft: #74c3981c;
+  --good: #74c398;
+  --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg); }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 56px 28px 90px;
+}
+
+.eyebrow {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+h1 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: clamp(1.7rem, 3.2vw, 2.3rem);
+  font-weight: 600;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.lede {
+  color: var(--text-muted);
+  max-width: 62ch;
+  font-size: 0.98rem;
+  margin: 0 0 6px;
+}
+
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+.meta-row b { color: var(--text-muted); font-weight: 600; }
+
+section { margin-top: 52px; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+.section-head h2 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+.section-head .hint { font-size: 0.8rem; color: var(--text-faint); font-family: 'IBM Plex Mono', monospace; }
+
+/* Architecture diagram */
+.arch {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.arch-tier {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+}
+.arch-tier + .arch-tier { border-top: 1px solid var(--border); }
+.arch-tier .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.arch-tier .label { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 0.95rem; min-width: 160px; }
+.arch-tier .desc { color: var(--text-muted); font-size: 0.86rem; }
+.arch-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 20px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+}
+
+/* Tier cards */
+.tier-grid { display: flex; flex-direction: column; gap: 14px; }
+.tier-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.tier-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-left: 3px solid var(--tier-color);
+  background: var(--tier-soft);
+}
+.tier-card-head .name { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 0.92rem; color: var(--text); }
+.tier-card-head .path { font-family: 'IBM Plex Mono', monospace; font-size: 0.76rem; color: var(--text-faint); margin-left: auto; }
+.tier-card-body { padding: 4px 18px 16px; }
+
+table { width: 100%; border-collapse: collapse; }
+table td, table th { text-align: left; padding: 9px 6px; font-size: 0.87rem; vertical-align: top; }
+table th {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+table td { border-bottom: 1px solid var(--border); }
+table tr:last-child td { border-bottom: none; }
+td.pkg { font-family: 'IBM Plex Mono', monospace; font-weight: 500; color: var(--text); white-space: nowrap; }
+td.ver { font-family: 'IBM Plex Mono', monospace; color: var(--tier-color); white-space: nowrap; }
+td.note { color: var(--text-muted); }
+
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px 16px; }
+.tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.74rem;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.callout {
+  margin: 0 18px 16px;
+  padding: 10px 13px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.83rem;
+  color: var(--text-muted);
+}
+.callout b { color: var(--text); }
+
+/* Tree */
+pre.tree {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8rem;
+  line-height: 1.65;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  box-shadow: var(--shadow);
+  color: var(--text-muted);
+}
+pre.tree .dir { color: var(--accent); font-weight: 600; }
+pre.tree .comment { color: var(--text-faint); }
+
+/* Stat strip */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.stat {
+  background: var(--surface);
+  padding: 16px 18px;
+}
+.stat .num {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--good);
+}
+.stat .lbl {
+  font-size: 0.76rem;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+footer {
+  margin-top: 60px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+
+@media (max-width: 640px) {
+  .arch-tier { flex-wrap: wrap; }
+  .arch-tier .label { min-width: unset; }
+  table { display: block; overflow-x: auto; }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <p class="eyebrow">Technical Stack — Reference Sheet</p>
+  <h1>Wizard (Soothsayer‑Wizard)</h1>
+  <p class="lede">Desktop app for CSV sensor-data import, dashboard exploration (table / line / scatter / pair-plot), Failure Group tagging, and Predictive Model training (Individual, Clustering, Relationship).</p>
+  <div class="meta-row">
+    <span><b>Package version</b> 0.2.1</span>
+    <span><b>Shell</b> Tauri v2</span>
+    <span><b>Architecture</b> 3-tier: React ↔ Rust core ↔ Python sidecar</span>
+    <span><b>Tests</b> 798 passing / 49 files</span>
+  </div>
+
+  <section>
+    <div class="section-head"><h2>Architecture</h2><span class="hint">how the three tiers talk</span></div>
+    <div class="arch">
+      <div class="arch-tier">
+        <span class="dot" style="background:var(--tier-fe)"></span>
+        <span class="label" style="color:var(--tier-fe)">React frontend</span>
+        <span class="desc">UI, charts, workspace state — no React Router, view switching is local state via a <code>?window=</code> query param per Tauri window</span>
+      </div>
+      <div class="arch-connector">Tauri IPC (invoke / commands) — 20 registered commands</div>
+      <div class="arch-tier">
+        <span class="dot" style="background:var(--tier-rust)"></span>
+        <span class="label" style="color:var(--tier-rust)">Rust core</span>
+        <span class="desc">CSV parsing, in-RAM columnar store, chart query pipeline, clustering, formula engine, window management</span>
+      </div>
+      <div class="arch-connector">stdin / stdout, JSON only — spawned as a Tauri externalBin sidecar</div>
+      <div class="arch-tier">
+        <span class="dot" style="background:var(--tier-py)"></span>
+        <span class="label" style="color:var(--tier-py)">Python sidecar</span>
+        <span class="desc">Relationship-model fitting only — compiled to a native binary, never shipped as raw <code>.py</code></span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Frontend</h2><span class="hint"><code>src/</code> — package.json</span></div>
+    <div class="tier-grid">
+      <div class="tier-card" style="--tier-color: var(--tier-fe); --tier-soft: var(--tier-fe-soft)">
+        <div class="tier-card-head"><span class="name">react-app</span><span class="path">src/</span></div>
+        <div class="tier-card-body">
+          <table>
+            <tr><th>Category</th><th>Library</th><th>Version</th><th>Role</th></tr>
+            <tr><td class="note">Framework</td><td class="pkg">react / react-dom</td><td class="ver">19.1</td><td class="note">strict TypeScript 5.8, no router</td></tr>
+            <tr><td class="note">Build</td><td class="pkg">vite</td><td class="ver">5.x</td><td class="note">dev port 1420</td></tr>
+            <tr><td class="note">Styling</td><td class="pkg">tailwindcss</td><td class="ver">4.1 (postcss)</td><td class="note">utility classes</td></tr>
+            <tr><td class="note">Line charts</td><td class="pkg">echarts / echarts-for-react</td><td class="ver">6.x / 3.0</td><td class="note">dashboard time series</td></tr>
+            <tr><td class="note">Scatter / pair-plot</td><td class="pkg">regl-scatterplot</td><td class="ver">1.16</td><td class="note">WebGL, has context-loss guard</td></tr>
+            <tr><td class="note">Layout</td><td class="pkg">split.js</td><td class="ver">1.6</td><td class="note">resizable panes</td></tr>
+            <tr><td class="note">Icons</td><td class="pkg">lucide-react</td><td class="ver">0.555</td><td class="note">—</td></tr>
+            <tr><td class="note">PNG export</td><td class="pkg">html-to-image</td><td class="ver">1.11</td><td class="note">+ ECharts canvas compositing</td></tr>
+            <tr><td class="note">Formula UI</td><td class="pkg">d3-scale</td><td class="ver">4.0</td><td class="note">shared with Rust formula engine</td></tr>
+            <tr><td class="note">Tauri bridge</td><td class="pkg">@tauri-apps/api + plugin-{dialog,fs,store}</td><td class="ver">^2</td><td class="note">native dialogs, scoped FS, persisted settings</td></tr>
+            <tr><td class="note">Testing</td><td class="pkg">vitest + jsdom + @testing-library/react</td><td class="ver">4.1 / 29 / 16.3</td><td class="note"><code>src/__tests__/</code></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Rust core</h2><span class="hint"><code>src-tauri/src/</code> — Cargo.toml, Tauri v2</span></div>
+    <div class="tier-grid">
+      <div class="tier-card" style="--tier-color: var(--tier-rust); --tier-soft: var(--tier-rust-soft)">
+        <div class="tier-card-head"><span class="name">tauri_app_lib</span><span class="path">src-tauri/</span></div>
+        <div class="tier-card-body">
+          <table>
+            <tr><th>Crate</th><th>Version</th><th>Used for</th></tr>
+            <tr><td class="pkg">tauri</td><td class="ver">2</td><td class="note">app shell, window management</td></tr>
+            <tr><td class="pkg">csv + rayon</td><td class="ver">1.3 / 1.10</td><td class="note">parallel CSV parsing</td></tr>
+            <tr><td class="pkg">chrono</td><td class="ver">0.4</td><td class="note">timestamp parsing</td></tr>
+            <tr><td class="pkg">nalgebra</td><td class="ver">0.33</td><td class="note">GMM ellipse fit (clustering)</td></tr>
+            <tr><td class="pkg">fasteval</td><td class="ver">0.2</td><td class="note">formula engine (calculated sensors)</td></tr>
+            <tr><td class="pkg">tauri-plugin-{dialog,fs,store,shell,opener}</td><td class="ver">2.x</td><td class="note">native dialogs, scoped FS, settings, sidecar spawn</td></tr>
+            <tr><td class="pkg">serde / serde_json</td><td class="ver">1</td><td class="note">IPC (de)serialization</td></tr>
+          </table>
+        </div>
+        <div class="tag-row">
+          <span class="tag">20 #[tauri::command]s</span>
+          <span class="tag">dev opt-level 1 (own crate)</span>
+          <span class="tag">dev opt-level 2 (deps)</span>
+        </div>
+        <div class="callout"><b>Why the dev opt-level split:</b> <code>chart_query.rs</code>'s filter → transform → aggregate → downsample pipeline needs to stay interactive on multi-million-row CSVs even in unoptimized <code>tauri dev</code> builds — opt-level 0 would run it 10–50× slower.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Python sidecar</h2><span class="hint"><code>src-tauri/python/backend.py</code></span></div>
+    <div class="tier-grid">
+      <div class="tier-card" style="--tier-color: var(--tier-py); --tier-soft: var(--tier-py-soft)">
+        <div class="tier-card-head"><span class="name">backend (relationship model)</span><span class="path">python/</span></div>
+        <div class="tier-card-body">
+          <table>
+            <tr><th>Library</th><th>Role</th></tr>
+            <tr><td class="pkg">numpy / scipy</td><td class="note">numerical fitting</td></tr>
+            <tr><td class="pkg">pygam</td><td class="note">GAM regression between sensors</td></tr>
+            <tr><td class="pkg">nuitka (build-time)</td><td class="note">compiles to a single native binary, <code>--onefile</code></td></tr>
+          </table>
+        </div>
+        <div class="tag-row">
+          <span class="tag">stdin/stdout JSON protocol</span>
+          <span class="tag">Relationship models only</span>
+          <span class="tag">shipped as compiled binary, not .py</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Project layout</h2><span class="hint">abbreviated</span></div>
+    <pre class="tree"><span class="dir">Soothsayer-wizard-app/</span>
+├─ <span class="dir">src/</span>                     <span class="comment"># React frontend</span>
+│  ├─ main.tsx               <span class="comment"># picks root component from ?window= param</span>
+│  ├─ App.tsx                <span class="comment"># main window entry</span>
+│  ├─ <span class="dir">components/</span>
+│  │  ├─ <span class="dir">upload/</span>              DataUploadPage (3-step wizard)
+│  │  ├─ <span class="dir">dashboard/</span>            Dashboard, DataTable, FilterPanel, FailureGroupsPanel, HighlightsPanel
+│  │  ├─ <span class="dir">charts/</span>               LineChart, ScatterChart, PairPlotCell/Chart
+│  │  └─ <span class="dir">windows/</span>              AddSensor, BuildModel, SaveAs, SensorExplorer, SensorTooling
+│  ├─ <span class="dir">hooks/</span>                  useDataUpload, useChartData, useCalculationEngine, useFormulaEditor, ...
+│  ├─ types/commands.ts      <span class="comment"># source of truth for every Tauri command signature</span>
+│  ├─ workspaceManager.ts    <span class="comment"># save/load/list/delete/duplicate/rename workspace</span>
+│  └─ <span class="dir">__tests__/</span>              49 files, 798 tests (vitest)
+│
+├─ <span class="dir">src-tauri/</span>
+│  ├─ <span class="dir">src/</span>
+│  │  ├─ lib.rs               <span class="comment"># invoke_handler, 20 commands, window mgmt</span>
+│  │  ├─ csv_processor.rs     <span class="comment"># CSV → in-RAM columnar store</span>
+│  │  ├─ chart_query.rs       <span class="comment"># filter → transform → aggregate → downsample</span>
+│  │  ├─ clustering.rs        <span class="comment"># GMM ellipse fit</span>
+│  │  ├─ operation_registry.rs <span class="comment"># calculated-sensor operation catalog</span>
+│  │  └─ metrics.rs           <span class="comment"># per-sensor statistics</span>
+│  ├─ python/backend.py       <span class="comment"># LinearGAM sidecar source</span>
+│  ├─ capabilities/{default,add-sensor}.json
+│  └─ tauri.conf.json         <span class="comment"># CSP, window config, externalBin, bundle targets</span>
+│
+├─ <span class="dir">docs/</span>                     requirements, task breakdown, PROJECT_HANDOVER.md
+└─ .github/workflows/release.yml <span class="comment"># CI: build sidecar + Tauri bundle, publish release</span></pre>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Verified state</h2><span class="hint">last full local check</span></div>
+    <div class="stat-strip">
+      <div class="stat"><div class="num">798</div><div class="lbl">tests passing</div></div>
+      <div class="stat"><div class="num">49</div><div class="lbl">test files</div></div>
+      <div class="stat"><div class="num">20</div><div class="lbl">Tauri commands</div></div>
+      <div class="stat"><div class="num">0.2.1</div><div class="lbl">app version</div></div>
+    </div>
+  </section>
+
+  <footer>
+    Sourced directly from package.json, src-tauri/Cargo.toml, and src-tauri/src/lib.rs on 2026-08-20. Not hand-maintained — regenerate rather than hand-edit if the stack changes.
+  </footer>
+</div>
+
+</body>
+</html>
