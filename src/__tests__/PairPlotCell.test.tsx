@@ -108,6 +108,10 @@ describe('PairPlotCell', () => {
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
         expect(opts.backgroundColor).toEqual([1.0, 1.0, 1.0, 1.0]);
         expect(opts.pointColor).toEqual(baseProps.pointColor);
+        // Regression: regl-scatterplot auto-picks a black/white point outline
+        // from canvas brightness, which dominated a dense cell as a solid
+        // black mass on light theme's white canvas.
+        expect(opts.pointOutlineWidth).toBe(0);
     });
 
     it('debounces resize-driven WebGL recreation (regression: a split-pane drag used to destroy+recreate every matrix cell\'s context on every single ResizeObserver tick)', () => {

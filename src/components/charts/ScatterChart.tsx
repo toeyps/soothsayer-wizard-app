@@ -345,6 +345,16 @@ function ScatterChart({
                 pointColorHover: POINT_COLOR_HOVER,
                 opacity: 0.6,
                 backgroundColor: CANVAS_BG[themeMode],
+                // regl-scatterplot auto-picks a black or white 2px outline
+                // per point based on canvas background brightness (black on
+                // light theme's white canvas). With thousands of overlapping
+                // points that outline dominates the density blend, reading
+                // as a solid black mass instead of the intended alpha-blended
+                // blue (the report that prompted this — dark theme's white
+                // outline was subtle enough to go unnoticed, light theme's
+                // black one wasn't). No outline at all keeps every theme
+                // showing plain alpha-blended density.
+                pointOutlineWidth: 0,
             });
         } catch (err) {
             reportError('scatter-init', err);
@@ -463,6 +473,9 @@ function ScatterChart({
                 // nothing to the page except the highlighted points
                 // themselves, painted underneath the main canvas.
                 backgroundColor: [0, 0, 0, 0],
+                // Same reasoning as the main instance's pointOutlineWidth — no
+                // auto black/white ring fighting the highlight colour itself.
+                pointOutlineWidth: 0,
             });
         } catch (err) {
             // Decorative layer only — if a second WebGL context genuinely
