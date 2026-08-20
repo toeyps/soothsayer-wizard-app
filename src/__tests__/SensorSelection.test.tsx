@@ -165,6 +165,14 @@ describe('SensorSelection', () => {
             rerender(<SensorSelection {...makeProps({ selectedSensors: ['TAG1', 'TAG2'] })} />);
             expect(screen.getByText('2 sensors selected')).toBeTruthy();
         });
+
+        it('the selected-count badge uses theme-aware colors, not a hardcoded dark navy (regression: it stayed dark-navy in light theme, clashing with the rest of the panel)', () => {
+            render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
+            const badge = screen.getByText('1 sensor selected').closest('div') as HTMLElement;
+            expect(badge.style.background).toBe('var(--accent-muted)');
+            expect(badge.style.border).toContain('var(--accent-color)');
+            expect(badge.style.background).not.toMatch(/#[0-9a-f]{3,6}/i);
+        });
     });
 
     describe('alarm setpoints', () => {

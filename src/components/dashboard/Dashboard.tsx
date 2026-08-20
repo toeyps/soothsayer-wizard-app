@@ -1548,12 +1548,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     background: 'var(--input-bg)', border: '1px solid var(--border)',
                                     borderRadius: '4px', color: 'var(--text-primary)',
                                     fontSize: '0.75rem', outline: 'none',
-                                    // Native spin-button arrows otherwise render in the
-                                    // browser's light-mode chrome (white), clashing with
-                                    // the app's dark theme — this makes Chromium/WebView2
-                                    // draw all native form-control chrome for this input
-                                    // (just the spinner here) in its dark variant.
-                                    colorScheme: 'dark',
                                 }}
                             />
                             <button
@@ -1849,7 +1843,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                             width: '64px', padding: '2px 4px',
                                                             background: 'var(--input-bg)', border: '1px solid var(--border)',
                                                             borderRadius: '4px', color: 'var(--text-primary)',
-                                                            fontSize: '0.75rem', outline: 'none', colorScheme: 'dark',
+                                                            fontSize: '0.75rem', outline: 'none',
                                                         }}
                                                     />
                                                     <span style={{ color: 'var(--text-secondary)' }}>–</span>
@@ -1862,7 +1856,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                             width: '64px', padding: '2px 4px',
                                                             background: 'var(--input-bg)', border: '1px solid var(--border)',
                                                             borderRadius: '4px', color: 'var(--text-primary)',
-                                                            fontSize: '0.75rem', outline: 'none', colorScheme: 'dark',
+                                                            fontSize: '0.75rem', outline: 'none',
                                                         }}
                                                     />
                                                     <button className="text-btn" onClick={applyAxisEditor}>Apply</button>

@@ -197,7 +197,7 @@ export default function SensorSelection({
                                     <>
                                         {meta.description}
                                         {meta.unit && (
-                                            <span style={{ marginLeft: '6px', fontSize: '0.8em', color: '#94a3b8', fontWeight: 400 }}>
+                                            <span style={{ marginLeft: '6px', fontSize: '0.8em', color: 'var(--text-secondary)', fontWeight: 400 }}>
                                                 ({meta.unit})
                                             </span>
                                         )}
@@ -437,8 +437,8 @@ export default function SensorSelection({
                 {selectedSensors.length > 0 && (
                     <div style={{
                         padding: '6px 10px',
-                        background: '#1d283a',
-                        border: '1px solid #334155',
+                        background: 'var(--accent-muted)',
+                        border: '1px solid var(--accent-color)',
                         borderRadius: '6px',
                         fontSize: '0.8rem',
                     }}>
@@ -464,13 +464,13 @@ export default function SensorSelection({
                                     fontSize: '0.8rem',
                                     letterSpacing: '0.03em',
                                     textTransform: 'uppercase',
-                                    borderBottom: '1px solid #1e293b',
+                                    borderBottom: '1px solid var(--border)',
                                     userSelect: 'none',
                                 }}
                             >
                                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 <span style={{ flex: 1 }}>{component}</span>
-                                <span style={{ color: '#64748b', fontWeight: 400, textTransform: 'none' }}>
+                                <span style={{ color: 'var(--text-faint)', fontWeight: 400, textTransform: 'none' }}>
                                     {compSensors.length}
                                 </span>
                             </div>

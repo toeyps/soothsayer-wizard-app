@@ -481,7 +481,7 @@ function PairPlotCell({
                     <div style={{
                         position: 'absolute', inset: 0, display: 'flex',
                         alignItems: 'center', justifyContent: 'center',
-                        background: 'rgba(15,23,42,0.92)', color: '#fca5a5',
+                        background: 'var(--card-bg)', color: 'var(--danger)',
                         fontSize: 9, textAlign: 'center', padding: 4, zIndex: 5,
                     }}>
                         WebGL unavailable

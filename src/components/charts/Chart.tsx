@@ -11,7 +11,7 @@ interface MainChartProps extends ChartProps {
 function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines, sensorColors, sensorAxisRange, scatterX, scatterY, onScatterAxesChange, scatterAxisPins, onScatterAxisPinsChange, sensorMetadata, timeHighlights, highlightDisplay, lineTaggedPoints, onLineTaggedPointsChange }: MainChartProps) {
 
     if (!sensors || sensors.length === 0) {
-        return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select sensors to view data</div>;
+        return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select sensors to view data</div>;
     }
 
     if (chartType === 'line') {
@@ -35,7 +35,7 @@ function Chart({ data, columnar, sensors, headers, chartType = 'line', markLines
 
     if (chartType === 'pair') {
         if (sensors.length < 2) {
-            return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
+            return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
         }
         return <PairPlotChart data={data} sensors={sensors} headers={headers} sensorMetadata={sensorMetadata} />;
     }

@@ -33,14 +33,14 @@ const labelStyle: React.CSSProperties = {
 
 const addBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '0.25rem',
-    padding: '0.2rem 0.4rem', background: 'rgba(59, 130, 246, 0.1)',
-    border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '4px',
-    color: '#3b82f6', fontSize: '0.65rem', fontWeight: 500,
+    padding: '0.2rem 0.4rem', background: 'var(--accent-muted)',
+    border: '1px solid var(--accent-color)', borderRadius: '4px',
+    color: 'var(--accent-color)', fontSize: '0.65rem', fontWeight: 500,
 };
 
 const filterRowStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.4rem',
-    background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)',
+    background: 'var(--chip-bg)', border: '1px solid var(--border)',
     borderRadius: '6px',
 };
 
@@ -52,9 +52,9 @@ const sensorSelectStyle: React.CSSProperties = {
 };
 
 const opSelectStyle: React.CSSProperties = {
-    padding: '0.25rem 0.3rem', background: 'rgba(59,130,246,0.1)',
-    border: '1px solid rgba(59,130,246,0.25)', borderRadius: '4px',
-    color: '#60a5fa', fontSize: '0.65rem', fontWeight: 600,
+    padding: '0.25rem 0.3rem', background: 'var(--accent-muted)',
+    border: '1px solid var(--accent-color)', borderRadius: '4px',
+    color: 'var(--accent-color)', fontSize: '0.65rem', fontWeight: 600,
     outline: 'none', cursor: 'pointer', flexShrink: 0,
 };
 
@@ -63,9 +63,6 @@ const valInputStyle: React.CSSProperties = {
     border: '1px solid var(--border)', borderRadius: '4px',
     color: 'var(--text-primary)', fontSize: '0.7rem', outline: 'none',
     flexShrink: 0,
-    // Native spin-button arrows otherwise render in the browser's
-    // light-mode chrome (white), clashing with the app's dark theme.
-    colorScheme: 'dark',
 };
 
 const removeBtnStyle: React.CSSProperties = {

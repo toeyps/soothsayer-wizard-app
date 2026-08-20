@@ -2171,7 +2171,7 @@ export default function PredictiveModelBuild() {
                                                 alignItems: 'center',
                                                 gap: '0.25rem',
                                                 padding: '0.35rem',
-                                                background: 'rgba(255,255,255,0.02)',
+                                                background: 'var(--chip-bg)',
                                                 border: `1px solid ${sensorStillValid ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`,
                                                 borderRadius: '6px',
                                             }}>
@@ -3636,7 +3636,7 @@ export default function PredictiveModelBuild() {
                             alignItems: 'center',
                             gap: 14,
                             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
-                            border: '1px solid var(--border-color, #334155)',
+                            border: '1px solid var(--border-strong)',
                         }}
                     >
                         <Loader2 size={36} className="animate-spin" style={{ color: '#3b82f6' }} />

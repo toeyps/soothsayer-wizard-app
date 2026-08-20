@@ -294,6 +294,15 @@ describe('ScatterChart', () => {
         expect(mockReportError).toHaveBeenCalledWith('scatter-init', expect.any(Error));
     });
 
+    it('the WebGL-unavailable overlay uses theme-aware colors, not a hardcoded dark navy card (regression: the canvas goes white in light theme but this overlay stayed hardcoded dark, floating as a jarring dark island)', () => {
+        mockCreateScatterplot.mockImplementationOnce(() => { throw new Error('boom'); });
+        render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+        const overlay = screen.getByText(/WebGL unavailable/).parentElement as HTMLElement;
+        expect(overlay.style.background).toBe('var(--card-bg)');
+        expect(overlay.style.color).toBe('var(--text-primary)');
+        expect(overlay.style.background).not.toMatch(/#[0-9a-f]{3,6}|rgba\(/i);
+    });
+
     it('Retry after an init failure re-attempts instance creation', () => {
         mockCreateScatterplot.mockImplementationOnce(() => { throw new Error('boom'); });
         render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);

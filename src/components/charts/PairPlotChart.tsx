@@ -408,7 +408,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     }, [tableRows, rowToCluster, data, sensors, headers]);
 
     if (n < 2) {
-        return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
+        return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
     // Defense-in-depth: Dashboard's tab-enabling logic already keeps the
     // selection at MAX_PAIR_PLOT_SENSORS while in Pair Plot mode, but its
@@ -417,7 +417,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     // that persisted a larger selection alongside chartType: 'pair').
     if (n > MAX_PAIR_PLOT_SENSORS) {
         return (
-            <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>
+            <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>
                 Pair Plot supports at most {MAX_PAIR_PLOT_SENSORS} sensors at once — {n} selected
             </div>
         );

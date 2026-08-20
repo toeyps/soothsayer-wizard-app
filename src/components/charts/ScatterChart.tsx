@@ -719,7 +719,7 @@ function ScatterChart({
     }, [sc, scatterTags, data, scatterX, scatterY, headers, visibleBounds]);
 
     if (sensors.length < 2) {
-        return <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
+        return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
 
     const yTicks = makeTicks(visibleBounds.yMin, visibleBounds.yMax);
@@ -912,7 +912,7 @@ function ScatterChart({
                     <div style={{
                         position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
                         alignItems: 'center', justifyContent: 'center', gap: 10,
-                        background: 'rgba(15,23,42,0.95)', color: '#e2e8f0', textAlign: 'center',
+                        background: 'var(--card-bg)', color: 'var(--text-primary)', textAlign: 'center',
                         padding: 16, zIndex: 5,
                     }}>
                         <span style={{ fontSize: 13, maxWidth: 340, lineHeight: 1.5 }}>
@@ -920,7 +920,7 @@ function ScatterChart({
                         </span>
                         <code style={{
                             fontSize: 11, maxWidth: 340, maxHeight: 80, overflow: 'auto',
-                            color: '#fca5a5', background: '#0f172a', padding: '6px 10px',
+                            color: 'var(--danger)', background: 'var(--input-bg)', padding: '6px 10px',
                             borderRadius: 6, wordBreak: 'break-word',
                         }}>
                             {initError}
@@ -929,7 +929,7 @@ function ScatterChart({
                             onClick={() => { setInitError(null); setRebuildNonce(n => n + 1); }}
                             style={{
                                 padding: '4px 14px', fontSize: 12, cursor: 'pointer', borderRadius: 6,
-                                border: '1px solid #475569', background: '#1e293b', color: '#e2e8f0',
+                                border: '1px solid var(--border-strong)', background: 'var(--input-bg)', color: 'var(--text-primary)',
                             }}
                         >
                             Retry
@@ -940,7 +940,7 @@ function ScatterChart({
                     <div style={{
                         position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
                         alignItems: 'center', justifyContent: 'center', gap: 10,
-                        background: 'rgba(15,23,42,0.88)', color: '#e2e8f0', textAlign: 'center',
+                        background: 'var(--card-bg)', color: 'var(--text-primary)', textAlign: 'center',
                         padding: 16, zIndex: 5,
                     }}>
                         <span style={{ fontSize: 13, maxWidth: 300, lineHeight: 1.5 }}>
@@ -950,7 +950,7 @@ function ScatterChart({
                             onClick={() => { setContextLost(false); setRebuildNonce(n => n + 1); }}
                             style={{
                                 padding: '4px 14px', fontSize: 12, cursor: 'pointer', borderRadius: 6,
-                                border: '1px solid #475569', background: '#1e293b', color: '#e2e8f0',
+                                border: '1px solid var(--border-strong)', background: 'var(--input-bg)', color: 'var(--text-primary)',
                             }}
                         >
                             Retry

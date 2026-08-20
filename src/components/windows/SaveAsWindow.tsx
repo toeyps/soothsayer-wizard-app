@@ -76,7 +76,7 @@ export default function SaveAsWindow() {
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 borderBottom: '1px solid var(--border)',
-                background: 'rgba(255,255,255,0.02)',
+                background: 'var(--chip-bg)',
                 cursor: 'move'
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -132,7 +132,7 @@ export default function SaveAsWindow() {
                 display: 'flex',
                 justifyContent: 'flex-end',
                 gap: '1rem',
-                background: 'rgba(255,255,255,0.02)',
+                background: 'var(--chip-bg)',
                 borderTop: '1px solid var(--border)'
             }}>
                 <button 

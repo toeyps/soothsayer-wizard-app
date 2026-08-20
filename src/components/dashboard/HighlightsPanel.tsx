@@ -107,7 +107,7 @@ export default function HighlightsPanel({
 
             {!highlightApplies && (
                 <div style={compatBannerStyle}>
-                    <AlertCircle size={14} style={{ flexShrink: 0, color: 'var(--warning, #f0b429)' }} />
+                    <AlertCircle size={14} style={{ flexShrink: 0, color: 'var(--warn)' }} />
                     <span style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
                         Not shown on <b style={{ color: 'var(--text-primary)' }}>Pair Plot</b> — it keeps its own lasso-cluster gesture instead.
                     </span>
@@ -235,7 +235,7 @@ const numInputStyle: CSSProperties = {
 const dtInputStyle: CSSProperties = {
     padding: '4px 6px', fontSize: '0.72rem', flex: 1, minWidth: '150px',
     background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '5px', color: 'var(--text-primary)', colorScheme: 'dark',
+    borderRadius: '5px', color: 'var(--text-primary)',
 };
 const chipRowStyle: CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px',
@@ -270,7 +270,7 @@ const scopeNoteStyle: CSSProperties = {
 };
 const compatBannerStyle: CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 9px', marginBottom: '8px',
-    background: 'var(--warning-bg, rgba(240, 180, 41, 0.12))', border: '1px solid var(--warning, #f0b429)',
+    background: 'var(--warn-muted)', border: '1px solid var(--warn)',
     borderRadius: '6px',
 };
 /** Neutralises the browser's default <fieldset> chrome (border, padding,
