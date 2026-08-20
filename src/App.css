@@ -552,9 +552,9 @@ body {
 
 .reset-range-btn {
     padding: 0.35rem 0.75rem;
-    background: #334155;
-    color: white;
-    border: none;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.75rem;
@@ -563,7 +563,7 @@ body {
 }
 
 .reset-range-btn:hover {
-    background: #475569;
+    background: var(--hover-bg);
 }
 
 .widget-content {
@@ -8215,17 +8215,17 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(30, 41, 59, 0.85);
+    background: var(--card-bg);
     padding: 5px 8px;
     border-radius: 4px;
     font-size: 11px;
-    border: 1px solid rgba(71, 85, 105, 0.5);
+    border: 1px solid var(--border-strong);
 }
 
 .scatter-regl-select {
-    background: #1e293b;
-    color: white;
-    border: 1px solid transparent;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
     font-size: 11px;
     padding: 2px 6px;
     border-radius: 3px;
@@ -8233,17 +8233,17 @@ body {
 }
 
 .scatter-regl-select:hover {
-    border-color: #6366f1;
+    border-color: var(--accent-color);
 }
 
 .scatter-regl-vs {
-    color: #94a3b8;
+    color: var(--text-secondary);
     margin: 0 2px;
     font-size: 11px;
 }
 
 .scatter-regl-hint {
-    color: #64748b;
+    color: var(--text-faint);
     font-style: italic;
     margin-left: 10px;
     font-size: 10px;
@@ -8258,11 +8258,10 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    background: rgba(30, 41, 59, 0.92);
-    border: 1px solid rgba(71, 85, 105, 0.6);
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     padding: 3px;
-    backdrop-filter: blur(4px);
 }
 
 .scatter-regl-tool {
@@ -8275,21 +8274,21 @@ body {
     border: 1px solid transparent;
     border-radius: 3px;
     background: transparent;
-    color: #94a3b8;
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.12s ease;
 }
 
 .scatter-regl-tool:hover:not(:disabled) {
-    border-color: rgba(165, 180, 252, 0.4);
-    background: rgba(99, 102, 241, 0.18);
-    color: #e0e7ff;
+    border-color: var(--accent-color);
+    background: var(--accent-muted);
+    color: var(--accent-color);
 }
 
 .scatter-regl-tool.active {
-    border-color: #6366f1;
-    background: rgba(99, 102, 241, 0.3);
-    color: #e0e7ff;
+    border-color: var(--accent-color);
+    background: var(--accent-muted);
+    color: var(--accent-color);
 }
 
 .scatter-regl-tool:disabled {
@@ -8383,7 +8382,7 @@ body {
 }
 
 .scatter-regl-tooltip-label {
-    color: #94a3b8;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -8393,15 +8392,15 @@ body {
 .scatter-regl-tooltip-value {
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: #fafafa;
+    color: var(--text-primary);
 }
 
 .scatter-regl-tooltip-ts {
-    color: #94a3b8;
+    color: var(--text-secondary);
     font-size: 10px;
     margin-top: 4px;
     padding-top: 3px;
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    border-top: 1px solid var(--border);
 }
 
 /* =============================================
@@ -8416,11 +8415,10 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    background: rgba(30, 41, 59, 0.92);
-    border: 1px solid rgba(71, 85, 105, 0.6);
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     padding: 3px;
-    backdrop-filter: blur(4px);
 }
 
 .line-chart-tool {
@@ -8433,21 +8431,21 @@ body {
     border: 1px solid transparent;
     border-radius: 3px;
     background: transparent;
-    color: #94a3b8;
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.12s ease;
 }
 
 .line-chart-tool:hover:not(:disabled) {
-    border-color: rgba(165, 180, 252, 0.4);
-    background: rgba(99, 102, 241, 0.18);
-    color: #e0e7ff;
+    border-color: var(--accent-color);
+    background: var(--accent-muted);
+    color: var(--accent-color);
 }
 
 .line-chart-tool.active {
-    border-color: #6366f1;
-    background: rgba(99, 102, 241, 0.3);
-    color: #e0e7ff;
+    border-color: var(--accent-color);
+    background: var(--accent-muted);
+    color: var(--accent-color);
 }
 
 /* Tag Point — Scatter chart's ring/badge/callout overlay (DOM, not
@@ -8484,14 +8482,14 @@ body {
 .scatter-tag-callout {
     position: absolute;
     transform: translate(-50%, calc(-100% - 12px));
-    background: rgba(15, 23, 42, 0.96);
-    border: 1px solid rgba(165, 180, 252, 0.4);
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     padding: 5px 8px;
     font-size: 10px;
     line-height: 1.5;
     white-space: nowrap;
-    color: #f1f5f9;
+    color: var(--text-primary);
     font-family: Inter, system-ui, sans-serif;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     pointer-events: none;
@@ -8499,7 +8497,7 @@ body {
 }
 
 .scatter-tag-callout .scatter-tag-callout-ts {
-    color: #94a3b8;
+    color: var(--text-secondary);
     font-family: 'JetBrains Mono', monospace;
 }
 
@@ -8522,11 +8520,10 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    background: rgba(30, 41, 59, 0.92);
-    border: 1px solid rgba(71, 85, 105, 0.6);
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     padding: 3px;
-    backdrop-filter: blur(4px);
 }
 
 .pair-regl-grid {
@@ -8574,18 +8571,17 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
-    background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(15, 23, 42, 0.85));
-    border: 1px solid rgba(165, 180, 252, 0.4);
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     padding: 6px 12px;
     font-size: 11px;
-    color: #f1f5f9;
+    color: var(--text-primary);
     z-index: 12;
-    backdrop-filter: blur(4px);
 }
 
 .pair-regl-panel b {
-    color: #fafafa;
+    color: var(--text-primary);
     font-weight: 600;
 }
 
@@ -8926,13 +8922,13 @@ body {
     inset: 0;
     z-index: 50;
     cursor: zoom-in;
-    background: rgba(165, 180, 252, 0.05);
+    background: transparent;
     transition: background 0.12s ease, box-shadow 0.12s ease;
 }
 
 .pair-regl-inspect-overlay:hover {
-    background: rgba(165, 180, 252, 0.18);
-    box-shadow: inset 0 0 0 2px #818cf8;
+    background: var(--accent-muted);
+    box-shadow: inset 0 0 0 2px var(--accent-color);
 }
 
 /* Axis label hover tooltip (sensor description) — zero footprint at rest,
