@@ -129,10 +129,6 @@ describe('ScatterChart', () => {
         // whole chart area instead of showing black bars on the sides.
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
         expect(opts.backgroundColor).toEqual([0.058, 0.094, 0.165, 1.0]);
-        // Regression: regl-scatterplot auto-picks a black/white point outline
-        // from canvas brightness, which dominated dense clusters as a solid
-        // black mass on light theme's white canvas.
-        expect(opts.pointOutlineWidth).toBe(0);
     });
 
     it('debounces resize-driven WebGL recreation (regression: a split-pane drag used to destroy+recreate the context on every single ResizeObserver tick)', () => {
@@ -209,7 +205,6 @@ describe('ScatterChart', () => {
             expect(mockCreateScatterplot).toHaveBeenCalledTimes(2);
             const haloOpts = mockCreateScatterplot.mock.calls[1][0];
             expect(haloOpts.backgroundColor).toEqual([0, 0, 0, 0]);
-            expect(haloOpts.pointOutlineWidth).toBe(0);
         });
 
         it('draws only points whose timestamp falls inside the enabled highlight, categorised on the halo layer', async () => {

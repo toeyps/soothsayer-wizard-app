@@ -230,11 +230,6 @@ function PairPlotCell({
                 opacity: 0.55,
                 backgroundColor: CANVAS_BG[themeMode],
                 lassoColor: [0.65, 0.73, 0.97, 0.8],
-                // Same fix as ScatterChart.tsx — regl-scatterplot auto-picks a
-                // black/white 2px point outline from canvas brightness, which
-                // dominates a dense pairplot cell's alpha-blended fill as a
-                // black mass on light theme's white canvas.
-                pointOutlineWidth: 0,
             });
         } catch (err) {
             reportError('pairplot-init', err);
