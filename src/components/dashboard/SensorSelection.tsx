@@ -154,9 +154,13 @@ export default function SensorSelection({
 
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
+        // Includes group 0 ("Not in Group") — a sensor can be toggled into it
+        // exactly like any real group (creates/removes the same individual
+        // model, just with groupNo: 0), so it shows as a chip here too.
         const memberGroups = fgGroups.filter(g =>
-            g.no !== 0 && fgModels.some(m => m.kind === 'individual' && m.groupNo === g.no && (m.targetSensor ?? '').toLowerCase() === sensor.toLowerCase())
+            fgModels.some(m => m.kind === 'individual' && m.groupNo === g.no && (m.targetSensor ?? '').toLowerCase() === sensor.toLowerCase())
         );
+        const isInNotInGroup = memberGroups.some(g => g.no === 0);
         const menuOpen = groupMenuFor === sensor;
         // The bell only appears at all when the sensor has at least one
         // setpoint value — independent of whether it's currently checked
@@ -382,6 +386,37 @@ export default function SensorSelection({
                                 No failure groups yet
                             </div>
                         )}
+
+                        {/* "Not in Group" (FG-0) — same toggle mechanic as a real
+                            group (creates/removes an individual model), but no
+                            rename/delete since it's a permanent, non-editable
+                            bucket for a sensor that doesn't belong to a failure
+                            mode yet still needs a model built for it. */}
+                        <div
+                            className="fg-group-color-slate"
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '8px' }}
+                        >
+                            <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
+                            <span style={{ flex: 1, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Not in Group</span>
+                            {isInNotInGroup ? (
+                                <button
+                                    onClick={() => onToggleSensorGroup(sensor, 0)}
+                                    title="Remove from Not in Group"
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
+                                >
+                                    <X size={13} />
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={() => onToggleSensorGroup(sensor, 0)}
+                                    title="Add to Not in Group"
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
+                                >
+                                    <Plus size={14} />
+                                </button>
+                            )}
+                        </div>
+
                         <div style={{ marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '6px' }}>
                             <div style={{ display: 'flex', gap: '4px' }}>
                                 <input

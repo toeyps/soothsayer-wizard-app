@@ -277,6 +277,50 @@ describe('SensorSelection', () => {
             expect(screen.getByText('No failure groups yet')).toBeTruthy();
         });
 
+        describe('"Not in Group" (FG-0) entry', () => {
+            it('is always offered in the menu, even with zero real groups', () => {
+                render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }] })} />);
+                expandPump();
+                fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
+                expect(screen.getByText('Not in Group')).toBeTruthy();
+            });
+
+            it('clicking "Add to Not in Group" toggles the sensor into group 0', () => {
+                const onToggleSensorGroup = vi.fn();
+                render(<SensorSelection {...makeProps({ onToggleSensorGroup })} />);
+                expandPump();
+                fireEvent.click(screen.getAllByTitle('Add to failure group')[1]); // TAG2, not a member of anything
+                fireEvent.click(screen.getByTitle('Add to Not in Group'));
+                expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG2', 0);
+            });
+
+            it('once a member, shows a remove control instead, and no rename/delete', () => {
+                const onToggleSensorGroup = vi.fn();
+                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNo: 0 }];
+                render(<SensorSelection {...makeProps({ fgModels: models, onToggleSensorGroup })} />);
+                expandPump();
+                fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1, already in group 0
+                expect(screen.queryByTitle('Add to Not in Group')).toBeNull();
+                expect(screen.queryByTitle('Rename Not in Group')).toBeNull();
+                expect(screen.queryByTitle('Delete Not in Group')).toBeNull();
+                // Two "Remove from Not in Group" controls exist at once here —
+                // the chip's own X (always visible) and the menu's toggle
+                // (visible because the menu happens to be open in this test).
+                const removeButtons = screen.getAllByTitle('Remove from Not in Group');
+                expect(removeButtons.length).toBeGreaterThan(0);
+                fireEvent.click(removeButtons[removeButtons.length - 1]);
+                expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG1', 0);
+            });
+
+            it('renders a "Not in Group" chip alongside real-group chips once a sensor is a member', () => {
+                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNo: 0 }];
+                render(<SensorSelection {...makeProps({ fgModels: models })} />);
+                expandPump();
+                expect(screen.getByText('Group A')).toBeTruthy();
+                expect(screen.getByText('Not in Group')).toBeTruthy();
+            });
+        });
+
         it('creating a new group: Create is disabled until typed, then calls onCreateGroupForSensor', () => {
             const onCreateGroupForSensor = vi.fn();
             render(<SensorSelection {...makeProps({ onCreateGroupForSensor })} />);
