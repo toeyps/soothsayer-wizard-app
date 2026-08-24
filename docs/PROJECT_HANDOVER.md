@@ -6,7 +6,7 @@
 >
 > 📌 **เอกสารนี้อัปเดตอัตโนมัติทุกครั้งที่ทำงานเสร็จ 1 อย่าง** (ผู้ใช้ทำงานสลับ 2 เครื่อง และ Claude Code ไม่มี session history sync ข้ามเครื่อง — เอกสารนี้คือตัวแทนความต่อเนื่องแทน chat history) — **กฎ push (ตั้งแต่ 2026-08-18): commit local ทันทีที่งานเสร็จเหมือนเดิม (unasked) แต่ `git push personal` ต้องรอผู้ใช้ยืนยันว่าทดสอบแอปจริง (`npm run tauri dev`) ผ่านแล้วก่อนเสมอ** (เหตุผล: บั๊ก Tauri capability config ที่ผ่าน `tsc`/`vitest` หมดแต่จอดำจริงในแอป) — **push ไปที่ `personal` remote เท่านั้นเสมอ ห้าม push เข้า `origin` (Alpha-Com-Thailand) โดยเด็ดขาดแม้จะมีสิทธิ์ก็ตาม เป็นการตัดสินใจของผู้ใช้** — ดู §7
 >
-> ✅ **2026-08-20: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน commit `f630fc2` ถูก push ไปที่ `personal` (toeyps/soothsayer-wizard-app) สำเร็จ เป็น fast-forward สะอาด (`c6c1b81` → `f630fc2`) รวมงานสะสมทั้งหมดตั้งแต่ 2026-08-18 (Build Model redesign, สีกราฟ/theme sweep ทั้งหมด, ลบ light theme) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `f630fc2`**
+> ✅ **2026-08-24: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน commit `7c6dc6a` ถูก push ไปที่ `personal` (toeyps/soothsayer-wizard-app) สำเร็จ เป็น fast-forward สะอาด (`f630fc2` → `7c6dc6a`) รวมงานสะสมทั้งหมดตั้งแต่ 2026-08-21 (Not in Group ครบ 3 จุด, ยุบ Predictive Model เป็น in-window page ของ Build Model, ล็อก plot mode ตาม model kind, สี Model kind picker, ปิด Build Model window อัตโนมัติตอนสลับ workspace) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `7c6dc6a`**
 
 ---
 
