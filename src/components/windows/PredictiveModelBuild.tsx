@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CsvRecord, SensorMetadata, FailureModel, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
+import { CsvRecord, SensorMetadata, FailureModel, ModelKind, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -27,6 +27,12 @@ const TARGET_CHART_MAX_POINTS = 4000;
 // Stable empty array for LineChart's unused row-based `data` prop (the
 // chart consumes the bounded `columnar` feed instead).
 const EMPTY_RECORDS: CsvRecord[] = [];
+
+const KIND_LABEL: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relationship',
+    clustering: 'Clustering',
+};
 
 interface SensorStats {
     mean: number;
@@ -149,6 +155,11 @@ interface PredictiveModelBuildProps {
      *  rather than a single global slot, so training one model can never
      *  discard another's config (see FailureModel's own doc comment). */
     modelId: string;
+    /** The model's kind, as chosen on the Build Model overview page's own
+     *  "Model kind" selector (Individual/Relationship/Clustering) — this
+     *  page must not ask for it again. Locks which of the three plot panels
+     *  below is active; the other two render disabled. */
+    kind: ModelKind;
     sensorHeaders: string[];
     sensorMetadata: SensorMetadata[] | null;
     /** Returns to BuildModelWindow's overview page. This page is a child of
@@ -158,7 +169,7 @@ interface PredictiveModelBuildProps {
     onBack: () => void;
 }
 
-export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeaders, sensorMetadata, onBack }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, onBack }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
@@ -172,12 +183,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeade
     const [predictorSensors, setPredictorSensors] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // Plot mode — Individual is an independent toggle; Relationship/Clustering are mutually exclusive
+    // Plot mode — locked to the model's own `kind` prop (set by the
+    // hydration effect below), not independently user-toggleable anymore.
+    // Kept as state (rather than derived inline) because the Apply/Save
+    // logic and chart JSX throughout this file already key off these two
+    // values, and both still get persisted like any other PM config field.
     const [individualChecked, setIndividualChecked] = useState(true);
     const [rcMode, setRcMode] = useState<'relationship' | 'clustering' | null>(null);
-
-    const toggleIndividual = () => setIndividualChecked(v => !v);
-    const toggleRc = (m: 'relationship' | 'clustering') => setRcMode(prev => prev === m ? null : m);
 
     // Scatter X
     const [scatterXSensor, setScatterXSensor] = useState<string>("");
@@ -554,9 +566,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeade
             const effectivePredictors = slice?.predictorSensors ?? [];
             setTargetSensor(effectiveTarget);
             setPredictorSensors(effectivePredictors);
+            // Which panel is active is locked to the model's own `kind` —
+            // that was already chosen on the Build Model overview page, so
+            // this page must not ask again. Overrides any persisted
+            // `individualChecked`/`rcMode` (old data from before this model
+            // was per-kind could disagree with `kind`; `kind` always wins).
+            setIndividualChecked(kind === 'individual');
+            setRcMode(kind === 'individual' ? null : kind);
             if (slice) {
-                setIndividualChecked(slice.individualChecked);
-                setRcMode(slice.rcMode);
                 setScatterXSensor(slice.scatterXSensor || (effectivePredictors[0] ?? ''));
                 setRelModelName(slice.relModelName);
                 // Snap legacy values (e.g. old default `1`) to the nearest
@@ -610,7 +627,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeade
         })();
 
         return () => { cancelled = true; };
-    }, [workspaceId, modelId]);
+    }, [workspaceId, modelId, kind]);
 
     // Keep workspaceName synced when the user renames the workspace from
     // Dashboard's native menu (App.tsx) while this page is open — that
@@ -2191,11 +2208,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeade
                 <div className="pm-col-center">
                     {/* Toggle pills + axis info */}
                     <div className="pm-mode-row">
+                        {/* Locked to this model's own `kind` — chosen already
+                            on the Build Model overview page's "Model kind"
+                            selector, so this page must not ask again. The
+                            two non-matching buttons are disabled+dimmed
+                            rather than hidden, so the model's kind is still
+                            visible at a glance. */}
                         <div className="pm-segmented">
                             <button
                                 className={`pm-segmented-btn ${individualChecked ? 'active' : ''}`}
-                                onClick={toggleIndividual}
-                                title="Toggle Individual plot"
+                                disabled={kind !== 'individual'}
+                                title={kind === 'individual' ? 'Individual plot' : `This model's kind is ${KIND_LABEL[kind]} — set on the Build Model overview page`}
                             >
                                 <Activity size={13} />
                                 <span>Individual</span>
@@ -2204,14 +2227,16 @@ export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeade
                         <div className="pm-segmented">
                             <button
                                 className={`pm-segmented-btn ${rcMode === 'relationship' ? 'active' : ''}`}
-                                onClick={() => toggleRc('relationship')}
+                                disabled={kind !== 'relationship'}
+                                title={kind === 'relationship' ? 'Relationship plot' : `This model's kind is ${KIND_LABEL[kind]} — set on the Build Model overview page`}
                             >
                                 <GitBranch size={13} />
                                 <span>Relationship</span>
                             </button>
                             <button
                                 className={`pm-segmented-btn ${rcMode === 'clustering' ? 'active' : ''}`}
-                                onClick={() => toggleRc('clustering')}
+                                disabled={kind !== 'clustering'}
+                                title={kind === 'clustering' ? 'Clustering plot' : `This model's kind is ${KIND_LABEL[kind]} — set on the Build Model overview page`}
                             >
                                 <Layers size={13} />
                                 <span>Clustering</span>

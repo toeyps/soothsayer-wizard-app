@@ -738,6 +738,7 @@ export default function BuildModelWindow() {
                 <PredictiveModelBuild
                     workspaceId={workspaceId}
                     modelId={pmPageModel.id}
+                    kind={pmPageModel.kind}
                     sensorHeaders={allSensors}
                     sensorMetadata={sensorMetadata}
                     onBack={() => setActivePage('overview')}

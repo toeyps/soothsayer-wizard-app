@@ -6912,6 +6912,18 @@ body {
     color: var(--text-primary);
     box-shadow: 0 1px 2px rgba(0,0,0,0.25), inset 0 0 0 1px var(--border);
 }
+/* The model's kind is fixed (chosen on the Build Model overview page), so
+   the two non-matching buttons are locked rather than clickable — dimmed
+   instead of hidden so the kind stays visible at a glance. */
+.pm-segmented-btn:disabled {
+    cursor: not-allowed;
+}
+.pm-segmented-btn:disabled:not(.active) {
+    opacity: 0.35;
+}
+.pm-segmented-btn:disabled:hover {
+    color: inherit;
+}
 
 .pm-axis-info {
     font-size: 11px;

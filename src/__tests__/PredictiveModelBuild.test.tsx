@@ -47,6 +47,9 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 
 import PredictiveModelBuild from '../components/windows/PredictiveModelBuild';
 import type { SensorMetadata } from '../types';
+import type { ComponentProps } from 'react';
+
+type PMProps = ComponentProps<typeof PredictiveModelBuild>;
 
 function last<T>(arr: T[]): T {
     return arr[arr.length - 1];
@@ -72,10 +75,11 @@ function makeStoredModel(overrides: Record<string, any> = {}) {
     };
 }
 
-function pmProps(overrides: Record<string, any> = {}) {
+function pmProps(overrides: Partial<PMProps> = {}): PMProps {
     return {
         workspaceId: 'ws1',
         modelId: 'm1',
+        kind: 'individual',
         sensorHeaders: ['TARGET1', 'PRED1', 'PRED2'],
         sensorMetadata,
         onBack: vi.fn(),
@@ -89,7 +93,7 @@ async function flush(times = 3) {
     });
 }
 
-async function renderHydrated(overrides: Record<string, any> = {}) {
+async function renderHydrated(overrides: Partial<PMProps> = {}) {
     const props = pmProps(overrides);
     let utils!: ReturnType<typeof render>;
     await act(async () => {
@@ -163,7 +167,7 @@ describe('PredictiveModelBuild', () => {
                 models: [makeStoredModel({ kind: 'clustering', targetSensor: '', xSensor: 'PRED1', ySensor: 'TARGET1' })],
             },
         });
-        await renderHydrated();
+        await renderHydrated({ kind: 'clustering' });
         // targetSensor field is empty on the stored record for clustering
         // models (they use xSensor/ySensor instead) — the page falls back
         // to ySensor as its "target" so the page isn't blank on first open.
@@ -176,21 +180,45 @@ describe('PredictiveModelBuild', () => {
             failureGroupState: {
                 groups: [],
                 models: [makeStoredModel({
+                    kind: 'relationship',
                     predictorSensors: ['PRED2'],
-                    individualChecked: false,
-                    rcMode: 'relationship',
                     scatterXSensor: 'PRED2',
                     relModelName: 'Saved Model',
                 })],
             },
         });
-        await renderHydrated();
+        await renderHydrated({ kind: 'relationship' });
         expect(screen.getByText('Predictor Two')).toBeTruthy();
         expect(screen.queryByText('Predictor One')).toBeNull();
-        const individualBtn = screen.getByText('Individual').closest('button')!;
-        expect(individualBtn.className).not.toContain('active');
-        const relBtn = screen.getByText('Relationship').closest('button')!;
-        expect(relBtn.className).toContain('active');
+    });
+
+    describe('plot mode is locked to the model\'s kind (chosen on the overview page)', () => {
+        it('individual-kind model: Individual active, Relationship/Clustering disabled', async () => {
+            await renderHydrated({ kind: 'individual' });
+            const individualBtn = screen.getByText('Individual').closest('button')!;
+            const relBtn = screen.getByText('Relationship').closest('button')!;
+            const clusterBtn = screen.getByText('Clustering').closest('button')!;
+            expect(individualBtn.className).toContain('active');
+            expect(individualBtn.hasAttribute('disabled')).toBe(false);
+            expect(relBtn.hasAttribute('disabled')).toBe(true);
+            expect(clusterBtn.hasAttribute('disabled')).toBe(true);
+        });
+
+        it('relationship-kind model: Relationship active, Individual/Clustering disabled and not clickable', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+            const individualBtn = screen.getByText('Individual').closest('button')!;
+            const relBtn = screen.getByText('Relationship').closest('button')!;
+            expect(relBtn.className).toContain('active');
+            expect(individualBtn.className).not.toContain('active');
+            // Disabled buttons don't fire onClick — clicking must not flip state.
+            fireEvent.click(individualBtn);
+            expect(individualBtn.className).not.toContain('active');
+            expect(relBtn.className).toContain('active');
+        });
     });
 
     it('fetches target-sensor stats once hydrated and feeds mean/σ markLines to the LineChart', async () => {
@@ -224,37 +252,13 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
-    describe('mode toggles', () => {
-        it('Individual toggles independently', async () => {
-            await renderHydrated();
-            const btn = screen.getByText('Individual').closest('button')!;
-            expect(btn.className).toContain('active'); // starts checked
-            fireEvent.click(btn);
-            expect(btn.className).not.toContain('active');
-        });
-
-        it('Relationship and Clustering are mutually exclusive', async () => {
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Relationship'));
-            expect(screen.getByText('Relationship').closest('button')!.className).toContain('active');
-
-            fireEvent.click(screen.getByText('Clustering'));
-            expect(screen.getByText('Clustering').closest('button')!.className).toContain('active');
-            expect(screen.getByText('Relationship').closest('button')!.className).not.toContain('active');
-        });
-
-        it('re-clicking the active mode turns it off', async () => {
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Relationship'));
-            fireEvent.click(screen.getByText('Relationship'));
-            expect(screen.getByText('Relationship').closest('button')!.className).not.toContain('active');
-        });
-    });
-
     describe('Relationship Apply', () => {
         it('blocks with no predictors selected', async () => {
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Relationship'));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
             clickApply('Relationship Model');
             await flush();
             expect(screen.getByText('Select at least one predictor.')).toBeTruthy();
@@ -282,10 +286,9 @@ describe('PredictiveModelBuild', () => {
             });
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship', predictorSensors: ['PRED1'] })] },
             });
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Relationship'));
+            await renderHydrated({ kind: 'relationship' });
 
             await act(async () => {
                 clickApply('Relationship Model');
@@ -302,8 +305,11 @@ describe('PredictiveModelBuild', () => {
 
     describe('Clustering Apply', () => {
         it('requires a predictor for the X-axis', async () => {
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Clustering'));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering' })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
             clickApply('Clustering Model');
             await flush();
             expect(screen.getByText('Select a predictor sensor for the X-axis.')).toBeTruthy();
@@ -324,10 +330,9 @@ describe('PredictiveModelBuild', () => {
             });
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering', predictorSensors: ['PRED1'] })] },
             });
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Clustering'));
+            await renderHydrated({ kind: 'clustering' });
 
             await act(async () => {
                 clickApply('Clustering Model');
@@ -410,8 +415,11 @@ describe('PredictiveModelBuild', () => {
         });
 
         it('disables Confirm & Save when Relationship is chosen with no predictors (blocking warning)', async () => {
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Relationship'));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
             fireEvent.click(screen.getByText('Save Model'));
             const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
             expect(confirmBtn.disabled).toBe(true);
@@ -419,7 +427,7 @@ describe('PredictiveModelBuild', () => {
     });
 
     describe('persistence', () => {
-        it('debounces a write into this model\'s own FailureModel record (not a global slot) after a mode toggle', async () => {
+        it('debounces a write into this model\'s own FailureModel record (not a global slot) after a field change', async () => {
             const onDiskModel = makeStoredModel();
             mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
@@ -429,12 +437,14 @@ describe('PredictiveModelBuild', () => {
             mockUpdateWorkspaceData.mockClear();
             mockEmit.mockClear();
 
-            fireEvent.click(screen.getByText('Individual'));
+            // Plot mode is locked now (not user-toggleable), so add a sensor
+            // filter instead to produce a real config change to debounce.
+            fireEvent.click(screen.getByTitle('Add a sensor value filter'));
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').individualChecked).toBe(false);
+            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').pmSensorFilters).toHaveLength(1);
             // Broadcast so Dashboard/BuildModelWindow (separate OS windows) refresh too.
             await act(async () => { await Promise.resolve(); });
             expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', state.failureGroupState);
@@ -452,7 +462,7 @@ describe('PredictiveModelBuild', () => {
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } }));
 
-            fireEvent.click(screen.getByText('Individual'));
+            fireEvent.click(screen.getByTitle('Add a sensor value filter'));
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;

@@ -505,6 +505,7 @@ describe('BuildModelWindow', () => {
             const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
             expect(lastProps.workspaceId).toBe('ws1');
             expect(lastProps.modelId).toBe('m1');
+            expect(lastProps.kind).toBe('individual'); // the model's own kind, chosen on this page — PM must not ask again
             expect(lastProps.sensorHeaders).toEqual(['TAG1', 'TAG2', 'TAG3']);
         });
 
