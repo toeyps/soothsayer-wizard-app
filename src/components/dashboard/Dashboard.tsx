@@ -881,6 +881,24 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     }, [initialState]);
 
+    // Close the (singleton, workspace-scoped) Build Model window when
+    // leaving this workspace. It only ever fetches its data once, on its
+    // own mount (see BuildModelWindow.tsx's `request-build-model-data`
+    // round-trip) — it has no way to notice `main` switching to a
+    // different workspace underneath it. Without this, staying open across
+    // a switch means the next "Build Model" click here (now scoped to a
+    // different workspace) just focuses the stale window via
+    // `WebviewWindow.getByLabel('build-model')` above instead of opening
+    // one for the new workspace — the user edits what looks like the right
+    // project but is actually still writing to the old one.
+    useEffect(() => {
+        return () => {
+            WebviewWindow.getByLabel('build-model')
+                .then(w => w?.close())
+                .catch(() => { /* ignore — window may already be gone */ });
+        };
+    }, []);
+
     // Scatter / pair plots are meaningless with fewer than two sensors, so
     // below that the two buttons are disabled — and if the selection drops
     // under two WHILE such a chart is active (unticking down to one), we

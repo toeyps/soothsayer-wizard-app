@@ -748,6 +748,33 @@ describe('Dashboard', () => {
             }));
         });
 
+        it('closes the build-model window when this workspace\'s Dashboard unmounts (e.g. switching to a different project)', async () => {
+            const existing = { close: vi.fn().mockResolvedValue(undefined) };
+            mockGetByLabel.mockResolvedValue(existing);
+            const { unmount } = renderDashboard();
+
+            await act(async () => {
+                unmount();
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            expect(mockGetByLabel).toHaveBeenCalledWith('build-model');
+            expect(existing.close).toHaveBeenCalled();
+        });
+
+        it('does nothing on unmount if no build-model window is open', async () => {
+            mockGetByLabel.mockResolvedValue(null);
+            const { unmount } = renderDashboard();
+
+            // Must not throw even though getByLabel resolves to null.
+            await act(async () => {
+                unmount();
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mockGetByLabel).toHaveBeenCalledWith('build-model');
+        });
     });
 
     describe('imperative rename', () => {
