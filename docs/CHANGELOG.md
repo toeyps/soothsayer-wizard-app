@@ -6,6 +6,46 @@
 
 ---
 
+## [0.3.0] — 2026-08-20
+
+รวมงานสะสมตั้งแต่ tag `v0.2.1` (2026-08-11) — 62 commit — installer build จริงครั้งที่ 2 ของโปรเจกต์ (ครั้งแรกคือ 0.2.1)
+
+### ✨ ฟีเจอร์ใหม่ / ปรับปรุงใหญ่
+
+- **Build Model / Failure Group แปลงเป็น per-model records แยกกันจริง** — เดิม 1 Failure Group มี config Predictive Model ใช้ร่วมกันสล็อตเดียว สลับ target สลับ sensor แล้ว config เดิมโดนทับ ต้อง retrain ใหม่ทุกครั้ง ตอนนี้แต่ละโมเดล (Individual/Relationship/Clustering) มี config ของตัวเองแยกกันสมบูรณ์ — ย้ายมาแก้ไขในหน้าต่าง **"Build Model"** ใหม่ทั้งหมด (เปิดพร้อมกันได้หลายกลุ่ม ต่างจาก PM window เดิมที่เปิดได้ทีละหน้าต่าง) ส่วน Failure Groups tab บน Dashboard กลายเป็นหน้า preview อย่างเดียว เพิ่มฟิลด์ description/recommendation ของกลุ่ม, ModelKind/ModelCategory (Performance/Condition), และกันชื่อกลุ่มซ้ำ (เดิมสร้างซ้ำได้) **workspace เก่าย้ายข้อมูลให้อัตโนมัติตอนเปิด ไม่ต้องทำอะไรเพิ่ม**
+- **Pair Plot ปรับปรุงใหญ่**: ครึ่งล่างของ matrix (เดิมว่างเปล่า) ตอนนี้แสดง **correlation heatmap** (ค่า Pearson r ต่อคู่ sensor ไล่สีแดง→เหลือง→เขียวตามขนาด |r|) เพิ่มเครื่องมือ **Pan/Zoom** ควบคู่กับ Lasso เดิม, ป้าย sensor ย้ายไปอยู่ "กรอบนอกเท่านั้น" (แถวบน/คอลัมน์ซ้าย) ไม่รกทุกช่องเหมือนเดิม, hover ป้ายชื่อ sensor เห็น description เป็น tooltip
+- **เพิ่มแท็บ "Highlights"** — ตีกรอบช่วงเวลาที่สนใจ (ตั้งชื่อ+เลือกสี) แสดงเป็นแถบไฮไลต์บนกราฟ Line (โหมด band หรือ "Line-colour" ให้เส้นเปลี่ยนสีตามช่วง) และเป็นวงแหวนไฮไลต์จุดบน Scatter (Pair Plot ไม่รองรับ ใช้ lasso-cluster ของตัวเองแทน)
+- **เพิ่มฟีเจอร์ Tag Point** — เทียบค่าจุดข้อมูล 2 จุดขึ้นไปแบบ side-by-side บนกราฟ Line และ Scatter กดไอคอน 🏷️ ในกล่องเครื่องมือแล้วคลิกจุดที่สนใจ ได้ badge เลข + การ์ดลอยโชว์ค่าทุก sensor ที่จุดนั้น คลิกจุดเดิมซ้ำเพื่อลบ tag ออก (ตั้งใจไม่ persist ลง workspace file — ปิดแอปแล้วเปิดใหม่ tag หายตามต้องการของผู้ใช้)
+
+### 🐛 Bug fixes
+
+- **Tag Point คลิกแล้วไม่ทำงานเลย** (2 บั๊กซ้อนกัน): `echarts-for-react` สร้าง chart instance รอบแรกแบบชั่วคราวแล้วสร้างใหม่ทับหลัง event `'finished'` — โค้ดเดิมผูก click handler กับ instance เก่าที่ถูกทำลายไปแล้ว, พอแก้จุดนี้แล้วยังคลิกไม่ติดอีกเพราะ `convertFromPixel({xAxisIndex:0}, ...)` คืนค่า `NaN` เสมอบน category axis ของ ECharts เวอร์ชันนี้ — เปลี่ยนไปใช้ `{seriesIndex:0}` แทนจึงใช้งานได้จริง
+- **Pair Plot**: จุด scatter กับสี histogram ไม่ตรงกัน, พื้นหลัง cell ไม่ตรงกับพื้นแอป, เห็นแถบดำ ("letterbox") ในแต่ละ cell (regl-scatterplot สมมติ aspect ratio 1:1 โดย default), tooltip ไม่โผล่เลยเพราะ `sensorMetadata` ไม่ถูกส่งเข้า branch ที่สองของ `<Chart>`, tooltip ของหน้าต่างขยาย/แว่นขยายเรนเดอร์อยู่ *หลัง* backdrop ของตัวเอง (z-index ผิด)
+- **แก้บั๊กสีเส้นกราฟใกล้เคียงกันเกินไป** (blue กับ indigo hue ห่างกันแค่ ~25°) — จัดลำดับ/ขยาย palette จาก 6 เป็น 12 สี
+- **แก้บั๊กเลย์เอาต์ของหน้าต่าง Build Model หลายจุด**: ปุ่มท้ายฟอร์มโดนตัดที่ขอบล่าง (ขาด `min-height:0` บน flex container), footer ไม่ sticky, พื้นหลังหน้าต่างเข้มกว่า Dashboard, boundary/accent bar ของโมเดลที่เปิดอยู่ไม่ครอบถึงปุ่ม Remove/Save (เปลี่ยนจาก absolute-positioned bar เป็น border รอบการ์ดจริง)
+- **แก้ ColorPlatePicker ของ Highlights เปิดผิดฝั่ง** (ปุ่มอยู่ซ้าย popup ไปโผล่ขวา)
+- **แก้ปุ่ม "N sensors selected" และปุ่ม/dropdown ของ Scatter/Line/Pair Plot เป็นสีเข้มตายตัวไม่ตอบสนอง theme** — พบระหว่างพยายามรองรับ light theme (ภายหลังลบ light theme ออกทั้งหมด ดูหัวข้อ "ฟีเจอร์ที่ถูกลบ" — ผลลัพธ์สุดท้ายคือกลับไปใช้ dark theme ค่าคงที่)
+
+### 🗑️ ฟีเจอร์ที่ถูกลบ
+
+- **Light theme (และปุ่มสลับ dark/light ทั้งหมด)** — หลังไล่แก้บั๊กสีเฉพาะ light theme มาหลายรอบ (ปุ่ม/กราฟยังมีจุดสีเข้มตายตัวหลงเหลืออยู่เรื่อยๆ) ตัดสินใจลบออกทั้งหมด บังคับใช้ dark theme อย่างเดียว — ลบ `useThemeMode()` hook, theme state/localStorage, native menu "Toggle Theme", `[data-theme="light"]` CSS block ทั้งก้อน
+- **"Export as PDF Report"** (หน้าต่าง Predictive Model) — ผู้ใช้ยืนยันไม่เคยใช้ ตัด `@react-pdf/renderer` ออก (dependency หนักที่สุดในแอป 1.46MB) ลดขนาด bundle ("Export as PNG" ยังอยู่ปกติ)
+- **แท็บ "Data Insight"** — ไม่ได้ใช้งาน และพบว่ายิง query เปลืองแม้ไม่ได้เป็นแท็บที่เปิดอยู่ (ลบพร้อมได้ผลพลอยได้ด้าน performance) — ไฟล์ต้นฉบับยังอยู่ในโปรเจกต์เผื่อเอากลับมาใช้ทีหลัง
+- **"Export dataset" (CSV export)** — ผู้ใช้ยืนยันไม่จำเป็น (มี raw data อยู่แล้วตั้งแต่ก่อนนำเข้าแอป) ลบทั้ง frontend และคำสั่ง Rust `export_chart_csv`
+- **Tag Point: delta comparison ต่อจุด** — ฟีเจอร์ย่อยที่ไม่ได้ใช้ ตัดออก
+
+### ⚡ Performance / เสถียรภาพ
+
+- ลบ `@react-pdf/renderer` (และ dependency ลูกอีก 59 ตัว) — ลดขนาด JS bundle ลงมาก
+- ลบ query สิ้นเปลืองของแท็บ Data Insight ที่ยิงอยู่เบื้องหลังแม้ไม่ได้เปิดดู
+- **Windows installer build เหลือแค่ `.exe` (NSIS) ตัวเดียว** — เดิม build ทั้ง NSIS + MSI พร้อมกัน ตัด MSI ออกตามคำขอ (macOS build ไม่กระทบ ยังได้ `.dmg`/`.app` ตามเดิม)
+
+### 📄 เอกสาร
+
+- เพิ่ม `docs/tech-stack.html` — สรุป technical stack ของแอปแบบหน้าเดียว อ้างอิงตรงจาก `package.json`/`Cargo.toml`/`lib.rs`
+
+---
+
 ## [0.2.1] — 2026-08-11
 
 เวอร์ชันก่อนหน้าที่เคย build เป็น installer จริงคือ **0.1.6** — เวอร์ชันนี้จึงรวมงานสะสมทั้งหมดตั้งแต่นั้นมา (0.2.1 เคยถูกตั้งไว้ในโค้ดมาสักพักแต่ไม่เคย build/แจกจริงมาก่อน) รวมทั้งหมด 10 commit
