@@ -26,6 +26,24 @@ const KIND_ABBREV: Record<ModelKind, string> = {
     clustering: 'C',
 };
 
+// Same per-kind colors as `.model-kind-icon--*` in App.css (the row's own
+// "I"/"R"/"C" badge) — the "Model kind" picker below used a single flat
+// accent color for all three regardless of which kind was active, so a
+// Relationship row's amber badge never matched its own picker's blue
+// highlight. Kept in sync manually since the badge is styled via CSS
+// classes but the picker is styled inline (matches its sibling Category
+// picker's existing per-option color pattern).
+const KIND_ACCENT: Record<ModelKind, string> = {
+    individual: 'var(--accent-color)',
+    relationship: 'var(--warn)',
+    clustering: 'var(--kind-clu)',
+};
+const KIND_ACCENT_MUTED: Record<ModelKind, string> = {
+    individual: 'var(--accent-muted)',
+    relationship: 'var(--warn-muted)',
+    clustering: 'var(--kind-clu-muted)',
+};
+
 const CATEGORY_LABELS: Record<ModelCategory, string> = {
     performance: 'Performance',
     condition: 'Condition',
@@ -445,9 +463,9 @@ export default function BuildModelWindow() {
                             onClick={() => setFormKind(k)}
                             style={{
                                 flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
-                                border: `1px solid ${formKind === k ? 'var(--accent-color)' : 'var(--border)'}`,
-                                background: formKind === k ? 'var(--accent-muted)' : 'none',
-                                color: formKind === k ? 'var(--accent-color)' : 'var(--text-secondary)',
+                                border: `1px solid ${formKind === k ? KIND_ACCENT[k] : 'var(--border)'}`,
+                                background: formKind === k ? KIND_ACCENT_MUTED[k] : 'none',
+                                color: formKind === k ? KIND_ACCENT[k] : 'var(--text-secondary)',
                                 fontWeight: formKind === k ? 600 : 400,
                             }}
                         >

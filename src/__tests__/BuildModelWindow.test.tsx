@@ -605,6 +605,30 @@ describe('BuildModelWindow', () => {
                 expect(create.disabled).toBe(false);
             });
 
+            it('the "Model kind" picker\'s active color matches that kind\'s own row badge color (not one flat color for all three)', async () => {
+                render(<BuildModelWindow />);
+                await deliverData();
+                fireEvent.click(screen.getAllByText('Add Model')[0]);
+                const form = within(screen.getByTestId('add-model-form'));
+                const individualBtn = form.getByText('Individual').closest('button') as HTMLButtonElement;
+                const relBtn = form.getByText('Relationship').closest('button') as HTMLButtonElement;
+                const clusterBtn = form.getByText('Clustering').closest('button') as HTMLButtonElement;
+
+                fireEvent.click(individualBtn);
+                // Matches .model-kind-icon--individual.
+                expect(individualBtn.style.color).toBe('var(--accent-color)');
+
+                fireEvent.click(relBtn);
+                // Matches .model-kind-icon--relationship, not the flat accent color.
+                expect(relBtn.style.color).toBe('var(--warn)');
+                expect(individualBtn.style.color).toBe('var(--text-secondary)');
+
+                fireEvent.click(clusterBtn);
+                // Matches .model-kind-icon--clustering.
+                expect(clusterBtn.style.color).toBe('var(--kind-clu)');
+                expect(relBtn.style.color).toBe('var(--text-secondary)');
+            });
+
             it('shows the Component readout with a placeholder as soon as a kind is picked, before any sensor is chosen', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
