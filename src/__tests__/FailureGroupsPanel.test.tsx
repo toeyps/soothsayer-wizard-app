@@ -53,10 +53,33 @@ describe('FailureGroupsPanel', () => {
         expect(screen.getByText('No failure groups yet')).toBeTruthy();
     });
 
-    it('never renders group 0 ("Not in Group") as a card', () => {
+    it('does not render group 0 ("Not in Group") as a card when it has no models', () => {
         render(<FailureGroupsPanel {...makeProps()} />);
         expect(screen.queryByText('Not in Group')).toBeNull();
         expect(screen.getByText('Group A')).toBeTruthy();
+    });
+
+    describe('"Not in Group" card (group 0)', () => {
+        it('renders once a model has groupNo 0, listed by its display label', () => {
+            const fgModels = [makeModel({ id: 'm1' }), makeModel({ id: 'm2', groupNo: 0, name: '', targetSensor: 'TAG1' })];
+            render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+            expect(screen.getByText('Not in Group')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+        });
+
+        it('has no rename/delete controls (it is a permanent, non-editable bucket)', () => {
+            const fgModels = [makeModel({ id: 'm1', groupNo: 0 })];
+            render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
+            expect(screen.queryAllByTitle('Rename group')).toHaveLength(0);
+            expect(screen.queryAllByTitle('Delete group')).toHaveLength(0);
+        });
+
+        it('does not count toward the "groups" stat (it is not a real failure group)', () => {
+            const fgModels = [makeModel({ id: 'm1', groupNo: 0 })];
+            const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
+            const statBolds = container.querySelectorAll('b');
+            expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '0']);
+        });
     });
 
     it('computes header stats: model count, group count (no completion % anymore — status lives only in Build Model)', () => {

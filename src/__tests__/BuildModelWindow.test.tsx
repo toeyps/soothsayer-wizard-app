@@ -244,7 +244,7 @@ describe('BuildModelWindow', () => {
         it('also shows the group breadcrumb inside a blank "+ Add Model" form', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [] } });
-            fireEvent.click(screen.getByText('Add Model'));
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
             expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
         });
 
@@ -319,7 +319,7 @@ describe('BuildModelWindow', () => {
         it('"+ Add Model" spans the full row width, not shrunk to its own content (regression: unlike the row divs above it, a bare button doesn\'t stretch by default, leaving its divider looking short/inconsistent)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            const addBtn = screen.getByText('Add Model').closest('button') as HTMLButtonElement;
+            const addBtn = screen.getAllByText('Add Model')[0].closest('button') as HTMLButtonElement;
             expect(addBtn.style.width).toBe('100%');
         });
 
@@ -329,7 +329,7 @@ describe('BuildModelWindow', () => {
             fireEvent.click(screen.getByText('Model One'));
             expect(screen.getByTestId('add-model-form')).toBeTruthy();
 
-            fireEvent.click(screen.getByText('Add Model'));
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
             const form = within(screen.getByTestId('add-model-form'));
             expect((form.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('');
         });
@@ -350,9 +350,9 @@ describe('BuildModelWindow', () => {
         it('"+ Add Model" also toggles closed on a second click, discarding the blank form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Add Model'));
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
             expect(screen.getByTestId('add-model-form')).toBeTruthy();
-            fireEvent.click(screen.getByText('Add Model'));
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
@@ -401,6 +401,59 @@ describe('BuildModelWindow', () => {
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             const created = state.failureGroupState.models.find((m: any) => m.name === 'New Model');
             expect(created.groupNo).toBe(2);
+        });
+
+        describe('"Not in Group" (FG-0) — a model without a failure group', () => {
+            it('is always shown in the FG-grouped view, even with zero real groups and zero ungrouped models', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [], models: [] } });
+                expect(screen.getByText('Not in Group')).toBeTruthy();
+                expect(screen.getAllByText('No models yet')).toHaveLength(1);
+            });
+
+            it('has no "Edit details"/rename/delete controls — it is a permanent, non-editable bucket', async () => {
+                render(<BuildModelWindow />);
+                await deliverData();
+                expect(screen.getAllByText('Edit details')).toHaveLength(1); // only the one real group
+            });
+
+            it('does not count toward the "groups" stat in the header', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [], models: [makeModel({ groupNo: 0 })] } });
+                expect(screen.getByText('0')).toBeTruthy(); // groups stat
+            });
+
+            it('lists a model whose groupNo is 0', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({
+                    failureGroupState: {
+                        groups: [makeGroup()],
+                        models: [makeModel({ id: 'm-ng', name: 'Orphan Model', groupNo: 0 })],
+                    },
+                });
+                expect(screen.getByText('Orphan Model')).toBeTruthy();
+            });
+
+            it('creating a model via its own "+ Add Model" persists groupNo 0', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [] } });
+                const addButtons = screen.getAllByText('Add Model');
+                fireEvent.click(addButtons[addButtons.length - 1]); // "Not in Group" is rendered last
+                const form = within(screen.getByTestId('add-model-form'));
+                fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Standalone Model' } });
+                fireEvent.click(form.getByText('Individual'));
+                fireEvent.click(form.getByText('Performance'));
+                fireEvent.change(form.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG1' } });
+                await act(async () => {
+                    fireEvent.click(form.getByText('Create model'));
+                    await Promise.resolve();
+                    await Promise.resolve();
+                });
+
+                const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+                const created = state.failureGroupState.models.find((m: any) => m.name === 'Standalone Model');
+                expect(created.groupNo).toBe(0);
+            });
         });
 
         it('"Remove model" confirms, persists, and closes the form', async () => {
@@ -467,7 +520,7 @@ describe('BuildModelWindow', () => {
             it('Create model is disabled until name + kind + category + an individual sensor are all set', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Add Model'));
+                fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
                 const create = form.getByText('Create model').closest('button') as HTMLButtonElement;
@@ -485,7 +538,7 @@ describe('BuildModelWindow', () => {
             it('requires at least one predictor for a relationship model', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Add Model'));
+                fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
                 fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Rel Model' } });
                 fireEvent.click(form.getByText('Relationship'));
@@ -503,7 +556,7 @@ describe('BuildModelWindow', () => {
             it('requires both X and Y sensors for a clustering model', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Add Model'));
+                fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
                 fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
                 fireEvent.click(form.getByText('Clustering'));
@@ -520,7 +573,7 @@ describe('BuildModelWindow', () => {
             it('shows the Component readout with a placeholder as soon as a kind is picked, before any sensor is chosen', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Add Model'));
+                fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
                 expect(form.queryByText('Component')).toBeNull();
 

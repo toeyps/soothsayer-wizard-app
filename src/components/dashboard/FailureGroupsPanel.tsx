@@ -67,12 +67,14 @@ export default function FailureGroupsPanel({
         return desc ? `${desc} (${targetTag})` : targetTag;
     };
 
-    // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
-    // for backward compatibility, but nothing in the Dashboard-native
-    // assignment model ever creates a model for it — so there's nothing
-    // meaningful to render for it here.
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModels = fgModels.length;
+    // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
+    // for models built against a sensor that isn't part of any failure
+    // mode. Rendered as its own card, but only once it actually holds a
+    // model — an empty "Not in Group" card would just be clutter for the
+    // (common) case where nobody's used it.
+    const ungroupedModels = fgModels.filter(m => m.groupNo === 0);
 
     const commitGroupRename = () => {
         if (editingGroupNo === null) return;
@@ -169,6 +171,35 @@ export default function FailureGroupsPanel({
                         </div>
                     );
                 })}
+
+                {ungroupedModels.length > 0 && (
+                    <div
+                        className="fg-group-color-slate fg-group-card"
+                        style={{ border: '1px dashed var(--border)', borderRadius: '8px', overflow: 'hidden' }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
+                            <span className="fg-group-dot" />
+                            <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                Not in Group
+                            </span>
+                            <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>
+                                {ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}
+                            </span>
+                        </div>
+                        <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                {ungroupedModels.map(model => (
+                                    <div key={model.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                                        {modelDisplayLabel(model)}
+                                    </div>
+                                ))}
+                            </div>
+                            <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>
+                                Sensors here aren't tied to any failure group — a place for a standalone model.
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {showNewGroup ? (
                     <div>

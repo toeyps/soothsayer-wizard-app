@@ -846,7 +846,52 @@ export default function BuildModelWindow() {
                             </div>
                         );
                     })
-                ) : (
+                ) : null}
+
+                {groupBy === 'fg' && (() => {
+                    // "Not in Group" (FG-0) — a permanent, non-deletable bucket for
+                    // a model whose sensor doesn't belong to any failure mode.
+                    // Always rendered (unlike the read-only Dashboard preview,
+                    // which only shows this card once it's non-empty) since this
+                    // window is the only place a model can actually be added to
+                    // it. No "Edit details" — it's not a real failure group, so
+                    // there's no name/description/recommendation to edit.
+                    const ungroupedModels = allModels.filter(m => m.groupNo === 0);
+                    const isAddingHere = showForm && editingModelId === null && formGroupNo === 0;
+                    return (
+                        <div className="fg-group-color-slate" style={{ border: '1px dashed var(--border)', borderRadius: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
+                                <span className="fg-group-dot" />
+                                <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1, color: 'var(--text-secondary)' }}>Not in Group</span>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}</span>
+                            </div>
+
+                            {ungroupedModels.length === 0 ? (
+                                <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
+                            ) : ungroupedModels.map(m => overviewModelRow(m, false))}
+
+                            <div>
+                                <div style={isAddingHere ? { border: `1.5px solid ${FG_ACCENT.slate}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
+                                    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
+                                        <button
+                                            onClick={() => { if (isAddingHere) resetForm(); else openAddForm(0); }}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%', padding: '8px 0', borderRadius: '7px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
+                                        >
+                                            <Plus size={13} /> Add Model
+                                        </button>
+                                    </div>
+                                    {isAddingHere && (
+                                        <div style={{ borderTop: '1px solid var(--border)' }}>
+                                            {renderModelForm()}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {groupBy === 'component' && (
                     componentSections.length === 0 ? (
                         <div className="no-results">No models yet</div>
                     ) : componentSections.map(([comp, models]) => {
