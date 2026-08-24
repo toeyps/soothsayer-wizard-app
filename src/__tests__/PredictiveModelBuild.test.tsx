@@ -1,14 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 
-const mockClose = vi.fn().mockResolvedValue(undefined);
-const mockMinimize = vi.fn().mockResolvedValue(undefined);
-const mockToggleMaximize = vi.fn().mockResolvedValue(undefined);
-const mockGetCurrentWindow = vi.fn(() => ({ close: mockClose, minimize: mockMinimize, toggleMaximize: mockToggleMaximize }));
-vi.mock('@tauri-apps/api/window', () => ({
-    getCurrentWindow: () => mockGetCurrentWindow(),
-}));
-
 let listenCallbacks: Record<string, Array<(e: any) => void>> = {};
 const mockListen = vi.fn((event: string, cb: (e: any) => void) => {
     (listenCallbacks[event] ??= []).push(cb);
@@ -37,7 +29,6 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
 }));
 
-vi.mock('../hooks/useSubWindowMenu', () => ({ useSubWindowMenu: vi.fn() }));
 vi.mock('../hooks/usePMReport', () => ({
     usePMReport: () => ({ exportPNG: vi.fn().mockResolvedValue(undefined) }),
 }));
@@ -55,7 +46,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 }));
 
 import PredictiveModelBuild from '../components/windows/PredictiveModelBuild';
-import type { CsvMetadata, SensorMetadata } from '../types';
+import type { SensorMetadata } from '../types';
 
 function last<T>(arr: T[]): T {
     return arr[arr.length - 1];
@@ -67,34 +58,29 @@ const sensorMetadata: SensorMetadata[] = [
     { tag: 'PRED2', description: 'Predictor Two', unit: 'C', component: 'Motor' },
 ];
 
-const csvMetadata: CsvMetadata = { headers: ['timestamp', 'TARGET1', 'PRED1', 'PRED2'], total_rows: 100 };
-
-function makePayload(overrides: Record<string, any> = {}) {
+// A FailureModel record as it'd be found in `failureGroupState.models` —
+// PredictiveModelBuild hydrates entirely from this now (no more event
+// payload), so most tests seed `mockLoadWorkspaceData` with one of these.
+function makeStoredModel(overrides: Record<string, any> = {}) {
     return {
-        workspaceId: 'ws1',
-        targetSensor: 'TARGET1',
-        predictorSensors: [] as string[],
-        modelId: 'm1',
-        sensorHeaders: ['TARGET1', 'PRED1', 'PRED2'],
-        sensorMetadata,
-        metadata: csvMetadata,
+        id: 'm1', groupNo: 1, name: 'A', kind: 'individual', category: null, notes: '', status: false,
+        targetSensor: 'TARGET1', predictorSensors: [], xSensor: '', ySensor: '',
+        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+        relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
         ...overrides,
     };
 }
 
-async function deliverPredictiveData(payload: Record<string, any> = makePayload()) {
-    await act(async () => {
-        for (const cb of listenCallbacks['predictive-model-data'] ?? []) {
-            cb({ payload });
-        }
-        await Promise.resolve();
-        await Promise.resolve();
-    });
-}
-
-function clickApply(section: 'Relationship Model' | 'Clustering Model') {
-    const btn = screen.getByText(section).closest('.pm-config-block')!.querySelector('button.pm-btn-primary') as HTMLButtonElement;
-    fireEvent.click(btn);
+function pmProps(overrides: Record<string, any> = {}) {
+    return {
+        workspaceId: 'ws1',
+        modelId: 'm1',
+        sensorHeaders: ['TARGET1', 'PRED1', 'PRED2'],
+        sensorMetadata,
+        onBack: vi.fn(),
+        ...overrides,
+    };
 }
 
 async function flush(times = 3) {
@@ -103,14 +89,28 @@ async function flush(times = 3) {
     });
 }
 
+async function renderHydrated(overrides: Record<string, any> = {}) {
+    const props = pmProps(overrides);
+    let utils!: ReturnType<typeof render>;
+    await act(async () => {
+        utils = render(<PredictiveModelBuild {...props} />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+    });
+    return { ...utils, onBack: props.onBack };
+}
+
+function clickApply(section: 'Relationship Model' | 'Clustering Model') {
+    const btn = screen.getByText(section).closest('.pm-config-block')!.querySelector('button.pm-btn-primary') as HTMLButtonElement;
+    fireEvent.click(btn);
+}
+
 beforeEach(() => {
     lineChartProps.length = 0;
     listenCallbacks = {};
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
-    mockClose.mockClear().mockResolvedValue(undefined);
-    mockMinimize.mockClear().mockResolvedValue(undefined);
-    mockToggleMaximize.mockClear().mockResolvedValue(undefined);
     mockInvoke.mockReset().mockImplementation((cmd: string) => {
         if (cmd === 'compute_sensor_stats') {
             return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
@@ -119,7 +119,10 @@ beforeEach(() => {
     });
     mockOpenDialog.mockReset();
     mockUpdateWorkspaceData.mockClear().mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id }));
-    mockLoadWorkspaceData.mockClear().mockResolvedValue(null);
+    mockLoadWorkspaceData.mockClear().mockResolvedValue({
+        name: 'My Workspace',
+        failureGroupState: { groups: [], models: [makeStoredModel()] },
+    });
     mockUseChartData.mockClear().mockReturnValue({ view: null, loading: false, error: null });
 });
 
@@ -128,61 +131,64 @@ afterEach(() => {
 });
 
 describe('PredictiveModelBuild', () => {
-    it('shows a loading state until predictive-model-data arrives', async () => {
-        render(<PredictiveModelBuild />);
+    it('shows a loading state until workspace data resolves', async () => {
+        let resolveLoad!: (v: any) => void;
+        mockLoadWorkspaceData.mockReturnValue(new Promise(res => { resolveLoad = res; }));
+        render(<PredictiveModelBuild {...pmProps()} />);
         expect(screen.getByText('Loading model data...')).toBeTruthy();
-        await deliverPredictiveData();
+        await act(async () => {
+            resolveLoad({ name: 'My Workspace', failureGroupState: { groups: [], models: [makeStoredModel()] } });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
         expect(screen.queryByText('Loading model data...')).toBeNull();
     });
 
-    it('emits request-predictive-data on mount', async () => {
-        render(<PredictiveModelBuild />);
-        await flush();
-        expect(mockEmit).toHaveBeenCalledWith('request-predictive-data', undefined);
-    });
-
-    it('hydrates target sensor and workspace name from the event payload (no persisted slice)', async () => {
-        mockLoadWorkspaceData.mockResolvedValue({ name: 'My Workspace' });
-        render(<PredictiveModelBuild />);
-        await deliverPredictiveData(makePayload({ predictorSensors: ['PRED1'] }));
+    it('hydrates target sensor and workspace name from the model record', async () => {
+        mockLoadWorkspaceData.mockResolvedValue({
+            name: 'My Workspace',
+            failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+        });
+        await renderHydrated();
         expect(screen.getByText('My Workspace')).toBeTruthy();
         expect(screen.getAllByText('TARGET1').length).toBeGreaterThan(0);
         expect(screen.getByText('Predictor One')).toBeTruthy(); // hydrated predictor chip
     });
 
-    it('a persisted FailureModel record overrides the incoming payload', async () => {
+    it('falls back to xSensor/ySensor for a clustering-kind model with no target set yet', async () => {
         mockLoadWorkspaceData.mockResolvedValue({
             name: 'WS',
             failureGroupState: {
                 groups: [],
-                models: [{
-                    id: 'm1', groupNo: 1, name: 'Saved Model', kind: 'relationship', category: null, notes: '', status: false,
-                    targetSensor: 'TARGET1',
+                models: [makeStoredModel({ kind: 'clustering', targetSensor: '', xSensor: 'PRED1', ySensor: 'TARGET1' })],
+            },
+        });
+        await renderHydrated();
+        // targetSensor field is empty on the stored record for clustering
+        // models (they use xSensor/ySensor instead) — the page falls back
+        // to ySensor as its "target" so the page isn't blank on first open.
+        expect(screen.getAllByText('TARGET1').length).toBeGreaterThan(0);
+    });
+
+    it('hydrates full PM config from a previously-configured FailureModel record', async () => {
+        mockLoadWorkspaceData.mockResolvedValue({
+            name: 'WS',
+            failureGroupState: {
+                groups: [],
+                models: [makeStoredModel({
                     predictorSensors: ['PRED2'],
-                    xSensor: '', ySensor: '',
                     individualChecked: false,
                     rcMode: 'relationship',
                     scatterXSensor: 'PRED2',
                     relModelName: 'Saved Model',
-                    relStiffness: 100000,
-                    clusterModelName: '',
-                    numClusters: 3,
-                    criteriaSensor: '',
-                    clusterRanges: [{ min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 }],
-                    filterTimeStart: '',
-                    filterTimeEnd: '',
-                    pmSensorFilters: [],
-                }],
+                })],
             },
         });
-        render(<PredictiveModelBuild />);
-        await deliverPredictiveData(makePayload({ predictorSensors: ['PRED1'] })); // payload says PRED1...
-        expect(screen.getByText('Predictor Two')).toBeTruthy(); // ...but the persisted slice (PRED2) wins
+        await renderHydrated();
+        expect(screen.getByText('Predictor Two')).toBeTruthy();
         expect(screen.queryByText('Predictor One')).toBeNull();
-        // Individual was persisted as unchecked.
         const individualBtn = screen.getByText('Individual').closest('button')!;
         expect(individualBtn.className).not.toContain('active');
-        // Relationship mode persisted as active.
         const relBtn = screen.getByText('Relationship').closest('button')!;
         expect(relBtn.className).toContain('active');
     });
@@ -192,9 +198,7 @@ describe('PredictiveModelBuild', () => {
             view: { headers: ['TARGET1'], timestamps: ['t0', 't1'], series: [[1, 2]], total_rows: 2, ts_min: 't0', ts_max: 't1' },
             loading: false, error: null,
         });
-        render(<PredictiveModelBuild />);
-        await deliverPredictiveData();
-        await flush();
+        await renderHydrated();
         expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.objectContaining({ sensor: 'TARGET1' }));
         const markLines = last(lineChartProps).markLines;
         expect(markLines.map((m: any) => m.label)).toEqual(['Mean', '+1σ', '−1σ', '+3σ', '−3σ']);
@@ -202,16 +206,18 @@ describe('PredictiveModelBuild', () => {
 
     describe('predictor selection', () => {
         it('picking a sensor from the autocomplete adds it as a predictor chip', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED1' } });
             fireEvent.click(screen.getByText('Predictor One'));
             expect(screen.getByText('1')).toBeTruthy(); // predictor count pill
         });
 
         it('removing a predictor chip drops it from the selection', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData(makePayload({ predictorSensors: ['PRED1'] }));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+            });
+            await renderHydrated();
             expect(screen.getByText('Predictor One')).toBeTruthy();
             fireEvent.click(screen.getByText('Predictor One').closest('.pm-selected-chip')!.querySelector('.pm-selected-remove')!);
             expect(screen.queryByText('Predictor One')).toBeNull();
@@ -220,8 +226,7 @@ describe('PredictiveModelBuild', () => {
 
     describe('mode toggles', () => {
         it('Individual toggles independently', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             const btn = screen.getByText('Individual').closest('button')!;
             expect(btn.className).toContain('active'); // starts checked
             fireEvent.click(btn);
@@ -229,8 +234,7 @@ describe('PredictiveModelBuild', () => {
         });
 
         it('Relationship and Clustering are mutually exclusive', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             fireEvent.click(screen.getByText('Relationship'));
             expect(screen.getByText('Relationship').closest('button')!.className).toContain('active');
 
@@ -240,8 +244,7 @@ describe('PredictiveModelBuild', () => {
         });
 
         it('re-clicking the active mode turns it off', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             fireEvent.click(screen.getByText('Relationship'));
             fireEvent.click(screen.getByText('Relationship'));
             expect(screen.getByText('Relationship').closest('button')!.className).not.toContain('active');
@@ -250,8 +253,7 @@ describe('PredictiveModelBuild', () => {
 
     describe('Relationship Apply', () => {
         it('blocks with no predictors selected', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             fireEvent.click(screen.getByText('Relationship'));
             clickApply('Relationship Model');
             await flush();
@@ -278,8 +280,11 @@ describe('PredictiveModelBuild', () => {
                 }
                 return Promise.resolve({});
             });
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData(makePayload({ predictorSensors: ['PRED1'] }));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+            });
+            await renderHydrated();
             fireEvent.click(screen.getByText('Relationship'));
 
             await act(async () => {
@@ -297,8 +302,7 @@ describe('PredictiveModelBuild', () => {
 
     describe('Clustering Apply', () => {
         it('requires a predictor for the X-axis', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             fireEvent.click(screen.getByText('Clustering'));
             clickApply('Clustering Model');
             await flush();
@@ -318,8 +322,11 @@ describe('PredictiveModelBuild', () => {
                 }
                 return Promise.resolve({});
             });
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData(makePayload({ predictorSensors: ['PRED1'] }));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+            });
+            await renderHydrated();
             fireEvent.click(screen.getByText('Clustering'));
 
             await act(async () => {
@@ -337,8 +344,11 @@ describe('PredictiveModelBuild', () => {
 
     describe('data filters (pmSensorFilters)', () => {
         it('is disabled with no target/predictor pool, enabled once one exists, and adds/removes a row', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData(makePayload({ predictorSensors: ['PRED1'] }));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+            });
+            await renderHydrated();
             const addBtn = screen.getByTitle('Add a sensor value filter') as HTMLButtonElement;
             expect(addBtn.disabled).toBe(false); // target + PRED1 form a non-empty pool
 
@@ -349,21 +359,11 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
-    describe('window controls', () => {
-        it('Minimize/Maximize/Close call the corresponding Tauri window APIs', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
-            fireEvent.click(screen.getByTitle('Minimize'));
-            expect(mockMinimize).toHaveBeenCalled();
-            fireEvent.click(screen.getByTitle('Maximize'));
-            expect(mockToggleMaximize).toHaveBeenCalled();
-
-            await act(async () => {
-                fireEvent.click(screen.getByText('×', { selector: '.predictive-close-btn' }));
-                await Promise.resolve();
-            });
-            expect(mockEmit).toHaveBeenCalledWith('predictive-model-closed', undefined);
-            expect(mockClose).toHaveBeenCalled();
+    describe('back navigation', () => {
+        it('the Back button calls onBack instead of closing any window', async () => {
+            const { onBack } = await renderHydrated();
+            fireEvent.click(screen.getByTitle('Back to Build Model overview'));
+            expect(onBack).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -379,8 +379,7 @@ describe('PredictiveModelBuild', () => {
                 }
                 return Promise.resolve({});
             });
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
 
             fireEvent.click(screen.getByText('Save Model'));
             const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
@@ -399,8 +398,7 @@ describe('PredictiveModelBuild', () => {
 
         it('cancelling the save-folder dialog does not train anything', async () => {
             mockOpenDialog.mockResolvedValue(null);
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
 
             fireEvent.click(screen.getByText('Save Model'));
             await act(async () => {
@@ -412,8 +410,7 @@ describe('PredictiveModelBuild', () => {
         });
 
         it('disables Confirm & Save when Relationship is chosen with no predictors (blocking warning)', async () => {
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             fireEvent.click(screen.getByText('Relationship'));
             fireEvent.click(screen.getByText('Save Model'));
             const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
@@ -422,24 +419,13 @@ describe('PredictiveModelBuild', () => {
     });
 
     describe('persistence', () => {
-        function makeStoredModel(overrides: Record<string, any> = {}) {
-            return {
-                id: 'm1', groupNo: 1, name: 'A', kind: 'individual', category: null, notes: '', status: false,
-                targetSensor: 'TARGET1', predictorSensors: [], xSensor: '', ySensor: '',
-                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
-                relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
-                ...overrides,
-            };
-        }
-
         it('debounces a write into this model\'s own FailureModel record (not a global slot) after a mode toggle', async () => {
             const onDiskModel = makeStoredModel();
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
             vi.useFakeTimers();
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             mockUpdateWorkspaceData.mockClear();
             mockEmit.mockClear();
 
@@ -457,11 +443,11 @@ describe('PredictiveModelBuild', () => {
 
         it('does not touch another model in the same group when this one changes', async () => {
             const sibling = makeStoredModel({ id: 'm2', targetSensor: 'PRED1', relModelName: 'Untouched' });
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } });
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } }));
             vi.useFakeTimers();
-            render(<PredictiveModelBuild />);
-            await deliverPredictiveData();
+            await renderHydrated();
             mockUpdateWorkspaceData.mockClear();
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } }));
@@ -477,8 +463,7 @@ describe('PredictiveModelBuild', () => {
     });
 
     it('picks up a rename via the workspace-renamed-internal event', async () => {
-        render(<PredictiveModelBuild />);
-        await deliverPredictiveData();
+        await renderHydrated();
         await act(async () => {
             for (const cb of listenCallbacks['workspace-renamed-internal'] ?? []) {
                 cb({ payload: { newName: 'Renamed WS' } });

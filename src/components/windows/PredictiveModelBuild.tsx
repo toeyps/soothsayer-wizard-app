@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { ReactNode } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CsvMetadata, CsvRecord, SensorMetadata, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
+import { CsvRecord, SensorMetadata, FailureModel, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -12,9 +11,7 @@ import type {
     ClusteringModelInfo,
     RelationshipTrainResult,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Plus, Square, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, FileText, Image as ImageIcon, ChevronDown } from "lucide-react";
-import { useIsMacOS } from "../../hooks/useIsMacOS";
-import { useSubWindowMenu } from "../../hooks/useSubWindowMenu";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, FileText, Image as ImageIcon, ChevronDown, ArrowLeft } from "lucide-react";
 import { usePMReport } from "../../hooks/usePMReport";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
@@ -145,10 +142,8 @@ function SensorAutocomplete({
     );
 }
 
-interface PredictiveModelData {
+interface PredictiveModelBuildProps {
     workspaceId: string;
-    targetSensor: string;
-    predictorSensors: string[];
     /** Which FailureModel this session's config belongs to — config is
      *  persisted into that specific model in `failureGroupState.models`
      *  rather than a single global slot, so training one model can never
@@ -156,27 +151,25 @@ interface PredictiveModelData {
     modelId: string;
     sensorHeaders: string[];
     sensorMetadata: SensorMetadata[] | null;
-    metadata: CsvMetadata;
-    dashboardSnapshot?: DashboardSnapshot;
+    /** Returns to BuildModelWindow's overview page. This page is a child of
+     *  that window (not a spawned OS window of its own — see BuildModelWindow's
+     *  own doc comment for why), so "closing" it just means switching the
+     *  parent's local page state back. */
+    onBack: () => void;
 }
 
-
-
-export default function PredictiveModelBuild() {
-    const isMacOS = useIsMacOS();
-    const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+export default function PredictiveModelBuild({ workspaceId, modelId, sensorHeaders, sensorMetadata, onBack }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
-    // Which FailureModel this session's config is persisted into — see
-    // PredictiveModelData's own doc comment.
-    const [pmModelId, setPmModelId] = useState<string>('');
+    // Alias kept so the large body of pre-existing code below (persistence
+    // effect, save/train calls, etc.) didn't need a mechanical rename pass.
+    const pmModelId = modelId;
+    const allSensors = sensorHeaders;
 
     // Data from previous page
     const [targetSensor, setTargetSensor] = useState<string>("");
     const [predictorSensors, setPredictorSensors] = useState<string[]>([]);
-    const [allSensors, setAllSensors] = useState<string[]>([]);
-    const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [loading, setLoading] = useState(true);
 
     // Plot mode — Individual is an independent toggle; Relationship/Clustering are mutually exclusive
@@ -529,107 +522,99 @@ export default function PredictiveModelBuild() {
     }, [reportMenuOpen]);
 
     useEffect(() => {
-        let unlistenData: (() => void) | undefined;
+        let cancelled = false;
+        hydratedRef.current = false;
+        setLoading(true);
 
-        const setup = async () => {
-            unlistenData = await listen<PredictiveModelData>('predictive-model-data', async (event) => {
-                console.log("Received predictive-model-data:", event.payload);
-                const d = event.payload;
-                setWorkspaceId(d.workspaceId);
-                setAllSensors(d.sensorHeaders);
-                setSensorMetadata(d.sensorMetadata);
-                setPmModelId(d.modelId);
-                if (d.dashboardSnapshot) setDashboardSnapshot(d.dashboardSnapshot);
+        (async () => {
+            // Hydrate model config from this specific FailureModel — it
+            // extends PredictiveModelStateSlice, so the model record itself
+            // IS the slice. `found` also carries `kind`/`xSensor`/`ySensor`,
+            // needed below for the very-first-open fallback (clustering
+            // models keep their sensors in xSensor/ySensor, not
+            // targetSensor/predictorSensors).
+            let found: FailureModel | undefined;
+            try {
+                const ws = await loadWorkspaceData(workspaceId);
+                if (cancelled) return;
+                if (ws?.name) setWorkspaceName(ws.name);
+                found = ws?.failureGroupState?.models.find(m => m.id === modelId);
+                if (ws?.dashboardSnapshot) setDashboardSnapshot(ws.dashboardSnapshot);
+                // Hydrate the remembered save folder so the next picker
+                // defaults to wherever the user last picked.
+                if (ws?.outputDir) setOutputDir(ws.outputDir);
+            } catch (e) {
+                console.warn('Failed to hydrate predictive-model state from workspace:', e);
+            }
+            if (cancelled) return;
 
-                // Hydrate model config from this specific FailureModel if it
-                // still exists on disk; otherwise fall back to the incoming
-                // payload. FailureModel extends PredictiveModelStateSlice, so
-                // the model record itself IS the slice.
-                let slice: PredictiveModelStateSlice | undefined;
-                try {
-                    const ws = await loadWorkspaceData(d.workspaceId);
-                    if (ws?.name) setWorkspaceName(ws.name);
-                    slice = ws?.failureGroupState?.models.find(m => m.id === d.modelId);
-                    if (ws?.dashboardSnapshot && !d.dashboardSnapshot) setDashboardSnapshot(ws.dashboardSnapshot);
-                    // Hydrate the remembered save folder so the next picker
-                    // defaults to wherever the user last picked.
-                    if (ws?.outputDir) setOutputDir(ws.outputDir);
-                } catch (e) {
-                    console.warn('Failed to hydrate predictive-model state from workspace:', e);
+            const slice: PredictiveModelStateSlice | undefined = found;
+            const kindMappedTarget = found ? (found.kind === 'clustering' ? found.ySensor : (found.targetSensor ?? '')) : '';
+            const effectiveTarget = slice?.targetSensor || kindMappedTarget;
+            const effectivePredictors = slice?.predictorSensors ?? [];
+            setTargetSensor(effectiveTarget);
+            setPredictorSensors(effectivePredictors);
+            if (slice) {
+                setIndividualChecked(slice.individualChecked);
+                setRcMode(slice.rcMode);
+                setScatterXSensor(slice.scatterXSensor || (effectivePredictors[0] ?? ''));
+                setRelModelName(slice.relModelName);
+                // Snap legacy values (e.g. old default `1`) to the nearest
+                // preset so the dropdown always renders a valid option.
+                setRelStiffness(snapStiffness(slice.relStiffness));
+                setClusterModelName(slice.clusterModelName);
+                setNumClusters(slice.numClusters);
+                setCriteriaSensor(slice.criteriaSensor);
+                // Restore per-cluster ranges. Older workspaces from before the
+                // multi-cluster migration may carry the legacy
+                // `clusterRangeMin` / `clusterRangeMax` scalar pair instead —
+                // fall back to those (replicated across all clusters) when
+                // `clusterRanges` is missing so old workspaces still open.
+                const legacy = slice as unknown as {
+                    clusterRangeMin?: number;
+                    clusterRangeMax?: number;
+                };
+                if (Array.isArray(slice.clusterRanges) && slice.clusterRanges.length > 0) {
+                    setClusterRanges(slice.clusterRanges);
+                } else if (typeof legacy.clusterRangeMin === 'number' && typeof legacy.clusterRangeMax === 'number') {
+                    // Spread the single pair into one range per cluster.
+                    const n = Math.max(1, slice.numClusters);
+                    const lo = legacy.clusterRangeMin;
+                    const hi = legacy.clusterRangeMax;
+                    const step = (hi - lo) / n;
+                    setClusterRanges(
+                        Array.from({ length: n }, (_, i) => ({
+                            min: lo + step * i,
+                            max: lo + step * (i + 1),
+                        })),
+                    );
                 }
+                setFilterTimeStart(slice.filterTimeStart);
+                setFilterTimeEnd(slice.filterTimeEnd);
+                // Backward-compat: older workspaces persisted a single free-text
+                // `filterSensorValue` (e.g. "> 50") that was never wired to the
+                // payload. Drop it on load; new per-sensor filters live in
+                // `pmSensorFilters` and now actually affect the model.
+                setPmSensorFilters(Array.isArray(slice.pmSensorFilters) ? slice.pmSensorFilters : []);
+                // NOTE: Fit results (relPreview / subModels / clusteringPreview)
+                // are deliberately NOT persisted. With many target sensors or
+                // large datasets the predictor_raw matrices balloon the workspace
+                // JSON quickly, so we accept that re-opening a workspace requires
+                // clicking Apply again.
+            } else if (effectivePredictors.length > 0) {
+                setScatterXSensor(effectivePredictors[0]);
+            }
 
-                const effectiveTarget = slice?.targetSensor || d.targetSensor;
-                const effectivePredictors = slice?.predictorSensors ?? d.predictorSensors;
-                setTargetSensor(effectiveTarget);
-                setPredictorSensors(effectivePredictors);
-                if (slice) {
-                    setIndividualChecked(slice.individualChecked);
-                    setRcMode(slice.rcMode);
-                    setScatterXSensor(slice.scatterXSensor || (effectivePredictors[0] ?? ''));
-                    setRelModelName(slice.relModelName);
-                    // Snap legacy values (e.g. old default `1`) to the nearest
-                    // preset so the dropdown always renders a valid option.
-                    setRelStiffness(snapStiffness(slice.relStiffness));
-                    setClusterModelName(slice.clusterModelName);
-                    setNumClusters(slice.numClusters);
-                    setCriteriaSensor(slice.criteriaSensor);
-                    // Restore per-cluster ranges. Older workspaces from before the
-                    // multi-cluster migration may carry the legacy
-                    // `clusterRangeMin` / `clusterRangeMax` scalar pair instead —
-                    // fall back to those (replicated across all clusters) when
-                    // `clusterRanges` is missing so old workspaces still open.
-                    const legacy = slice as unknown as {
-                        clusterRangeMin?: number;
-                        clusterRangeMax?: number;
-                    };
-                    if (Array.isArray(slice.clusterRanges) && slice.clusterRanges.length > 0) {
-                        setClusterRanges(slice.clusterRanges);
-                    } else if (typeof legacy.clusterRangeMin === 'number' && typeof legacy.clusterRangeMax === 'number') {
-                        // Spread the single pair into one range per cluster.
-                        const n = Math.max(1, slice.numClusters);
-                        const lo = legacy.clusterRangeMin;
-                        const hi = legacy.clusterRangeMax;
-                        const step = (hi - lo) / n;
-                        setClusterRanges(
-                            Array.from({ length: n }, (_, i) => ({
-                                min: lo + step * i,
-                                max: lo + step * (i + 1),
-                            })),
-                        );
-                    }
-                    setFilterTimeStart(slice.filterTimeStart);
-                    setFilterTimeEnd(slice.filterTimeEnd);
-                    // Backward-compat: older workspaces persisted a single free-text
-                    // `filterSensorValue` (e.g. "> 50") that was never wired to the
-                    // payload. Drop it on load; new per-sensor filters live in
-                    // `pmSensorFilters` and now actually affect the model.
-                    setPmSensorFilters(Array.isArray(slice.pmSensorFilters) ? slice.pmSensorFilters : []);
-                    // NOTE: Fit results (relPreview / subModels / clusteringPreview)
-                    // are deliberately NOT persisted. With many target sensors or
-                    // large datasets the predictor_raw matrices balloon the workspace
-                    // JSON quickly, so we accept that re-opening a workspace requires
-                    // clicking Apply again.
-                } else if (effectivePredictors.length > 0) {
-                    setScatterXSensor(effectivePredictors[0]);
-                }
+            hydratedRef.current = true;
+            setLoading(false);
+        })();
 
-                hydratedRef.current = true;
-                setLoading(false);
-            });
+        return () => { cancelled = true; };
+    }, [workspaceId, modelId]);
 
-            // Request data from opener
-            await emit('request-predictive-data');
-        };
-
-        setup();
-
-        return () => {
-            if (unlistenData) unlistenData();
-        };
-    }, []);
-
-    // Keep workspaceName synced when the user renames via this window's
-    // native menu (rename UI emits `workspace-renamed-internal` after disk write).
+    // Keep workspaceName synced when the user renames the workspace from
+    // Dashboard's native menu (App.tsx) while this page is open — that
+    // rename UI emits `workspace-renamed-internal` globally after disk write.
     useEffect(() => {
         let unlisten: (() => void) | undefined;
         (async () => {
@@ -671,8 +656,6 @@ export default function PredictiveModelBuild() {
             (async () => {
                 const next = await updateWorkspaceData(workspaceId, (prev) => ({
                     ...prev,
-                    lastRoute: 'predictive-model',
-                    lastPmModelId: pmModelId,
                     failureGroupState: {
                         groups: prev.failureGroupState?.groups ?? [],
                         models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
@@ -1251,42 +1234,7 @@ export default function PredictiveModelBuild() {
         };
     }, [clusteringPreview]);
 
-    // Shake animation, triggered by a `predictive-model-shake` emit. Nothing
-    // emits this event anymore — it was FailureGroupCreation.tsx's "focus PM
-    // and shake it" affordance when the user tried to close FG while PM was
-    // still open. FG is gone (folded into the Dashboard window, which has no
-    // equivalent close-blocking need), so this listener is inert but
-    // harmless; left in place rather than half-removed without auditing
-    // every `containerRef` usage in this file.
     const containerRef = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        let unlistenShake: (() => void) | undefined;
-        const setupShake = async () => {
-            unlistenShake = await listen('predictive-model-shake', () => {
-                if (containerRef.current) {
-                    containerRef.current.classList.add('window-shake');
-                    setTimeout(() => {
-                        containerRef.current?.classList.remove('window-shake');
-                    }, 500);
-                }
-            });
-        };
-        setupShake();
-        return () => { if (unlistenShake) unlistenShake(); };
-    }, []);
-
-    // No `onCloseRequested` handler — let close proceed unconditionally.
-    // Whichever window spawned PM (now always Dashboard.tsx) already listens
-    // for `tauri://destroyed` on the WebviewWindow handle it created, so
-    // destruction is signaled regardless of close path (custom button,
-    // native red-close, force-quit, crash).
-
-    const handleClose = async () => {
-        // The custom-titlebar path (Windows / Linux). Fire-and-forget the emit
-        // so a slow/hung IPC channel can't block the actual close call.
-        emit('predictive-model-closed').catch(() => { /* ignore */ });
-        try { await getCurrentWindow().close(); } catch { /* ignore */ }
-    };
 
     const handlePredictorToggle = (sensor: string) => {
         setPredictorSensors(prev => {
@@ -1866,15 +1814,6 @@ export default function PredictiveModelBuild() {
         }
     };
 
-    useSubWindowMenu({
-        workspaceId,
-        localSaveLabel: 'Save Model',
-        // Route the menu through the same confirmation modal as the toolbar
-        // button + Preview modal — so users always see the "what's going to
-        // be saved?" summary regardless of which Save Model trigger they use.
-        onLocalSave: () => setConfirmSaveOpen(true),
-    });
-
     if (loading) {
         return (
             <div className="predictive-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1885,24 +1824,15 @@ export default function PredictiveModelBuild() {
 
     return (
         <div className="predictive-container" ref={containerRef}>
-            {/* Title Bar — only render custom bar when OS doesn't provide native decorations */}
-            {!isMacOS && (
-                <div data-tauri-drag-region className="predictive-titlebar">
-                    <h2 className="predictive-title">Predictive Mode — Model Build</h2>
-                    <div className="predictive-titlebar-actions">
-                        <button className="predictive-window-btn" onClick={() => getCurrentWindow().minimize()} title="Minimize">
-                            <Minus size={14} />
-                        </button>
-                        <button className="predictive-window-btn" onClick={() => getCurrentWindow().toggleMaximize()} title="Maximize">
-                            <Square size={12} />
-                        </button>
-                        <button onClick={handleClose} className="predictive-close-btn">&times;</button>
-                    </div>
-                </div>
-            )}
-
-            {/* Command bar */}
+            {/* Command bar — no window chrome (minimize/maximize/close) here
+                anymore: this is a page inside BuildModelWindow now, not its
+                own OS window, so that's BuildModelWindow's own titlebar's
+                job. "Closing" this page just means going back to it. */}
             <div className="pm-commandbar">
+                <button className="pm-btn pm-btn-secondary" onClick={onBack} title="Back to Build Model overview">
+                    <ArrowLeft size={13} />
+                    <span>Back</span>
+                </button>
                 <div className="pm-breadcrumb">
                     <span className="pm-crumb-current" title={workspaceName || undefined}>
                         {workspaceName || 'Unnamed'}

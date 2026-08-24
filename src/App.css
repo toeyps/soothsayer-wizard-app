@@ -1378,125 +1378,21 @@ tr:hover {
    Predictive Model Build Page
    ============================================= */
 
+/* This page now renders as a child of BuildModelWindow's own layout (not
+   its own OS window/webview anymore), so it fills its flex-column parent
+   rather than the viewport — `flex: 1; min-height: 0` instead of
+   `height: 100vh`. Window-chrome classes (titlebar, minimize/maximize/close
+   buttons, shake animation) that only made sense for a standalone window
+   were removed along with the JSX that used them. */
 .predictive-container {
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    width: 100vw;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
     overflow: hidden;
     background: var(--bg-primary);
     color: var(--text-primary);
-}
-
-/* Window shake animation (like Windows MessageBeep) */
-@keyframes windowShake {
-
-    0%,
-    100% {
-        transform: translateX(0);
-    }
-
-    10% {
-        transform: translateX(-6px);
-    }
-
-    20% {
-        transform: translateX(6px);
-    }
-
-    30% {
-        transform: translateX(-5px);
-    }
-
-    40% {
-        transform: translateX(5px);
-    }
-
-    50% {
-        transform: translateX(-3px);
-    }
-
-    60% {
-        transform: translateX(3px);
-    }
-
-    70% {
-        transform: translateX(-2px);
-    }
-
-    80% {
-        transform: translateX(2px);
-    }
-
-    90% {
-        transform: translateX(-1px);
-    }
-}
-
-.window-shake {
-    animation: windowShake 0.5s ease-in-out;
-}
-
-.predictive-titlebar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 1rem;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    height: 40px;
-    box-sizing: border-box;
-}
-
-.predictive-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-    pointer-events: none;
-}
-
-.predictive-titlebar-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    pointer-events: auto;
-}
-
-.predictive-window-btn {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    transition: background 0.2s, color 0.2s;
-}
-
-.predictive-window-btn:hover {
-    background: var(--hover-bg);
-    color: var(--text-primary);
-}
-
-.predictive-close-btn {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 1.5rem;
-    cursor: pointer;
-    padding: 0 0.25rem;
-    line-height: 1;
-    border-radius: 4px;
-    transition: background 0.2s, color 0.2s;
-}
-
-.predictive-close-btn:hover {
-    background: #ef4444;
-    color: #fff;
 }
 
 .predictive-body {
@@ -4823,19 +4719,6 @@ body {
 /* =============================================
    Failure Group Creation — Design Refresh
    ============================================= */
-
-.predictive-titlebar {
-    background: var(--card-bg);
-    border-bottom: 1px solid var(--border);
-    height: 38px;
-}
-
-.predictive-title {
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    letter-spacing: -0.01em;
-}
 
 .fg-body {
     background: var(--bg-primary);

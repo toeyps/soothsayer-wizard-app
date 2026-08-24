@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import Split from 'split.js';
-import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
+import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
@@ -816,136 +816,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
-    // ── Predictive Model — spawns the (singleton) PM window directly ────
-    // Previously FailureGroupCreation.tsx's job (its `spawnPMHelper` +
-    // `request-predictive-data` responder); reproduced here since that
-    // window no longer exists. PM broadcasts `request-predictive-data` on
-    // mount and consumes whatever answers on `predictive-model-data` (see
-    // PredictiveModelBuild.tsx) — this also works when PM is spawned by the
-    // separate Build Model window (BuildModelWindow.tsx) instead of directly
-    // from here, since only Dashboard holds the raw CSV sensor data PM needs
-    // and the request/response event bus is global across windows.
-    const pendingModelDataRef = useRef<{ targetSensor: string; predictorSensors: string[]; modelId: string } | null>(null);
-    const autoResumedPmRef = useRef(false);
-
-    const buildDashboardSnapshot = useCallback(() => ({
-        selectedSensors, visibleSensors, operationConfig, filters, samplingMethod,
-    }), [selectedSensors, visibleSensors, operationConfig, filters, samplingMethod]);
-
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen('request-predictive-data', async () => {
-                if (!pendingModelDataRef.current || !initialState) return;
-                await emit('predictive-model-data', {
-                    workspaceId: initialState.id,
-                    targetSensor: pendingModelDataRef.current.targetSensor,
-                    predictorSensors: pendingModelDataRef.current.predictorSensors,
-                    modelId: pendingModelDataRef.current.modelId,
-                    sensorHeaders,
-                    sensorMetadata,
-                    metadata,
-                    dashboardSnapshot: buildDashboardSnapshot(),
-                });
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, [initialState, sensorHeaders, sensorMetadata, metadata, buildDashboardSnapshot]);
-
-    // Opens PM for one specific FailureModel. Sensor requirements are
-    // derived from the model's kind: individual/relationship hand PM their
-    // target + predictors as-is; clustering maps ySensor → PM's "target" and
-    // xSensor → its sole predictor (PM's scatterXSensor then defaults to it).
-    const spawnPredictiveModel = useCallback(async (model: FailureModel) => {
-        if (!initialState) return;
-        const target = model.kind === 'clustering' ? model.ySensor : (model.targetSensor ?? '');
-        if (!target) return;
-        const predictors = model.kind === 'relationship'
-            ? (model.predictorSensors ?? [])
-            : model.kind === 'clustering'
-                ? [model.xSensor].filter((s): s is string => !!s)
-                : [];
-
-        pendingModelDataRef.current = { targetSensor: target, predictorSensors: predictors, modelId: model.id };
-
-        await updateWorkspaceData(initialState.id, prev => ({
-            ...prev,
-            lastRoute: 'predictive-model',
-            lastPmModelId: model.id,
-        }));
-
-        try {
-            // Idempotency: PM stays a singleton window — focus instead of
-            // respawning if it's already open (even for a different model;
-            // matches prior behaviour, unchanged by this redesign).
-            const existingPM = await WebviewWindow.getByLabel('predictive-model');
-            if (existingPM) {
-                try { await existingPM.setFocus(); } catch { /* ignore */ }
-                return;
-            }
-            const screenW = window.screen.width;
-            const screenH = window.screen.height;
-            const isMac = /mac/i.test((navigator as any).userAgentData?.platform || navigator.platform || navigator.userAgent);
-            const webview = new WebviewWindow('predictive-model', {
-                url: '/?window=predictive-model',
-                title: `Predictive Model — ${model.name || target}`,
-                width: Math.round(screenW * 0.75),
-                height: Math.round(screenH * 0.85),
-                center: true,
-                maximized: true,
-                decorations: isMac,
-            });
-            webview.once('tauri://error', (e) => console.error('Failed to open predictive model window:', e));
-            // Reset lastRoute so reopening this workspace from Recent lands
-            // back on Dashboard's Failure Groups tab, not stuck pointing at
-            // PM. Dual listeners (destroyed + the explicit close event)
-            // mirror the robustness FailureGroupCreation.tsx used to
-            // provide — PM emits both regardless of who spawned it.
-            webview.once('tauri://destroyed', () => {
-                updateWorkspaceData(initialState.id, prev => ({ ...prev, lastRoute: 'failure-group' })).catch(() => { /* ignore */ });
-            });
-            const unlistenClose = await listen('predictive-model-closed', () => {
-                updateWorkspaceData(initialState.id, prev => ({ ...prev, lastRoute: 'failure-group' })).catch(() => { /* ignore */ });
-                unlistenClose();
-            });
-        } catch (err) {
-            console.error('Error opening predictive model window:', err);
-        }
-    }, [initialState]);
-
-    // BuildModelWindow (a separate OS window) can't call spawnPredictiveModel
-    // directly, so it asks for PM via this event instead. Model data is
-    // re-read from disk rather than from this window's own (possibly stale)
-    // fgModels, since BuildModelWindow persists its edits independently.
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen<{ modelId: string }>('launch-predictive-model', async (event) => {
-                if (!initialState) return;
-                const ws = await loadWorkspaceData(initialState.id);
-                const model = ws?.failureGroupState?.models.find(m => m.id === event.payload.modelId);
-                if (!model) return;
-                await spawnPredictiveModel(model);
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, [initialState, spawnPredictiveModel]);
-
-    // Recent-workspace resume: if this workspace's lastRoute is
-    // 'predictive-model' (set the last time PM was opened), auto-reopen it
-    // once on mount on the same model instead of leaving the user stranded
-    // on Dashboard with no visible link to what they were configuring.
-    useEffect(() => {
-        if (autoResumedPmRef.current) return;
-        if (initialState?.lastRoute !== 'predictive-model') return;
-        const model = initialState.failureGroupState?.models.find(m => m.id === initialState.lastPmModelId);
-        if (!model) return;
-        autoResumedPmRef.current = true;
-        spawnPredictiveModel(model);
-        // Intentionally run once on mount only — initialState is a stable
-        // prop for this window's lifetime.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
 
     // ── Build Model — singleton window (label `build-model`) reached from
     //    the Failure Groups tab's "Build Model" button. Was two OS windows

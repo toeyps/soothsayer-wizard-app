@@ -5,6 +5,7 @@ import { X, Plus, Trash2 } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
+import PredictiveModelBuild from "./PredictiveModelBuild";
 
 interface BuildModelData {
     workspaceId: string;
@@ -143,6 +144,16 @@ export default function BuildModelWindow() {
     const hydratedRef = useRef(false);
 
     const [groupBy, setGroupBy] = useState<GroupBy>('fg');
+
+    // ---- Predictive Model page — an in-window "next page" (not a spawned
+    //      OS window) reached from a model row's "Build Model" button. Only
+    //      Dashboard + this singleton window are ever open at once; PM used
+    //      to be its own window/label ('predictive-model') until the user
+    //      asked for it to become a page inside this one instead, same
+    //      consolidation this window itself already went through (see this
+    //      component's own doc comment above). ----
+    const [activePage, setActivePage] = useState<'overview' | 'model'>('overview');
+    const [pmPageModelId, setPmPageModelId] = useState<string | null>(null);
 
     // ---- Group "Edit details" panel: Name + Description + Recommendation
     //      together, one group expanded at a time ----
@@ -389,7 +400,8 @@ export default function BuildModelWindow() {
     };
 
     const trainModel = (modelId: string) => {
-        emit('launch-predictive-model', { modelId });
+        setPmPageModelId(modelId);
+        setActivePage('model');
     };
 
     const handleClose = async () => {
@@ -691,7 +703,7 @@ export default function BuildModelWindow() {
                             className="model-open-pm"
                             onClick={e => { e.stopPropagation(); trainModel(model.id); }}
                         >
-                            Open in Predictive Model →
+                            Build Model →
                         </button>
                     </div>
                     {isEditingThis && (
@@ -704,6 +716,8 @@ export default function BuildModelWindow() {
         );
     };
 
+    const pmPageModel = activePage === 'model' ? allModels.find(m => m.id === pmPageModelId) : undefined;
+
     return (
         // Matches the Dashboard's own card surfaces (`.widget-section`/
         // `.chart-section-large`, which use `--card-bg`) rather than
@@ -713,13 +727,23 @@ export default function BuildModelWindow() {
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--card-bg)', borderBottom: '1px solid var(--border)' }}>
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Build Model — Overview
+                    {pmPageModel ? `Build Model — ${modelDisplayLabel(pmPageModel)}` : 'Build Model — Overview'}
                 </h2>
                 <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
                     <X size={14} />
                 </button>
             </div>
 
+            {pmPageModel && workspaceId ? (
+                <PredictiveModelBuild
+                    workspaceId={workspaceId}
+                    modelId={pmPageModel.id}
+                    sensorHeaders={allSensors}
+                    sensorMetadata={sensorMetadata}
+                    onBack={() => setActivePage('overview')}
+                />
+            ) : (
+            <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-faint)', display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <b style={{ color: 'var(--text-primary)' }}>{totalModels}</b> models ·
@@ -911,6 +935,8 @@ export default function BuildModelWindow() {
                     })
                 )}
             </div>
+            </>
+            )}
         </div>
     );
 }

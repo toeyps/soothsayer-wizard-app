@@ -298,14 +298,14 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
 
       // Recent-workspace navigation used to branch here: `lastRoute ===
       // 'failure-group'` spawned the standalone FailureGroupCreation.tsx
-      // window (destroying `main` first), and `'predictive-model'` did the
-      // same then had FG cascade into PM after hydrating. That window is
-      // gone now — failure-group management lives inline in Dashboard's
-      // Sensor panel, so both routes just render Dashboard normally like
-      // `'dashboard'` does. Dashboard itself reads `initialState.lastRoute`
-      // to decide whether to land on the Failure Groups tab (`'failure-group'`)
-      // or auto-reopen the Predictive Model window (`'predictive-model'`,
-      // via its own mount effect) — see Dashboard.tsx.
+      // window (destroying `main` first). That window is gone now —
+      // failure-group management lives inline in Dashboard's Sensor panel,
+      // so that route just renders Dashboard normally like `'dashboard'`
+      // does. Dashboard itself reads `initialState.lastRoute` to decide
+      // whether to land on the Failure Groups tab (`'failure-group'`) — see
+      // Dashboard.tsx. (The Predictive Model page no longer has its own
+      // route at all — it's reached only via Build Model's "Build Model →"
+      // button and never auto-resumes on workspace open.)
       onDataReady(dataMetadata, state, sm);
     } catch (err) {
       setWorkspaceError(String(err));

@@ -748,39 +748,6 @@ describe('Dashboard', () => {
             }));
         });
 
-        it('a "launch-predictive-model" event from a Build Model window loads that model from disk and spawns the (singleton) PM window', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                id: 'ws1',
-                failureGroupState: {
-                    groups: [],
-                    models: [{
-                        id: 'm1', groupNo: 1, name: 'My Model', kind: 'individual', category: null,
-                        targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '', notes: '', status: false,
-                        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
-                        relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
-                    }],
-                },
-            });
-            renderDashboard();
-            await act(async () => {
-                for (const cb of listenCallbacks['launch-predictive-model'] ?? []) {
-                    await cb({ payload: { modelId: 'm1' } });
-                }
-            });
-            expect(webviewWindowCalls.some((c) => c.label === 'predictive-model')).toBe(true);
-        });
-
-        it('does nothing when the launched model no longer exists on disk', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({ id: 'ws1', failureGroupState: { groups: [], models: [] } });
-            renderDashboard();
-            await act(async () => {
-                for (const cb of listenCallbacks['launch-predictive-model'] ?? []) {
-                    await cb({ payload: { modelId: 'gone' } });
-                }
-            });
-            expect(webviewWindowCalls.some((c) => c.label === 'predictive-model')).toBe(false);
-        });
     });
 
     describe('imperative rename', () => {

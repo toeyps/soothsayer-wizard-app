@@ -26,6 +26,23 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
 }));
 
+// PredictiveModelBuild is a large, heavy component with its own dedicated
+// test file (PredictiveModelBuild.test.tsx) — stub it here so
+// BuildModelWindow's tests only need to assert the page-navigation wiring
+// (props passed in, onBack switching pages), not PM's own internals.
+const predictiveModelBuildProps: any[] = [];
+vi.mock('../components/windows/PredictiveModelBuild', () => ({
+    default: (props: any) => {
+        predictiveModelBuildProps.push(props);
+        return (
+            <div data-testid="pm-page-mock">
+                <span>PM page for {props.modelId}</span>
+                <button onClick={props.onBack}>Mock Back</button>
+            </div>
+        );
+    },
+}));
+
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 
 function makeGroup(overrides: Record<string, any> = {}) {
@@ -67,6 +84,7 @@ async function deliverData(overrides: Record<string, any> = {}) {
 
 beforeEach(() => {
     listenCallbacks = {};
+    predictiveModelBuildProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
@@ -476,12 +494,28 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('"Open in Predictive Model" emits launch-predictive-model without opening the form', async () => {
+        it('"Build Model" navigates to the in-window Predictive Model page instead of opening a new window', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Open in Predictive Model →'));
-            expect(mockEmit).toHaveBeenCalledWith('launch-predictive-model', { modelId: 'm1' });
-            expect(screen.queryByTestId('add-model-form')).toBeNull();
+            fireEvent.click(screen.getByText('Build Model →'));
+            // No cross-window event — this is now local page-navigation state.
+            expect(mockEmit).not.toHaveBeenCalledWith('launch-predictive-model', expect.anything());
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+            expect(screen.getByText('PM page for m1')).toBeTruthy();
+            const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
+            expect(lastProps.workspaceId).toBe('ws1');
+            expect(lastProps.modelId).toBe('m1');
+            expect(lastProps.sensorHeaders).toEqual(['TAG1', 'TAG2', 'TAG3']);
+        });
+
+        it('the PM page\'s Back control returns to the model overview', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Build Model →'));
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+            fireEvent.click(screen.getByText('Mock Back'));
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull();
+            expect(screen.getByText('Build Model →')).toBeTruthy();
         });
 
         it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to "description (tag)"', async () => {

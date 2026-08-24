@@ -188,7 +188,7 @@ export interface FailureGroupStateSlice {
     models: FailureModel[];
 }
 
-export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group' | 'predictive-model';
+export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';
 
 /**
  * Fixed positions on the Dashboard that any panel can occupy. Naming is
@@ -315,10 +315,6 @@ export interface WorkspaceState {
      *  shim (`workspaceManager.ts`) to seed the one model it used to belong
      *  to; never written by current code. */
     predictiveModelState?: PredictiveModelStateSlice;
-    /** Id of the `FailureModel` last opened in the (singleton) Predictive
-     *  Model window, kept only so Dashboard can auto-reopen PM on the same
-     *  model when the workspace is resumed with `lastRoute: 'predictive-model'`. */
-    lastPmModelId?: string;
     /** Last folder the user picked in the Save Model dialog. Used as the
      *  `defaultPath` for the next folder-picker invocation so they don't have
      *  to re-navigate to the same place every save. The actual save still
