@@ -86,6 +86,11 @@ vi.mock('../components/dashboard/HighlightsPanel', () => ({
                 <button onClick={() => props.onRemoveTimeHighlight('h1')}>hl-remove-highlight</button>
                 <button onClick={() => props.onRecolorTimeHighlight('h1', '#abcdef')}>hl-recolor-highlight</button>
                 <button onClick={() => props.onRenameTimeHighlight('h1', 'Renamed')}>hl-rename-highlight</button>
+                <button onClick={() => props.onSetValueHighlightSensor('TAG1')}>hl-set-value-sensor</button>
+                <button onClick={() => props.onAddValueHighlightRange(10, 20)}>hl-add-value-range</button>
+                <button onClick={() => props.onToggleValueHighlightRange('r1')}>hl-toggle-value-range</button>
+                <button onClick={() => props.onRemoveValueHighlightRange('r1')}>hl-remove-value-range</button>
+                <button onClick={() => props.onRecolorValueHighlightRange('r1', '#abcdef')}>hl-recolor-value-range</button>
             </div>
         );
     },
@@ -473,6 +478,76 @@ describe('Dashboard', () => {
             await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
             const saved = last(mockSaveWorkspaceData.mock.calls)[0];
             expect(saved.highlightLineDisplay).toBe('line');
+        });
+    });
+
+    describe('Highlights tab ("By value" — Scatter-only, restored after removal to live here instead of a "Colour by…" control on Scatter\'s own toolbar)', () => {
+        it('seeds valueHighlight from initialState (default { sensor: \'\', ranges: [] } when absent) and forwards it to HighlightsPanel', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(last(highlightsPanelProps).valueHighlight).toEqual({ sensor: '', ranges: [] });
+        });
+
+        it('onSetValueHighlightSensor / onAddValueHighlightRange / onToggleValueHighlightRange / onRecolorValueHighlightRange / onRemoveValueHighlightRange all mutate valueHighlight, forwarded to Chart only on Scatter', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], chartType: 'scatter' }) });
+            fireEvent.click(screen.getByText('Highlights'));
+
+            fireEvent.click(screen.getByText('hl-set-value-sensor'));
+            expect(last(highlightsPanelProps).valueHighlight.sensor).toBe('TAG1');
+
+            fireEvent.click(screen.getByText('hl-add-value-range'));
+            const ranges = last(highlightsPanelProps).valueHighlight.ranges;
+            expect(ranges).toEqual([
+                expect.objectContaining({ min: 10, max: 20, enabled: true, color: expect.any(String) }),
+            ]);
+            const rId = ranges[0].id;
+
+            act(() => { last(highlightsPanelProps).onToggleValueHighlightRange(rId); });
+            expect(last(highlightsPanelProps).valueHighlight.ranges[0].enabled).toBe(false);
+
+            act(() => { last(highlightsPanelProps).onRecolorValueHighlightRange(rId, '#123456'); });
+            expect(last(highlightsPanelProps).valueHighlight.ranges[0].color).toBe('#123456');
+
+            // Scatter-only -- forwarded to Chart since it's active.
+            expect(last(chartProps).valueHighlight).toEqual(last(highlightsPanelProps).valueHighlight);
+
+            act(() => { last(highlightsPanelProps).onRemoveValueHighlightRange(rId); });
+            expect(last(highlightsPanelProps).valueHighlight.ranges).toEqual([]);
+        });
+
+        it('drops the sensor (and its ranges) when it\'s no longer among the selected sensors', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], valueHighlight: { sensor: 'TAG2', ranges: [{ id: 'r1', min: 1, max: 2, color: '#fff', enabled: true }] } }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(last(highlightsPanelProps).valueHighlight).toEqual({ sensor: 'TAG2', ranges: [{ id: 'r1', min: 1, max: 2, color: '#fff', enabled: true }] });
+
+            // Deselect TAG2 via the same mocked SensorSelection used elsewhere in this file.
+            fireEvent.click(screen.getByText('select-tag1'));
+            expect(last(highlightsPanelProps).valueHighlight).toEqual({ sensor: '', ranges: [] });
+        });
+
+        it('persists valueHighlight via the autosave (buildWorkspaceState)', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            fireEvent.click(screen.getByText('hl-set-value-sensor'));
+            fireEvent.click(screen.getByText('hl-add-value-range'));
+
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
+            const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+            expect(saved.valueHighlight).toEqual(last(highlightsPanelProps).valueHighlight);
+        });
+
+        it('passes valueHighlight to Chart only when Scatter is active, never Line or Pair Plot', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], chartType: 'line' }) });
+            expect(last(chartProps).valueHighlight).toBeUndefined();
+
+            fireEvent.click(screen.getByText('Scatter'));
+            expect(last(chartProps)).toHaveProperty('valueHighlight');
+        });
+
+        it('passes the currently plotted sensors (scatterChartHeaders) as valueHighlightSensors', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
+            fireEvent.click(screen.getByText('Highlights'));
+            expect(last(highlightsPanelProps).valueHighlightSensors).toEqual(['TAG1', 'TAG2']);
         });
     });
 

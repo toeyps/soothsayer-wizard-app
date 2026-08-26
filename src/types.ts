@@ -265,6 +265,34 @@ export interface TimeHighlight {
  *  'band' (the original, pre-this-field default). */
 export type HighlightLineDisplay = 'band' | 'line';
 
+/** One user-defined value range ("load band") under `ValueHighlight.sensor`
+ *  — a point whose value on that sensor falls in [min, max] gets this
+ *  range's colour when `enabled`. Colour is assigned once (from the same
+ *  palette `TimeHighlight` cycles through) when the range is created and
+ *  persisted from then on, same as `TimeHighlight.color` — stable across
+ *  adding/removing other ranges, and user-recolourable. */
+export interface ValueHighlightRange {
+    id: string;
+    min: number;
+    max: number;
+    color: string;
+    enabled: boolean;
+}
+
+/** "By value" highlighting — colours Scatter chart points by where a 3rd
+ *  sensor's value falls among user-defined ranges (e.g. two speed bands
+ *  compared spatially on an X/Y plot). Lives in the same "Highlights" tab
+ *  as `TimeHighlight` ("By time"), but is a single sensor + its ranges
+ *  rather than a flat list — Scatter only has one colour channel, so
+ *  ranges from more than one sensor active at once would be ambiguous.
+ *  Scatter-only (Line/Pair Plot don't read this at all — Pair Plot keeps
+ *  its own lasso-cluster gesture, Line has no 3rd-sensor colour channel).
+ *  `sensor: ''` = off (no sensor picked yet). */
+export interface ValueHighlight {
+    sensor: string;
+    ranges: ValueHighlightRange[];
+}
+
 /** A single tagged point on the Line chart — "pin this exact point so I can
  *  compare its value against another one." Identified by its x-axis
  *  TIMESTAMP, not a raw array index: the query result's index-to-timestamp
@@ -368,4 +396,7 @@ export interface WorkspaceState {
     timeHighlights?: TimeHighlight[];
     /** See `HighlightLineDisplay`. Absent = 'band'. */
     highlightLineDisplay?: HighlightLineDisplay;
+    /** "By value" highlighting — see `ValueHighlight`. Scatter-only. Absent
+     *  = no sensor picked (the pre-feature default). */
+    valueHighlight?: ValueHighlight;
 }

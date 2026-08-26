@@ -159,11 +159,12 @@ describe('ScatterChart', () => {
         expect(events).not.toEqual(expect.arrayContaining(['select', 'deselect']));
     });
 
-    describe('point colouring (criteria-sensor "By value" colouring was removed — Scatter only ever renders a flat colour on its own canvas)', () => {
+    describe('point colouring ("by value" highlighting — the range editor itself lives in Dashboard\'s Highlights tab, not this chart\'s own toolbar)', () => {
         const headers3 = ['A', 'B', 'C'];
         const data3 = [
             { timestamp: 't0', values: [1, 10, 100] },
             { timestamp: 't1', values: [2, 20, 200] },
+            { timestamp: 't2', values: [3, 30, 300] },
         ] as any;
 
         it('no criteria control exists in this chart\'s own toolbar (only X/Y pickers)', () => {
@@ -174,11 +175,68 @@ describe('ScatterChart', () => {
             expect(screen.queryByText('+ Add')).toBeNull();
         });
 
-        it('always colours points flat (colorBy off), never a category palette', () => {
+        it('colours points flat when no valueHighlight prop is passed at all', () => {
             render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
             const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
             expect(lastSetCall![0].colorBy).toBeNull();
             expect(lastSetCall![0].pointColor).toEqual([0.39, 0.58, 0.98, 0.55]);
+        });
+
+        it('colours points flat when a sensor is picked but has no enabled ranges yet', () => {
+            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} valueHighlight={{ sensor: 'C', ranges: [] }} />);
+            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
+            expect(lastSetCall![0].colorBy).toBeNull();
+        });
+
+        it('colours points by value once a range is enabled, using each range\'s own colour + a fixed unmatched colour at index 0', async () => {
+            const valueHighlight = {
+                sensor: 'C',
+                ranges: [{ id: 'r1', min: 150, max: 250, color: '#ff0000', enabled: true }],
+            };
+            await act(async () => {
+                render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} valueHighlight={valueHighlight} />);
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
+            expect(lastSetCall![0].colorBy).toBe('valueA');
+            expect(lastSetCall![0].pointColor).toEqual([
+                [0.55, 0.6, 0.68, 0.12], // VALUE_UNMATCHED_COLOR
+                [1, 0, 0, 1], // #ff0000
+            ]);
+            // Row t0 (C=100) and t2 (C=300) fall outside [150,250] -> category 0;
+            // row t1 (C=200) falls inside -> category 1 (first, and only, range).
+            const drawCall = last(lastInstance!.draw.mock.calls);
+            expect(Array.from(drawCall[0].valueA as Float32Array)).toEqual([0, 1, 0]);
+        });
+
+        it('a disabled range is excluded from colouring (its points fall back to unmatched)', () => {
+            const valueHighlight = {
+                sensor: 'C',
+                ranges: [{ id: 'r1', min: 150, max: 250, color: '#ff0000', enabled: false }],
+            };
+            render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} valueHighlight={valueHighlight} />);
+            const lastSetCall = last(lastInstance!.set.mock.calls.filter((c) => 'colorBy' in c[0]));
+            expect(lastSetCall![0].colorBy).toBeNull(); // no enabled ranges at all -> flat, same as "no ranges"
+        });
+
+        it('the first matching range wins when ranges overlap', async () => {
+            const valueHighlight = {
+                sensor: 'C',
+                ranges: [
+                    { id: 'r1', min: 50, max: 350, color: '#ff0000', enabled: true },
+                    { id: 'r2', min: 150, max: 250, color: '#00ff00', enabled: true },
+                ],
+            };
+            await act(async () => {
+                render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} valueHighlight={valueHighlight} />);
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            const drawCall = last(lastInstance!.draw.mock.calls);
+            // Every row falls in range 1 (wider) first, even the ones that
+            // also fall in range 2 -> all category 1, never 2.
+            expect(Array.from(drawCall[0].valueA as Float32Array)).toEqual([1, 1, 1]);
         });
     });
 

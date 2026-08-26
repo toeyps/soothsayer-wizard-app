@@ -5,7 +5,7 @@ import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureModel, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, LineTaggedPoint,
+    FailureGroup, FailureModel, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -436,6 +436,58 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [highlightLineDisplay, setHighlightLineDisplay] = useState<HighlightLineDisplay>(
         initialState?.highlightLineDisplay ?? 'band',
     );
+
+    // "By value" highlighting ("Highlights" tab) — Scatter-only. Lives
+    // alongside timeHighlights in the same tab (per explicit user request —
+    // it used to be a "Colour by…" dropdown on Scatter's own toolbar
+    // before being replaced by time-window highlighting; the user asked
+    // for it back, deliberately relocated into the Highlights tab this
+    // time instead of restoring the old toolbar control). See
+    // ValueHighlight in types.ts for why this is one sensor + its ranges
+    // rather than a flat list like timeHighlights — Scatter only has one
+    // colour channel, so ranges from more than one sensor active at once
+    // would be ambiguous.
+    const [valueHighlight, setValueHighlight] = useState<ValueHighlight>(
+        initialState?.valueHighlight ?? { sensor: '', ranges: [] },
+    );
+
+    const handleSetValueHighlightSensor = useCallback((sensor: string) => {
+        setValueHighlight(prev => ({ ...prev, sensor }));
+    }, []);
+
+    const handleAddValueHighlightRange = useCallback((min: number, max: number) => {
+        setValueHighlight(prev => ({
+            ...prev,
+            ranges: [...prev.ranges, {
+                id: `${Date.now()}-${prev.ranges.length}`,
+                min, max,
+                color: rgbaToHex(RANGE_PALETTE[prev.ranges.length % RANGE_PALETTE.length]),
+                enabled: true,
+            }],
+        }));
+    }, []);
+
+    const handleToggleValueHighlightRange = useCallback((id: string) => {
+        setValueHighlight(prev => ({ ...prev, ranges: prev.ranges.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r) }));
+    }, []);
+
+    const handleRemoveValueHighlightRange = useCallback((id: string) => {
+        setValueHighlight(prev => ({ ...prev, ranges: prev.ranges.filter(r => r.id !== id) }));
+    }, []);
+
+    const handleRecolorValueHighlightRange = useCallback((id: string, color: string) => {
+        setValueHighlight(prev => ({ ...prev, ranges: prev.ranges.map(r => r.id === id ? { ...r, color } : r) }));
+    }, []);
+
+    // Drop the criteria sensor (turn "by value" coloring off) if it's no
+    // longer among the selected sensors — same reasoning as scatterAxes/
+    // scatterAxisPins elsewhere in this file. Its ranges go with it — they're
+    // meaningless for a different sensor.
+    useEffect(() => {
+        if (valueHighlight.sensor && !selectedSensors.includes(valueHighlight.sensor)) {
+            setValueHighlight({ sensor: '', ranges: [] });
+        }
+    }, [selectedSensors, valueHighlight.sensor]);
 
     // Quick relative time range (e.g. "last 2 D") — an alternative to
     // manually picking absolute start/end dates. Y/M use calendar-accurate
@@ -1079,6 +1131,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         scatterAxisPins,
         timeHighlights,
         highlightLineDisplay,
+        valueHighlight,
         // lineTaggedPoints deliberately excluded — see the state's own
         // comment above for why (not meant to survive app close/reopen).
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
@@ -1087,7 +1140,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
-        relativeAmount, relativeUnit,
+        valueHighlight, relativeAmount, relativeUnit,
     ]);
 
     // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
@@ -1346,6 +1399,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onScatterAxisPinsChange={handleScatterAxisPinsChange}
                         sensorMetadata={sensorMetadata}
                         timeHighlights={timeHighlights}
+                        valueHighlight={valueHighlight}
                     />
                 )}
             </div>
@@ -1585,6 +1639,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRenameTimeHighlight={handleRenameTimeHighlight}
                         lineDisplay={highlightLineDisplay}
                         onSetLineDisplay={setHighlightLineDisplay}
+                        valueHighlight={valueHighlight}
+                        valueHighlightSensors={scatterChartHeaders}
+                        onSetValueHighlightSensor={handleSetValueHighlightSensor}
+                        onAddValueHighlightRange={handleAddValueHighlightRange}
+                        onToggleValueHighlightRange={handleToggleValueHighlightRange}
+                        onRemoveValueHighlightRange={handleRemoveValueHighlightRange}
+                        onRecolorValueHighlightRange={handleRecolorValueHighlightRange}
                         chartType={chartType}
                     />
                 ) : (

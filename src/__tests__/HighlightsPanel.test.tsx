@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { TimeHighlight } from '../types';
+import type { TimeHighlight, ValueHighlight } from '../types';
 
 const colorPickerCalls: any[] = [];
 vi.mock('../components/dashboard/ColorPlatePicker', () => ({
@@ -22,6 +22,13 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof HighlightsPane
         onRenameTimeHighlight: vi.fn(),
         lineDisplay: 'band' as const,
         onSetLineDisplay: vi.fn(),
+        valueHighlight: { sensor: '', ranges: [] } as ValueHighlight,
+        valueHighlightSensors: ['TAG1', 'TAG2', 'TAG3'],
+        onSetValueHighlightSensor: vi.fn(),
+        onAddValueHighlightRange: vi.fn(),
+        onToggleValueHighlightRange: vi.fn(),
+        onRemoveValueHighlightRange: vi.fn(),
+        onRecolorValueHighlightRange: vi.fn(),
         // Default to Scatter so the group applies (no compat banner) --
         // matches every existing test's assumption. The banner tests below
         // override this explicitly.
@@ -329,6 +336,107 @@ describe('HighlightsPanel', () => {
 
             rerender(<HighlightsPanel {...makeProps({ chartType: 'pair', timeHighlights })} />);
             expect(screen.queryByDisplayValue('Startup')).toBeNull();
+        });
+    });
+
+    describe('By value (Scatter-only — restored after removal, this time living here instead of a "Colour by…" control on Scatter\'s own toolbar)', () => {
+        it('lists the given sensors in the "Colour by…" dropdown and calls onSetValueHighlightSensor on pick', () => {
+            const onSetValueHighlightSensor = vi.fn();
+            render(<HighlightsPanel {...makeProps({ onSetValueHighlightSensor })} />);
+            const select = screen.getByText('Colour by…').closest('select') as HTMLSelectElement;
+            expect(Array.from(select.options).map(o => o.value)).toEqual(['', 'TAG1', 'TAG2', 'TAG3']);
+            fireEvent.change(select, { target: { value: 'TAG2' } });
+            expect(onSetValueHighlightSensor).toHaveBeenCalledWith('TAG2');
+        });
+
+        it('hides the range editor entirely until a sensor is picked', () => {
+            render(<HighlightsPanel {...makeProps()} />);
+            expect(screen.queryByPlaceholderText('min')).toBeNull();
+            expect(screen.queryByText('No ranges yet — a point stays uncoloured until at least one is added below.')).toBeNull();
+        });
+
+        it('shows the empty-ranges hint and the add-range form once a sensor is picked', () => {
+            render(<HighlightsPanel {...makeProps({ valueHighlight: { sensor: 'TAG1', ranges: [] } })} />);
+            expect(screen.getByText('No ranges yet — a point stays uncoloured until at least one is added below.')).toBeTruthy();
+            expect(screen.getByPlaceholderText('min')).toBeTruthy();
+            expect(screen.getByPlaceholderText('max')).toBeTruthy();
+        });
+
+        it('adds a valid range and clears the draft fields', () => {
+            const onAddValueHighlightRange = vi.fn();
+            render(<HighlightsPanel {...makeProps({ valueHighlight: { sensor: 'TAG1', ranges: [] }, onAddValueHighlightRange })} />);
+            fireEvent.change(screen.getByPlaceholderText('min'), { target: { value: '10' } });
+            fireEvent.change(screen.getByPlaceholderText('max'), { target: { value: '20' } });
+            fireEvent.click(screen.getAllByText('+ Add')[1]); // [0] = By time, [1] = By value
+            expect(onAddValueHighlightRange).toHaveBeenCalledWith(10, 20);
+            expect((screen.getByPlaceholderText('min') as HTMLInputElement).value).toBe('');
+        });
+
+        it('rejects non-numeric input with an inline error', () => {
+            const onAddValueHighlightRange = vi.fn();
+            render(<HighlightsPanel {...makeProps({ valueHighlight: { sensor: 'TAG1', ranges: [] }, onAddValueHighlightRange })} />);
+            fireEvent.click(screen.getAllByText('+ Add')[1]);
+            expect(screen.getByText('Enter valid numbers')).toBeTruthy();
+            expect(onAddValueHighlightRange).not.toHaveBeenCalled();
+        });
+
+        it('rejects min >= max with an inline error', () => {
+            const onAddValueHighlightRange = vi.fn();
+            render(<HighlightsPanel {...makeProps({ valueHighlight: { sensor: 'TAG1', ranges: [] }, onAddValueHighlightRange })} />);
+            fireEvent.change(screen.getByPlaceholderText('min'), { target: { value: '20' } });
+            fireEvent.change(screen.getByPlaceholderText('max'), { target: { value: '10' } });
+            fireEvent.click(screen.getAllByText('+ Add')[1]);
+            expect(screen.getByText('Min must be less than max')).toBeTruthy();
+            expect(onAddValueHighlightRange).not.toHaveBeenCalled();
+        });
+
+        it('renders a chip per range with checkbox/swatch/min-max/delete, wired to their handlers', () => {
+            const onToggleValueHighlightRange = vi.fn();
+            const onRemoveValueHighlightRange = vi.fn();
+            const valueHighlight: ValueHighlight = {
+                sensor: 'TAG1',
+                ranges: [{ id: 'r1', min: 10, max: 20, color: '#ff0000', enabled: true }],
+            };
+            render(<HighlightsPanel {...makeProps({ valueHighlight, onToggleValueHighlightRange, onRemoveValueHighlightRange })} />);
+
+            expect(screen.getByText('10.00–20.00')).toBeTruthy();
+            fireEvent.click(screen.getByRole('checkbox'));
+            expect(onToggleValueHighlightRange).toHaveBeenCalledWith('r1');
+
+            fireEvent.click(screen.getByTitle('Remove'));
+            expect(onRemoveValueHighlightRange).toHaveBeenCalledWith('r1');
+        });
+
+        it('opens the ColorPlatePicker on swatch click and calls onRecolorValueHighlightRange when a colour is picked', () => {
+            const onRecolorValueHighlightRange = vi.fn();
+            const valueHighlight: ValueHighlight = {
+                sensor: 'TAG1',
+                ranges: [{ id: 'r1', min: 10, max: 20, color: '#ff0000', enabled: true }],
+            };
+            render(<HighlightsPanel {...makeProps({ valueHighlight, onRecolorValueHighlightRange })} />);
+
+            fireEvent.click(screen.getByTitle('Change colour'));
+            expect(colorPickerCalls[0].color).toBe('#ff0000');
+            fireEvent.click(screen.getByText('set-color-#ff0000'));
+            expect(onRecolorValueHighlightRange).toHaveBeenCalledWith('r1', '#123456');
+        });
+
+        it('shows the "applies to Scatter only" scope note', () => {
+            render(<HighlightsPanel {...makeProps()} />);
+            expect(screen.getByText(/Applies to Scatter only/)).toBeTruthy();
+        });
+
+        it('shows no compat banner on Scatter, but shows one (and disables the group) on Line and Pair Plot', () => {
+            const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'scatter' })} />);
+            expect(screen.queryByText(/Only affects/)).toBeNull();
+
+            rerender(<HighlightsPanel {...makeProps({ chartType: 'line' })} />);
+            expect(screen.getByText(/Only affects/).textContent).toContain('Scatter');
+            const fieldsets = document.querySelectorAll('fieldset');
+            expect((fieldsets[1] as HTMLFieldSetElement).disabled).toBe(true); // [0] = By time, [1] = By value
+
+            rerender(<HighlightsPanel {...makeProps({ chartType: 'pair' })} />);
+            expect(screen.getByText(/Only affects/).textContent).toContain('Scatter');
         });
     });
 });

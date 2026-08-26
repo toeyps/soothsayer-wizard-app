@@ -1,7 +1,13 @@
 import { useState, type CSSProperties } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
-import type { TimeHighlight, HighlightLineDisplay } from '../../types';
+import type { TimeHighlight, HighlightLineDisplay, ValueHighlight } from '../../types';
 import ColorPlatePicker from './ColorPlatePicker';
+
+function fmt(n: number): string {
+    if (!isFinite(n)) return '—';
+    if (Math.abs(n) >= 10000 || (Math.abs(n) > 0 && Math.abs(n) < 0.01)) return n.toExponential(2);
+    return n.toFixed(2);
+}
 
 interface HighlightsPanelProps {
     // "By time" -- timestamp windows, read by Line + Scatter (not Pair Plot).
@@ -20,6 +26,20 @@ interface HighlightsPanelProps {
      *  just dimmed" rule as the rest of this component. */
     lineDisplay: HighlightLineDisplay;
     onSetLineDisplay: (mode: HighlightLineDisplay) => void;
+
+    // "By value" -- one sensor + its value ranges, colours Scatter points.
+    // Scatter-only (see ValueHighlight's own docstring in types.ts for why
+    // this is a single sensor+ranges object rather than a flat list like
+    // timeHighlights).
+    valueHighlight: ValueHighlight;
+    /** Sensors selectable in the "Colour by…" dropdown -- same pool
+     *  ScatterChart itself plots (Dashboard's `scatterChartHeaders`). */
+    valueHighlightSensors: string[];
+    onSetValueHighlightSensor: (sensor: string) => void;
+    onAddValueHighlightRange: (min: number, max: number) => void;
+    onToggleValueHighlightRange: (id: string) => void;
+    onRemoveValueHighlightRange: (id: string) => void;
+    onRecolorValueHighlightRange: (id: string, color: string) => void;
 
     /** Which chart is on screen right now -- drives the live compatibility
      *  banner + disabled state below. On Pair Plot (the only chart type this
@@ -55,13 +75,19 @@ function fmtRange(start: string, end: string): string {
  */
 export default function HighlightsPanel({
     timeHighlights, onAddTimeHighlight, onToggleTimeHighlight, onRemoveTimeHighlight, onRecolorTimeHighlight,
-    onRenameTimeHighlight, lineDisplay, onSetLineDisplay, chartType,
+    onRenameTimeHighlight, lineDisplay, onSetLineDisplay,
+    valueHighlight, valueHighlightSensors, onSetValueHighlightSensor, onAddValueHighlightRange,
+    onToggleValueHighlightRange, onRemoveValueHighlightRange, onRecolorValueHighlightRange,
+    chartType,
 }: HighlightsPanelProps) {
     const highlightApplies = chartType !== 'pair';
     // Band/Line-colour is a Line-only choice -- Scatter still shows
     // highlights (as a ring) but has nothing for this control to change,
     // and Pair Plot is already fully covered by `highlightApplies` above.
     const lineDisplayApplies = chartType === 'line';
+    // "By value" only ever does anything on Scatter -- Line has no 3rd-
+    // sensor colour channel and Pair Plot keeps its own lasso-cluster.
+    const valueHighlightApplies = chartType === 'scatter';
 
     const [draftStart, setDraftStart] = useState('');
     const [draftEnd, setDraftEnd] = useState('');
@@ -72,6 +98,21 @@ export default function HighlightsPanel({
     // text field instead of static text, plus its in-progress draft value.
     const [editLabelFor, setEditLabelFor] = useState<string | null>(null);
     const [draftEditLabel, setDraftEditLabel] = useState('');
+
+    // "By value" draft-form state -- mirrors the "By time" block above.
+    const [draftRangeMin, setDraftRangeMin] = useState('');
+    const [draftRangeMax, setDraftRangeMax] = useState('');
+    const [rangeError, setRangeError] = useState<string | null>(null);
+    const [rangeColorFor, setRangeColorFor] = useState<string | null>(null);
+
+    const handleAddRange = () => {
+        const min = parseFloat(draftRangeMin);
+        const max = parseFloat(draftRangeMax);
+        if (!isFinite(min) || !isFinite(max)) { setRangeError('Enter valid numbers'); return; }
+        if (min >= max) { setRangeError('Min must be less than max'); return; }
+        onAddValueHighlightRange(min, max);
+        setDraftRangeMin(''); setDraftRangeMax(''); setRangeError(null);
+    };
 
     const handleAddHighlight = () => {
         if (!draftStart || !draftEnd) { setHighlightError('Pick a start and end'); return; }
@@ -222,6 +263,85 @@ export default function HighlightsPanel({
             </fieldset>
             <div style={{ ...scopeNoteStyle, marginTop: '10px' }}>
                 Applies to Line and Scatter. Line shows a tinted band or recolours itself (see above); Scatter always rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '16px 0 8px' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>By value</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>colour Scatter points by a sensor's value range</span>
+            </div>
+
+            {!valueHighlightApplies && (
+                <div style={compatBannerStyle}>
+                    <AlertCircle size={14} style={{ flexShrink: 0, color: 'var(--warn)' }} />
+                    <span style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        Only affects <b style={{ color: 'var(--text-primary)' }}>Scatter</b> — Line has no 3rd-sensor colour channel and Pair Plot keeps its own lasso-cluster gesture instead.
+                    </span>
+                </div>
+            )}
+
+            <fieldset disabled={!valueHighlightApplies} style={valueHighlightApplies ? fieldsetResetStyle : { ...fieldsetResetStyle, ...mutedStyle }}>
+                <select
+                    value={valueHighlight.sensor}
+                    onChange={e => onSetValueHighlightSensor(e.target.value)}
+                    style={{ ...numInputStyle, width: '100%', marginBottom: '6px' }}
+                >
+                    <option value="">Colour by…</option>
+                    {valueHighlightSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+
+                {valueHighlight.sensor && (
+                    <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+                            {valueHighlight.ranges.length === 0 && (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, padding: '4px 0' }}>
+                                    No ranges yet — a point stays uncoloured until at least one is added below.
+                                </div>
+                            )}
+                            {valueHighlight.ranges.map(r => (
+                                <div key={r.id}>
+                                    <div style={chipRowStyle}>
+                                        <input type="checkbox" checked={r.enabled} onChange={() => onToggleValueHighlightRange(r.id)} title={r.enabled ? 'Hide this range' : 'Show this range'} />
+                                        <button
+                                            onClick={() => setRangeColorFor(prev => prev === r.id ? null : r.id)}
+                                            title="Change colour"
+                                            style={{ ...swatchButtonStyle, background: r.color }}
+                                        />
+                                        <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 500 }}>{fmt(r.min)}–{fmt(r.max)}</span>
+                                        <button onClick={() => onRemoveValueHighlightRange(r.id)} title="Remove" style={iconButtonStyle}><X size={12} /></button>
+                                    </div>
+                                    {/* Same reasoning as the "By time" picker above —
+                                        gated on valueHighlightApplies too, not just
+                                        fieldset disabled. */}
+                                    {rangeColorFor === r.id && valueHighlightApplies && (
+                                        <div style={pickerWrapStyle}>
+                                            <div style={pickerBoxStyle}>
+                                                <ColorPlatePicker color={r.color} onChange={hex => onRecolorValueHighlightRange(r.id, hex)} />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px' }}>
+                            <input
+                                type="number" placeholder="min" value={draftRangeMin}
+                                onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
+                                style={numInputStyle}
+                            />
+                            <span style={{ color: 'var(--text-secondary)' }}>–</span>
+                            <input
+                                type="number" placeholder="max" value={draftRangeMax}
+                                onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
+                                style={numInputStyle}
+                            />
+                            <button className="text-btn" onClick={handleAddRange}>+ Add</button>
+                        </div>
+                        {rangeError && <div style={errorStyle}>{rangeError}</div>}
+                    </>
+                )}
+            </fieldset>
+            <div style={{ ...scopeNoteStyle, marginTop: '10px' }}>
+                Applies to Scatter only. A point's colour comes from the first enabled range its value falls inside; a value matching none of them fades out instead.
             </div>
         </div>
     );

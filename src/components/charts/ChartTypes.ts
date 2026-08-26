@@ -1,4 +1,4 @@
-import { CsvRecord, SensorMetadata, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, LineTaggedPoint } from '../../types';
+import { CsvRecord, SensorMetadata, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint } from '../../types';
 
 /** Pair Plot renders one regl-scatterplot WebGL context per scatter cell
  *  AND per time-series cell — n(n-1)/2 + n contexts for n sensors. Chromium
@@ -99,4 +99,9 @@ export interface ChartProps {
     /** Fired whenever the Line chart's tagged points change (add/remove/
      *  clear), so the parent can persist them. */
     onLineTaggedPointsChange?: (points: LineTaggedPoint[]) => void;
+    /** "By value" highlighting (Dashboard-owned, edited from the Highlights
+     *  tab's "By value" group) — colours Scatter points by where a 3rd
+     *  sensor's value falls among user-defined ranges. Scatter-only;
+     *  ignored by Line/Pair Plot. See `ValueHighlight`. */
+    valueHighlight?: ValueHighlight;
 }

@@ -3,7 +3,7 @@ import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import { RotateCcw, Ruler, Tag, Trash2 } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
-import type { TimeHighlight } from '../../types';
+import type { TimeHighlight, ValueHighlightRange } from '../../types';
 import { firstMatchingHighlight } from '../../utils/timeHighlights';
 import AxisLabel from './AxisLabel';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
@@ -25,6 +25,12 @@ const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 
 /** Base point colour — the app's standard indigo accent at low alpha
  *  (density emerges via WebGL alpha blending). */
 const BASE_POINT_COLOR: [number, number, number, number] = [0.39, 0.58, 0.98, 0.55];
+
+/** Colour for a point that falls outside every enabled "by value" range —
+ *  very low alpha so it fades into the background instead of competing
+ *  with the highlighted bands, while still giving the overall data shape
+ *  as context. */
+const VALUE_UNMATCHED_COLOR: [number, number, number, number] = [0.55, 0.6, 0.68, 0.12];
 
 /**
  * Pixel padding around the WebGL canvas for the SVG axis overlay.
@@ -48,7 +54,7 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
 function ScatterChart({
     data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange,
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
-    sensorMetadata, timeHighlights,
+    sensorMetadata, timeHighlights, valueHighlight,
 }: ChartProps) {
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getDescription = useCallback(
@@ -499,6 +505,13 @@ function ScatterChart({
         const xs: number[] = [];
         const ys: number[] = [];
         const orig: number[] = [];
+        // "By value" highlighting's criteria-sensor column, gathered
+        // alongside x/y on the SAME filtered row set (so point count / orig-
+        // index mapping never depends on whether a sensor is picked) — a row
+        // missing/invalid on the criteria sensor still plots, just
+        // uncoloured (matches no range) rather than being dropped.
+        const valueSensorIdx = valueHighlight?.sensor ? headers.indexOf(valueHighlight.sensor) : -1;
+        const zs: (number | null)[] = [];
         // Defensive cap: the Dashboard already feeds a bounded sample, but if
         // this chart is ever handed raw data, stride it down so we never push
         // a GPU-unsafe point count (which would lose the WebGL context and
@@ -514,6 +527,10 @@ function ScatterChart({
             xs.push(x);
             ys.push(y);
             orig.push(i);
+            if (valueSensorIdx >= 0) {
+                const z = data[i].values[valueSensorIdx];
+                zs.push(z != null && typeof z === 'number' && !isNaN(z) ? z : null);
+            }
             if (x < xMin) xMin = x;
             if (x > xMax) xMax = x;
             if (y < yMin) yMin = y;
@@ -576,6 +593,27 @@ function ScatterChart({
             }
         }
 
+        // Main canvas's own colour channel — "by value" highlighting. Same
+        // valueA/pointColor-palette mechanism the halo layer uses above (and
+        // PairPlotCell uses for lasso clusters), just on the main canvas
+        // instead of a second transparent one: 0 = "no enabled range
+        // matched" (or no sensor picked at all); 1..N = the Nth enabled
+        // range, in the order the user added them. Only the FIRST matching
+        // range wins for a point whose value falls in more than one
+        // (overlapping ranges are the user's call, not an error).
+        const enabledRanges: ValueHighlightRange[] = valueSensorIdx >= 0 ? (valueHighlight?.ranges ?? []).filter(r => r.enabled) : [];
+        const hasActiveRanges = enabledRanges.length > 0;
+        let valueAArr: Float32Array | undefined;
+        if (hasActiveRanges) {
+            valueAArr = new Float32Array(len);
+            for (let i = 0; i < len; i++) {
+                const z = zs[i];
+                if (z == null) continue; // stays 0 (unmatched)
+                const idx = enabledRanges.findIndex(r => z >= r.min && z <= r.max);
+                if (idx >= 0) valueAArr[i] = idx + 1;
+            }
+        }
+
         origIndicesRef.current = orig;
         dataBoundsRef.current = { xLo, xHi, yLo, yHi };
         // Fresh data → reset the visible window to the full extent. The next
@@ -591,8 +629,16 @@ function ScatterChart({
         sc.set({
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
-            colorBy: null,
-            pointColor: BASE_POINT_COLOR,
+            // Toggle "by value" colouring on/off. pointColor doubles as both
+            // "the flat colour" (colorBy: null) and "the category palette,
+            // index 0 = unmatched" (colorBy: 'valueA') depending on which
+            // mode is active — same dual-purpose option regl-scatterplot
+            // itself specifies (and the same pattern the halo layer above,
+            // and PairPlotCell's lasso clusters, both use).
+            colorBy: hasActiveRanges ? 'valueA' : null,
+            pointColor: hasActiveRanges
+                ? [VALUE_UNMATCHED_COLOR, ...enabledRanges.map(r => hexToRgba(r.color))]
+                : BASE_POINT_COLOR,
         });
         // Without this, changing sensors or applying/editing a pin while
         // zoomed/panned left the camera showing whatever fraction of the
@@ -609,8 +655,8 @@ function ScatterChart({
             sc.reset();
         }
         prevScForResetRef.current = sc;
-        requestDraw(sc, { x: xArr, y: yArr });
-    }, [sc, data, scatterX, scatterY, headers, requestDraw, effectiveXRange, effectiveYRange, haloSc, timeHighlights, requestHaloDraw]);
+        requestDraw(sc, valueAArr ? { x: xArr, y: yArr, valueA: valueAArr } : { x: xArr, y: yArr });
+    }, [sc, data, scatterX, scatterY, headers, requestDraw, effectiveXRange, effectiveYRange, haloSc, timeHighlights, requestHaloDraw, valueHighlight]);
 
     const handleResetView = () => {
         sc?.reset();

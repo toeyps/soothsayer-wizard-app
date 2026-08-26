@@ -154,4 +154,19 @@ describe('Chart', () => {
         expect(scatterProps[0].lineTaggedPoints).toBeUndefined();
         expect(scatterProps[0].onLineTaggedPointsChange).toBeUndefined();
     });
+
+    it('forwards valueHighlight to Scatter only -- Line has no 3rd-sensor colour channel, Pair Plot keeps its own lasso-cluster', () => {
+        const valueHighlight = { sensor: 'A', ranges: [{ id: 'r1', min: 0, max: 10, color: '#ff0000', enabled: true }] };
+
+        const { unmount: unmountScatter } = render(<Chart {...baseProps} sensors={['A', 'B']} chartType="scatter" valueHighlight={valueHighlight} />);
+        expect(scatterProps[0].valueHighlight).toBe(valueHighlight);
+        unmountScatter();
+
+        const { unmount: unmountLine } = render(<Chart {...baseProps} sensors={['A']} chartType="line" valueHighlight={valueHighlight} />);
+        expect(lineProps[0].valueHighlight).toBeUndefined();
+        unmountLine();
+
+        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" valueHighlight={valueHighlight} />);
+        expect(pairProps[0].valueHighlight).toBeUndefined();
+    });
 });
