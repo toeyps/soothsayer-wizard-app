@@ -518,6 +518,22 @@ describe('BuildModelWindow', () => {
                 const created = state.failureGroupState.models.find((m: any) => m.name === 'Standalone Model');
                 expect(created.groupNos).toEqual([0]);
             });
+
+            it('"Not in Group" is exempt from the sensor restriction — offers every sensor, never shows the "no sensors yet" notice, even with zero models seeded there', async () => {
+                // 2026-08-31: reported by the user right after testing —
+                // "Not in Group" has no "toggle sensor in first" step like
+                // a real group (via the Sensor tab), so restricting its
+                // add-mode picker the same way just blocked every add.
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [] } });
+                const addButtons = screen.getAllByText('Add Model');
+                fireEvent.click(addButtons[addButtons.length - 1]); // "Not in Group" is rendered last
+                const form = within(screen.getByTestId('add-model-form'));
+                expect(form.queryByText(/no sensors yet/i)).toBeNull();
+                fireEvent.click(form.getByText('Individual'));
+                const select = form.getByDisplayValue('Select a sensor…') as HTMLSelectElement;
+                expect(Array.from(select.options).map(o => o.value)).toEqual(expect.arrayContaining(['TAG1', 'TAG2', 'TAG3']));
+            });
         });
 
         it('"Remove model" confirms, persists, and closes the form', async () => {

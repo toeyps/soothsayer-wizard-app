@@ -463,13 +463,20 @@ export default function BuildModelWindow() {
         // to render group membership). Editing an existing model keeps the
         // full sensor list, since the model's own target/group is already
         // established and may legitimately need any sensor.
+        //
+        // "Not in Group" (0) is exempt from the restriction — unlike a
+        // real group, there's no "toggle sensors in first" step for the
+        // catch-all bucket, so applying the same rule there just blocked
+        // every add with a false "no sensors yet" (reported by the user
+        // right after testing). Full sensor list for 0, same as editing.
+        const isRestrictedGroup = isAdding && formOriginGroupNo !== null && formOriginGroupNo !== 0;
         const groupSensorSet = new Set(
-            isAdding && formOriginGroupNo !== null
+            isRestrictedGroup
                 ? allModels.filter(m => m.kind === 'individual' && m.groupNos.includes(formOriginGroupNo) && m.targetSensor).map(m => m.targetSensor)
                 : []
         );
         const groupSensors = allSensors.filter(s => groupSensorSet.has(s));
-        const sensorOptions = isAdding ? groupSensors : allSensors;
+        const sensorOptions = isRestrictedGroup ? groupSensors : allSensors;
         return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
             <div className="fg-inspector-field">
@@ -519,7 +526,7 @@ export default function BuildModelWindow() {
                 </div>
             )}
 
-            {isAdding && groupSensors.length === 0 ? (
+            {isRestrictedGroup && groupSensors.length === 0 ? (
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
                     This group has no sensors yet — add sensors to it from the Sensor tab first.
                 </div>

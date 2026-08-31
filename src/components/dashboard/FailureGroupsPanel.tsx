@@ -126,9 +126,16 @@ export default function FailureGroupsPanel({
     // because it has an individual-kind model whose groupNos include that
     // group, same rule SensorSelection.tsx uses to render membership.
     // Prevents picking some unrelated sensor that was never added here.
-    const groupSensors = addModelForGroupNo === null ? [] : sensors.filter(s =>
-        fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(addModelForGroupNo) && m.targetSensor === s)
-    );
+    //
+    // "Not in Group" (0) is exempt — unlike a real group, there's no
+    // "toggle sensors in first" step for it (nobody deliberately adds a
+    // sensor to the catch-all bucket before building its model), so
+    // restricting it the same way just blocked every model there with a
+    // false "no sensors yet" — reported by the user immediately after
+    // testing. Full sensor list for 0, confirmed via AskUserQuestion.
+    const groupSensors = addModelForGroupNo === null ? [] :
+        addModelForGroupNo === 0 ? sensors :
+        sensors.filter(s => fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(addModelForGroupNo) && m.targetSensor === s));
 
     const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && (
         draftModelKind === 'clustering' ? draftModelX !== '' && draftModelY !== '' : draftModelTarget !== ''
@@ -280,21 +287,29 @@ export default function FailureGroupsPanel({
                     );
                 })}
 
-                {ungroupedModels.length > 0 && (
-                    <div
-                        className="fg-group-color-slate fg-group-card"
-                        style={{ border: '1px dashed var(--border)', borderRadius: '8px', overflow: 'hidden' }}
-                    >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
-                            <span className="fg-group-dot" />
-                            <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                                Not in Group
-                            </span>
-                            <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>
-                                {ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}
-                            </span>
-                        </div>
-                        <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
+                {/* 2026-08-31: this card now always renders, same as a real
+                    group's — it used to render only once it already held a
+                    model, which meant there was never a way to add the
+                    FIRST one (no "+ Add model" button existed here at all).
+                    Reported by the user after testing: "not in group ทำไม
+                    ไม่สามารถ add model ได้". */}
+                <div
+                    className="fg-group-color-slate fg-group-card"
+                    style={{ border: '1px dashed var(--border)', borderRadius: '8px', overflow: 'hidden' }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
+                        <span className="fg-group-dot" />
+                        <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                            Not in Group
+                        </span>
+                        <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>
+                            {ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}
+                        </span>
+                    </div>
+                    <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
+                        {ungroupedModels.length === 0 ? (
+                            <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
+                        ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                 {ungroupedModels.map(model => (
                                     <div key={model.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
@@ -302,12 +317,18 @@ export default function FailureGroupsPanel({
                                     </div>
                                 ))}
                             </div>
-                            <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>
-                                Sensors here aren't tied to any failure group — a place for a standalone model.
-                            </div>
+                        )}
+                        <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>
+                            Sensors here aren't tied to any failure group — a place for a standalone model.
                         </div>
+                        <button
+                            onClick={() => openAddModel(0)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '6px', padding: '4px 0', background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.68rem', cursor: 'pointer' }}
+                        >
+                            <Plus size={11} /> Add model
+                        </button>
                     </div>
-                )}
+                </div>
 
                 {showNewGroup ? (
                     <div>
