@@ -323,26 +323,29 @@ export default function SensorSelection({
                                 key={`${g.no}-${kind}`}
                                 className={`fg-group-color-${getGroupColor(g.no)}`}
                                 style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                    fontSize: '0.65rem', padding: '1px 4px 1px 7px', borderRadius: '999px',
+                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                    fontSize: '0.65rem', padding: '1px 4px 1px 4px', borderRadius: '999px',
                                     background: 'var(--fg-tint)', color: 'var(--fg-dot)',
                                 }}
                             >
-                                <span className="fg-group-dot" />
-                                {g.name}
-                                {/* 2026-08-31: a colored badge (not just a
-                                    dim letter) — reported by the user
-                                    directly as hard to tell apart at this
-                                    size. Reuses `.model-kind-icon--*`, the
-                                    exact class Build Model's own model
-                                    rows use, for one consistent visual
-                                    language app-wide. */}
+                                {/* 2026-08-31: leads the chip now (was a
+                                    small dim letter buried after the group
+                                    name) — still not prominent enough per
+                                    direct user follow-up ("sensor แทบไม่เยอะ
+                                    เท่าไหร่"), so it's bigger still and
+                                    goes first, same lead-with-the-badge
+                                    order the FG tab uses (confirmed clear
+                                    by the user there). Reuses
+                                    `.model-kind-icon--*`, the exact class
+                                    Build Model's own model rows use. */}
                                 <span
                                     className={`model-kind-icon model-kind-icon--${kind}`}
-                                    style={{ width: '13px', height: '13px', borderRadius: '3px', fontSize: '0.5rem' }}
+                                    style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.62rem', flexShrink: 0 }}
                                 >
                                     {KIND_LETTER[kind]}
                                 </span>
+                                <span className="fg-group-dot" />
+                                {g.name}
                                 <button
                                     onClick={(e) => { e.stopPropagation(); onToggleSensorGroupKind(sensor, g.no, kind); }}
                                     title={`Remove ${KIND_LABEL[kind]} from ${g.name}`}
