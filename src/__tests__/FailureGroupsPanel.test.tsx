@@ -98,6 +98,18 @@ describe('FailureGroupsPanel', () => {
         expect(screen.queryByText('Incomplete')).toBeNull();
     });
 
+    it('shows a colored kind badge per model row, so two models of the same sensor in different kinds are told apart at a glance (2026-08-31: reported by the user — this panel showed no kind indicator at all)', () => {
+        const fgModels = [
+            makeModel({ id: 'm1', kind: 'individual' }),
+            makeModel({ id: 'm2', kind: 'relationship', predictorSensors: ['TAG2'] }),
+        ];
+        render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+        const individualBadge = screen.getByText('I', { selector: '.model-kind-icon' });
+        const relationshipBadge = screen.getByText('R', { selector: '.model-kind-icon' });
+        expect(individualBadge.className).toContain('model-kind-icon--individual');
+        expect(relationshipBadge.className).toContain('model-kind-icon--relationship');
+    });
+
     it('a trash icon per model row calls onDeleteModel immediately, with no confirmation dialog (2026-08-31: model deletion now lives entirely on Dashboard, per explicit user request)', () => {
         const onDeleteModel = vi.fn();
         render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ id: 'm1' })], onDeleteModel })} />);

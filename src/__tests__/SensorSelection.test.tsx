@@ -234,6 +234,13 @@ describe('SensorSelection', () => {
             expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
             expect(screen.getByTitle('Remove Relationship from Group A')).toBeTruthy();
         });
+
+        it('each chip carries a colored kind badge (not just a dim letter), reusing the same .model-kind-icon class Build Model\'s own rows use (2026-08-31: reported by the user as hard to tell apart)', () => {
+            render(<SensorSelection {...makeProps()} />);
+            expandPump();
+            const badge = screen.getByText('I', { selector: '.model-kind-icon' });
+            expect(badge.className).toContain('model-kind-icon--individual');
+        });
     });
 
     describe('the group-assignment menu', () => {

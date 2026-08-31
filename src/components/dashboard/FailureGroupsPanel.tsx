@@ -1,7 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, Play } from 'lucide-react';
-import { FailureGroup, FailureModel, SensorMetadata } from '../../types';
+import { FailureGroup, FailureModel, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+
+// Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
+// for the model-kind badge's tooltip (see renderModelRow below).
+const KIND_LABEL: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relationship',
+    clustering: 'Clustering',
+};
 
 interface FailureGroupsPanelProps {
     fgGroups: FailureGroup[];
@@ -106,8 +114,23 @@ export default function FailureGroupsPanel({
     // entirely on Dashboard (this panel), per explicit user request. No
     // confirmation dialog, matching this session's "click does the thing"
     // policy for every other destructive action in the app.
+    //
+    // 2026-08-31 (later): a colored kind badge (I/R/C) per row — this panel
+    // previously showed no kind indicator at all, so two models of the
+    // same sensor in different kinds (e.g. Individual + Relationship) were
+    // visually identical, reported by the user directly ("tab FG ไม่บอก
+    // อะไรเลย"). Reuses `.model-kind-icon--*`, the exact same class Build
+    // Model's own row badge uses, for one consistent visual language
+    // across the whole app rather than inventing a second one here.
     const renderModelRow = (model: FailureModel) => (
-        <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div
+                className={`model-kind-icon model-kind-icon--${model.kind}`}
+                title={KIND_LABEL[model.kind]}
+                style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.56rem', flexShrink: 0 }}
+            >
+                {model.kind.charAt(0).toUpperCase()}
+            </div>
             <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
                 {modelDisplayLabel(model)}
             </span>

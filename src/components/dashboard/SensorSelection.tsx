@@ -330,7 +330,19 @@ export default function SensorSelection({
                             >
                                 <span className="fg-group-dot" />
                                 {g.name}
-                                <span style={{ opacity: 0.7, color: KIND_ACCENT[kind], fontWeight: 700 }}>{KIND_LETTER[kind]}</span>
+                                {/* 2026-08-31: a colored badge (not just a
+                                    dim letter) — reported by the user
+                                    directly as hard to tell apart at this
+                                    size. Reuses `.model-kind-icon--*`, the
+                                    exact class Build Model's own model
+                                    rows use, for one consistent visual
+                                    language app-wide. */}
+                                <span
+                                    className={`model-kind-icon model-kind-icon--${kind}`}
+                                    style={{ width: '13px', height: '13px', borderRadius: '3px', fontSize: '0.5rem' }}
+                                >
+                                    {KIND_LETTER[kind]}
+                                </span>
                                 <button
                                     onClick={(e) => { e.stopPropagation(); onToggleSensorGroupKind(sensor, g.no, kind); }}
                                     title={`Remove ${KIND_LABEL[kind]} from ${g.name}`}
