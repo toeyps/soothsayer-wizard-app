@@ -19,6 +19,14 @@ const notInGroup: FailureGroup = { no: 0, name: 'Not in Group', isCollapsed: fal
 const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
 const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
 
+// 2026-08-31: the quick-add popup's Target/X/Y pickers are limited to
+// sensors already toggled into the destination group (via the Sensor tab)
+// — represented, same as SensorSelection.tsx reads it, as an individual-kind
+// model whose groupNos include that group. Tests that need to pick TAG1/
+// TAG2/TAG3 from the popup must first seed that "membership" via fgModels.
+const sensorsInGroup = (groupNo: number, tags: string[]): FailureModel[] =>
+    tags.map((tag, i) => makeModel({ id: `mem-${groupNo}-${tag}`, groupNos: [groupNo], targetSensor: tag, name: `existing-${i}` }));
+
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
 ];
@@ -309,8 +317,20 @@ describe('FailureGroupsPanel', () => {
             expect(modal.queryByRole('checkbox')).toBeNull();
         });
 
-        it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
+        it('shows a "no sensors yet" notice (not the kind/target pickers) when the group has no sensors toggled into it', () => {
+            // 2026-08-31: Target/X/Y choices come from sensors already
+            // toggled into this group from the Sensor tab — an empty group
+            // has nothing to build a model against yet.
             render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
+            expect(modal.getByText(/no sensors yet/i)).toBeTruthy();
+            expect(modal.queryByText('Model kind')).toBeNull();
+            expect(modal.getByText('Create model').closest('button')).toHaveProperty('disabled', true);
+        });
+
+        it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
             fireEvent.click(screen.getByText('Add model'));
             fireEvent.click(screen.getByText('Individual'));
             expect(screen.getByText('Target sensor')).toBeTruthy();
@@ -323,7 +343,7 @@ describe('FailureGroupsPanel', () => {
         });
 
         it('"Create model" stays disabled until name + kind + the kind-appropriate sensor(s) are filled', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
             fireEvent.click(screen.getByText('Add model'));
             const create = screen.getByText('Create model').closest('button') as HTMLButtonElement;
             expect(create.disabled).toBe(true);
@@ -339,7 +359,7 @@ describe('FailureGroupsPanel', () => {
         });
 
         it('requires both X and Y for Clustering before enabling Create', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
             fireEvent.click(screen.getByText('Add model'));
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
             fireEvent.click(screen.getByText('Clustering'));
@@ -353,7 +373,7 @@ describe('FailureGroupsPanel', () => {
 
         it('calls onQuickAddModel with the group, trimmed name, kind, and target on Create, then closes the modal', () => {
             const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: [], onQuickAddModel })} />);
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']), onQuickAddModel })} />);
             fireEvent.click(screen.getByText('Add model'));
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: '  New Model  ' } });
             fireEvent.click(screen.getByText('Individual'));
@@ -366,7 +386,7 @@ describe('FailureGroupsPanel', () => {
 
         it('calls onQuickAddModel with x/y sensors (and an empty target) for Clustering', () => {
             const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: [], onQuickAddModel })} />);
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']), onQuickAddModel })} />);
             fireEvent.click(screen.getByText('Add model'));
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
             fireEvent.click(screen.getByText('Clustering'));

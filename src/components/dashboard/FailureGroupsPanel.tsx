@@ -121,6 +121,15 @@ export default function FailureGroupsPanel({
         setDraftModelY('');
     };
 
+    // 2026-08-31: Target/X/Y choices are limited to sensors already
+    // toggled into this group (Sensor tab) — a sensor "is in" a group
+    // because it has an individual-kind model whose groupNos include that
+    // group, same rule SensorSelection.tsx uses to render membership.
+    // Prevents picking some unrelated sensor that was never added here.
+    const groupSensors = addModelForGroupNo === null ? [] : sensors.filter(s =>
+        fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(addModelForGroupNo) && m.targetSensor === s)
+    );
+
     const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && (
         draftModelKind === 'clustering' ? draftModelX !== '' && draftModelY !== '' : draftModelTarget !== ''
     );
@@ -366,6 +375,12 @@ export default function FailureGroupsPanel({
                                 />
                             </div>
 
+                            {groupSensors.length === 0 ? (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
+                                    This group has no sensors yet — add sensors to it from the Sensor tab first.
+                                </div>
+                            ) : (
+                            <>
                             <div className="fg-inspector-field">
                                 <div className="fg-inspector-field-label-row"><label>Model kind</label></div>
                                 <div style={{ display: 'flex', gap: '6px' }}>
@@ -393,14 +408,14 @@ export default function FailureGroupsPanel({
                                         <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
                                         <select className="fg-inspector-input" value={draftModelX} onChange={e => setDraftModelX(e.target.value)}>
                                             <option value="">Select a sensor…</option>
-                                            {sensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                            {groupSensors.map(s => <option key={s} value={s}>{s}</option>)}
                                         </select>
                                     </div>
                                     <div className="fg-inspector-field">
                                         <div className="fg-inspector-field-label-row"><label>Y sensor</label></div>
                                         <select className="fg-inspector-input" value={draftModelY} onChange={e => setDraftModelY(e.target.value)}>
                                             <option value="">Select a sensor…</option>
-                                            {sensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                            {groupSensors.map(s => <option key={s} value={s}>{s}</option>)}
                                         </select>
                                     </div>
                                 </>
@@ -409,7 +424,7 @@ export default function FailureGroupsPanel({
                                     <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
                                     <select className="fg-inspector-input" value={draftModelTarget} onChange={e => setDraftModelTarget(e.target.value)} disabled={draftModelKind === null}>
                                         <option value="">Select a sensor…</option>
-                                        {sensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                        {groupSensors.map(s => <option key={s} value={s}>{s}</option>)}
                                     </select>
                                 </div>
                             )}
@@ -417,6 +432,8 @@ export default function FailureGroupsPanel({
                             <div style={{ fontSize: '0.68rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
                                 Category, predictors, and other detail can be added later from Build Model.
                             </div>
+                            </>
+                            )}
                         </div>
 
                         <div className="quick-add-model-footer">

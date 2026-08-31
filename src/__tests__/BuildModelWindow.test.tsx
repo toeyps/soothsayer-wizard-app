@@ -273,6 +273,19 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByRole('checkbox')).toBeNull();
         });
 
+        it('shows a "no sensors yet" notice instead of the kind/target pickers when adding to a group with no sensors toggled into it', async () => {
+            // 2026-08-31: Target/X/Y choices in add-mode come from sensors
+            // already toggled into that group (Sensor tab) — an empty
+            // group has nothing to build a model against yet.
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [] } });
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
+            const form = within(screen.getByTestId('add-model-form'));
+            expect(form.getByText(/no sensors yet/i)).toBeTruthy();
+            expect(form.queryByText('Model kind')).toBeNull();
+            expect(form.getByText('Create model').closest('button')).toHaveProperty('disabled', true);
+        });
+
         it('a model can be checked into more than one Failure Group at once', async () => {
             render(<BuildModelWindow />);
             await deliverData({
@@ -430,7 +443,10 @@ describe('BuildModelWindow', () => {
 
         it('creating a new model via "+ Add Model" persists it against the right group', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Group B' })], models: [makeModel()] } });
+            // 2026-08-31: Target/X/Y choices in add-mode are limited to
+            // sensors already in the destination group — seed Group B with
+            // TAG2 (via an existing individual model) so it's pickable.
+            await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Group B' })], models: [makeModel(), makeModel({ id: 'mem-2', groupNos: [2], targetSensor: 'TAG2', name: 'existing' })] } });
             const addButtons = screen.getAllByText('Add Model');
             fireEvent.click(addButtons[1]); // Group B's Add Model
             const form = within(screen.getByTestId('add-model-form'));
@@ -482,7 +498,9 @@ describe('BuildModelWindow', () => {
 
             it('creating a model via its own "+ Add Model" persists groupNo 0', async () => {
                 render(<BuildModelWindow />);
-                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [] } });
+                // 2026-08-31: seed TAG1 as already "not in group" (groupNos
+                // [0]) so it's pickable from the add-mode sensor picker.
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'mem-0', groupNos: [0], targetSensor: 'TAG1', name: 'existing' })] } });
                 const addButtons = screen.getAllByText('Add Model');
                 fireEvent.click(addButtons[addButtons.length - 1]); // "Not in Group" is rendered last
                 const form = within(screen.getByTestId('add-model-form'));
@@ -582,7 +600,9 @@ describe('BuildModelWindow', () => {
         describe('add model form validation', () => {
             it('Create model is disabled until name + kind + category + an individual sensor are all set', async () => {
                 render(<BuildModelWindow />);
-                await deliverData();
+                // 2026-08-31: seed TAG2 as already in Group A so it's
+                // pickable from the add-mode Target sensor picker.
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel(), makeModel({ id: 'mem-1', targetSensor: 'TAG2', name: 'existing' })] } });
                 fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
@@ -618,7 +638,10 @@ describe('BuildModelWindow', () => {
 
             it('requires both X and Y sensors for a clustering model', async () => {
                 render(<BuildModelWindow />);
-                await deliverData();
+                // 2026-08-31: seed TAG2 as already in Group A (TAG1 already
+                // is, via the default model) so both are pickable from the
+                // add-mode X/Y sensor pickers.
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel(), makeModel({ id: 'mem-1', targetSensor: 'TAG2', name: 'existing' })] } });
                 fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
                 fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });

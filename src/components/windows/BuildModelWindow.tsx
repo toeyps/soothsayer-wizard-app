@@ -454,6 +454,22 @@ export default function BuildModelWindow() {
     // under the fields box, at a fixed, predictable position, regardless
     // of how tall the fields are or how the surrounding list is scrolled.
     const renderModelFormFields = () => {
+        const isAdding = editingModelId === null;
+        // 2026-08-31: while adding a brand-new model, Target/X/Y sensor
+        // choices are limited to sensors already toggled into the
+        // destination group (from the Sensor tab) — a sensor "is in" a
+        // group precisely because it has an individual-kind model whose
+        // groupNos include that group (same rule SensorSelection.tsx uses
+        // to render group membership). Editing an existing model keeps the
+        // full sensor list, since the model's own target/group is already
+        // established and may legitimately need any sensor.
+        const groupSensorSet = new Set(
+            isAdding && formOriginGroupNo !== null
+                ? allModels.filter(m => m.kind === 'individual' && m.groupNos.includes(formOriginGroupNo) && m.targetSensor).map(m => m.targetSensor)
+                : []
+        );
+        const groupSensors = allSensors.filter(s => groupSensorSet.has(s));
+        const sensorOptions = isAdding ? groupSensors : allSensors;
         return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
             <div className="fg-inspector-field">
@@ -503,6 +519,12 @@ export default function BuildModelWindow() {
                 </div>
             )}
 
+            {isAdding && groupSensors.length === 0 ? (
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
+                    This group has no sensors yet — add sensors to it from the Sensor tab first.
+                </div>
+            ) : (
+            <>
             <div>
                 <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Model kind</label></div>
                 <div style={{ display: 'flex', gap: '6px' }}>
@@ -555,7 +577,7 @@ export default function BuildModelWindow() {
                     <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
                     <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
                         <option value="">Select a sensor…</option>
-                        {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
+                        {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                     </select>
                 </div>
             )}
@@ -566,7 +588,7 @@ export default function BuildModelWindow() {
                         <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
                         <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
                             <option value="">Select a sensor…</option>
-                            {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
+                            {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                         </select>
                     </div>
                     <div className="fg-inspector-field">
@@ -602,14 +624,14 @@ export default function BuildModelWindow() {
                             <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
                             <select className="fg-inspector-input" value={formX} onChange={e => setFormX(e.target.value)}>
                                 <option value="">Select…</option>
-                                {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
+                                {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                             </select>
                         </div>
                         <div className="fg-inspector-field" style={{ flex: 1 }}>
                             <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
                             <select className="fg-inspector-input" value={formY} onChange={e => setFormY(e.target.value)}>
                                 <option value="">Select…</option>
-                                {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
+                                {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
                             </select>
                         </div>
                     </div>
@@ -654,6 +676,8 @@ export default function BuildModelWindow() {
                         {formComponent || 'Auto-filled from target sensor'}
                     </div>
                 </div>
+            )}
+            </>
             )}
         </div>
         );
