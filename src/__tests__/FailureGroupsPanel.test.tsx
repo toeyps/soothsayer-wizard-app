@@ -100,18 +100,21 @@ describe('FailureGroupsPanel', () => {
     });
 
     it('lists every model in the group by name, without any Complete/Incomplete status (removed per user request)', () => {
+        // 2026-08-31: the tag is now always appended (see the "shows the
+        // model name when one is set" test below), so the visible text is
+        // "name (tag)" rather than the bare name.
         const fgModels = [makeModel({ id: 'm1', name: 'Bearing model', status: true }), makeModel({ id: 'm2', name: 'Temp model', status: false })];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
-        expect(screen.getByText('Bearing model')).toBeTruthy();
-        expect(screen.getByText('Temp model')).toBeTruthy();
+        expect(screen.getByText('Bearing model (TAG1)')).toBeTruthy();
+        expect(screen.getByText('Temp model (TAG1)')).toBeTruthy();
         expect(screen.queryByText('Complete')).toBeNull();
         expect(screen.queryByText('Incomplete')).toBeNull();
     });
 
     describe('model display label fallback chain', () => {
-        it('shows the model name when one is set', () => {
+        it('shows the model name with its target tag appended (2026-08-31: matches Build Model\'s own overview, which always shows the tag too — the user flagged the FG tab as inconsistent for omitting it)', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'Bearing model', targetSensor: 'TAG1' })] })} />);
-            expect(screen.getByText('Bearing model')).toBeTruthy();
+            expect(screen.getByText('Bearing model (TAG1)')).toBeTruthy();
             expect(screen.queryByText('Pump Pressure (TAG1)')).toBeNull();
         });
 

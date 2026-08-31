@@ -185,13 +185,20 @@ export default function FailureGroupsPanel({
     // existed (see workspaceManager.ts's migration shim), so without this
     // check every migrated model would permanently show its raw tag here
     // instead of ever falling through to the sensor's description.
+    //
+    // 2026-08-31: the tag itself is now always appended in parens when the
+    // target sensor is known — Build Model's own overview always shows the
+    // raw tag alongside the name/description ("Target: description (tag)"
+    // on its own line), and this panel showed description/name ALONE with
+    // no tag at all, which the user flagged as an inconsistency once every
+    // group listed the exact same sensor description (several models named
+    // after the same sensor were impossible to tell apart at a glance).
     const modelDisplayLabel = (model: FailureModel) => {
         const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
         const trimmedName = model.name.trim();
-        if (trimmedName && trimmedName !== targetTag) return trimmedName;
-        if (!targetTag) return 'Untitled model';
-        const desc = sensorMetaMap.get(normalizeSensorTag(targetTag))?.description;
-        return desc ? `${desc} (${targetTag})` : targetTag;
+        if (!targetTag) return trimmedName || 'Untitled model';
+        const label = (trimmedName && trimmedName !== targetTag) ? trimmedName : sensorMetaMap.get(normalizeSensorTag(targetTag))?.description;
+        return label ? `${label} (${targetTag})` : targetTag;
     };
 
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
