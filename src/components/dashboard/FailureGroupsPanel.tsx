@@ -86,16 +86,22 @@ export default function FailureGroupsPanel({
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
 
-    // Quick-add-model modal — open/closed plus its own draft-form state.
-    // One modal instance reused across every card's "+ Add model" trigger
-    // rather than per-card state. `draftModelGroups` is a checkbox
-    // multi-select (2026-08-25: one model can belong to several Failure
-    // Groups at once, per explicit user request) — opening it from a
-    // specific card's button pre-checks just that group, but any
-    // combination (including "Not in Group", 0) can be picked before
-    // creating.
-    const [addModelOpen, setAddModelOpen] = useState(false);
-    const [draftModelGroups, setDraftModelGroups] = useState<number[]>([]);
+    // Quick-add-model modal — which group it's open for (null = closed)
+    // plus its own draft-form state. One modal instance reused across
+    // every card's "+ Add model" trigger rather than per-card state.
+    //
+    // 2026-08-25: briefly had a "Failure groups" checkbox here too (a
+    // model can belong to several groups at once) — reverted per direct
+    // user feedback ("we already picked the failure group [by clicking
+    // that card's button] — this page is for picking the model, don't
+    // ask again"). The group is already fully determined by which card's
+    // button opened the modal; asking again here was pure redundancy.
+    // Multi-group membership is still fully supported — it's just edited
+    // from Build Model's own form afterward (see BuildModelWindow.tsx),
+    // which shows the checkbox only while EDITING an existing model, for
+    // the same reason: adding one is always from a specific group's own
+    // button, no context to re-ask about.
+    const [addModelForGroupNo, setAddModelForGroupNo] = useState<number | null>(null);
     const [draftModelName, setDraftModelName] = useState('');
     const [draftModelKind, setDraftModelKind] = useState<ModelKind | null>(null);
     const [draftModelTarget, setDraftModelTarget] = useState('');
@@ -103,13 +109,11 @@ export default function FailureGroupsPanel({
     const [draftModelY, setDraftModelY] = useState('');
 
     const openAddModel = (groupNo: number) => {
-        setAddModelOpen(true);
-        setDraftModelGroups([groupNo]);
+        setAddModelForGroupNo(groupNo);
     };
 
     const closeAddModel = () => {
-        setAddModelOpen(false);
-        setDraftModelGroups([]);
+        setAddModelForGroupNo(null);
         setDraftModelName('');
         setDraftModelKind(null);
         setDraftModelTarget('');
@@ -117,27 +121,23 @@ export default function FailureGroupsPanel({
         setDraftModelY('');
     };
 
-    const toggleDraftModelGroup = (groupNo: number) => {
-        setDraftModelGroups(prev => prev.includes(groupNo) ? prev.filter(n => n !== groupNo) : [...prev, groupNo]);
-    };
-
-    const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && draftModelGroups.length > 0 && (
+    const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && (
         draftModelKind === 'clustering' ? draftModelX !== '' && draftModelY !== '' : draftModelTarget !== ''
     );
 
     const commitAddModel = () => {
-        if (!addModelValid || !draftModelKind) return;
-        onQuickAddModel(draftModelGroups, draftModelName.trim(), draftModelKind, draftModelTarget, draftModelX, draftModelY);
+        if (!addModelValid || !draftModelKind || addModelForGroupNo === null) return;
+        onQuickAddModel([addModelForGroupNo], draftModelName.trim(), draftModelKind, draftModelTarget, draftModelX, draftModelY);
         closeAddModel();
     };
 
     useEffect(() => {
-        if (!addModelOpen) return;
+        if (addModelForGroupNo === null) return;
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAddModel(); };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [addModelOpen]);
+    }, [addModelForGroupNo]);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     // Model name if the user set one; otherwise the target sensor's
@@ -341,11 +341,16 @@ export default function FailureGroupsPanel({
                 </button>
             </div>
 
-            {addModelOpen && (
+            {addModelForGroupNo !== null && (
                 <div className="quick-add-model-backdrop" onClick={closeAddModel}>
                     <div className="quick-add-model-card" onClick={e => e.stopPropagation()}>
                         <div className="quick-add-model-header">
-                            <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Add model</div>
+                            <div>
+                                <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Add model</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                    {addModelForGroupNo === 0 ? 'Not in Group' : (fgGroups.find(g => g.no === addModelForGroupNo)?.name ?? `FG-${addModelForGroupNo}`)}
+                                </div>
+                            </div>
                             <button className="fg-icon-btn" title="Close" onClick={closeAddModel}><X size={14} /></button>
                         </div>
 
@@ -359,29 +364,6 @@ export default function FailureGroupsPanel({
                                     value={draftModelName}
                                     onChange={e => setDraftModelName(e.target.value)}
                                 />
-                            </div>
-
-                            {/* Checkbox multi-select — 2026-08-25 redesign: one
-                                model can belong to several Failure Groups at
-                                once (a real many-to-many relationship, not a
-                                duplicate model per group), per explicit user
-                                request. "Not in Group" (0) is a selectable
-                                option here too, same as it is in the Sensor
-                                tab's own quick-assign menu. */}
-                            <div className="fg-inspector-field">
-                                <div className="fg-inspector-field-label-row"><label>Failure groups</label></div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
-                                    {realGroups.map(g => (
-                                        <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                                            <input type="checkbox" checked={draftModelGroups.includes(g.no)} onChange={() => toggleDraftModelGroup(g.no)} />
-                                            {g.name}
-                                        </label>
-                                    ))}
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                                        <input type="checkbox" checked={draftModelGroups.includes(0)} onChange={() => toggleDraftModelGroup(0)} />
-                                        Not in Group
-                                    </label>
-                                </div>
                             </div>
 
                             <div className="fg-inspector-field">

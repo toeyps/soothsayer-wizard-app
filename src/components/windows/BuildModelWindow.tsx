@@ -471,24 +471,37 @@ export default function BuildModelWindow() {
                 many-to-many relationship, not a duplicate model per
                 group), per explicit user request. "Not in Group" (0) is a
                 selectable option here too, same as it is in the Sensor
-                tab's own quick-assign menu and the Dashboard quick-add
-                popup. */}
-            <div>
-                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
-                    {realGroups.map(g => (
-                        <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                            <input type="checkbox" checked={formGroupNos.includes(g.no)} onChange={() => toggleFormGroup(g.no)} />
-                            <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(g.no)], flexShrink: 0 }} />
-                            FG-{g.no} · {g.name}
+                tab's own quick-assign menu.
+                2026-08-31: shown ONLY while editing an existing model. When
+                adding a brand-new one, the group is already fully
+                determined by which group's "+ Add Model" button was
+                clicked — re-asking here was redundant, per direct user
+                feedback on the equivalent Dashboard popup. Add-mode shows a
+                static, non-interactive breadcrumb instead. */}
+            {editingModelId !== null ? (
+                <div>
+                    <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
+                        {realGroups.map(g => (
+                            <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={formGroupNos.includes(g.no)} onChange={() => toggleFormGroup(g.no)} />
+                                <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(g.no)], flexShrink: 0 }} />
+                                FG-{g.no} · {g.name}
+                            </label>
+                        ))}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={formGroupNos.includes(0)} onChange={() => toggleFormGroup(0)} />
+                            Not in Group
                         </label>
-                    ))}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={formGroupNos.includes(0)} onChange={() => toggleFormGroup(0)} />
-                        Not in Group
-                    </label>
+                    </div>
                 </div>
-            </div>
+            ) : (
+                <div className="fg-inspector-field-label-row" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    Adding to: {formOriginGroupNo === 0 || formOriginGroupNo === null
+                        ? 'Not in Group'
+                        : `FG-${formOriginGroupNo} · ${allGroups.find(g => g.no === formOriginGroupNo)?.name ?? ''}`}
+                </div>
+            )}
 
             <div>
                 <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Model kind</label></div>

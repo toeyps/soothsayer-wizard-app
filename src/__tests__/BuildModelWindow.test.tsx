@@ -260,12 +260,17 @@ describe('BuildModelWindow', () => {
             expect(checkbox.checked).toBe(true);
         });
 
-        it('also shows the group checklist inside a blank "+ Add Model" form, pre-checking the group whose button opened it', async () => {
+        it('shows a static "Adding to" breadcrumb (not a checklist) inside a blank "+ Add Model" form, since the group is already fixed by which button opened it', async () => {
+            // 2026-08-31: re-asking for the group here was redundant — it's
+            // already fully determined by which group's own button
+            // triggered the add flow. The checklist stays available only
+            // when editing an existing model (see the test above).
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [] } });
             fireEvent.click(screen.getAllByText('Add Model')[0]);
-            const checkbox = screen.getByText('FG-2 · Group B').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-            expect(checkbox.checked).toBe(true);
+            expect(screen.getByText('Adding to: FG-2 · Group B')).toBeTruthy();
+            expect(screen.queryByText('Failure groups')).toBeNull();
+            expect(screen.queryByRole('checkbox')).toBeNull();
         });
 
         it('a model can be checked into more than one Failure Group at once', async () => {

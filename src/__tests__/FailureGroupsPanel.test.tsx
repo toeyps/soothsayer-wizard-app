@@ -294,31 +294,19 @@ describe('FailureGroupsPanel', () => {
             expect(screen.queryByText('Model name')).toBeNull();
         });
 
-        it('opens the modal, pre-checking the group whose "+ Add model" button was clicked', () => {
+        it('opens the modal, showing (not re-asking) the group whose "+ Add model" button was clicked', () => {
+            // 2026-08-31: the group is already fully determined by which
+            // card's button opened the modal, so this page no longer asks
+            // the user to pick it again — it just shows it as a subtitle.
             render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
             const addButtons = screen.getAllByText('Add model');
             fireEvent.click(addButtons[1]); // groupA, groupB in order -> index 1 = Group B
             const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
             expect(modal.getByText('Model name')).toBeTruthy();
-            const checkbox = modal.getByText('Group B').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-            expect(checkbox.checked).toBe(true);
-            const otherCheckbox = modal.getByText('Group A').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-            expect(otherCheckbox.checked).toBe(false);
-        });
-
-        it('a model can be checked into more than one Failure Group at once', () => {
-            const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [], onQuickAddModel })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // pre-checks Group A
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            fireEvent.click(modal.getByText('Group B')); // also check Group B
-            fireEvent.change(modal.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Shared Model' } });
-            fireEvent.click(modal.getByText('Individual'));
-            fireEvent.change(modal.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
-            fireEvent.click(modal.getByText('Create model'));
-
-            expect(onQuickAddModel).toHaveBeenCalledWith(expect.arrayContaining([groupA.no, groupB.no]), 'Shared Model', 'individual', 'TAG2', '', '');
-            expect(onQuickAddModel.mock.calls[0][0]).toHaveLength(2);
+            expect(modal.getByText('Group B')).toBeTruthy();
+            expect(modal.queryByText('Group A')).toBeNull();
+            expect(modal.queryByText('Failure groups')).toBeNull();
+            expect(modal.queryByRole('checkbox')).toBeNull();
         });
 
         it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
