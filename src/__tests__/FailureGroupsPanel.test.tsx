@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
 
@@ -19,14 +19,6 @@ const notInGroup: FailureGroup = { no: 0, name: 'Not in Group', isCollapsed: fal
 const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
 const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
 
-// 2026-08-31: the quick-add popup's Target/X/Y pickers are limited to
-// sensors already toggled into the destination group (via the Sensor tab)
-// — represented, same as SensorSelection.tsx reads it, as an individual-kind
-// model whose groupNos include that group. Tests that need to pick TAG1/
-// TAG2/TAG3 from the popup must first seed that "membership" via fgModels.
-const sensorsInGroup = (groupNo: number, tags: string[]): FailureModel[] =>
-    tags.map((tag, i) => makeModel({ id: `mem-${groupNo}-${tag}`, groupNos: [groupNo], targetSensor: tag, name: `existing-${i}` }));
-
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
 ];
@@ -35,13 +27,11 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
     return {
         fgGroups: [notInGroup, groupA],
         fgModels: [makeModel()],
-        sensors: ['TAG1', 'TAG2', 'TAG3'],
         sensorMetadata,
         getGroupColor: () => 'blue',
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
         onCreateEmptyGroup: vi.fn(),
-        onQuickAddModel: vi.fn(),
         onOpenBuildModel: vi.fn(),
         ...overrides,
     };
@@ -57,6 +47,12 @@ describe('FailureGroupsPanel', () => {
         render(<FailureGroupsPanel {...makeProps()} />);
         expect(screen.getByText('Not in Group')).toBeTruthy();
         expect(screen.getByText('Group A')).toBeTruthy();
+    });
+
+    it('shows no "Add model" button anywhere in the panel (2026-08-31: removed per explicit user request — "เอาปุ่ม add model ออกเลย ผมบังคับให้ add จากหน้า dashboard เท่านั้น" — model creation is forced through Build Model\'s own window only)', () => {
+        render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
+        expect(screen.queryByText('Add model')).toBeNull();
+        expect(screen.queryByText('Model name')).toBeNull();
     });
 
     describe('"Not in Group" card (group 0)', () => {
@@ -280,195 +276,6 @@ describe('FailureGroupsPanel', () => {
             expect(onCreateEmptyGroup).not.toHaveBeenCalled();
             expect(screen.getByText('A failure group named "group a" already exists')).toBeTruthy();
             expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
-        });
-    });
-
-    describe('quick-add model (per-card "+ Add model" -> a lightweight modal, not the full Build Model form)', () => {
-        it('the modal is closed by default', () => {
-            render(<FailureGroupsPanel {...makeProps()} />);
-            expect(screen.queryByText('Model name')).toBeNull();
-        });
-
-        it('opens the modal, showing (not re-asking) the group whose "+ Add model" button was clicked', () => {
-            // 2026-08-31: the group is already fully determined by which
-            // card's button opened the modal, so this page no longer asks
-            // the user to pick it again — it just shows it as a subtitle.
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
-            const addButtons = screen.getAllByText('Add model');
-            fireEvent.click(addButtons[1]); // groupA, groupB in order -> index 1 = Group B
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            expect(modal.getByText('Model name')).toBeTruthy();
-            expect(modal.getByText('Group B')).toBeTruthy();
-            expect(modal.queryByText('Group A')).toBeNull();
-            expect(modal.queryByText('Failure groups')).toBeNull();
-            expect(modal.queryByRole('checkbox')).toBeNull();
-        });
-
-        it('shows a "no sensors yet" notice (not the kind/target pickers) when the group has no sensors toggled into it', () => {
-            // 2026-08-31: Target/X/Y choices come from sensors already
-            // toggled into this group from the Sensor tab — an empty group
-            // has nothing to build a model against yet.
-            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            expect(modal.getByText(/no sensors yet/i)).toBeTruthy();
-            expect(modal.queryByText('Model kind')).toBeNull();
-            expect(modal.getByText('Create model').closest('button')).toHaveProperty('disabled', true);
-        });
-
-        it('"Not in Group" is exempt from the sensor restriction — offers every sensor, never blocks with the "no sensors yet" notice, since it has no "toggle sensor in first" step like a real group', () => {
-            // 2026-08-31: reported by the user right after testing — the
-            // "Not in Group" card had no "+ Add model" button at all
-            // before this fix (only rendered once it already held a
-            // model), and even once given a button, restricting its
-            // sensor picker the same way as a real group blocked every
-            // add with a false "no sensors yet" notice, since nobody
-            // pre-populates the catch-all bucket via the Sensor tab.
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: [] })} />);
-            fireEvent.click(screen.getAllByText('Add model')[1]); // Not in Group's own button
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            expect(modal.queryByText(/no sensors yet/i)).toBeNull();
-            fireEvent.click(modal.getByText('Individual'));
-            const select = modal.getByDisplayValue('Select a sensor…') as HTMLSelectElement;
-            expect(Array.from(select.options).map(o => o.value)).toEqual(expect.arrayContaining(['TAG1', 'TAG2', 'TAG3']));
-        });
-
-        it('auto-fills Target sensor when exactly one sensor is already in the group — no need to re-pick what was already chosen on the Sensor tab', () => {
-            // 2026-08-31: "ผมเลือก sensor เข้า FG ไปแล้ว แล้วทำไมตอนใส่
-            // detail model ผมต้องมานั่งใส่ใหม่อีก ก็เป็น sensor เดิมสิ" —
-            // confirmed via AskUserQuestion: applies to Individual's (and
-            // Relationship's) Target only, only when the group has
-            // exactly one candidate sensor.
-            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1']) })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]);
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            fireEvent.click(modal.getByText('Individual'));
-            expect(modal.getByDisplayValue('TAG1')).toBeTruthy();
-        });
-
-        it('does NOT auto-fill Target when the group has more than one sensor — still requires an explicit pick', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]);
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            fireEvent.click(modal.getByText('Individual'));
-            expect(modal.getByDisplayValue('Select a sensor…')).toBeTruthy();
-        });
-
-        it('does NOT auto-fill X/Y for Clustering even with exactly one sensor in the group', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1']) })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]);
-            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
-            fireEvent.click(modal.getByText('Clustering'));
-            expect(modal.getAllByDisplayValue('Select a sensor…')).toHaveLength(2); // X and Y both still blank
-        });
-
-        it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.click(screen.getByText('Individual'));
-            expect(screen.getByText('Target sensor')).toBeTruthy();
-            expect(screen.queryByText('X sensor')).toBeNull();
-
-            fireEvent.click(screen.getByText('Clustering'));
-            expect(screen.queryByText('Target sensor')).toBeNull();
-            expect(screen.getByText('X sensor')).toBeTruthy();
-            expect(screen.getByText('Y sensor')).toBeTruthy();
-        });
-
-        it('"Create model" stays disabled until name + kind + the kind-appropriate sensor(s) are filled', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            const create = screen.getByText('Create model').closest('button') as HTMLButtonElement;
-            expect(create.disabled).toBe(true);
-
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'New Model' } });
-            expect(create.disabled).toBe(true);
-
-            fireEvent.click(screen.getByText('Individual'));
-            expect(create.disabled).toBe(true);
-
-            fireEvent.change(screen.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
-            expect(create.disabled).toBe(false);
-        });
-
-        it('requires both X and Y for Clustering before enabling Create', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
-            fireEvent.click(screen.getByText('Clustering'));
-            const create = screen.getByText('Create model').closest('button') as HTMLButtonElement;
-            const [xSelect, ySelect] = screen.getAllByDisplayValue('Select a sensor…');
-            fireEvent.change(xSelect, { target: { value: 'TAG1' } });
-            expect(create.disabled).toBe(true);
-            fireEvent.change(ySelect, { target: { value: 'TAG2' } });
-            expect(create.disabled).toBe(false);
-        });
-
-        it('calls onQuickAddModel with the group, trimmed name, kind, and target on Create, then closes the modal', () => {
-            const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']), onQuickAddModel })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: '  New Model  ' } });
-            fireEvent.click(screen.getByText('Individual'));
-            fireEvent.change(screen.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
-            fireEvent.click(screen.getByText('Create model'));
-
-            expect(onQuickAddModel).toHaveBeenCalledWith([groupA.no], 'New Model', 'individual', 'TAG2', '', '');
-            expect(screen.queryByText('Model name')).toBeNull();
-        });
-
-        it('calls onQuickAddModel with x/y sensors (and an empty target) for Clustering', () => {
-            const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']), onQuickAddModel })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
-            fireEvent.click(screen.getByText('Clustering'));
-            const [xSelect, ySelect] = screen.getAllByDisplayValue('Select a sensor…');
-            fireEvent.change(xSelect, { target: { value: 'TAG1' } });
-            fireEvent.change(ySelect, { target: { value: 'TAG2' } });
-            fireEvent.click(screen.getByText('Create model'));
-
-            expect(onQuickAddModel).toHaveBeenCalledWith([groupA.no], 'Cluster Model', 'clustering', '', 'TAG1', 'TAG2');
-        });
-
-        it('Cancel closes the modal without calling onQuickAddModel', () => {
-            const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgModels: [], onQuickAddModel })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Discarded' } });
-            fireEvent.click(screen.getByText('Cancel'));
-            expect(onQuickAddModel).not.toHaveBeenCalled();
-            expect(screen.queryByText('Model name')).toBeNull();
-        });
-
-        it('Escape closes the modal without calling onQuickAddModel', () => {
-            const onQuickAddModel = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgModels: [], onQuickAddModel })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.keyDown(document, { key: 'Escape' });
-            expect(onQuickAddModel).not.toHaveBeenCalled();
-            expect(screen.queryByText('Model name')).toBeNull();
-        });
-
-        it('clicking the backdrop closes the modal; clicking inside the card does not', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
-            fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too
-            fireEvent.click(screen.getByText('Model name')); // inside the card
-            expect(screen.getByText('Model name')).toBeTruthy();
-
-            fireEvent.click(document.querySelector('.quick-add-model-backdrop')!);
-            expect(screen.queryByText('Model name')).toBeNull();
-        });
-
-        it('resets the draft form the next time the modal opens for a different group', () => {
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
-            const addButtons = screen.getAllByText('Add model');
-            fireEvent.click(addButtons[0]);
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Leftover draft' } });
-            fireEvent.click(screen.getByText('Cancel'));
-
-            fireEvent.click(screen.getAllByText('Add model')[1]);
-            expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('');
         });
     });
 });

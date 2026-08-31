@@ -65,7 +65,6 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
                 <button onClick={() => props.onCreateEmptyGroup('Empty Group')}>create-empty-group</button>
                 <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group-fg</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
-                <button onClick={() => props.onQuickAddModel([1], 'Quick Model', 'individual', 'TAG2', '', '')}>quick-add-model</button>
                 <button onClick={() => props.onOpenBuildModel()}>open-build-model</button>
             </div>
         );
@@ -789,26 +788,6 @@ describe('Dashboard', () => {
             expect(state.failureGroupState.groups).toHaveLength(0);
         });
 
-        it('passes the full sensor pool (sensorHeaders, not just selectedSensors) for the quick-add modal\'s pickers', () => {
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            fireEvent.click(screen.getByText('Failure Groups'));
-            expect(last(fgPanelProps).sensors).toEqual(['TAG1', 'TAG2', 'TAG3']);
-        });
-
-        it('onQuickAddModel creates a new individual-kind model in the given group and round-trips through updateWorkspaceData', async () => {
-            renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
-            });
-            fireEvent.click(screen.getByText('Failure Groups'));
-
-            fireEvent.click(screen.getByText('quick-add-model'));
-            const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
-            expect(state.failureGroupState.models).toHaveLength(1);
-            expect(state.failureGroupState.models[0]).toMatchObject({
-                groupNos: [1], name: 'Quick Model', kind: 'individual', category: null, status: false,
-                targetSensor: 'TAG2', predictorSensors: [], xSensor: '', ySensor: '',
-            });
-        });
     });
 
     describe('color / axis editor (Selected Sensor tab)', () => {

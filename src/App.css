@@ -7170,58 +7170,6 @@ body {
     word-break: break-all;
 }
 
-/* ── Dashboard's quick-add-model modal (Failure Groups tab) ──────────
-   Same backdrop/card/animation pattern as the Predictive Model preview
-   modal above (.pm-preview-modal-*), reusing its @keyframes — this is a
-   different feature (Dashboard, not PM) so it gets its own class names
-   rather than borrowing the pm- prefix. */
-.quick-add-model-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    background: rgba(2, 6, 23, 0.55);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
-    animation: pm-chart-modal-fade 0.14s ease-out;
-}
-.quick-add-model-card {
-    width: 100%;
-    max-width: 380px;
-    background: var(--bg-surface, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    display: flex;
-    flex-direction: column;
-    animation: pm-chart-modal-pop 0.16s ease-out;
-}
-.quick-add-model-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 16px 18px 12px;
-    border-bottom: 1px solid var(--border);
-}
-.quick-add-model-body {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 16px 18px;
-}
-.quick-add-model-footer {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 18px 16px;
-    border-top: 1px solid var(--border);
-}
-
 .pm-preview-section {
     background: var(--hover-bg);
     border: 1px solid var(--border);
