@@ -312,11 +312,27 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const isMember = !!existing && existing.groupNos.includes(groupNo);
         let nextModels: FailureModel[];
         if (isMember) {
-            nextModels = fgModels.map(m => {
-                if (m !== existing) return m;
-                const remaining = m.groupNos.filter(n => n !== groupNo);
-                return { ...m, groupNos: remaining.length > 0 ? remaining : [0] };
-            });
+            const remaining = existing!.groupNos.filter(n => n !== groupNo);
+            if (remaining.length > 0) {
+                nextModels = fgModels.map(m => m === existing ? { ...m, groupNos: remaining } : m);
+            } else if (groupNo === 0) {
+                // 2026-08-31: removing "Not in Group" when it's the
+                // model's ONLY membership used to fall back to `[0]` —
+                // i.e. put the exact same sentinel right back, making the
+                // X button a silent no-op (confirmed bug, reported by
+                // user: "add แล้วไม่สามารถเอาออกได้"). There's no other
+                // group left to represent, so delete the model outright
+                // instead — same as clicking "Remove model" in Build
+                // Model — confirmed via AskUserQuestion over leaving the
+                // X disabled.
+                nextModels = fgModels.filter(m => m !== existing);
+            } else {
+                // Removing the last REAL group still falls back to the
+                // "Not in Group" sentinel — the model itself (and
+                // whatever config it already has) isn't lost, just no
+                // longer tied to a failure mode.
+                nextModels = fgModels.map(m => m === existing ? { ...m, groupNos: [0] } : m);
+            }
         } else if (existing) {
             nextModels = fgModels.map(m => m === existing
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }

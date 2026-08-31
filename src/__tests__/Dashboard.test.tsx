@@ -679,6 +679,34 @@ describe('Dashboard', () => {
                 });
             });
 
+            it('toggling a sensor OUT of "Not in Group" when it\'s the model\'s only membership deletes the model (2026-08-31 fix: used to no-op, falling back right back to [0])', () => {
+                // Regression test — the old fallback logic re-added the
+                // exact same [0] sentinel it had just removed, making the
+                // "Remove from Not in Group" button silently do nothing.
+                // There's no other group left to represent once 0 itself
+                // is removed, so the placeholder model is deleted outright
+                // (same as clicking "Remove model" in Build Model),
+                // confirmed with the user rather than assumed.
+                renderDashboard({
+                    initialState: makeInitialState({
+                        failureGroupState: {
+                            groups: [],
+                            models: [{
+                                id: 'm1', groupNos: [0], name: '', kind: 'individual', category: null, notes: '', status: false,
+                                targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                            }],
+                        },
+                    }),
+                });
+                act(() => { last(sensorSelectionProps).onToggleSensorGroup('TAG1', 0); });
+                return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
+                    expect(state.failureGroupState.models).toHaveLength(0);
+                });
+            });
+
             it('createGroupForSensor reuses the sensor\'s existing individual model instead of creating a duplicate', async () => {
                 renderDashboard({
                     initialState: makeInitialState({
