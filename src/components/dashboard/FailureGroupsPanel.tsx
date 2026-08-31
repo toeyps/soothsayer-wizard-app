@@ -1,22 +1,54 @@
-import { useState } from 'react';
-import { Plus, Pencil, Trash2, Play } from 'lucide-react';
-import { FailureGroup, FailureModel, SensorMetadata } from '../../types';
+import { useState, useEffect } from 'react';
+import { Plus, Pencil, Trash2, Play, X } from 'lucide-react';
+import { FailureGroup, FailureModel, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
 interface FailureGroupsPanelProps {
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
+    /** Full sensor pool (every CSV column, not just currently-selected/
+     *  plotted ones) for the quick-add modal's sensor pickers — same list
+     *  Build Model's own form uses. */
+    sensors: string[];
     sensorMetadata: SensorMetadata[] | null;
     getGroupColor: (groupNo: number) => string;
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
+    /** Creates a model with just enough to exist (name, kind, and its
+     *  kind-appropriate sensor(s)) directly from this panel, without
+     *  opening Build Model first — the "quick add" flow. Everything else
+     *  (category, predictors, cluster ranges, …) is still only editable
+     *  from Build Model afterward; the model shows as Incomplete until
+     *  then, same as any other freshly-created model. */
+    onQuickAddModel: (groupNo: number, name: string, kind: ModelKind, target: string, xSensor: string, ySensor: string) => void;
     /** Opens the (singleton) Build Model window, which starts on its
      *  overview page (all groups/models, groupable by Failure Group or
      *  Component) — the sole entry point into building models now; cards
      *  themselves no longer open anything on click. */
     onOpenBuildModel: () => void;
 }
+
+// Same per-kind colours as BuildModelWindow.tsx's own KIND_ACCENT (and, via
+// that, the row badge's .model-kind-icon--* classes in App.css) — duplicated
+// rather than imported since this panel and BuildModelWindow don't share a
+// components module. Keeps the quick-add modal's kind picker visually
+// consistent with the one in Build Model's own form.
+const KIND_ACCENT: Record<ModelKind, string> = {
+    individual: 'var(--accent-color)',
+    relationship: 'var(--warn)',
+    clustering: 'var(--kind-clu)',
+};
+const KIND_ACCENT_MUTED: Record<ModelKind, string> = {
+    individual: 'var(--accent-muted)',
+    relationship: 'var(--warn-muted)',
+    clustering: 'var(--kind-clu-muted)',
+};
+const KIND_LABELS: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relationship',
+    clustering: 'Clustering',
+};
 
 const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: number) =>
     groups.some(g => g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -27,17 +59,23 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * — the model's own name if one was set, otherwise the target sensor's
  * description — so the whole group is scannable at a glance. Complete/
  * Incomplete status is deliberately NOT shown here (only in the Build Model
- * window) per explicit user request. Cards are read-only display only (no
- * click-to-open) — the "Build Model" button at the bottom of the panel is
- * the sole way in, opening the Build Model window on its overview page
- * rather than straight into a specific group's editor. All editing —
- * description, recommendation, sensors, model config — lives exclusively
- * in that window's detail page, so this view never duplicates state it
- * already owns.
+ * window) per explicit user request. Cards themselves stay read-only, no
+ * click-to-open — the "Build Model" button at the bottom of the panel
+ * remains the way into full editing (description, recommendation, sensors,
+ * category, predictors, cluster ranges — everything past what quick-add
+ * below covers).
+ *
+ * One exception: each card's own "+ Add model" quick-adds a bare-minimum
+ * model (name, kind, target sensor(s)) right here, right after creating the
+ * group it belongs to — added per explicit user request so the "create a
+ * group, then add its first model" flow doesn't require leaving Dashboard.
+ * Deliberately minimal (not the full Build Model form) to avoid growing
+ * this already-cramped sidebar panel — everything else about the model is
+ * still only editable from Build Model afterward.
  */
 export default function FailureGroupsPanel({
-    fgGroups, fgModels, sensorMetadata, getGroupColor,
-    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModel,
+    fgGroups, fgModels, sensors, sensorMetadata, getGroupColor,
+    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onQuickAddModel, onOpenBuildModel,
 }: FailureGroupsPanelProps) {
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
     const [editGroupDraft, setEditGroupDraft] = useState('');
@@ -45,6 +83,43 @@ export default function FailureGroupsPanel({
     const [showNewGroup, setShowNewGroup] = useState(false);
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
+
+    // Quick-add-model modal — which group it's open for (null = closed) plus
+    // its own draft-form state. One modal instance reused across every
+    // card's "+ Add model" trigger rather than per-card state.
+    const [addModelForGroupNo, setAddModelForGroupNo] = useState<number | null>(null);
+    const [draftModelName, setDraftModelName] = useState('');
+    const [draftModelKind, setDraftModelKind] = useState<ModelKind | null>(null);
+    const [draftModelTarget, setDraftModelTarget] = useState('');
+    const [draftModelX, setDraftModelX] = useState('');
+    const [draftModelY, setDraftModelY] = useState('');
+
+    const closeAddModel = () => {
+        setAddModelForGroupNo(null);
+        setDraftModelName('');
+        setDraftModelKind(null);
+        setDraftModelTarget('');
+        setDraftModelX('');
+        setDraftModelY('');
+    };
+
+    const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && (
+        draftModelKind === 'clustering' ? draftModelX !== '' && draftModelY !== '' : draftModelTarget !== ''
+    );
+
+    const commitAddModel = () => {
+        if (!addModelValid || addModelForGroupNo === null || !draftModelKind) return;
+        onQuickAddModel(addModelForGroupNo, draftModelName.trim(), draftModelKind, draftModelTarget, draftModelX, draftModelY);
+        closeAddModel();
+    };
+
+    useEffect(() => {
+        if (addModelForGroupNo === null) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAddModel(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [addModelForGroupNo]);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     // Model name if the user set one; otherwise the target sensor's
@@ -167,6 +242,12 @@ export default function FailureGroupsPanel({
                                         ))}
                                     </div>
                                 )}
+                                <button
+                                    onClick={() => setAddModelForGroupNo(group.no)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '6px', padding: '4px 0', background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.68rem', cursor: 'pointer' }}
+                                >
+                                    <Plus size={11} /> Add model
+                                </button>
                             </div>
                         </div>
                     );
@@ -241,6 +322,92 @@ export default function FailureGroupsPanel({
                     <Play size={12} /> Build Model
                 </button>
             </div>
+
+            {addModelForGroupNo !== null && (
+                <div className="quick-add-model-backdrop" onClick={closeAddModel}>
+                    <div className="quick-add-model-card" onClick={e => e.stopPropagation()}>
+                        <div className="quick-add-model-header">
+                            <div>
+                                <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Add model</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                    {fgGroups.find(g => g.no === addModelForGroupNo)?.name ?? `FG-${addModelForGroupNo}`}
+                                </div>
+                            </div>
+                            <button className="fg-icon-btn" title="Close" onClick={closeAddModel}><X size={14} /></button>
+                        </div>
+
+                        <div className="quick-add-model-body">
+                            <div className="fg-inspector-field">
+                                <div className="fg-inspector-field-label-row"><label>Model name</label></div>
+                                <input
+                                    autoFocus
+                                    className="fg-inspector-input"
+                                    placeholder="e.g. Bearing vibration model"
+                                    value={draftModelName}
+                                    onChange={e => setDraftModelName(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="fg-inspector-field">
+                                <div className="fg-inspector-field-label-row"><label>Model kind</label></div>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                    {(['individual', 'relationship', 'clustering'] as ModelKind[]).map(k => (
+                                        <button
+                                            key={k}
+                                            onClick={() => setDraftModelKind(k)}
+                                            style={{
+                                                flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
+                                                border: `1px solid ${draftModelKind === k ? KIND_ACCENT[k] : 'var(--border)'}`,
+                                                background: draftModelKind === k ? KIND_ACCENT_MUTED[k] : 'none',
+                                                color: draftModelKind === k ? KIND_ACCENT[k] : 'var(--text-secondary)',
+                                                fontWeight: draftModelKind === k ? 600 : 400,
+                                            }}
+                                        >
+                                            {KIND_LABELS[k]}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {draftModelKind === 'clustering' ? (
+                                <>
+                                    <div className="fg-inspector-field">
+                                        <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
+                                        <select className="fg-inspector-input" value={draftModelX} onChange={e => setDraftModelX(e.target.value)}>
+                                            <option value="">Select a sensor…</option>
+                                            {sensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="fg-inspector-field">
+                                        <div className="fg-inspector-field-label-row"><label>Y sensor</label></div>
+                                        <select className="fg-inspector-input" value={draftModelY} onChange={e => setDraftModelY(e.target.value)}>
+                                            <option value="">Select a sensor…</option>
+                                            {sensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="fg-inspector-field">
+                                    <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
+                                    <select className="fg-inspector-input" value={draftModelTarget} onChange={e => setDraftModelTarget(e.target.value)} disabled={draftModelKind === null}>
+                                        <option value="">Select a sensor…</option>
+                                        {sensors.map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                                Category, predictors, and other detail can be added later from Build Model.
+                            </div>
+                        </div>
+
+                        <div className="quick-add-model-footer">
+                            <button className="text-btn" onClick={closeAddModel}>Cancel</button>
+                            <button className="fg-build-model-btn" disabled={!addModelValid} onClick={commitAddModel}>Create model</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

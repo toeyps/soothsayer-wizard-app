@@ -27,11 +27,13 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
     return {
         fgGroups: [notInGroup, groupA],
         fgModels: [makeModel()],
+        sensors: ['TAG1', 'TAG2', 'TAG3'],
         sensorMetadata,
         getGroupColor: () => 'blue',
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
         onCreateEmptyGroup: vi.fn(),
+        onQuickAddModel: vi.fn(),
         onOpenBuildModel: vi.fn(),
         ...overrides,
     };
@@ -283,6 +285,130 @@ describe('FailureGroupsPanel', () => {
             expect(onCreateEmptyGroup).not.toHaveBeenCalled();
             expect(screen.getByText('A failure group named "group a" already exists')).toBeTruthy();
             expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
+        });
+    });
+
+    describe('quick-add model (per-card "+ Add model" -> a lightweight modal, not the full Build Model form)', () => {
+        it('the modal is closed by default', () => {
+            render(<FailureGroupsPanel {...makeProps()} />);
+            expect(screen.queryByText('Model name')).toBeNull();
+        });
+
+        it('opens the modal for the clicked group, showing its name in the header', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
+            const addButtons = screen.getAllByText('Add model');
+            fireEvent.click(addButtons[1]); // groupA, groupB in order -> index 1 = Group B
+            expect(document.querySelector('.quick-add-model-header')!.textContent).toContain('Group B');
+            expect(screen.getByText('Model name')).toBeTruthy();
+        });
+
+        it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.click(screen.getByText('Individual'));
+            expect(screen.getByText('Target sensor')).toBeTruthy();
+            expect(screen.queryByText('X sensor')).toBeNull();
+
+            fireEvent.click(screen.getByText('Clustering'));
+            expect(screen.queryByText('Target sensor')).toBeNull();
+            expect(screen.getByText('X sensor')).toBeTruthy();
+            expect(screen.getByText('Y sensor')).toBeTruthy();
+        });
+
+        it('"Create model" stays disabled until name + kind + the kind-appropriate sensor(s) are filled', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            const create = screen.getByText('Create model').closest('button') as HTMLButtonElement;
+            expect(create.disabled).toBe(true);
+
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'New Model' } });
+            expect(create.disabled).toBe(true);
+
+            fireEvent.click(screen.getByText('Individual'));
+            expect(create.disabled).toBe(true);
+
+            fireEvent.change(screen.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
+            expect(create.disabled).toBe(false);
+        });
+
+        it('requires both X and Y for Clustering before enabling Create', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
+            fireEvent.click(screen.getByText('Clustering'));
+            const create = screen.getByText('Create model').closest('button') as HTMLButtonElement;
+            const [xSelect, ySelect] = screen.getAllByDisplayValue('Select a sensor…');
+            fireEvent.change(xSelect, { target: { value: 'TAG1' } });
+            expect(create.disabled).toBe(true);
+            fireEvent.change(ySelect, { target: { value: 'TAG2' } });
+            expect(create.disabled).toBe(false);
+        });
+
+        it('calls onQuickAddModel with the group, trimmed name, kind, and target on Create, then closes the modal', () => {
+            const onQuickAddModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: [], onQuickAddModel })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: '  New Model  ' } });
+            fireEvent.click(screen.getByText('Individual'));
+            fireEvent.change(screen.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
+            fireEvent.click(screen.getByText('Create model'));
+
+            expect(onQuickAddModel).toHaveBeenCalledWith(groupA.no, 'New Model', 'individual', 'TAG2', '', '');
+            expect(screen.queryByText('Model name')).toBeNull();
+        });
+
+        it('calls onQuickAddModel with x/y sensors (and an empty target) for Clustering', () => {
+            const onQuickAddModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA], fgModels: [], onQuickAddModel })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Cluster Model' } });
+            fireEvent.click(screen.getByText('Clustering'));
+            const [xSelect, ySelect] = screen.getAllByDisplayValue('Select a sensor…');
+            fireEvent.change(xSelect, { target: { value: 'TAG1' } });
+            fireEvent.change(ySelect, { target: { value: 'TAG2' } });
+            fireEvent.click(screen.getByText('Create model'));
+
+            expect(onQuickAddModel).toHaveBeenCalledWith(groupA.no, 'Cluster Model', 'clustering', '', 'TAG1', 'TAG2');
+        });
+
+        it('Cancel closes the modal without calling onQuickAddModel', () => {
+            const onQuickAddModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [], onQuickAddModel })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Discarded' } });
+            fireEvent.click(screen.getByText('Cancel'));
+            expect(onQuickAddModel).not.toHaveBeenCalled();
+            expect(screen.queryByText('Model name')).toBeNull();
+        });
+
+        it('Escape closes the modal without calling onQuickAddModel', () => {
+            const onQuickAddModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [], onQuickAddModel })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.keyDown(document, { key: 'Escape' });
+            expect(onQuickAddModel).not.toHaveBeenCalled();
+            expect(screen.queryByText('Model name')).toBeNull();
+        });
+
+        it('clicking the backdrop closes the modal; clicking inside the card does not', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
+            fireEvent.click(screen.getByText('Add model'));
+            fireEvent.click(screen.getByText('Model name')); // inside the card
+            expect(screen.getByText('Model name')).toBeTruthy();
+
+            fireEvent.click(document.querySelector('.quick-add-model-backdrop')!);
+            expect(screen.queryByText('Model name')).toBeNull();
+        });
+
+        it('resets the draft form the next time the modal opens for a different group', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
+            const addButtons = screen.getAllByText('Add model');
+            fireEvent.click(addButtons[0]);
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Leftover draft' } });
+            fireEvent.click(screen.getByText('Cancel'));
+
+            fireEvent.click(screen.getAllByText('Add model')[1]);
+            expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('');
         });
     });
 });

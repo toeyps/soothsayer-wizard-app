@@ -5,7 +5,7 @@ import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureModel, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
+    FailureGroup, FailureModel, ModelKind, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -354,6 +354,48 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setFgGroups(newGroups);
         persistFailureGroupState(newGroups, fgModels);
     }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
+
+    // "Quick add" a model straight from the Failure Groups tab's card,
+    // right after creating the group it belongs to, without opening Build
+    // Model first — added per explicit user request. Only the bare
+    // minimum needed to exist (name, kind, its kind-appropriate sensor(s));
+    // everything else (category, predictors, cluster ranges, …) is still
+    // only editable from Build Model afterward — the model shows
+    // "Incomplete" until then, same as any model created there directly.
+    const handleQuickAddModel = useCallback((groupNo: number, name: string, kind: ModelKind, target: string, xSensor: string, ySensor: string) => {
+        const newModel: FailureModel = {
+            id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            groupNo,
+            name,
+            kind,
+            category: null,
+            notes: '',
+            status: false,
+            targetSensor: kind === 'clustering' ? '' : target,
+            predictorSensors: [],
+            xSensor: kind === 'clustering' ? xSensor : '',
+            ySensor: kind === 'clustering' ? ySensor : '',
+            individualChecked: true,
+            rcMode: null,
+            scatterXSensor: '',
+            relModelName: '',
+            relStiffness: 100_000,
+            clusterModelName: '',
+            numClusters: 3,
+            criteriaSensor: '',
+            clusterRanges: [
+                { min: 0, max: 33 },
+                { min: 33, max: 66 },
+                { min: 66, max: 100 },
+            ],
+            filterTimeStart: '',
+            filterTimeEnd: '',
+            pmSensorFilters: [],
+        };
+        const newModels = [...fgModels, newModel];
+        setFgModels(newModels);
+        persistFailureGroupState(fgGroups, newModels);
+    }, [fgGroups, fgModels, persistFailureGroupState]);
 
     // Per-sensor line-color override and pinned Y-axis bounds, set from the
     // "Selected Sensor" tab.
@@ -1885,11 +1927,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <FailureGroupsPanel
                         fgGroups={fgGroups}
                         fgModels={fgModels}
+                        sensors={sensorHeaders}
                         sensorMetadata={sensorMetadata}
                         getGroupColor={getFgGroupColor}
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}
                         onCreateEmptyGroup={createEmptyGroup}
+                        onQuickAddModel={handleQuickAddModel}
                         onOpenBuildModel={spawnBuildModel}
                     />
                 )}
