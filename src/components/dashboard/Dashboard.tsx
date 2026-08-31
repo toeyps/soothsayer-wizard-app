@@ -5,7 +5,7 @@ import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureModel, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
+    FailureGroup, FailureModel, ModelKind, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -259,20 +259,32 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => { if (unlisten) unlisten(); };
     }, []);
 
-    // Default PM build config for a freshly created model — mirrors
-    // spawnPredictiveModel's own seed defaults below so a model behaves
-    // identically whether it was created here or from Build Model.
-    const makeDefaultModel = useCallback((tag: string, groupNos: number[]): FailureModel => ({
+    // Default PM build config for a freshly created model of a given kind —
+    // mirrors spawnPredictiveModel's own seed defaults below so a model
+    // behaves identically whether it was created here or from Build Model.
+    //
+    // 2026-08-31 redesign: model creation/deletion now lives entirely on
+    // Dashboard (Sensor tab's per-kind toggle + Failure Groups tab's own
+    // delete button) — Build Model no longer creates or removes models at
+    // all, only edits/trains existing ones, per explicit user request. A
+    // sensor can now carry more than one model KIND at once (e.g. both an
+    // Individual and a Relationship model), not just more than one GROUP —
+    // so this is parameterized by kind instead of being individual-only.
+    // Clustering has no single "target sensor" (it needs X and Y); adding
+    // it from a single-sensor toggle seeds that sensor as X and leaves Y
+    // blank for later — confirmed via AskUserQuestion over not offering
+    // Clustering in this flow at all.
+    const makeDefaultModelForKind = useCallback((tag: string, groupNos: number[], kind: ModelKind): FailureModel => ({
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         groupNos,
         name: getSensorMeta(tag)?.description || tag,
-        kind: 'individual',
+        kind,
         category: null,
         notes: '',
         status: false,
-        targetSensor: tag,
+        targetSensor: kind === 'clustering' ? '' : tag,
         predictorSensors: [],
-        xSensor: '',
+        xSensor: kind === 'clustering' ? tag : '',
         ySensor: '',
         individualChecked: true,
         rcMode: null,
@@ -296,19 +308,33 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         fgGroups.some(g => g.no !== 0 && g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase()),
     [fgGroups]);
 
-    // A sensor's quick-assign toggle (SensorSelection's FolderPlus menu) —
-    // 2026-08-25 redesign: a sensor can legitimately sit in several Failure
-    // Groups at once, and that's now expressed as ONE individual model with
-    // several entries in `groupNos`, not one duplicate model per group (the
-    // old behaviour, which meant editing one copy never touched the
-    // others). Toggling ON reuses this sensor's existing individual model
-    // if one exists (adding `groupNo`, dropping the `0` "Not in Group"
-    // sentinel now that it has a real group) or creates a fresh one.
-    // Toggling OFF removes just this one membership — falling back to
-    // `[0]` if it was the model's last group, never deleting the model
-    // outright, so its status/notes/etc. aren't silently lost.
-    const toggleSensorGroup = useCallback((tag: string, groupNo: number) => {
-        const existing = fgModels.find(m => m.kind === 'individual' && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase());
+    // A model "of kind K for sensor S" is identified by targetSensor (for
+    // individual/relationship) or xSensor (for clustering, which seeded
+    // this sensor as X on creation — see makeDefaultModelForKind above).
+    const findModelForKind = useCallback((tag: string, kind: ModelKind) =>
+        fgModels.find(m => m.kind === kind && (
+            kind === 'clustering' ? (m.xSensor ?? '').toLowerCase() === tag.toLowerCase() : (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase()
+        )),
+    [fgModels]);
+
+    // A sensor's per-kind, per-group toggle (SensorSelection's FolderPlus
+    // menu and its chips) — 2026-08-25 redesign: a sensor can legitimately
+    // sit in several Failure Groups at once, expressed as several entries
+    // in one model's `groupNos`, not one duplicate model per group.
+    // 2026-08-31 redesign: a sensor can ALSO carry more than one model
+    // KIND at once now (e.g. both Individual and Relationship) — this is
+    // the one control that both creates AND removes a specific (sensor,
+    // group, kind) membership, toggling instantly with no separate
+    // confirm step, consistent with the rest of the app's "no
+    // confirmations, click does the thing" policy this session settled on.
+    // Toggling ON reuses this sensor's existing model of that kind if one
+    // exists (adding `groupNo`, dropping the `0` "Not in Group" sentinel
+    // now that it has a real group) or creates a fresh one. Toggling OFF
+    // removes just this one (group, kind) membership — falling back to
+    // `[0]` if it was the model's last group, or deleting the model
+    // outright if it was already at `[0]` (nothing left to represent).
+    const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
+        const existing = findModelForKind(tag, kind);
         const isMember = !!existing && existing.groupNos.includes(groupNo);
         let nextModels: FailureModel[];
         if (isMember) {
@@ -322,9 +348,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // X button a silent no-op (confirmed bug, reported by
                 // user: "add แล้วไม่สามารถเอาออกได้"). There's no other
                 // group left to represent, so delete the model outright
-                // instead — same as clicking "Remove model" in Build
-                // Model — confirmed via AskUserQuestion over leaving the
-                // X disabled.
+                // instead — confirmed via AskUserQuestion over leaving
+                // the X disabled.
                 nextModels = fgModels.filter(m => m !== existing);
             } else {
                 // Removing the last REAL group still falls back to the
@@ -338,36 +363,48 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }
                 : m);
         } else {
-            nextModels = [...fgModels, makeDefaultModel(tag, [groupNo])];
+            nextModels = [...fgModels, makeDefaultModelForKind(tag, [groupNo], kind)];
         }
         setFgModels(nextModels);
         persistFailureGroupState(fgGroups, nextModels);
-    }, [fgModels, fgGroups, makeDefaultModel, persistFailureGroupState]);
+    }, [fgModels, fgGroups, findModelForKind, makeDefaultModelForKind, persistFailureGroupState]);
 
-    // Same reuse-or-create logic as toggleSensorGroup above, for the "create
-    // a brand new group for this sensor" flow — the sensor's existing
-    // individual model (if any) gains the new group instead of a duplicate
-    // being created next to it.
+    // "Create a brand new group for this sensor" — creates the empty group
+    // and, for convenience, reuses-or-creates this sensor's Individual
+    // model into it (the common case); additional kinds are then added the
+    // same way as any other group, via toggleSensorGroupKind on the new
+    // group's own row once it appears in the menu.
     const createGroupForSensor = useCallback((tag: string, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
         const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
         const newGroupNo = maxNo + 1;
         const newGroups = [...fgGroups, { no: newGroupNo, name: trimmed, isCollapsed: false }];
-        const existing = fgModels.find(m => m.kind === 'individual' && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase());
+        const existing = findModelForKind(tag, 'individual');
         const newModels = existing
             ? fgModels.map(m => m === existing
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
                 : m)
-            : [...fgModels, makeDefaultModel(tag, [newGroupNo])];
+            : [...fgModels, makeDefaultModelForKind(tag, [newGroupNo], 'individual')];
         setFgGroups(newGroups);
         setFgModels(newModels);
         persistFailureGroupState(newGroups, newModels);
-    }, [fgGroups, fgModels, isDuplicateGroupName, makeDefaultModel, persistFailureGroupState]);
+    }, [fgGroups, fgModels, findModelForKind, isDuplicateGroupName, makeDefaultModelForKind, persistFailureGroupState]);
+
+    // 2026-08-31: model deletion now lives on Dashboard (Failure Groups
+    // tab's own per-model delete button) — Build Model no longer has a
+    // "Remove model" control at all, per explicit user request. No
+    // confirmation dialog, matching this session's "click does the thing"
+    // policy for every other destructive action in the app.
+    const deleteModel = useCallback((modelId: string) => {
+        const newModels = fgModels.filter(m => m.id !== modelId);
+        setFgModels(newModels);
+        persistFailureGroupState(fgGroups, newModels);
+    }, [fgGroups, fgModels, persistFailureGroupState]);
 
     // Renaming/deleting a group is global (not tied to one sensor's model),
     // so these operate on fgGroups/fgModels directly rather than through
-    // toggleSensorGroup.
+    // toggleSensorGroupKind.
     const renameGroup = useCallback((groupNo: number, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed, groupNo)) return;
@@ -398,9 +435,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // ── Failure Groups tab (group-centric preview) ───────────────────────
     // Supports FailureGroupsPanel.tsx. Reuses fgGroups/fgModels/
-    // persistFailureGroupState above; toggleSensorGroup/createGroupForSensor
-    // (also above) remain the entry points used by SensorSelection.tsx's
-    // per-sensor quick-assign, unchanged.
+    // persistFailureGroupState above; toggleSensorGroupKind/
+    // createGroupForSensor (also above) remain the entry points used by
+    // SensorSelection.tsx's per-sensor quick-assign, unchanged.
     const [activeSensorTab, setActiveSensorTab] = useState<'sensor' | 'failure-groups'>(
         initialState?.lastRoute === 'failure-group' ? 'failure-groups' : 'sensor'
     );
@@ -1185,7 +1222,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         collapsedPanels: Array.from(collapsedPanels),
         layoutSizes,
         // Carry the LATEST fgGroups/fgModels (kept current by
-        // toggleSensorGroup/createGroupForSensor, and by the
+        // toggleSensorGroupKind/createGroupForSensor, and by the
         // 'failure-group-state-changed' listener above whenever
         // BuildModelWindow or PredictiveModelBuild persist independently),
         // not the stale failureGroupState captured in `initialState` at
@@ -1943,7 +1980,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         fgGroups={fgGroups}
                         fgModels={fgModels}
                         getGroupColor={getFgGroupColor}
-                        onToggleSensorGroup={toggleSensorGroup}
+                        onToggleSensorGroupKind={toggleSensorGroupKind}
                         onCreateGroupForSensor={createGroupForSensor}
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}
@@ -1959,6 +1996,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRenameGroup={renameGroup}
                         onDeleteGroup={deleteGroup}
                         onCreateEmptyGroup={createEmptyGroup}
+                        onDeleteModel={deleteModel}
                         onOpenBuildModel={spawnBuildModel}
                     />
                 )}

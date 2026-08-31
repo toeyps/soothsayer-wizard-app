@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { X, Trash2 } from "lucide-react";
+import { X } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
@@ -386,17 +386,6 @@ export default function BuildModelWindow() {
         }));
     };
 
-    // 2026-08-31: no confirmation dialog anywhere in the app, per explicit
-    // user request — click delete, it's deleted. (Briefly used an async
-    // ask() here to fix window.confirm() not actually blocking in Tauri's
-    // webview; removed again once the user clarified they want no
-    // confirmation at all, system-wide, not just a working one.)
-    const removeModel = () => {
-        if (!editingModelId) return;
-        persist((models, groups) => ({ groups, models: models.filter(m => m.id !== editingModelId) }));
-        resetForm();
-    };
-
     const trainModel = (modelId: string) => {
         setPmPageModelId(modelId);
         setActivePage('model');
@@ -407,14 +396,14 @@ export default function BuildModelWindow() {
     };
 
     // Split into fields (own bounded, independently-scrollable box) + a
-    // footer (Remove model / Save changes) that is never inside that box —
-    // a tall form (e.g. Relationship kind with several fields) used to be
-    // one long flow relying on the whole page's scroll position to reach
-    // its own buttons, which repeatedly left Save/Remove unreachable or
-    // looking "missing" depending on exactly where the page happened to be
-    // scrolled. The footer is now structurally always rendered directly
-    // under the fields box, at a fixed, predictable position, regardless
-    // of how tall the fields are or how the surrounding list is scrolled.
+    // footer (Save changes) that is never inside that box — a tall form
+    // (e.g. Relationship kind with several fields) used to be one long
+    // flow relying on the whole page's scroll position to reach its own
+    // button, which repeatedly left it unreachable or looking "missing"
+    // depending on exactly where the page happened to be scrolled. The
+    // footer is now structurally always rendered directly under the
+    // fields box, at a fixed, predictable position, regardless of how
+    // tall the fields are or how the surrounding list is scrolled.
     const renderModelFormFields = () => {
         // 2026-08-31: add-mode removed entirely — this form only ever
         // edits an existing model now, so the sensor list is always
@@ -621,7 +610,10 @@ export default function BuildModelWindow() {
     //
     // 2026-08-31: this form only ever edits an existing model now (add
     // removed entirely), so `editingModelId` is always set whenever the
-    // form is open — footer no longer branches on it.
+    // form is open — footer no longer branches on it. No "Remove model"
+    // button either — model deletion moved to Dashboard's Failure Groups
+    // tab (a trash icon per model row there), per explicit user request
+    // that Build Model do only detail-editing and training, nothing else.
     //
     // `position: sticky, bottom: 0` — being structurally right after the
     // fields box (rather than, say, inside a page-level modal) turned out
@@ -635,10 +627,7 @@ export default function BuildModelWindow() {
     // Requires no `overflow: hidden` on any ancestor between this and the
     // page's own scroll container (see the group card wrappers above).
     const renderModelFormFooter = () => (
-        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
-            <button className="model-remove-btn" onClick={removeModel}>
-                <Trash2 size={12} /> Remove model
-            </button>
+        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
             <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
                 Save changes
             </button>

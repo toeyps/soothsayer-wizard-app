@@ -281,7 +281,7 @@ describe('BuildModelWindow', () => {
             expect(saved.groupNos).toHaveLength(2);
         });
 
-        it('the Save changes / Remove model footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own buttons, requiring exactly the right page scroll position to reach them)', async () => {
+        it('the Save changes footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own button, requiring exactly the right page scroll position to reach it)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
@@ -368,14 +368,19 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
-        it('Save/Create is a normal-sized button, not stretched full-width over Remove model (regression: .fg-build-model-btn\'s width:100% overlapping siblings)', async () => {
+        it('Save changes is a normal-sized button, not stretched full-width (regression: .fg-build-model-btn\'s width:100% default)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
             const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
             expect(saveBtn.style.width).not.toBe('100%');
-            const removeBtn = screen.getByText('Remove model').closest('button') as HTMLButtonElement;
-            expect(removeBtn.className).toContain('model-remove-btn');
+        });
+
+        it('shows no "Remove model" button anywhere (2026-08-31: removed per explicit user request — model deletion moved to Dashboard\'s Failure Groups tab; Build Model only edits/trains)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            expect(screen.queryByText('Remove model')).toBeNull();
         });
 
         it('saving an edit persists it and closes the form, showing the change immediately', async () => {
@@ -425,20 +430,6 @@ describe('BuildModelWindow', () => {
                 expect(screen.getByText('Orphan Model')).toBeTruthy();
             });
 
-        });
-
-        it('"Remove model" persists and closes the form immediately on click, with no confirmation dialog (2026-08-31: no confirmations anywhere in the app, per explicit user request)', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
-            await act(async () => {
-                fireEvent.click(screen.getByText('Remove model'));
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models).toHaveLength(0);
-            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
         it('toggling the status pill persists the change without opening the form', async () => {

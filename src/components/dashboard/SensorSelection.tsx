@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, FolderPlus, X, Plus, Pencil, Trash2, Check, Bell } from 'lucide-react';
-import { SensorMetadata, FailureGroup, FailureModel, AlarmLevel } from '../../types';
+import { ChevronRight, ChevronDown, FolderPlus, X, Pencil, Trash2, Check, Bell } from 'lucide-react';
+import { SensorMetadata, FailureGroup, FailureModel, ModelKind, AlarmLevel } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { ALARM_LEVELS, ALARM_LABELS, isCriticalAlarmLevel, alarmLevelColor, hasAlarmSetpoints } from '../../utils/alarmLevels';
 
@@ -21,7 +21,13 @@ interface SensorSelectionProps {
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
     getGroupColor: (groupNo: number) => string;
-    onToggleSensorGroup: (tag: string, groupNo: number) => void;
+    /** Toggles a specific (sensor, group, kind) membership on/off — creates
+     *  or reuses a model of that kind for this sensor (2026-08-31: a sensor
+     *  can now carry more than one model kind at once, e.g. both Individual
+     *  and Relationship, not just more than one group). One control does
+     *  both add and remove, no separate confirm step — clicking an
+     *  already-member kind removes it, clicking an absent one adds it. */
+    onToggleSensorGroupKind: (tag: string, groupNo: number, kind: ModelKind) => void;
     onCreateGroupForSensor: (tag: string, name: string) => void;
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
@@ -32,6 +38,36 @@ interface SensorSelectionProps {
 
 const UNCATEGORIZED = 'Uncategorized';
 
+// Same per-kind colours/labels as BuildModelWindow.tsx's own KIND_ACCENT
+// (and, via that, the row badge's .model-kind-icon--* classes in App.css) —
+// duplicated rather than imported since this panel doesn't share a
+// components module with BuildModelWindow. A sensor's membership in a
+// group is now per-kind, so each kind gets its own small toggle here.
+const KIND_ACCENT: Record<ModelKind, string> = {
+    individual: 'var(--accent-color)',
+    relationship: 'var(--warn)',
+    clustering: 'var(--kind-clu)',
+};
+const KIND_LETTER: Record<ModelKind, string> = {
+    individual: 'I',
+    relationship: 'R',
+    clustering: 'C',
+};
+const KIND_LABEL: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relationship',
+    clustering: 'Clustering',
+};
+const ALL_KINDS: ModelKind[] = ['individual', 'relationship', 'clustering'];
+
+/** Does model `m` (of kind `kind`) represent sensor `tag`? Individual/
+ *  Relationship key off targetSensor; Clustering keys off xSensor, since a
+ *  Clustering model created from this single-sensor toggle flow seeds that
+ *  sensor as X and leaves Y for later (see Dashboard.tsx's
+ *  makeDefaultModelForKind). */
+const modelMatchesSensorKind = (m: FailureModel, kind: ModelKind, tag: string) =>
+    m.kind === kind && (kind === 'clustering' ? (m.xSensor ?? '') : (m.targetSensor ?? '')).toLowerCase() === tag.toLowerCase();
+
 export default function SensorSelection({
     sensors,
     selectedSensors,
@@ -41,7 +77,7 @@ export default function SensorSelection({
     fgGroups,
     fgModels,
     getGroupColor,
-    onToggleSensorGroup,
+    onToggleSensorGroupKind,
     onCreateGroupForSensor,
     onRenameGroup,
     onDeleteGroup,
@@ -154,15 +190,49 @@ export default function SensorSelection({
 
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
-        // Includes group 0 ("Not in Group") — a sensor can be toggled into it
-        // exactly like any real group (adds/removes 0 from the same
-        // individual model's groupNos — see Dashboard.tsx's
-        // toggleSensorGroup), so it shows as a chip here too.
-        const memberGroups = fgGroups.filter(g =>
-            fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(g.no) && (m.targetSensor ?? '').toLowerCase() === sensor.toLowerCase())
+        // Which (group, kind) pairs this sensor actually belongs to — a
+        // sensor can carry more than one model kind per group now (e.g.
+        // both an Individual and a Relationship model), so membership is
+        // tracked per kind, not just per group. Includes group 0 ("Not in
+        // Group") — a sensor can be toggled into it exactly like any real
+        // group (see Dashboard.tsx's toggleSensorGroupKind).
+        const memberEntries: { group: FailureGroup; kind: ModelKind }[] = fgGroups.flatMap(g =>
+            ALL_KINDS
+                .filter(kind => fgModels.some(m => modelMatchesSensorKind(m, kind, sensor) && m.groupNos.includes(g.no)))
+                .map(kind => ({ group: g, kind }))
         );
-        const isInNotInGroup = memberGroups.some(g => g.no === 0);
+        const isMemberOfKind = (groupNo: number, kind: ModelKind) =>
+            memberEntries.some(e => e.group.no === groupNo && e.kind === kind);
         const menuOpen = groupMenuFor === sensor;
+
+        // Three small per-kind toggle buttons for one group (or "Not in
+        // Group", 0) — the single control for both adding AND removing a
+        // (sensor, group, kind) membership, letting the user pick more
+        // than one kind for the same group by clicking more than one
+        // (2026-08-31 redesign, replacing the old single +/✕ button).
+        const renderKindToggles = (groupNo: number, groupName: string) => (
+            <div style={{ display: 'flex', gap: '2px' }} onClick={e => e.stopPropagation()}>
+                {ALL_KINDS.map(kind => {
+                    const active = isMemberOfKind(groupNo, kind);
+                    return (
+                        <button
+                            key={kind}
+                            onClick={() => onToggleSensorGroupKind(sensor, groupNo, kind)}
+                            title={`${active ? 'Remove' : 'Add'} ${KIND_LABEL[kind]}${active ? ' from' : ' to'} ${groupName}`}
+                            style={{
+                                width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                borderRadius: '4px', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+                                border: `1px solid ${active ? KIND_ACCENT[kind] : 'var(--border)'}`,
+                                background: active ? KIND_ACCENT[kind] : 'none',
+                                color: active ? 'var(--bg-primary)' : 'var(--text-faint)',
+                            }}
+                        >
+                            {KIND_LETTER[kind]}
+                        </button>
+                    );
+                })}
+            </div>
+        );
         // The bell only appears at all when the sensor has at least one
         // setpoint value — independent of whether it's currently checked
         // into the chart, so it's browsable before deciding to plot. The
@@ -246,11 +316,11 @@ export default function SensorSelection({
                         </button>
                     </div>
                 </div>
-                {memberGroups.length > 0 && (
+                {memberEntries.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', paddingLeft: '26px', marginTop: '4px' }}>
-                        {memberGroups.map(g => (
+                        {memberEntries.map(({ group: g, kind }) => (
                             <span
-                                key={g.no}
+                                key={`${g.no}-${kind}`}
                                 className={`fg-group-color-${getGroupColor(g.no)}`}
                                 style={{
                                     display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -260,9 +330,10 @@ export default function SensorSelection({
                             >
                                 <span className="fg-group-dot" />
                                 {g.name}
+                                <span style={{ opacity: 0.7, color: KIND_ACCENT[kind], fontWeight: 700 }}>{KIND_LETTER[kind]}</span>
                                 <button
-                                    onClick={(e) => { e.stopPropagation(); onToggleSensorGroup(sensor, g.no); }}
-                                    title={`Remove from ${g.name}`}
+                                    onClick={(e) => { e.stopPropagation(); onToggleSensorGroupKind(sensor, g.no, kind); }}
+                                    title={`Remove ${KIND_LABEL[kind]} from ${g.name}`}
                                     style={{
                                         background: 'none', border: 'none', color: 'inherit', opacity: 0.7,
                                         cursor: 'pointer', padding: '2px', display: 'flex', borderRadius: '999px',
@@ -315,7 +386,6 @@ export default function SensorSelection({
                         }}
                     >
                         {fgGroups.filter(g => g.no !== 0).map(g => {
-                            const isMember = memberGroups.some(mg => mg.no === g.no);
                             const isEditing = editingGroupNo === g.no;
                             if (isEditing) {
                                 return (
@@ -356,15 +426,7 @@ export default function SensorSelection({
                                 >
                                     <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
                                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-primary)' }}>{g.name}</span>
-                                    {!isMember && (
-                                        <button
-                                            onClick={() => onToggleSensorGroup(sensor, g.no)}
-                                            title={`Add to ${g.name}`}
-                                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
-                                        >
-                                            <Plus size={14} />
-                                        </button>
-                                    )}
+                                    {renderKindToggles(g.no, g.name)}
                                     <button
                                         onClick={() => { setEditingGroupNo(g.no); setEditGroupDraft(g.name); }}
                                         title={`Rename ${g.name}`}
@@ -388,34 +450,18 @@ export default function SensorSelection({
                             </div>
                         )}
 
-                        {/* "Not in Group" (FG-0) — same toggle mechanic as a real
-                            group (creates/removes an individual model), but no
-                            rename/delete since it's a permanent, non-editable
-                            bucket for a sensor that doesn't belong to a failure
-                            mode yet still needs a model built for it. */}
+                        {/* "Not in Group" (FG-0) — same per-kind toggle mechanic
+                            as a real group, but no rename/delete since it's a
+                            permanent, non-editable bucket for a sensor that
+                            doesn't belong to a failure mode yet still needs a
+                            model built for it. */}
                         <div
                             className="fg-group-color-slate"
                             style={{ display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '8px' }}
                         >
                             <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
                             <span style={{ flex: 1, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Not in Group</span>
-                            {isInNotInGroup ? (
-                                <button
-                                    onClick={() => onToggleSensorGroup(sensor, 0)}
-                                    title="Remove from Not in Group"
-                                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
-                                >
-                                    <X size={13} />
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={() => onToggleSensorGroup(sensor, 0)}
-                                    title="Add to Not in Group"
-                                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
-                                >
-                                    <Plus size={14} />
-                                </button>
-                            )}
+                            {renderKindToggles(0, 'Not in Group')}
                         </div>
 
                         <div style={{ marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '6px' }}>

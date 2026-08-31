@@ -26,7 +26,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof SensorSelectio
         fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }, groupA],
         fgModels: [modelTag1InGroupA],
         getGroupColor: () => 'blue',
-        onToggleSensorGroup: vi.fn(),
+        onToggleSensorGroupKind: vi.fn(),
         onCreateGroupForSensor: vi.fn(),
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
@@ -199,6 +199,10 @@ describe('SensorSelection', () => {
         });
     });
 
+    // 2026-08-31 redesign: a sensor's membership is now per (group, kind)
+    // pair, not just per group — a sensor can carry more than one model
+    // kind at once (e.g. both Individual and Relationship). Chips and the
+    // group menu's toggle controls were updated accordingly.
     describe('failure-group badge chips', () => {
         it('shows a chip for each group the sensor already belongs to', () => {
             render(<SensorSelection {...makeProps()} />);
@@ -206,12 +210,12 @@ describe('SensorSelection', () => {
             expect(screen.getByText('Group A')).toBeTruthy();
         });
 
-        it('removing via the chip\'s X calls onToggleSensorGroup', () => {
-            const onToggleSensorGroup = vi.fn();
-            render(<SensorSelection {...makeProps({ onToggleSensorGroup })} />);
+        it('removing via the chip\'s X calls onToggleSensorGroupKind with the model\'s own kind', () => {
+            const onToggleSensorGroupKind = vi.fn();
+            render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
             expandPump();
-            fireEvent.click(screen.getByTitle('Remove from Group A'));
-            expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG1', 1);
+            fireEvent.click(screen.getByTitle('Remove Individual from Group A'));
+            expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 1, 'individual');
         });
 
         it('shows one chip per group when a single model\'s groupNos lists several (2026-08-25: real many-to-many, not a duplicate model per group)', () => {
@@ -221,6 +225,14 @@ describe('SensorSelection', () => {
             expandPump();
             expect(screen.getByText('Group A')).toBeTruthy();
             expect(screen.getByText('Group B')).toBeTruthy();
+        });
+
+        it('shows a separate chip per kind when a sensor carries more than one model kind in the same group', () => {
+            const relModel: FailureModel = { ...modelTag1InGroupA, id: 'm2', kind: 'relationship' };
+            render(<SensorSelection {...makeProps({ fgModels: [modelTag1InGroupA, relModel] })} />);
+            expandPump();
+            expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
+            expect(screen.getByTitle('Remove Relationship from Group A')).toBeTruthy();
         });
     });
 
@@ -240,22 +252,32 @@ describe('SensorSelection', () => {
             expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
         });
 
-        it('lists existing groups with an Add button when the sensor is not yet a member', () => {
-            const onToggleSensorGroup = vi.fn();
-            render(<SensorSelection {...makeProps({ onToggleSensorGroup })} />);
+        it('each group row offers a per-kind toggle (Individual/Relationship/Clustering) that adds a kind the sensor is not yet a member of', () => {
+            const onToggleSensorGroupKind = vi.fn();
+            render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
             expandPump();
-            // Open TAG2's menu — TAG2 is not in Group A.
+            // Open TAG2's menu — TAG2 is not in Group A at all.
             const folderButtons = screen.getAllByTitle('Add to failure group');
             fireEvent.click(folderButtons[1]);
-            fireEvent.click(screen.getByTitle('Add to Group A'));
-            expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG2', 1);
+            fireEvent.click(screen.getByTitle('Add Individual to Group A'));
+            expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG2', 1, 'individual');
         });
 
-        it('does not show an Add button for a group the sensor already belongs to', () => {
-            render(<SensorSelection {...makeProps()} />);
+        it('a kind the sensor already belongs to in that group shows a Remove control instead of Add; the other kinds still show Add', () => {
+            const onToggleSensorGroupKind = vi.fn();
+            render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
             expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1's own menu
-            expect(screen.queryByTitle('Add to Group A')).toBeNull();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1's own menu — already Individual in Group A
+            // Two "Remove Individual from Group A" controls exist at once
+            // here — the chip's own X (always visible) and the menu's
+            // toggle (visible because the menu happens to be open).
+            expect(screen.getAllByTitle('Remove Individual from Group A').length).toBeGreaterThan(0);
+            expect(screen.queryByTitle('Add Individual to Group A')).toBeNull();
+            expect(screen.getByTitle('Add Relationship to Group A')).toBeTruthy();
+            expect(screen.getByTitle('Add Clustering to Group A')).toBeTruthy();
+
+            fireEvent.click(screen.getByTitle('Add Relationship to Group A'));
+            expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 1, 'relationship');
         });
 
         it('renaming a group commits via Enter or the check button', () => {
@@ -294,31 +316,32 @@ describe('SensorSelection', () => {
                 expect(screen.getByText('Not in Group')).toBeTruthy();
             });
 
-            it('clicking "Add to Not in Group" toggles the sensor into group 0', () => {
-                const onToggleSensorGroup = vi.fn();
-                render(<SensorSelection {...makeProps({ onToggleSensorGroup })} />);
+            it('clicking "Add Individual to Not in Group" toggles the sensor into group 0 as Individual', () => {
+                const onToggleSensorGroupKind = vi.fn();
+                render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
                 expandPump();
                 fireEvent.click(screen.getAllByTitle('Add to failure group')[1]); // TAG2, not a member of anything
-                fireEvent.click(screen.getByTitle('Add to Not in Group'));
-                expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG2', 0);
+                fireEvent.click(screen.getByTitle('Add Individual to Not in Group'));
+                expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG2', 0, 'individual');
             });
 
-            it('once a member, shows a remove control instead, and no rename/delete', () => {
-                const onToggleSensorGroup = vi.fn();
+            it('once a member of one kind, that kind shows Remove (other kinds still show Add); still no rename/delete', () => {
+                const onToggleSensorGroupKind = vi.fn();
                 const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
-                render(<SensorSelection {...makeProps({ fgModels: models, onToggleSensorGroup })} />);
+                render(<SensorSelection {...makeProps({ fgModels: models, onToggleSensorGroupKind })} />);
                 expandPump();
-                fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1, already in group 0
-                expect(screen.queryByTitle('Add to Not in Group')).toBeNull();
+                fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1, already Individual member of group 0
                 expect(screen.queryByTitle('Rename Not in Group')).toBeNull();
                 expect(screen.queryByTitle('Delete Not in Group')).toBeNull();
-                // Two "Remove from Not in Group" controls exist at once here —
-                // the chip's own X (always visible) and the menu's toggle
-                // (visible because the menu happens to be open in this test).
-                const removeButtons = screen.getAllByTitle('Remove from Not in Group');
+                expect(screen.getByTitle('Add Relationship to Not in Group')).toBeTruthy();
+                // Two "Remove Individual from Not in Group" controls exist at
+                // once here — the chip's own X (always visible) and the
+                // menu's toggle (visible because the menu happens to be open
+                // in this test).
+                const removeButtons = screen.getAllByTitle('Remove Individual from Not in Group');
                 expect(removeButtons.length).toBeGreaterThan(0);
                 fireEvent.click(removeButtons[removeButtons.length - 1]);
-                expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG1', 0);
+                expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 0, 'individual');
             });
 
             it('renders a "Not in Group" chip alongside real-group chips once a sensor is a member', () => {

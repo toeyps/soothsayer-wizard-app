@@ -11,13 +11,15 @@ interface FailureGroupsPanelProps {
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
-    /** Opens the (singleton) Build Model window, which starts on its
-     *  overview page (all groups/models, groupable by Failure Group or
-     *  Component) — the sole entry point into building models. Cards
-     *  themselves no longer open anything on click, and no longer have
-     *  their own "+ Add model" either (2026-08-31: removed per explicit
-     *  user request — model creation is forced through Build Model only,
-     *  not scattered across this panel too). */
+    /** Deletes a model record outright — 2026-08-31: model lifecycle (both
+     *  creation, via the Sensor tab's per-kind toggle, and deletion, here)
+     *  now lives entirely on Dashboard, per explicit user request ("การ add
+     *  model หรือลบ model ทำเสร็จทั้งหมดในหน้า dashboard"). Build Model no
+     *  longer creates or removes models at all — only edits/trains them. */
+    onDeleteModel: (modelId: string) => void;
+    /** Opens the (singleton) Build Model window — for editing a model's
+     *  detail (category, notes, predictors, cluster ranges, kind, …) and
+     *  training it. Cards themselves still don't open anything on click. */
     onOpenBuildModel: () => void;
 }
 
@@ -28,25 +30,24 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * Group-centric "preview" view for the Dashboard's Sensor panel — Failure
  * Groups tab. Each card shows the group's name/ID and every model inside it
  * — the model's own name if one was set, otherwise the target sensor's
- * description — so the whole group is scannable at a glance. Complete/
- * Incomplete status is deliberately NOT shown here (only in the Build Model
- * window) per explicit user request. Cards stay entirely read-only, no
- * click-to-open and no way to create a model from here either — the
- * "Build Model" button at the bottom of the panel is the sole entry point
- * into editing (description, recommendation, sensors, category, predictors,
- * cluster ranges, and creating new models).
+ * description — so the whole group is scannable at a glance, plus a delete
+ * button per model. Complete/Incomplete status is deliberately NOT shown
+ * here (only in the Build Model window) per explicit user request.
  *
- * 2026-08-25–2026-08-31: this panel briefly had its own "+ Add model"
- * quick-add popup per card, added per explicit user request so "create a
- * group, then add its first model" didn't require leaving Dashboard.
- * Removed again per an equally explicit later request ("เอาปุ่ม add model
- * ออกเลย ผมบังคับให้ add จากหน้า dashboard เท่านั้น" — clarified via
- * AskUserQuestion to mean: force model creation through Build Model's own
- * window only, remove the shortcut from this panel).
+ * 2026-08-31: model creation and deletion both live entirely on Dashboard
+ * now, per explicit user request — this panel handles deletion (a trash
+ * icon per model row below); creation happens on the Sensor tab (per-kind
+ * toggle on each sensor, see SensorSelection.tsx). Build Model is left
+ * with only editing a model's detail and training it, no create/delete at
+ * all. This panel briefly had its own "+ Add model" quick-add popup per
+ * card (2026-08-25) — removed again once the user clarified they wanted
+ * creation forced through one place instead ("เอาปุ่ม add model ออกเลย
+ * ผมบังคับให้ add จากหน้า dashboard เท่านั้น" → turned out to mean the
+ * Sensor tab, not this panel).
  */
 export default function FailureGroupsPanel({
     fgGroups, fgModels, sensorMetadata, getGroupColor,
-    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onOpenBuildModel,
+    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel,
 }: FailureGroupsPanelProps) {
     const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
     const [editGroupDraft, setEditGroupDraft] = useState('');
@@ -83,13 +84,33 @@ export default function FailureGroupsPanel({
         return label ? `${label} (${targetTag})` : targetTag;
     };
 
+    // 2026-08-31: a trash icon per model row — deleting a model now lives
+    // entirely on Dashboard (this panel), per explicit user request. No
+    // confirmation dialog, matching this session's "click does the thing"
+    // policy for every other destructive action in the app.
+    const renderModelRow = (model: FailureModel) => (
+        <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                {modelDisplayLabel(model)}
+            </span>
+            <button
+                className="fg-icon-btn fg-icon-btn-danger"
+                title="Delete model"
+                onClick={() => onDeleteModel(model.id)}
+                style={{ flexShrink: 0, width: '18px', height: '18px' }}
+            >
+                <Trash2 size={10} />
+            </button>
+        </div>
+    );
+
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModels = fgModels.length;
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
     // for models built against a sensor that isn't part of any failure
-    // mode. Rendered as its own card, but only once it actually holds a
-    // model — an empty "Not in Group" card would just be clutter for the
-    // (common) case where nobody's used it.
+    // mode. Always rendered as its own card now (2026-08-31 fix — it used
+    // to hide until non-empty, which meant there was no entry point to
+    // ever get a model into it in the first place).
     const ungroupedModels = fgModels.filter(m => m.groupNos.includes(0));
 
     const commitGroupRename = () => {
@@ -182,11 +203,7 @@ export default function FailureGroupsPanel({
                                     <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                        {groupModels.map(model => (
-                                            <div key={model.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                                                {modelDisplayLabel(model)}
-                                            </div>
-                                        ))}
+                                        {groupModels.map(model => renderModelRow(model))}
                                     </div>
                                 )}
                             </div>
@@ -218,11 +235,7 @@ export default function FailureGroupsPanel({
                             <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                {ungroupedModels.map(model => (
-                                    <div key={model.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                                        {modelDisplayLabel(model)}
-                                    </div>
-                                ))}
+                                {ungroupedModels.map(model => renderModelRow(model))}
                             </div>
                         )}
                         <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>

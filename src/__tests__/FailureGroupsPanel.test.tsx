@@ -32,6 +32,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
         onRenameGroup: vi.fn(),
         onDeleteGroup: vi.fn(),
         onCreateEmptyGroup: vi.fn(),
+        onDeleteModel: vi.fn(),
         onOpenBuildModel: vi.fn(),
         ...overrides,
     };
@@ -95,6 +96,13 @@ describe('FailureGroupsPanel', () => {
         expect(screen.getByText('Temp model (TAG1)')).toBeTruthy();
         expect(screen.queryByText('Complete')).toBeNull();
         expect(screen.queryByText('Incomplete')).toBeNull();
+    });
+
+    it('a trash icon per model row calls onDeleteModel immediately, with no confirmation dialog (2026-08-31: model deletion now lives entirely on Dashboard, per explicit user request)', () => {
+        const onDeleteModel = vi.fn();
+        render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ id: 'm1' })], onDeleteModel })} />);
+        fireEvent.click(screen.getByTitle('Delete model'));
+        expect(onDeleteModel).toHaveBeenCalledWith('m1');
     });
 
     describe('model display label fallback chain', () => {

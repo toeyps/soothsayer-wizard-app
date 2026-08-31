@@ -46,7 +46,7 @@ vi.mock('../components/dashboard/SensorSelection', () => ({
                 <button onClick={() => props.onSensorChange(['TAG1', 'TAG2', 'TAG3', 'TAG4'])}>select-4-tags</button>
                 <button onClick={() => props.onSensorChange(['TAG1', 'TAG2', 'TAG3', 'TAG4', 'TAG5'])}>select-5-tags</button>
                 <button onClick={() => props.onSensorChange([])}>select-none</button>
-                <button onClick={() => props.onToggleSensorGroup('TAG1', 1)}>toggle-group</button>
+                <button onClick={() => props.onToggleSensorGroupKind('TAG1', 1, 'individual')}>toggle-group</button>
                 <button onClick={() => props.onCreateGroupForSensor('TAG1', 'New Group')}>create-group-for-sensor</button>
                 <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group</button>
@@ -65,6 +65,7 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
                 <button onClick={() => props.onCreateEmptyGroup('Empty Group')}>create-empty-group</button>
                 <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group-fg</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
+                <button onClick={() => props.onDeleteModel('m1')}>delete-model-fg</button>
                 <button onClick={() => props.onOpenBuildModel()}>open-build-model</button>
             </div>
         );
@@ -647,8 +648,8 @@ describe('Dashboard', () => {
                         },
                     }),
                 });
-                // The mocked SensorSelection's toggle-group button always toggles TAG1 into group 1 -- use onToggleSensorGroup directly via the same mock button pattern isn't available for group 2, so drive it through sensorSelectionProps instead.
-                act(() => { last(sensorSelectionProps).onToggleSensorGroup('TAG1', 2); });
+                // The mocked SensorSelection's toggle-group button always toggles TAG1 into group 1 as individual -- use onToggleSensorGroupKind directly via the same mock button pattern isn't available for group 2, so drive it through sensorSelectionProps instead.
+                act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 2, 'individual'); });
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
                     expect(state.failureGroupState.models).toHaveLength(1); // still just one record, not two
                     expect(state.failureGroupState.models[0].groupNos).toEqual(expect.arrayContaining([1, 2]));
@@ -700,9 +701,38 @@ describe('Dashboard', () => {
                         },
                     }),
                 });
-                act(() => { last(sensorSelectionProps).onToggleSensorGroup('TAG1', 0); });
+                act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 0, 'individual'); });
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
                     expect(state.failureGroupState.models).toHaveLength(0);
+                });
+            });
+
+            it('2026-08-31: toggling a sensor into the same group with a DIFFERENT kind creates a separate model, leaving the existing kind\'s model untouched', () => {
+                // The whole point of this redesign — a sensor can now
+                // carry more than one model KIND at once (not just more
+                // than one group), per explicit user request.
+                renderDashboard({
+                    initialState: makeInitialState({
+                        failureGroupState: {
+                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                            models: [{
+                                id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
+                                targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                            }],
+                        },
+                    }),
+                });
+                act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'relationship'); });
+                return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
+                    expect(state.failureGroupState.models).toHaveLength(2); // the original individual model, plus a new relationship one
+                    const individual = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+                    const relationship = state.failureGroupState.models.find((m: any) => m.kind === 'relationship');
+                    expect(individual.groupNos).toEqual([1]); // untouched
+                    expect(relationship.targetSensor).toBe('TAG1');
+                    expect(relationship.groupNos).toEqual([1]);
                 });
             });
 
@@ -788,6 +818,27 @@ describe('Dashboard', () => {
             expect(state.failureGroupState.groups).toHaveLength(0);
         });
 
+        it('deleting a model from the preview panel round-trips too (2026-08-31: model deletion now lives entirely on Dashboard, per explicit user request)', async () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    failureGroupState: {
+                        groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                        models: [{
+                            id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
+                            targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                            individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                            relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                            clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                        }],
+                    },
+                }),
+            });
+            fireEvent.click(screen.getByText('Failure Groups'));
+
+            fireEvent.click(screen.getByText('delete-model-fg'));
+            const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.models).toHaveLength(0);
+        });
     });
 
     describe('color / axis editor (Selected Sensor tab)', () => {
