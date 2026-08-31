@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { Layout, Clock, MoreVertical, Trash2, Copy, Edit2 } from "lucide-react";
-import { ask } from "@tauri-apps/plugin-dialog";
 import type { WorkspaceMetadata } from "../../types";
 import {
   getRecentWorkspaces,
@@ -36,17 +35,13 @@ export default function RecentWorkspaces({ onLoadWorkspace }: RecentWorkspacesPr
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // 2026-08-31: no confirmation dialog anywhere in the app, per explicit
+  // user request — click delete, it's deleted, including whole workspaces.
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const confirmed = await ask(
-      "Are you sure you want to delete this workspace? This action cannot be undone.",
-      { title: "Delete Workspace", kind: "warning" }
-    );
-    if (confirmed) {
-      await deleteWorkspace(id);
-      refresh();
-      setActiveMenuId(null);
-    }
+    await deleteWorkspace(id);
+    refresh();
+    setActiveMenuId(null);
   };
 
   const handleDuplicate = async (id: string, e: React.MouseEvent) => {

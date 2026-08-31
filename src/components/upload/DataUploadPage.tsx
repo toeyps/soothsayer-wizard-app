@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useDataUpload } from "../../hooks/useDataUpload";
@@ -315,16 +314,12 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     }
   };
 
+  // 2026-08-31: no confirmation dialog anywhere in the app, per explicit
+  // user request — click delete, it's deleted, including whole workspaces.
   const handleDeleteWorkspace = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const confirmed = await ask(
-      "Are you sure you want to delete this workspace? This action cannot be undone.",
-      { title: "Delete Workspace", kind: "warning" }
-    );
-    if (confirmed) {
-      await deleteWorkspace(id);
-      refreshWorkspaces();
-    }
+    await deleteWorkspace(id);
+    refreshWorkspaces();
   };
 
   // Rename a workspace from the inline edit field in the Recent sidebar.

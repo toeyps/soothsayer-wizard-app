@@ -16,7 +16,6 @@ import type { UseMappingDataReturn } from '../hooks/useMappingData';
 // ─────────────────────────────────────────────────────────────────────────
 
 const mockInvoke = vi.fn();
-const mockAsk = vi.fn();
 const mockListen = vi.fn();
 const mockEmit = vi.fn();
 const mockGetByLabel = vi.fn();
@@ -24,10 +23,6 @@ const mockGetCurrentWindow = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
-}));
-
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  ask: (...args: unknown[]) => mockAsk(...args),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -305,23 +300,8 @@ describe('A. Workspace sidebar', () => {
     });
   });
 
-  it('A6. clicking delete on a row opens the confirm dialog', async () => {
+  it('A6. clicking delete on a row calls deleteWorkspace and refreshes the list immediately, with no confirmation dialog (2026-08-31: no confirmations anywhere in the app, per explicit user request)', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    mockAsk.mockResolvedValue(false);
-
-    render(<DataUploadPage onDataReady={onDataReady} />);
-    await waitFor(() => screen.getByText('Engine pressure run'));
-
-    const allDeleteBtns = screen.getAllByTitle('Delete workspace');
-    fireEvent.click(allDeleteBtns[0]);
-
-    expect(mockAsk).toHaveBeenCalledTimes(1);
-    expect(mockAsk.mock.calls[0][1]).toMatchObject({ title: 'Delete Workspace' });
-  });
-
-  it('A7. confirming delete calls deleteWorkspace and refreshes list', async () => {
-    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    mockAsk.mockResolvedValue(true);
     mockDeleteWorkspace.mockResolvedValue(undefined);
 
     render(<DataUploadPage onDataReady={onDataReady} />);
@@ -334,20 +314,6 @@ describe('A. Workspace sidebar', () => {
     });
     // refreshWorkspaces() runs after delete → second getRecent call
     expect(mockGetRecent).toHaveBeenCalledTimes(2);
-  });
-
-  it('A8. cancelling delete does NOT call deleteWorkspace', async () => {
-    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    mockAsk.mockResolvedValue(false);
-
-    render(<DataUploadPage onDataReady={onDataReady} />);
-    await waitFor(() => screen.getByText('Engine pressure run'));
-
-    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
-
-    // wait one microtask for the ask() promise to settle
-    await Promise.resolve();
-    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
   });
 });
 

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { X, Plus, Trash2 } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
@@ -451,17 +450,13 @@ export default function BuildModelWindow() {
         }));
     };
 
-    const removeModel = async () => {
+    // 2026-08-31: no confirmation dialog anywhere in the app, per explicit
+    // user request — click delete, it's deleted. (Briefly used an async
+    // ask() here to fix window.confirm() not actually blocking in Tauri's
+    // webview; removed again once the user clarified they want no
+    // confirmation at all, system-wide, not just a working one.)
+    const removeModel = () => {
         if (!editingModelId) return;
-        const current = allModels.find(m => m.id === editingModelId);
-        // 2026-08-31: the browser's synchronous window.confirm() doesn't
-        // actually block in Tauri's webview — the deletion ran
-        // immediately regardless of what the user clicked in the dialog,
-        // which only appeared to matter (same bug reported for Delete
-        // group in FailureGroupsPanel.tsx). Tauri's own `ask()` is
-        // properly async and actually waits for the answer.
-        const confirmed = await ask(`Remove model "${current ? modelDisplayLabel(current) : 'Untitled'}"?`, { title: 'Remove Model', kind: 'warning' });
-        if (!confirmed) return;
         persist((models, groups) => ({ groups, models: models.filter(m => m.id !== editingModelId) }));
         resetForm();
     };

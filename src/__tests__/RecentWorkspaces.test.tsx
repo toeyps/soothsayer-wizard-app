@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 
-const mockAsk = vi.fn();
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-    ask: (message: string, opts: unknown) => mockAsk(message, opts),
-}));
-
 const mockGetRecentWorkspaces = vi.fn();
 const mockDeleteWorkspace = vi.fn().mockResolvedValue(undefined);
 const mockDuplicateWorkspace = vi.fn().mockResolvedValue(undefined);
@@ -25,7 +20,6 @@ const workspaces = [
 ];
 
 beforeEach(() => {
-    mockAsk.mockReset().mockResolvedValue(true);
     mockGetRecentWorkspaces.mockReset().mockResolvedValue(workspaces);
     mockDeleteWorkspace.mockClear().mockResolvedValue(undefined);
     mockDuplicateWorkspace.mockClear().mockResolvedValue(undefined);
@@ -72,7 +66,7 @@ describe('RecentWorkspaces', () => {
     });
 
     describe('Delete', () => {
-        it('deletes and refreshes the list after confirmation', async () => {
+        it('deletes and refreshes the list immediately on click, with no confirmation dialog (2026-08-31: no confirmations anywhere in the app, per explicit user request)', async () => {
             await renderLoaded();
             fireEvent.click(screen.getAllByRole('button')[0]);
             await act(async () => {
@@ -80,20 +74,8 @@ describe('RecentWorkspaces', () => {
                 await Promise.resolve();
                 await Promise.resolve();
             });
-            expect(mockAsk).toHaveBeenCalled();
             expect(mockDeleteWorkspace).toHaveBeenCalledWith('ws1');
             expect(mockGetRecentWorkspaces).toHaveBeenCalledTimes(2); // initial + refresh
-        });
-
-        it('does nothing when the confirmation is declined', async () => {
-            mockAsk.mockResolvedValue(false);
-            await renderLoaded();
-            fireEvent.click(screen.getAllByRole('button')[0]);
-            await act(async () => {
-                fireEvent.click(screen.getByText('Delete'));
-                await Promise.resolve();
-            });
-            expect(mockDeleteWorkspace).not.toHaveBeenCalled();
         });
     });
 

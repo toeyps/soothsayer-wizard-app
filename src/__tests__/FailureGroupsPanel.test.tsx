@@ -1,15 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, act } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
-
-// 2026-08-31: Delete group switched from the browser's window.confirm()
-// (which doesn't actually block in Tauri's webview — see the fix commit)
-// to Tauri's own async ask().
-const mockAsk = vi.fn().mockResolvedValue(true);
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-    ask: (text: string, opts: unknown) => mockAsk(text, opts),
-}));
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -54,10 +46,6 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
         ...overrides,
     };
 }
-
-beforeEach(() => {
-    mockAsk.mockClear().mockResolvedValue(true);
-});
 
 describe('FailureGroupsPanel', () => {
     it('shows the empty state when there are no real groups', () => {
@@ -231,30 +219,11 @@ describe('FailureGroupsPanel', () => {
     });
 
     describe('deleting a group', () => {
-        it('calls onDeleteGroup only after the user confirms', async () => {
-            // 2026-08-31 regression test: this used to call onDeleteGroup
-            // unconditionally the instant the button was clicked, because
-            // window.confirm() doesn't actually block in Tauri's webview —
-            // the group was deleted before the dialog was ever answered.
+        it('calls onDeleteGroup immediately on click, with no confirmation dialog (2026-08-31: no confirmations anywhere in the app, per explicit user request)', () => {
             const onDeleteGroup = vi.fn();
             render(<FailureGroupsPanel {...makeProps({ onDeleteGroup })} />);
-            await act(async () => {
-                fireEvent.click(screen.getByTitle('Delete group'));
-                await Promise.resolve();
-            });
-            expect(mockAsk).toHaveBeenCalled();
+            fireEvent.click(screen.getByTitle('Delete group'));
             expect(onDeleteGroup).toHaveBeenCalledWith(1);
-        });
-
-        it('does not call onDeleteGroup when the user cancels the confirm', async () => {
-            mockAsk.mockResolvedValue(false);
-            const onDeleteGroup = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onDeleteGroup })} />);
-            await act(async () => {
-                fireEvent.click(screen.getByTitle('Delete group'));
-                await Promise.resolve();
-            });
-            expect(onDeleteGroup).not.toHaveBeenCalled();
         });
 
         it('does not open Build Model Overview when clicking delete', () => {
