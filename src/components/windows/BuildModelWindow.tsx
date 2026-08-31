@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Trash2 } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
@@ -77,34 +77,6 @@ const FG_ACCENT: Record<string, string> = {
     slate: 'var(--text-faint)',
 };
 
-function makeDefaultModel(groupNos: number[]): FailureModel {
-    return {
-        id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        groupNos,
-        name: '',
-        kind: 'individual',
-        category: null,
-        notes: '',
-        status: false,
-        targetSensor: '',
-        predictorSensors: [],
-        xSensor: '',
-        ySensor: '',
-        individualChecked: true,
-        rcMode: null,
-        scatterXSensor: '',
-        relModelName: '',
-        relStiffness: 100_000,
-        clusterModelName: '',
-        numClusters: 3,
-        criteriaSensor: '',
-        clusterRanges: DEFAULT_CLUSTER_RANGES,
-        filterTimeStart: '',
-        filterTimeEnd: '',
-        pmSensorFilters: [],
-    };
-}
-
 // `label` renders a tag as "description (tag)" when metadata has a
 // description, else the bare tag — see this component's own `sensorLabel`.
 function sensorSummary(model: FailureModel, label: (tag: string) => string): string {
@@ -135,13 +107,17 @@ type GroupBy = 'fg' | 'component';
  *     explicit user request: "the name should only be editable together
  *     with the rest of the detail, not separate from it").
  *   - Clicking a model row (FG or Component view) expands that model's
- *     add/edit form directly beneath the row, accordion-style — clicking
- *     it again (or a different row) closes/switches it. A group's
- *     "+ Add Model" opens the same form, blank, in the same spot. This
- *     replaces an earlier version that navigated to a dedicated model
- *     page; the user asked for it to work like the old per-group window's
- *     inline row editing instead: "it should become a tab appearing below
- *     that model, not go to a new page".
+ *     edit form directly beneath the row, accordion-style — clicking it
+ *     again (or a different row) closes/switches it. This replaces an
+ *     earlier version that navigated to a dedicated model page; the user
+ *     asked for it to work like the old per-group window's inline row
+ *     editing instead: "it should become a tab appearing below that
+ *     model, not go to a new page".
+ *   - 2026-08-31: there is no "add" flow anymore — toggling a sensor into
+ *     a group (Sensor tab) is the sole way a model comes into existence
+ *     now, always as kind 'individual'; this window only ever edits an
+ *     existing model afterward, including changing its kind, per explicit
+ *     user request ("เอาปุ่ม add model ออกเหมือนกัน ของหน้านี้").
  *
  * All of this is local state — no window spawn for any of it — which is
  * also what makes the earlier "two Build Model windows for the same
@@ -181,23 +157,14 @@ export default function BuildModelWindow() {
     const [groupDescDraft, setGroupDescDraft] = useState('');
     const [groupRecDraft, setGroupRecDraft] = useState('');
 
-    // ---- Model add/edit accordion: one form active at a time, shown
-    //      directly under the row that opened it (or under a group's
-    //      "+ Add Model" for a brand-new one) ----
+    // ---- Model edit accordion: one form active at a time, shown
+    //      directly under the row that opened it ----
     const [showForm, setShowForm] = useState(false);
     const [editingModelId, setEditingModelId] = useState<string | null>(null);
     /** Which group(s) the form's model will belong to — a checkbox
      *  multi-select (2026-08-25: one model can belong to several Failure
      *  Groups at once, per explicit user request). */
     const [formGroupNos, setFormGroupNos] = useState<number[]>([]);
-    /** Purely which group's "+ Add Model" the accordion is visually
-     *  anchored under while adding a brand-new model — independent of
-     *  `formGroupNos` (the actual checkbox selection for submission), since
-     *  the user may check additional groups without the form needing to
-     *  appear to open in more than one place at once. Irrelevant while
-     *  editing an existing model — that row's own section renders its own
-     *  form wherever that model appears (see `overviewModelRow`). */
-    const [formOriginGroupNo, setFormOriginGroupNo] = useState<number | null>(null);
     const [formName, setFormName] = useState('');
     const [formKind, setFormKind] = useState<ModelKind | null>(null);
     const [formCategory, setFormCategory] = useState<ModelCategory | null>(null);
@@ -336,11 +303,15 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [groupNameDraft, groupDescDraft, groupRecDraft, expandedGroupNo]);
 
-    // ---- Model add/edit accordion ----
+    // ---- Model edit accordion — 2026-08-31: "add" removed entirely per
+    //      explicit user request; toggling a sensor into a group (Sensor
+    //      tab) is now the sole way a model comes into existence, always
+    //      as kind 'individual'. This form only ever edits an existing
+    //      model afterward — including changing its kind to relationship/
+    //      clustering, which stays fully supported here. ----
     const resetForm = () => {
         setEditingModelId(null);
         setFormGroupNos([]);
-        setFormOriginGroupNo(null);
         setFormName('');
         setFormKind(null);
         setFormCategory(null);
@@ -351,36 +322,6 @@ export default function BuildModelWindow() {
         setFormCriteria('');
         setFormClusterRanges([]);
         setShowForm(false);
-    };
-
-    // Sensors already "in" a group — a real group's are the ones with an
-    // existing individual model whose groupNos include it (same rule
-    // SensorSelection.tsx uses to render membership); "Not in Group" (0)
-    // has no such pre-selection step, so it gets the full sensor list.
-    // Shared by the add-mode sensor restriction and the single-candidate
-    // auto-fill below.
-    const sensorsForGroup = (groupNo: number): string[] => {
-        if (groupNo === 0) return allSensors;
-        const set = new Set(allModels.filter(m => m.kind === 'individual' && m.groupNos.includes(groupNo) && m.targetSensor).map(m => m.targetSensor));
-        return allSensors.filter(s => set.has(s));
-    };
-
-    const openAddForm = (groupNo: number) => {
-        resetForm();
-        setFormGroupNos([groupNo]);
-        setFormOriginGroupNo(groupNo);
-        // 2026-08-31: if exactly one sensor is already in this group, the
-        // user already chose it by toggling it into the FG from the
-        // Sensor tab — pre-fill Target immediately instead of making them
-        // pick it again from a 1-option dropdown. 2+ sensors still need an
-        // explicit pick; group 0 has no natural single candidate to infer.
-        // Clustering's X/Y stay manual regardless — confirmed with the
-        // user rather than guessed.
-        if (groupNo !== 0) {
-            const candidates = sensorsForGroup(groupNo);
-            if (candidates.length === 1) setFormTarget(candidates[0]);
-        }
-        setShowForm(true);
     };
 
     const toggleFormGroup = (groupNo: number) => {
@@ -418,7 +359,7 @@ export default function BuildModelWindow() {
     );
 
     const commitForm = () => {
-        if (!formValid || !formKind || !formCategory) return;
+        if (!formValid || !formKind || !formCategory || !editingModelId) return;
         const fields = {
             groupNos: formGroupNos,
             name: formName.trim(),
@@ -431,15 +372,10 @@ export default function BuildModelWindow() {
             criteriaSensor: formKind === 'clustering' ? formCriteria : '',
             clusterRanges: formKind === 'clustering' && formCriteria ? formClusterRanges : [],
         };
-        if (editingModelId) {
-            persist((models, groups) => ({
-                groups,
-                models: models.map(m => m.id === editingModelId ? { ...m, ...fields } : m),
-            }));
-        } else {
-            const model: FailureModel = { ...makeDefaultModel(formGroupNos), ...fields };
-            persist((models, groups) => ({ groups, models: [...models, model] }));
-        }
+        persist((models, groups) => ({
+            groups,
+            models: models.map(m => m.id === editingModelId ? { ...m, ...fields } : m),
+        }));
         resetForm();
     };
 
@@ -480,24 +416,11 @@ export default function BuildModelWindow() {
     // under the fields box, at a fixed, predictable position, regardless
     // of how tall the fields are or how the surrounding list is scrolled.
     const renderModelFormFields = () => {
-        const isAdding = editingModelId === null;
-        // 2026-08-31: while adding a brand-new model, Target/X/Y sensor
-        // choices are limited to sensors already toggled into the
-        // destination group (from the Sensor tab) — a sensor "is in" a
-        // group precisely because it has an individual-kind model whose
-        // groupNos include that group (same rule SensorSelection.tsx uses
-        // to render group membership). Editing an existing model keeps the
-        // full sensor list, since the model's own target/group is already
-        // established and may legitimately need any sensor.
-        //
-        // "Not in Group" (0) is exempt from the restriction — unlike a
-        // real group, there's no "toggle sensors in first" step for the
-        // catch-all bucket, so applying the same rule there just blocked
-        // every add with a false "no sensors yet" (reported by the user
-        // right after testing). Full sensor list for 0, same as editing.
-        const isRestrictedGroup = isAdding && formOriginGroupNo !== null && formOriginGroupNo !== 0;
-        const groupSensors = isRestrictedGroup ? sensorsForGroup(formOriginGroupNo) : [];
-        const sensorOptions = isRestrictedGroup ? groupSensors : allSensors;
+        // 2026-08-31: add-mode removed entirely — this form only ever
+        // edits an existing model now, so the sensor list is always
+        // unrestricted (the model's own target/group is already
+        // established and may legitimately need any sensor).
+        const sensorOptions = allSensors;
         return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
             <div className="fg-inspector-field">
@@ -515,44 +438,24 @@ export default function BuildModelWindow() {
                 many-to-many relationship, not a duplicate model per
                 group), per explicit user request. "Not in Group" (0) is a
                 selectable option here too, same as it is in the Sensor
-                tab's own quick-assign menu.
-                2026-08-31: shown ONLY while editing an existing model. When
-                adding a brand-new one, the group is already fully
-                determined by which group's "+ Add Model" button was
-                clicked — re-asking here was redundant, per direct user
-                feedback on the equivalent Dashboard popup. Add-mode shows a
-                static, non-interactive breadcrumb instead. */}
-            {editingModelId !== null ? (
-                <div>
-                    <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
-                        {realGroups.map(g => (
-                            <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                                <input type="checkbox" checked={formGroupNos.includes(g.no)} onChange={() => toggleFormGroup(g.no)} />
-                                <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(g.no)], flexShrink: 0 }} />
-                                FG-{g.no} · {g.name}
-                            </label>
-                        ))}
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                            <input type="checkbox" checked={formGroupNos.includes(0)} onChange={() => toggleFormGroup(0)} />
-                            Not in Group
+                tab's own quick-assign menu. */}
+            <div>
+                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
+                    {realGroups.map(g => (
+                        <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={formGroupNos.includes(g.no)} onChange={() => toggleFormGroup(g.no)} />
+                            <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(g.no)], flexShrink: 0 }} />
+                            FG-{g.no} · {g.name}
                         </label>
-                    </div>
+                    ))}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={formGroupNos.includes(0)} onChange={() => toggleFormGroup(0)} />
+                        Not in Group
+                    </label>
                 </div>
-            ) : (
-                <div className="fg-inspector-field-label-row" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                    Adding to: {formOriginGroupNo === 0 || formOriginGroupNo === null
-                        ? 'Not in Group'
-                        : `FG-${formOriginGroupNo} · ${allGroups.find(g => g.no === formOriginGroupNo)?.name ?? ''}`}
-                </div>
-            )}
+            </div>
 
-            {isRestrictedGroup && groupSensors.length === 0 ? (
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px 10px', lineHeight: 1.5 }}>
-                    This group has no sensors yet — add sensors to it from the Sensor tab first.
-                </div>
-            ) : (
-            <>
             <div>
                 <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Model kind</label></div>
                 <div style={{ display: 'flex', gap: '6px' }}>
@@ -705,19 +608,20 @@ export default function BuildModelWindow() {
                     </div>
                 </div>
             )}
-            </>
-            )}
         </div>
         );
     };
 
     // No "Cancel" button — closing the form is already just re-clicking
-    // whatever opened it (the model row, or "+ Add Model"), same toggle
-    // everywhere, per explicit user feedback that a separate Cancel was
-    // redundant with that. `.fg-build-model-btn` defaults to `width: 100%`
-    // for its other use as a standalone full-width panel button, so it's
-    // explicitly sized here instead of left to stretch across the whole
-    // row.
+    // whatever opened it (the model row), same toggle everywhere, per
+    // explicit user feedback that a separate Cancel was redundant with
+    // that. `.fg-build-model-btn` defaults to `width: 100%` for its other
+    // use as a standalone full-width panel button, so it's explicitly
+    // sized here instead of left to stretch across the whole row.
+    //
+    // 2026-08-31: this form only ever edits an existing model now (add
+    // removed entirely), so `editingModelId` is always set whenever the
+    // form is open — footer no longer branches on it.
     //
     // `position: sticky, bottom: 0` — being structurally right after the
     // fields box (rather than, say, inside a page-level modal) turned out
@@ -731,14 +635,12 @@ export default function BuildModelWindow() {
     // Requires no `overflow: hidden` on any ancestor between this and the
     // page's own scroll container (see the group card wrappers above).
     const renderModelFormFooter = () => (
-        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: editingModelId ? 'space-between' : 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
-            {editingModelId && (
-                <button className="model-remove-btn" onClick={removeModel}>
-                    <Trash2 size={12} /> Remove model
-                </button>
-            )}
+        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
+            <button className="model-remove-btn" onClick={removeModel}>
+                <Trash2 size={12} /> Remove model
+            </button>
             <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
-                {editingModelId ? 'Save changes' : 'Create model'}
+                Save changes
             </button>
         </div>
     );
@@ -910,7 +812,6 @@ export default function BuildModelWindow() {
                         const models = allModels.filter(m => m.groupNos.includes(g.no));
                         const color = getFgGroupColor(g.no);
                         const isExpanded = expandedGroupNo === g.no;
-                        const isAddingHere = showForm && editingModelId === null && formOriginGroupNo === g.no;
                         // No `overflow: hidden` on the card below (despite the rounded
                         // corners) — it would clip the sticky Save/Remove footer instead
                         // of letting it stick to the viewport; nothing inside this card
@@ -964,36 +865,6 @@ export default function BuildModelWindow() {
                                 {models.length === 0 ? (
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                                 ) : models.map(m => overviewModelRow(m, false))}
-
-                                {/* Stays visible (doesn't get replaced by the form) so it can
-                                    also act as the close trigger — same toggle as clicking a
-                                    model row again. Matches FailureGroupsPanel's own
-                                    "+ Add failure group" button (dashed rounded button, not a
-                                    bare divider-adjacent text link) — the button previously had
-                                    no explicit width, so unlike the row `<div>`s above it (which
-                                    are block-level and fill the card automatically) it shrank to
-                                    its own content, leaving its border-top divider looking
-                                    short/inconsistent against the full-width row dividers. */}
-                                <div>
-                                    {/* Same real-border treatment as overviewModelRow — see the
-                                        comment there for why an absolute-positioned bar visibly
-                                        detached from the sticky footer during scroll. */}
-                                    <div style={isAddingHere ? { border: `1.5px solid ${FG_ACCENT[color]}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
-                                        <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
-                                            <button
-                                                onClick={() => { if (isAddingHere) resetForm(); else openAddForm(g.no); }}
-                                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%', padding: '8px 0', borderRadius: '7px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
-                                            >
-                                                <Plus size={13} /> Add Model
-                                            </button>
-                                        </div>
-                                        {isAddingHere && (
-                                            <div style={{ borderTop: '1px solid var(--border)' }}>
-                                                {renderModelForm()}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
                             </div>
                         );
                     })
@@ -1003,12 +874,10 @@ export default function BuildModelWindow() {
                     // "Not in Group" (FG-0) — a permanent, non-deletable bucket for
                     // a model whose sensor doesn't belong to any failure mode.
                     // Always rendered (unlike the read-only Dashboard preview,
-                    // which only shows this card once it's non-empty) since this
-                    // window is the only place a model can actually be added to
-                    // it. No "Edit details" — it's not a real failure group, so
-                    // there's no name/description/recommendation to edit.
+                    // which only shows this card once it's non-empty). No
+                    // "Edit details" — it's not a real failure group, so there's
+                    // no name/description/recommendation to edit.
                     const ungroupedModels = allModels.filter(m => m.groupNos.includes(0));
-                    const isAddingHere = showForm && editingModelId === null && formOriginGroupNo === 0;
                     return (
                         <div className="fg-group-color-slate" style={{ border: '1px dashed var(--border)', borderRadius: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
@@ -1020,24 +889,6 @@ export default function BuildModelWindow() {
                             {ungroupedModels.length === 0 ? (
                                 <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                             ) : ungroupedModels.map(m => overviewModelRow(m, false))}
-
-                            <div>
-                                <div style={isAddingHere ? { border: `1.5px solid ${FG_ACCENT.slate}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
-                                    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px' }}>
-                                        <button
-                                            onClick={() => { if (isAddingHere) resetForm(); else openAddForm(0); }}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%', padding: '8px 0', borderRadius: '7px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
-                                        >
-                                            <Plus size={13} /> Add Model
-                                        </button>
-                                    </div>
-                                    {isAddingHere && (
-                                        <div style={{ borderTop: '1px solid var(--border)' }}>
-                                            {renderModelForm()}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
                         </div>
                     );
                 })()}
