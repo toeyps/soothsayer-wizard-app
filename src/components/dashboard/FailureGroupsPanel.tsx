@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, Play, X } from 'lucide-react';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { FailureGroup, FailureModel, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
@@ -282,7 +283,20 @@ export default function FailureGroupsPanel({
                                     <button
                                         className="fg-icon-btn fg-icon-btn-danger"
                                         title="Delete group"
-                                        onClick={() => { if (confirm(`Delete group "${group.name}"? Every model in it is removed too.`)) onDeleteGroup(group.no); }}
+                                        onClick={async () => {
+                                            // 2026-08-31: the browser's synchronous window.confirm()
+                                            // doesn't actually block in Tauri's webview — the code
+                                            // after it (onDeleteGroup) ran immediately regardless of
+                                            // what the user clicked in the dialog, which only appeared
+                                            // to matter, deleting the group unconditionally every time
+                                            // (reported by the user: dialog still showed "Delete
+                                            // TEST3?" after TEST3 had already vanished from the list
+                                            // behind it). Tauri's own `ask()` is properly async and
+                                            // actually waits for the answer, same pattern already used
+                                            // for workspace deletion in DataUploadPage.tsx.
+                                            const confirmed = await ask(`Delete group "${group.name}"? Every model in it is removed too.`, { title: 'Delete Failure Group', kind: 'warning' });
+                                            if (confirmed) onDeleteGroup(group.no);
+                                        }}
                                     >
                                         <Trash2 size={11} />
                                     </button>

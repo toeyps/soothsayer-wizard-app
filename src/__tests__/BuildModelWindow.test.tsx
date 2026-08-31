@@ -19,6 +19,14 @@ vi.mock('@tauri-apps/api/event', () => ({
     emit: (event: string, payload?: any) => mockEmit(event, payload),
 }));
 
+// 2026-08-31: "Remove model" switched from the browser's window.confirm()
+// (which doesn't actually block in Tauri's webview — see the fix commit)
+// to Tauri's own async ask().
+const mockAsk = vi.fn().mockResolvedValue(true);
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+    ask: (text: string, opts: unknown) => mockAsk(text, opts),
+}));
+
 const mockUpdateWorkspaceData = vi.fn();
 const mockLoadWorkspaceData = vi.fn();
 vi.mock('../workspaceManager', () => ({
@@ -88,6 +96,7 @@ beforeEach(() => {
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
+    mockAsk.mockClear().mockResolvedValue(true);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
         const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()] } };
         return patch(prev);
@@ -571,14 +580,33 @@ describe('BuildModelWindow', () => {
         });
 
         it('"Remove model" confirms, persists, and closes the form', async () => {
-            vi.spyOn(window, 'confirm').mockReturnValue(true);
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByText('Remove model'));
+            await act(async () => {
+                fireEvent.click(screen.getByText('Remove model'));
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mockAsk).toHaveBeenCalled();
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models).toHaveLength(0);
             expect(screen.queryByTestId('add-model-form')).toBeNull();
+        });
+
+        it('"Remove model" does nothing when the user cancels the confirm (2026-08-31 regression: window.confirm() didn\'t actually block in Tauri\'s webview, so the model was removed unconditionally)', async () => {
+            mockAsk.mockResolvedValue(false);
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            mockUpdateWorkspaceData.mockClear();
+            await act(async () => {
+                fireEvent.click(screen.getByText('Remove model'));
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
         });
 
         it('toggling the status pill persists the change without opening the form', async () => {
