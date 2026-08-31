@@ -63,7 +63,7 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
         return (
             <div data-testid="fg-panel">
                 <button onClick={() => props.onCreateEmptyGroup('Empty Group')}>create-empty-group</button>
-                <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group-fg</button>
+                <button onClick={() => props.onUpdateGroupDetails(1, 'Renamed', 'New Desc', 'New Rec')}>update-group-details-fg</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
                 <button onClick={() => props.onDeleteModel('m1')}>delete-model-fg</button>
                 <button onClick={() => props.onOpenBuildModel()}>open-build-model</button>
@@ -803,15 +803,17 @@ describe('Dashboard', () => {
             expect(state.failureGroupState.groups.map((g: any) => g.name)).toContain('Empty Group');
         });
 
-        it('rename/delete from the preview panel itself also round-trip', async () => {
+        it('updating group details (name/description/recommendation) and deleting from the preview panel itself also round-trip (2026-08-31: this "Edit details" editing moved here from Build Model window entirely, per explicit user request)', async () => {
             renderDashboard({
                 initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
             });
             fireEvent.click(screen.getByText('Failure Groups'));
 
-            fireEvent.click(screen.getByText('rename-group-fg'));
+            fireEvent.click(screen.getByText('update-group-details-fg'));
             let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups[0].name).toBe('Renamed');
+            expect(state.failureGroupState.groups[0].description).toBe('New Desc');
+            expect(state.failureGroupState.groups[0].recommendation).toBe('New Rec');
 
             fireEvent.click(screen.getByText('delete-group-fg'));
             state = await last(mockUpdateWorkspaceData.mock.results)!.value;

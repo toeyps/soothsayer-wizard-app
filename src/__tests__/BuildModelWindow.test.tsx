@@ -179,64 +179,15 @@ describe('BuildModelWindow', () => {
         expect(mockClose).toHaveBeenCalled();
     });
 
-    describe('group "Edit details" (Name + Description + Recommendation together)', () => {
-        it('the group name is plain text, not independently clickable-to-rename', async () => {
+    describe('group cards are read-only headers (2026-08-31: "Edit details" — Name/Description/Recommendation — moved to Dashboard\'s Failure Groups tab entirely, per explicit user request)', () => {
+        it('the group name is plain text, not clickable-to-rename, and there is no "Edit details" control anywhere', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Group A'));
-            // Clicking the bare name must NOT reveal a rename input on its own.
+            // Clicking the bare name must NOT reveal a rename input.
             expect(screen.queryByDisplayValue('Group A')).toBeNull();
-        });
-
-        it('"Edit details" reveals Name + Description + Recommendation together, seeded from the group', async () => {
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup({ description: 'Bearing wear', recommendation: 'Replace bearing' })], models: [makeModel()] } });
-            fireEvent.click(screen.getByText('Edit details'));
-
-            expect(screen.getByDisplayValue('Group A')).toBeTruthy();
-            expect(screen.getByDisplayValue('Bearing wear')).toBeTruthy();
-            expect(screen.getByDisplayValue('Replace bearing')).toBeTruthy();
-        });
-
-        it('debounces a combined save of name/description/recommendation', async () => {
-            vi.useFakeTimers();
-            render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Edit details'));
-
-            fireEvent.change(screen.getByDisplayValue('Group A'), { target: { value: 'Renamed Group' } });
-            fireEvent.change(screen.getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'Bearing wear' } });
-            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-
-            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.groups[0].name).toBe('Renamed Group');
-            expect(state.failureGroupState.groups[0].description).toBe('Bearing wear');
-            vi.useRealTimers();
-        });
-
-        it('rejects renaming to a name already used by another group, with an inline error', async () => {
-            vi.useFakeTimers();
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Other Group' })], models: [makeModel()] } });
-            mockUpdateWorkspaceData.mockClear();
-            fireEvent.click(screen.getAllByText('Edit details')[0]);
-
-            fireEvent.change(screen.getByDisplayValue('Group A'), { target: { value: 'other group' } });
-            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-
-            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
-            expect(screen.getByText('A failure group named "other group" already exists')).toBeTruthy();
-            vi.useRealTimers();
-        });
-
-        it('"Hide details" collapses the panel', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Edit details'));
-            expect(screen.getByPlaceholderText('What failure mode does this group track?')).toBeTruthy();
-
-            fireEvent.click(screen.getByText('Hide details'));
-            expect(screen.queryByPlaceholderText('What failure mode does this group track?')).toBeNull();
+            expect(screen.queryByText('Edit details')).toBeNull();
+            expect(screen.queryByText('Hide details')).toBeNull();
         });
     });
 
@@ -407,10 +358,10 @@ describe('BuildModelWindow', () => {
                 expect(screen.getAllByText('No models yet')).toHaveLength(1);
             });
 
-            it('has no "Edit details"/rename/delete controls — it is a permanent, non-editable bucket', async () => {
+            it('has no rename/delete controls — it is a permanent, non-editable bucket (2026-08-31: no group has "Edit details" here anymore anyway — see the read-only-headers test above)', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                expect(screen.getAllByText('Edit details')).toHaveLength(1); // only the one real group
+                expect(screen.queryByText('Edit details')).toBeNull();
             });
 
             it('does not count toward the "groups" stat in the header', async () => {

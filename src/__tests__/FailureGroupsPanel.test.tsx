@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
 
@@ -29,7 +29,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
         fgModels: [makeModel()],
         sensorMetadata,
         getGroupColor: () => 'blue',
-        onRenameGroup: vi.fn(),
+        onUpdateGroupDetails: vi.fn(),
         onDeleteGroup: vi.fn(),
         onCreateEmptyGroup: vi.fn(),
         onDeleteModel: vi.fn(),
@@ -173,52 +173,81 @@ describe('FailureGroupsPanel', () => {
         expect(onOpenBuildModel).toHaveBeenCalledTimes(1);
     });
 
-    describe('renaming a group', () => {
-        it('opens a prefilled input and commits on Enter', () => {
-            const onRenameGroup = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onRenameGroup })} />);
-            fireEvent.click(screen.getByTitle('Rename group'));
-            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-            fireEvent.change(input, { target: { value: 'Renamed' } });
-            fireEvent.keyDown(input, { key: 'Enter' });
-            expect(onRenameGroup).toHaveBeenCalledWith(1, 'Renamed');
+    // 2026-08-31: this "Edit details" panel (Name + Description +
+    // Recommendation together) moved here from Build Model window
+    // entirely, per explicit user request ("ส่วนของ edit detail ต้องอยู่
+    // ที่ dashboard ด้วย") — not duplicated between the two. Name isn't
+    // independently editable from the rest, mirroring Build Model's own
+    // reasoning: "the name should only be editable together with the rest
+    // of the detail, not separate from it".
+    describe('editing group details ("Edit details" panel)', () => {
+        it('the group name is plain text, not independently clickable-to-rename', () => {
+            render(<FailureGroupsPanel {...makeProps()} />);
+            fireEvent.click(screen.getByText('Group A'));
+            expect(screen.queryByDisplayValue('Group A')).toBeNull();
         });
 
-        it('commits on blur too', () => {
-            const onRenameGroup = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ onRenameGroup })} />);
-            fireEvent.click(screen.getByTitle('Rename group'));
-            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-            fireEvent.change(input, { target: { value: 'Blurred Name' } });
-            fireEvent.blur(input);
-            expect(onRenameGroup).toHaveBeenCalledWith(1, 'Blurred Name');
+        it('"Edit details" reveals Name + Description + Recommendation together, seeded from the group', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, { ...groupA, description: 'Bearing wear', recommendation: 'Replace bearing' }] })} />);
+            fireEvent.click(screen.getByText('Edit details'));
+            expect(screen.getByDisplayValue('Group A')).toBeTruthy();
+            expect(screen.getByDisplayValue('Bearing wear')).toBeTruthy();
+            expect(screen.getByDisplayValue('Replace bearing')).toBeTruthy();
         });
 
-        it('does not open Build Model Overview when clicking into the rename input', () => {
+        it('debounces a combined save of name/description/recommendation', async () => {
+            vi.useFakeTimers();
+            const onUpdateGroupDetails = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ onUpdateGroupDetails })} />);
+            fireEvent.click(screen.getByText('Edit details'));
+
+            fireEvent.change(screen.getByDisplayValue('Group A'), { target: { value: 'Renamed Group' } });
+            fireEvent.change(screen.getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'Bearing wear' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            expect(onUpdateGroupDetails).toHaveBeenCalledWith(1, 'Renamed Group', 'Bearing wear', '');
+            vi.useRealTimers();
+        });
+
+        it('rejects renaming to a name already used by another group, with an inline error', async () => {
+            vi.useFakeTimers();
+            const onUpdateGroupDetails = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], onUpdateGroupDetails })} />);
+            fireEvent.click(screen.getAllByText('Edit details')[0]);
+
+            fireEvent.change(screen.getByDisplayValue('Group A'), { target: { value: 'group b' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            expect(onUpdateGroupDetails).not.toHaveBeenCalled();
+            expect(screen.getByText('A failure group named "group b" already exists')).toBeTruthy();
+            vi.useRealTimers();
+        });
+
+        it('allows renaming a group to its own current name unchanged', async () => {
+            vi.useFakeTimers();
+            const onUpdateGroupDetails = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ onUpdateGroupDetails })} />);
+            fireEvent.click(screen.getByText('Edit details'));
+            fireEvent.change(screen.getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'x' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            expect(onUpdateGroupDetails).toHaveBeenCalledWith(1, 'Group A', 'x', '');
+            vi.useRealTimers();
+        });
+
+        it('"Hide details" collapses the panel', () => {
+            render(<FailureGroupsPanel {...makeProps()} />);
+            fireEvent.click(screen.getByText('Edit details'));
+            expect(screen.getByPlaceholderText('What failure mode does this group track?')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Hide details'));
+            expect(screen.queryByPlaceholderText('What failure mode does this group track?')).toBeNull();
+        });
+
+        it('does not open Build Model Overview when clicking "Edit details"', () => {
             const onOpenBuildModel = vi.fn();
             render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
-            fireEvent.click(screen.getByTitle('Rename group'));
+            fireEvent.click(screen.getByText('Edit details'));
             expect(onOpenBuildModel).not.toHaveBeenCalled();
-        });
-
-        it('rejects renaming to a name already used by another group (case-insensitive), with an inline error', () => {
-            const onRenameGroup = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], onRenameGroup })} />);
-            fireEvent.click(screen.getAllByTitle('Rename group')[0]);
-            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-            fireEvent.change(input, { target: { value: 'group b' } });
-            fireEvent.keyDown(input, { key: 'Enter' });
-            expect(onRenameGroup).not.toHaveBeenCalled();
-            expect(screen.getByText('A failure group named "group b" already exists')).toBeTruthy();
-        });
-
-        it('allows renaming a group to its own current name unchanged', () => {
-            const onRenameGroup = vi.fn();
-            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], onRenameGroup })} />);
-            fireEvent.click(screen.getAllByTitle('Rename group')[0]);
-            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-            fireEvent.keyDown(input, { key: 'Enter' });
-            expect(onRenameGroup).toHaveBeenCalledWith(1, 'Group A');
         });
     });
 

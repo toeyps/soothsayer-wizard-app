@@ -97,15 +97,8 @@ type GroupBy = 'fg' | 'component';
  * every model from every Failure Group, groupable by FG or by Component —
  * with everything editable inline, no navigation to a second page at all
  * (an earlier version of this redesign used a separate "model detail"
- * page; the user asked for that to become an inline accordion instead,
- * same request that made a Failure Group's own Name/Description/
- * Recommendation editable in place too):
+ * page; the user asked for that to become an inline accordion instead):
  *
- *   - FG-grouped view: each group's header has an "Edit details" toggle
- *     that reveals Name + Description + Recommendation together in one
- *     panel (previously Name was separately click-to-rename — merged per
- *     explicit user request: "the name should only be editable together
- *     with the rest of the detail, not separate from it").
  *   - Clicking a model row (FG or Component view) expands that model's
  *     edit form directly beneath the row, accordion-style — clicking it
  *     again (or a different row) closes/switches it. This replaces an
@@ -118,6 +111,13 @@ type GroupBy = 'fg' | 'component';
  *     now, always as kind 'individual'; this window only ever edits an
  *     existing model afterward, including changing its kind, per explicit
  *     user request ("เอาปุ่ม add model ออกเหมือนกัน ของหน้านี้").
+ *   - 2026-08-31: a Failure Group's own Name/Description/Recommendation
+ *     are no longer editable here at all — that "Edit details" panel
+ *     moved to Dashboard's Failure Groups tab entirely (not duplicated),
+ *     per explicit user request ("ส่วนของ edit detail ต้องอยู่ที่
+ *     dashboard ด้วย"). This window's group cards are read-only headers
+ *     now — name, FG badge, model count — nothing else to edit about the
+ *     group itself.
  *
  * All of this is local state — no window spawn for any of it — which is
  * also what makes the earlier "two Build Model windows for the same
@@ -149,13 +149,6 @@ export default function BuildModelWindow() {
     const [activePage, setActivePage] = useState<'overview' | 'model'>('overview');
     const [pmPageModelId, setPmPageModelId] = useState<string | null>(null);
 
-    // ---- Group "Edit details" panel: Name + Description + Recommendation
-    //      together, one group expanded at a time ----
-    const [expandedGroupNo, setExpandedGroupNo] = useState<number | null>(null);
-    const [groupNameDraft, setGroupNameDraft] = useState('');
-    const [groupNameError, setGroupNameError] = useState('');
-    const [groupDescDraft, setGroupDescDraft] = useState('');
-    const [groupRecDraft, setGroupRecDraft] = useState('');
 
     // ---- Model edit accordion: one form active at a time, shown
     //      directly under the row that opened it ----
@@ -261,47 +254,6 @@ export default function BuildModelWindow() {
             await emit('failure-group-state-changed', next.failureGroupState);
         }
     }, [workspaceId]);
-
-    // ---- Group "Edit details" panel (Name + Description + Recommendation
-    //      together — merged per explicit user request) ----
-    const toggleGroupDetails = (g: FailureGroup) => {
-        if (expandedGroupNo === g.no) {
-            setExpandedGroupNo(null);
-            return;
-        }
-        setExpandedGroupNo(g.no);
-        setGroupNameDraft(g.name);
-        setGroupNameError('');
-        setGroupDescDraft(g.description ?? '');
-        setGroupRecDraft(g.recommendation ?? '');
-    };
-
-    // Debounced save, mirrors PredictiveModelBuild's own 250ms config-save
-    // debounce. `toggleGroupDetails` seeds the drafts to match the group's
-    // current values on expand, so this naturally no-ops until the user
-    // actually changes something.
-    useEffect(() => {
-        if (!hydratedRef.current || expandedGroupNo === null) return;
-        const g = allGroups.find(x => x.no === expandedGroupNo);
-        if (!g) return;
-        const trimmedName = groupNameDraft.trim();
-        if (trimmedName === g.name && groupDescDraft === (g.description ?? '') && groupRecDraft === (g.recommendation ?? '')) return;
-        const timer = setTimeout(() => {
-            if (!trimmedName) return;
-            const isDuplicate = allGroups.some(x => x.no !== expandedGroupNo && x.no !== 0 && x.name.trim().toLowerCase() === trimmedName.toLowerCase());
-            if (isDuplicate) {
-                setGroupNameError(`A failure group named "${trimmedName}" already exists`);
-                return;
-            }
-            setGroupNameError('');
-            persist((models, groups) => ({
-                models,
-                groups: groups.map(x => x.no === expandedGroupNo ? { ...x, name: trimmedName, description: groupDescDraft, recommendation: groupRecDraft } : x),
-            }));
-        }, 250);
-        return () => clearTimeout(timer);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [groupNameDraft, groupDescDraft, groupRecDraft, expandedGroupNo]);
 
     // ---- Model edit accordion — 2026-08-31: "add" removed entirely per
     //      explicit user request; toggling a sensor into a group (Sensor
@@ -800,9 +752,8 @@ export default function BuildModelWindow() {
                     ) : realGroups.map(g => {
                         const models = allModels.filter(m => m.groupNos.includes(g.no));
                         const color = getFgGroupColor(g.no);
-                        const isExpanded = expandedGroupNo === g.no;
                         // No `overflow: hidden` on the card below (despite the rounded
-                        // corners) — it would clip the sticky Save/Remove footer instead
+                        // corners) — it would clip the sticky Save footer instead
                         // of letting it stick to the viewport; nothing inside this card
                         // actually needs edge-to-edge clipping to look right without it.
                         return (
@@ -812,44 +763,7 @@ export default function BuildModelWindow() {
                                     <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1 }}>{g.name}</span>
                                     <span style={{ fontFamily: 'var(--mono)', fontSize: '0.68rem', color: 'var(--text-faint)' }}>FG-{g.no}</span>
                                     <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{models.length} model{models.length === 1 ? '' : 's'}</span>
-                                    <button className="text-btn" style={{ fontSize: '0.7rem' }} onClick={() => toggleGroupDetails(g)}>
-                                        {isExpanded ? 'Hide details' : 'Edit details'}
-                                    </button>
                                 </div>
-
-                                {isExpanded && (
-                                    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                            <label style={{ fontSize: '0.66rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Name</label>
-                                            <input
-                                                value={groupNameDraft}
-                                                onChange={e => { setGroupNameDraft(e.target.value); setGroupNameError(''); }}
-                                                style={{ padding: '6px 8px', background: 'var(--input-bg)', border: `1px solid ${groupNameError ? 'var(--danger)' : 'var(--border)'}`, borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.82rem', fontWeight: 600 }}
-                                            />
-                                            {groupNameError && <div style={{ fontSize: '0.66rem', color: 'var(--danger)' }}>{groupNameError}</div>}
-                                        </div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                            <label style={{ fontSize: '0.66rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Description</label>
-                                            <textarea
-                                                rows={2}
-                                                value={groupDescDraft}
-                                                placeholder="What failure mode does this group track?"
-                                                onChange={e => setGroupDescDraft(e.target.value)}
-                                                style={{ resize: 'vertical', padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.76rem' }}
-                                            />
-                                        </div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                            <label style={{ fontSize: '0.66rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Recommendation</label>
-                                            <textarea
-                                                rows={2}
-                                                value={groupRecDraft}
-                                                placeholder="Recommended action when this failure is detected"
-                                                onChange={e => setGroupRecDraft(e.target.value)}
-                                                style={{ resize: 'vertical', padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.76rem' }}
-                                            />
-                                        </div>
-                                    </div>
-                                )}
 
                                 {models.length === 0 ? (
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Pencil, Trash2, Play } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Trash2, Play } from 'lucide-react';
 import { FailureGroup, FailureModel, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 
@@ -8,7 +8,14 @@ interface FailureGroupsPanelProps {
     fgModels: FailureModel[];
     sensorMetadata: SensorMetadata[] | null;
     getGroupColor: (groupNo: number) => string;
-    onRenameGroup: (groupNo: number, name: string) => void;
+    /** Saves Name + Description + Recommendation together — 2026-08-31:
+     *  moved here from Build Model window entirely, per explicit user
+     *  request ("ส่วนของ edit detail ต้องอยู่ที่ dashboard ด้วย"), which
+     *  is why Name isn't independently editable from the rest (same
+     *  reasoning Build Model's own version was built on: "the name should
+     *  only be editable together with the rest of the detail, not
+     *  separate from it"). */
+    onUpdateGroupDetails: (groupNo: number, name: string, description: string, recommendation: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
     /** Deletes a model record outright — 2026-08-31: model lifecycle (both
@@ -32,14 +39,19 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * — the model's own name if one was set, otherwise the target sensor's
  * description — so the whole group is scannable at a glance, plus a delete
  * button per model. Complete/Incomplete status is deliberately NOT shown
- * here (only in the Build Model window) per explicit user request.
+ * here (only in the Build Model window) per explicit user request. Each
+ * card also has its own "Edit details" toggle (Name + Description +
+ * Recommendation together) — moved here from Build Model window entirely
+ * (2026-08-31, "ส่วนของ edit detail ต้องอยู่ที่ dashboard ด้วย"), not
+ * duplicated between the two.
  *
  * 2026-08-31: model creation and deletion both live entirely on Dashboard
  * now, per explicit user request — this panel handles deletion (a trash
  * icon per model row below); creation happens on the Sensor tab (per-kind
  * toggle on each sensor, see SensorSelection.tsx). Build Model is left
- * with only editing a model's detail and training it, no create/delete at
- * all. This panel briefly had its own "+ Add model" quick-add popup per
+ * with only editing a model's own detail and training it, no group-detail
+ * editing or model create/delete at all. This panel briefly had its own
+ * "+ Add model" quick-add popup per
  * card (2026-08-25) — removed again once the user clarified they wanted
  * creation forced through one place instead ("เอาปุ่ม add model ออกเลย
  * ผมบังคับให้ add จากหน้า dashboard เท่านั้น" → turned out to mean the
@@ -47,11 +59,17 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  */
 export default function FailureGroupsPanel({
     fgGroups, fgModels, sensorMetadata, getGroupColor,
-    onRenameGroup, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel,
+    onUpdateGroupDetails, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel,
 }: FailureGroupsPanelProps) {
-    const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
-    const [editGroupDraft, setEditGroupDraft] = useState('');
-    const [editGroupError, setEditGroupError] = useState('');
+    // "Edit details" panel — Name + Description + Recommendation together,
+    // one group expanded at a time. Mirrors Build Model window's own
+    // version exactly (moved here, not duplicated — see the doc comment
+    // above and this component's own top-level doc comment).
+    const [expandedGroupNo, setExpandedGroupNo] = useState<number | null>(null);
+    const [groupNameDraft, setGroupNameDraft] = useState('');
+    const [groupNameError, setGroupNameError] = useState('');
+    const [groupDescDraft, setGroupDescDraft] = useState('');
+    const [groupRecDraft, setGroupRecDraft] = useState('');
     const [showNewGroup, setShowNewGroup] = useState(false);
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
@@ -113,18 +131,40 @@ export default function FailureGroupsPanel({
     // ever get a model into it in the first place).
     const ungroupedModels = fgModels.filter(m => m.groupNos.includes(0));
 
-    const commitGroupRename = () => {
-        if (editingGroupNo === null) return;
-        const trimmed = editGroupDraft.trim();
-        if (!trimmed) { setEditingGroupNo(null); return; }
-        if (isDuplicateName(realGroups, trimmed, editingGroupNo)) {
-            setEditGroupError(`A failure group named "${trimmed}" already exists`);
+    const toggleGroupDetails = (g: FailureGroup) => {
+        if (expandedGroupNo === g.no) {
+            setExpandedGroupNo(null);
             return;
         }
-        onRenameGroup(editingGroupNo, trimmed);
-        setEditingGroupNo(null);
-        setEditGroupError('');
+        setExpandedGroupNo(g.no);
+        setGroupNameDraft(g.name);
+        setGroupNameError('');
+        setGroupDescDraft(g.description ?? '');
+        setGroupRecDraft(g.recommendation ?? '');
     };
+
+    // Debounced save, mirrors Build Model's own 250ms config-save debounce
+    // it was moved from. `toggleGroupDetails` seeds the drafts to match the
+    // group's current values on expand, so this naturally no-ops until the
+    // user actually changes something.
+    useEffect(() => {
+        if (expandedGroupNo === null) return;
+        const g = realGroups.find(x => x.no === expandedGroupNo);
+        if (!g) return;
+        const trimmedName = groupNameDraft.trim();
+        if (trimmedName === g.name && groupDescDraft === (g.description ?? '') && groupRecDraft === (g.recommendation ?? '')) return;
+        const timer = setTimeout(() => {
+            if (!trimmedName) return;
+            if (isDuplicateName(realGroups, trimmedName, expandedGroupNo)) {
+                setGroupNameError(`A failure group named "${trimmedName}" already exists`);
+                return;
+            }
+            setGroupNameError('');
+            onUpdateGroupDetails(expandedGroupNo, trimmedName, groupDescDraft, groupRecDraft);
+        }, 250);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groupNameDraft, groupDescDraft, groupRecDraft, expandedGroupNo]);
 
     const commitNewGroup = () => {
         const trimmed = newGroupDraft.trim();
@@ -151,7 +191,7 @@ export default function FailureGroupsPanel({
                 {realGroups.map(group => {
                     const groupModels = fgModels.filter(m => m.groupNos.includes(group.no));
                     const color = getGroupColor(group.no);
-                    const isEditingName = editingGroupNo === group.no;
+                    const isExpanded = expandedGroupNo === group.no;
                     return (
                         <div
                             key={group.no}
@@ -160,43 +200,61 @@ export default function FailureGroupsPanel({
                         >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
                                 <span className="fg-group-dot" />
-                                {isEditingName ? (
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <input
-                                            autoFocus
-                                            value={editGroupDraft}
-                                            onChange={e => { setEditGroupDraft(e.target.value); setEditGroupError(''); }}
-                                            onKeyDown={e => { if (e.key === 'Enter') commitGroupRename(); if (e.key === 'Escape') { setEditingGroupNo(null); setEditGroupError(''); } }}
-                                            onBlur={commitGroupRename}
-                                            style={{ width: '100%', padding: '2px 5px', background: 'var(--input-bg)', border: `1px solid ${editGroupError ? 'var(--danger, #e2555f)' : 'var(--border)'}`, borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.78rem' }}
-                                        />
-                                        {editGroupError && <div style={{ fontSize: '0.65rem', color: 'var(--danger, #e2555f)', marginTop: '2px' }}>{editGroupError}</div>}
-                                    </div>
-                                ) : (
-                                    <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {group.name}
-                                    </span>
-                                )}
+                                <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {group.name}
+                                </span>
                                 <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>FG-{group.no}</span>
-                                <div style={{ display: 'flex', gap: '3px' }}>
-                                    <button className="fg-icon-btn fg-icon-btn-edit" title="Rename group" onClick={() => { setEditingGroupNo(group.no); setEditGroupDraft(group.name); setEditGroupError(''); }}>
-                                        <Pencil size={11} />
-                                    </button>
-                                    <button
-                                        className="fg-icon-btn fg-icon-btn-danger"
-                                        title="Delete group"
-                                        // 2026-08-31: no confirmation dialog anywhere in the app,
-                                        // per explicit user request — click delete, it's deleted.
-                                        // (Briefly used an async ask() here to fix window.confirm()
-                                        // not actually blocking in Tauri's webview; removed again
-                                        // once the user clarified they want no confirmation at all,
-                                        // system-wide, not just a working one.)
-                                        onClick={() => onDeleteGroup(group.no)}
-                                    >
-                                        <Trash2 size={11} />
-                                    </button>
-                                </div>
+                                <button className="text-btn" style={{ fontSize: '0.66rem' }} onClick={() => toggleGroupDetails(group)}>
+                                    {isExpanded ? 'Hide details' : 'Edit details'}
+                                </button>
+                                <button
+                                    className="fg-icon-btn fg-icon-btn-danger"
+                                    title="Delete group"
+                                    // 2026-08-31: no confirmation dialog anywhere in the app,
+                                    // per explicit user request — click delete, it's deleted.
+                                    // (Briefly used an async ask() here to fix window.confirm()
+                                    // not actually blocking in Tauri's webview; removed again
+                                    // once the user clarified they want no confirmation at all,
+                                    // system-wide, not just a working one.)
+                                    onClick={() => onDeleteGroup(group.no)}
+                                >
+                                    <Trash2 size={11} />
+                                </button>
                             </div>
+
+                            {isExpanded && (
+                                <div style={{ borderTop: '1px solid var(--border)', padding: '8px 8px 8px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                        <label style={{ fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Name</label>
+                                        <input
+                                            value={groupNameDraft}
+                                            onChange={e => { setGroupNameDraft(e.target.value); setGroupNameError(''); }}
+                                            style={{ padding: '5px 7px', background: 'var(--input-bg)', border: `1px solid ${groupNameError ? 'var(--danger, #e2555f)' : 'var(--border)'}`, borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.78rem', fontWeight: 600 }}
+                                        />
+                                        {groupNameError && <div style={{ fontSize: '0.62rem', color: 'var(--danger, #e2555f)' }}>{groupNameError}</div>}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                        <label style={{ fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Description</label>
+                                        <textarea
+                                            rows={2}
+                                            value={groupDescDraft}
+                                            placeholder="What failure mode does this group track?"
+                                            onChange={e => setGroupDescDraft(e.target.value)}
+                                            style={{ resize: 'vertical', padding: '5px 7px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.72rem' }}
+                                        />
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                        <label style={{ fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Recommendation</label>
+                                        <textarea
+                                            rows={2}
+                                            value={groupRecDraft}
+                                            placeholder="Recommended action when this failure is detected"
+                                            onChange={e => setGroupRecDraft(e.target.value)}
+                                            style={{ resize: 'vertical', padding: '5px 7px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.72rem' }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
 
                             <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
                                 {groupModels.length === 0 ? (

@@ -413,6 +413,21 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupState(newGroups, fgModels);
     }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
 
+    // Name + Description + Recommendation together, for the Failure Groups
+    // tab's own "Edit details" panel — 2026-08-31: moved here from Build
+    // Model window entirely, per explicit user request ("ส่วนของ edit
+    // detail ต้องอยู่ที่ dashboard ด้วย"), so it's no longer duplicated
+    // between the two. FailureGroupsPanel.tsx does its own duplicate-name
+    // check locally before calling this (same pattern Build Model used),
+    // so this is a plain apply, not a validating gate.
+    const updateGroupDetails = useCallback((groupNo: number, name: string, description: string, recommendation: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        const newGroups = fgGroups.map(g => g.no === groupNo ? { ...g, name: trimmed, description, recommendation } : g);
+        setFgGroups(newGroups);
+        persistFailureGroupState(newGroups, fgModels);
+    }, [fgGroups, fgModels, persistFailureGroupState]);
+
     // Deleting a group only strips THAT group from every model's
     // `groupNos` (falling back to `[0]`, "Not in Group", if it was a
     // model's last one) — it no longer deletes models outright the way it
@@ -1993,7 +2008,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         fgModels={fgModels}
                         sensorMetadata={sensorMetadata}
                         getGroupColor={getFgGroupColor}
-                        onRenameGroup={renameGroup}
+                        onUpdateGroupDetails={updateGroupDetails}
                         onDeleteGroup={deleteGroup}
                         onCreateEmptyGroup={createEmptyGroup}
                         onDeleteModel={deleteModel}
