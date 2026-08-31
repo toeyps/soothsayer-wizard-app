@@ -108,8 +108,28 @@ export default function FailureGroupsPanel({
     const [draftModelX, setDraftModelX] = useState('');
     const [draftModelY, setDraftModelY] = useState('');
 
+    // Sensors already "in" a group — a real group's are the ones with an
+    // existing individual model whose groupNos include it (same rule
+    // SensorSelection.tsx uses to render membership); "Not in Group" (0)
+    // has no such pre-selection step, so it gets the full sensor list.
+    // Shared by the add-mode sensor restriction and the single-candidate
+    // auto-fill below.
+    const sensorsForGroup = (groupNo: number): string[] =>
+        groupNo === 0 ? sensors : sensors.filter(s => fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(groupNo) && m.targetSensor === s));
+
     const openAddModel = (groupNo: number) => {
         setAddModelForGroupNo(groupNo);
+        // 2026-08-31: if exactly one sensor is already in this group, the
+        // user already chose it by toggling it into the FG from the
+        // Sensor tab — pre-fill Target immediately instead of making them
+        // pick it again from a 1-option dropdown. 2+ sensors still need an
+        // explicit pick; group 0 has no natural single candidate to infer.
+        // Clustering's X/Y stay manual regardless — confirmed with the
+        // user rather than guessed.
+        if (groupNo !== 0) {
+            const candidates = sensorsForGroup(groupNo);
+            if (candidates.length === 1) setDraftModelTarget(candidates[0]);
+        }
     };
 
     const closeAddModel = () => {
@@ -133,9 +153,7 @@ export default function FailureGroupsPanel({
     // restricting it the same way just blocked every model there with a
     // false "no sensors yet" — reported by the user immediately after
     // testing. Full sensor list for 0, confirmed via AskUserQuestion.
-    const groupSensors = addModelForGroupNo === null ? [] :
-        addModelForGroupNo === 0 ? sensors :
-        sensors.filter(s => fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(addModelForGroupNo) && m.targetSensor === s));
+    const groupSensors = addModelForGroupNo === null ? [] : sensorsForGroup(addModelForGroupNo);
 
     const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && (
         draftModelKind === 'clustering' ? draftModelX !== '' && draftModelY !== '' : draftModelTarget !== ''

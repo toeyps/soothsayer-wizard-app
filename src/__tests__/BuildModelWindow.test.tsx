@@ -286,6 +286,38 @@ describe('BuildModelWindow', () => {
             expect(form.getByText('Create model').closest('button')).toHaveProperty('disabled', true);
         });
 
+        it('auto-fills Target sensor when exactly one sensor is already in the group — no need to re-pick what was already chosen on the Sensor tab', async () => {
+            // 2026-08-31: "ผมเลือก sensor เข้า FG ไปแล้ว แล้วทำไมตอนใส่
+            // detail model ผมต้องมานั่งใส่ใหม่อีก ก็เป็น sensor เดิมสิ" —
+            // confirmed via AskUserQuestion: applies to Individual's (and
+            // Relationship's) Target only, only when the group has
+            // exactly one candidate sensor.
+            render(<BuildModelWindow />);
+            await deliverData(); // Group A has exactly one sensor: TAG1 (the default seeded model)
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.click(form.getByText('Individual'));
+            expect(form.getByDisplayValue('Pump Pressure (TAG1)')).toBeTruthy();
+        });
+
+        it('does NOT auto-fill Target when the group has more than one sensor — still requires an explicit pick', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel(), makeModel({ id: 'mem-1', targetSensor: 'TAG2', name: 'existing' })] } });
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.click(form.getByText('Individual'));
+            expect(form.getByDisplayValue('Select a sensor…')).toBeTruthy();
+        });
+
+        it('does NOT auto-fill X/Y for Clustering even with exactly one sensor in the group', async () => {
+            render(<BuildModelWindow />);
+            await deliverData(); // Group A has exactly one sensor: TAG1
+            fireEvent.click(screen.getAllByText('Add Model')[0]);
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.click(form.getByText('Clustering'));
+            expect(form.getAllByDisplayValue('Select…')).toHaveLength(2); // X and Y both still blank
+        });
+
         it('a model can be checked into more than one Failure Group at once', async () => {
             render(<BuildModelWindow />);
             await deliverData({
@@ -446,6 +478,9 @@ describe('BuildModelWindow', () => {
             // 2026-08-31: Target/X/Y choices in add-mode are limited to
             // sensors already in the destination group — seed Group B with
             // TAG2 (via an existing individual model) so it's pickable.
+            // Since it's the ONLY sensor in Group B, it also gets
+            // auto-filled as Target the moment the form opens — no manual
+            // selection needed.
             await deliverData({ failureGroupState: { groups: [makeGroup(), makeGroup({ no: 2, name: 'Group B' })], models: [makeModel(), makeModel({ id: 'mem-2', groupNos: [2], targetSensor: 'TAG2', name: 'existing' })] } });
             const addButtons = screen.getAllByText('Add Model');
             fireEvent.click(addButtons[1]); // Group B's Add Model
@@ -453,7 +488,6 @@ describe('BuildModelWindow', () => {
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'New Model' } });
             fireEvent.click(form.getByText('Individual'));
             fireEvent.click(form.getByText('Performance'));
-            fireEvent.change(form.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
             await act(async () => {
                 fireEvent.click(form.getByText('Create model'));
                 await Promise.resolve();
@@ -643,9 +677,11 @@ describe('BuildModelWindow', () => {
                 fireEvent.click(form.getByText('Relationship'));
                 fireEvent.click(form.getByText('Condition'));
 
+                // 2026-08-31: Target sensor is already auto-filled — Group
+                // A has exactly one sensor (TAG1, from the default seeded
+                // model), so there's nothing left to pick there. Only the
+                // predictor is still required.
                 const create = form.getByText('Create model').closest('button') as HTMLButtonElement;
-                const [targetSelect] = form.getAllByDisplayValue('Select a sensor…');
-                fireEvent.change(targetSelect, { target: { value: 'TAG1' } });
                 expect(create.disabled).toBe(true);
 
                 fireEvent.change(form.getByDisplayValue('Add a predictor…'), { target: { value: 'TAG2' } });
@@ -698,7 +734,10 @@ describe('BuildModelWindow', () => {
 
             it('shows the Component readout with a placeholder as soon as a kind is picked, before any sensor is chosen', async () => {
                 render(<BuildModelWindow />);
-                await deliverData();
+                // 2026-08-31: needs 2+ sensors already in the group, or
+                // Target auto-fills immediately and there's no "before any
+                // sensor is chosen" moment left to observe.
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel(), makeModel({ id: 'mem-1', targetSensor: 'TAG2', name: 'existing' })] } });
                 fireEvent.click(screen.getAllByText('Add Model')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
                 expect(form.queryByText('Component')).toBeNull();

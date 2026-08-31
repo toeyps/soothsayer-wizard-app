@@ -349,6 +349,35 @@ describe('FailureGroupsPanel', () => {
             expect(Array.from(select.options).map(o => o.value)).toEqual(expect.arrayContaining(['TAG1', 'TAG2', 'TAG3']));
         });
 
+        it('auto-fills Target sensor when exactly one sensor is already in the group — no need to re-pick what was already chosen on the Sensor tab', () => {
+            // 2026-08-31: "ผมเลือก sensor เข้า FG ไปแล้ว แล้วทำไมตอนใส่
+            // detail model ผมต้องมานั่งใส่ใหม่อีก ก็เป็น sensor เดิมสิ" —
+            // confirmed via AskUserQuestion: applies to Individual's (and
+            // Relationship's) Target only, only when the group has
+            // exactly one candidate sensor.
+            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1']) })} />);
+            fireEvent.click(screen.getAllByText('Add model')[0]);
+            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
+            fireEvent.click(modal.getByText('Individual'));
+            expect(modal.getByDisplayValue('TAG1')).toBeTruthy();
+        });
+
+        it('does NOT auto-fill Target when the group has more than one sensor — still requires an explicit pick', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
+            fireEvent.click(screen.getAllByText('Add model')[0]);
+            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
+            fireEvent.click(modal.getByText('Individual'));
+            expect(modal.getByDisplayValue('Select a sensor…')).toBeTruthy();
+        });
+
+        it('does NOT auto-fill X/Y for Clustering even with exactly one sensor in the group', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1']) })} />);
+            fireEvent.click(screen.getAllByText('Add model')[0]);
+            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
+            fireEvent.click(modal.getByText('Clustering'));
+            expect(modal.getAllByDisplayValue('Select a sensor…')).toHaveLength(2); // X and Y both still blank
+        });
+
         it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: sensorsInGroup(groupA.no, ['TAG1', 'TAG2']) })} />);
             fireEvent.click(screen.getAllByText('Add model')[0]); // Group A's — "Not in Group" now always renders its own too

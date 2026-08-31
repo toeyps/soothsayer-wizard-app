@@ -353,10 +353,33 @@ export default function BuildModelWindow() {
         setShowForm(false);
     };
 
+    // Sensors already "in" a group — a real group's are the ones with an
+    // existing individual model whose groupNos include it (same rule
+    // SensorSelection.tsx uses to render membership); "Not in Group" (0)
+    // has no such pre-selection step, so it gets the full sensor list.
+    // Shared by the add-mode sensor restriction and the single-candidate
+    // auto-fill below.
+    const sensorsForGroup = (groupNo: number): string[] => {
+        if (groupNo === 0) return allSensors;
+        const set = new Set(allModels.filter(m => m.kind === 'individual' && m.groupNos.includes(groupNo) && m.targetSensor).map(m => m.targetSensor));
+        return allSensors.filter(s => set.has(s));
+    };
+
     const openAddForm = (groupNo: number) => {
         resetForm();
         setFormGroupNos([groupNo]);
         setFormOriginGroupNo(groupNo);
+        // 2026-08-31: if exactly one sensor is already in this group, the
+        // user already chose it by toggling it into the FG from the
+        // Sensor tab — pre-fill Target immediately instead of making them
+        // pick it again from a 1-option dropdown. 2+ sensors still need an
+        // explicit pick; group 0 has no natural single candidate to infer.
+        // Clustering's X/Y stay manual regardless — confirmed with the
+        // user rather than guessed.
+        if (groupNo !== 0) {
+            const candidates = sensorsForGroup(groupNo);
+            if (candidates.length === 1) setFormTarget(candidates[0]);
+        }
         setShowForm(true);
     };
 
@@ -470,12 +493,7 @@ export default function BuildModelWindow() {
         // every add with a false "no sensors yet" (reported by the user
         // right after testing). Full sensor list for 0, same as editing.
         const isRestrictedGroup = isAdding && formOriginGroupNo !== null && formOriginGroupNo !== 0;
-        const groupSensorSet = new Set(
-            isRestrictedGroup
-                ? allModels.filter(m => m.kind === 'individual' && m.groupNos.includes(formOriginGroupNo) && m.targetSensor).map(m => m.targetSensor)
-                : []
-        );
-        const groupSensors = allSensors.filter(s => groupSensorSet.has(s));
+        const groupSensors = isRestrictedGroup ? sensorsForGroup(formOriginGroupNo) : [];
         const sensorOptions = isRestrictedGroup ? groupSensors : allSensors;
         return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
