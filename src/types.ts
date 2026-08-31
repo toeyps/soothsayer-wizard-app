@@ -153,7 +153,7 @@ export interface PredictiveModelStateSlice {
 }
 
 /**
- * One model inside a Failure Group. Sensor requirements depend on `kind`:
+ * One model inside 1+ Failure Groups. Sensor requirements depend on `kind`:
  * - individual: `targetSensor` only.
  * - relationship: `targetSensor` (the target) + `predictorSensors` (>=1).
  * - clustering: `xSensor` + `ySensor`; `criteriaSensor` is optional but if
@@ -171,7 +171,26 @@ export interface PredictiveModelStateSlice {
  */
 export interface FailureModel extends PredictiveModelStateSlice {
     id: string;
-    groupNo: number;
+    /** Which Failure Group(s) this model belongs to — a genuine many-to-many
+     *  relationship (2026-08-25 redesign, per explicit user request: a
+     *  sensor legitimately needs an individual, a relationship, AND a
+     *  clustering model at once, and a single model — most importantly a
+     *  Relationship/Clustering one with real config, not just a bare
+     *  individual — needs to appear under more than one Failure Group
+     *  without being duplicated into a second, independently-editable
+     *  copy). Always has at least one entry. `0` is the permanent "Not in
+     *  Group" sentinel (see FG-0's own history) — a model with no real
+     *  group falls back to `[0]`, it's never an empty array. A model with
+     *  both `0` and a real group in this array is not a valid steady
+     *  state (adding a real group drops `0`; losing its last real group
+     *  falls back to `[0]`) but isn't actively guarded against everywhere
+     *  — callers that assign groups follow this convention rather than the
+     *  type enforcing it.
+     *
+     *  Migrated from the old singular `groupNo: number` field by
+     *  `workspaceManager.ts`'s load shim — every model persisted before
+     *  this redesign becomes `groupNos: [that old groupNo]`. */
+    groupNos: number[];
     name: string;
     kind: ModelKind;
     category: ModelCategory | null;

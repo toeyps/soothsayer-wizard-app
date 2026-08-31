@@ -51,7 +51,7 @@ function makeGroup(overrides: Record<string, any> = {}) {
 
 function makeModel(overrides: Record<string, any> = {}) {
     return {
-        id: 'm1', groupNo: 1, name: 'Model One', kind: 'individual', category: 'performance', notes: '', status: false,
+        id: 'm1', groupNos: [1], name: 'Model One', kind: 'individual', category: 'performance', notes: '', status: false,
         targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
@@ -252,18 +252,41 @@ describe('BuildModelWindow', () => {
             expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
         });
 
-        it('shows a "FG-{no} · {group name}" breadcrumb inside the opened form so it\'s always clear which model\'s group the visible detail/buttons belong to', async () => {
+        it('shows a "Failure groups" checkbox list inside the opened form, with the model\'s own group(s) pre-checked (2026-08-25: a model can belong to more than one group)', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [makeModel({ groupNo: 2 })] } });
+            await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [makeModel({ groupNos: [2] })] } });
             fireEvent.click(screen.getByText('Model One'));
-            expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
+            const checkbox = screen.getByText('FG-2 · Group B').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+            expect(checkbox.checked).toBe(true);
         });
 
-        it('also shows the group breadcrumb inside a blank "+ Add Model" form', async () => {
+        it('also shows the group checklist inside a blank "+ Add Model" form, pre-checking the group whose button opened it', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [] } });
             fireEvent.click(screen.getAllByText('Add Model')[0]);
-            expect(screen.getByText('FG-2 · Group B')).toBeTruthy();
+            const checkbox = screen.getByText('FG-2 · Group B').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+            expect(checkbox.checked).toBe(true);
+        });
+
+        it('a model can be checked into more than one Failure Group at once', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup({ no: 1, name: 'Group A' }), makeGroup({ no: 2, name: 'Group B' })],
+                    models: [makeModel({ groupNos: [1] })],
+                },
+            });
+            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getByText('FG-2 · Group B'));
+            await act(async () => {
+                fireEvent.click(screen.getByText('Save changes'));
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            const saved = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+            expect(saved.groupNos).toEqual(expect.arrayContaining([1, 2]));
+            expect(saved.groupNos).toHaveLength(2);
         });
 
         it('the Save changes / Remove model footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own buttons, requiring exactly the right page scroll position to reach them)', async () => {
@@ -418,7 +441,7 @@ describe('BuildModelWindow', () => {
 
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             const created = state.failureGroupState.models.find((m: any) => m.name === 'New Model');
-            expect(created.groupNo).toBe(2);
+            expect(created.groupNos).toEqual([2]);
         });
 
         describe('"Not in Group" (FG-0) — a model without a failure group', () => {
@@ -437,7 +460,7 @@ describe('BuildModelWindow', () => {
 
             it('does not count toward the "groups" stat in the header', async () => {
                 render(<BuildModelWindow />);
-                await deliverData({ failureGroupState: { groups: [], models: [makeModel({ groupNo: 0 })] } });
+                await deliverData({ failureGroupState: { groups: [], models: [makeModel({ groupNos: [0] })] } });
                 expect(screen.getByText('0')).toBeTruthy(); // groups stat
             });
 
@@ -446,7 +469,7 @@ describe('BuildModelWindow', () => {
                 await deliverData({
                     failureGroupState: {
                         groups: [makeGroup()],
-                        models: [makeModel({ id: 'm-ng', name: 'Orphan Model', groupNo: 0 })],
+                        models: [makeModel({ id: 'm-ng', name: 'Orphan Model', groupNos: [0] })],
                     },
                 });
                 expect(screen.getByText('Orphan Model')).toBeTruthy();
@@ -470,7 +493,7 @@ describe('BuildModelWindow', () => {
 
                 const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
                 const created = state.failureGroupState.models.find((m: any) => m.name === 'Standalone Model');
-                expect(created.groupNo).toBe(0);
+                expect(created.groupNos).toEqual([0]);
             });
         });
 

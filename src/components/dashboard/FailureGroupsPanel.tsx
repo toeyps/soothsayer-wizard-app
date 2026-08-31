@@ -15,13 +15,15 @@ interface FailureGroupsPanelProps {
     onRenameGroup: (groupNo: number, name: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
-    /** Creates a model with just enough to exist (name, kind, and its
-     *  kind-appropriate sensor(s)) directly from this panel, without
-     *  opening Build Model first — the "quick add" flow. Everything else
-     *  (category, predictors, cluster ranges, …) is still only editable
-     *  from Build Model afterward; the model shows as Incomplete until
-     *  then, same as any other freshly-created model. */
-    onQuickAddModel: (groupNo: number, name: string, kind: ModelKind, target: string, xSensor: string, ySensor: string) => void;
+    /** Creates a model with just enough to exist (name, kind, its
+     *  kind-appropriate sensor(s), and which Failure Group(s) it belongs
+     *  to — checkboxes, since one model can belong to several at once)
+     *  directly from this panel, without opening Build Model first — the
+     *  "quick add" flow. Everything else (category, predictors, cluster
+     *  ranges, …) is still only editable from Build Model afterward; the
+     *  model shows as Incomplete until then, same as any other
+     *  freshly-created model. */
+    onQuickAddModel: (groupNos: number[], name: string, kind: ModelKind, target: string, xSensor: string, ySensor: string) => void;
     /** Opens the (singleton) Build Model window, which starts on its
      *  overview page (all groups/models, groupable by Failure Group or
      *  Component) — the sole entry point into building models now; cards
@@ -84,18 +86,30 @@ export default function FailureGroupsPanel({
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
 
-    // Quick-add-model modal — which group it's open for (null = closed) plus
-    // its own draft-form state. One modal instance reused across every
-    // card's "+ Add model" trigger rather than per-card state.
-    const [addModelForGroupNo, setAddModelForGroupNo] = useState<number | null>(null);
+    // Quick-add-model modal — open/closed plus its own draft-form state.
+    // One modal instance reused across every card's "+ Add model" trigger
+    // rather than per-card state. `draftModelGroups` is a checkbox
+    // multi-select (2026-08-25: one model can belong to several Failure
+    // Groups at once, per explicit user request) — opening it from a
+    // specific card's button pre-checks just that group, but any
+    // combination (including "Not in Group", 0) can be picked before
+    // creating.
+    const [addModelOpen, setAddModelOpen] = useState(false);
+    const [draftModelGroups, setDraftModelGroups] = useState<number[]>([]);
     const [draftModelName, setDraftModelName] = useState('');
     const [draftModelKind, setDraftModelKind] = useState<ModelKind | null>(null);
     const [draftModelTarget, setDraftModelTarget] = useState('');
     const [draftModelX, setDraftModelX] = useState('');
     const [draftModelY, setDraftModelY] = useState('');
 
+    const openAddModel = (groupNo: number) => {
+        setAddModelOpen(true);
+        setDraftModelGroups([groupNo]);
+    };
+
     const closeAddModel = () => {
-        setAddModelForGroupNo(null);
+        setAddModelOpen(false);
+        setDraftModelGroups([]);
         setDraftModelName('');
         setDraftModelKind(null);
         setDraftModelTarget('');
@@ -103,23 +117,27 @@ export default function FailureGroupsPanel({
         setDraftModelY('');
     };
 
-    const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && (
+    const toggleDraftModelGroup = (groupNo: number) => {
+        setDraftModelGroups(prev => prev.includes(groupNo) ? prev.filter(n => n !== groupNo) : [...prev, groupNo]);
+    };
+
+    const addModelValid = draftModelName.trim() !== '' && draftModelKind !== null && draftModelGroups.length > 0 && (
         draftModelKind === 'clustering' ? draftModelX !== '' && draftModelY !== '' : draftModelTarget !== ''
     );
 
     const commitAddModel = () => {
-        if (!addModelValid || addModelForGroupNo === null || !draftModelKind) return;
-        onQuickAddModel(addModelForGroupNo, draftModelName.trim(), draftModelKind, draftModelTarget, draftModelX, draftModelY);
+        if (!addModelValid || !draftModelKind) return;
+        onQuickAddModel(draftModelGroups, draftModelName.trim(), draftModelKind, draftModelTarget, draftModelX, draftModelY);
         closeAddModel();
     };
 
     useEffect(() => {
-        if (addModelForGroupNo === null) return;
+        if (!addModelOpen) return;
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAddModel(); };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [addModelForGroupNo]);
+    }, [addModelOpen]);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     // Model name if the user set one; otherwise the target sensor's
@@ -149,7 +167,7 @@ export default function FailureGroupsPanel({
     // mode. Rendered as its own card, but only once it actually holds a
     // model — an empty "Not in Group" card would just be clutter for the
     // (common) case where nobody's used it.
-    const ungroupedModels = fgModels.filter(m => m.groupNo === 0);
+    const ungroupedModels = fgModels.filter(m => m.groupNos.includes(0));
 
     const commitGroupRename = () => {
         if (editingGroupNo === null) return;
@@ -187,7 +205,7 @@ export default function FailureGroupsPanel({
 
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {realGroups.map(group => {
-                    const groupModels = fgModels.filter(m => m.groupNo === group.no);
+                    const groupModels = fgModels.filter(m => m.groupNos.includes(group.no));
                     const color = getGroupColor(group.no);
                     const isEditingName = editingGroupNo === group.no;
                     return (
@@ -243,7 +261,7 @@ export default function FailureGroupsPanel({
                                     </div>
                                 )}
                                 <button
-                                    onClick={() => setAddModelForGroupNo(group.no)}
+                                    onClick={() => openAddModel(group.no)}
                                     style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '6px', padding: '4px 0', background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.68rem', cursor: 'pointer' }}
                                 >
                                     <Plus size={11} /> Add model
@@ -323,16 +341,11 @@ export default function FailureGroupsPanel({
                 </button>
             </div>
 
-            {addModelForGroupNo !== null && (
+            {addModelOpen && (
                 <div className="quick-add-model-backdrop" onClick={closeAddModel}>
                     <div className="quick-add-model-card" onClick={e => e.stopPropagation()}>
                         <div className="quick-add-model-header">
-                            <div>
-                                <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Add model</div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                    {fgGroups.find(g => g.no === addModelForGroupNo)?.name ?? `FG-${addModelForGroupNo}`}
-                                </div>
-                            </div>
+                            <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Add model</div>
                             <button className="fg-icon-btn" title="Close" onClick={closeAddModel}><X size={14} /></button>
                         </div>
 
@@ -346,6 +359,29 @@ export default function FailureGroupsPanel({
                                     value={draftModelName}
                                     onChange={e => setDraftModelName(e.target.value)}
                                 />
+                            </div>
+
+                            {/* Checkbox multi-select — 2026-08-25 redesign: one
+                                model can belong to several Failure Groups at
+                                once (a real many-to-many relationship, not a
+                                duplicate model per group), per explicit user
+                                request. "Not in Group" (0) is a selectable
+                                option here too, same as it is in the Sensor
+                                tab's own quick-assign menu. */}
+                            <div className="fg-inspector-field">
+                                <div className="fg-inspector-field-label-row"><label>Failure groups</label></div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
+                                    {realGroups.map(g => (
+                                        <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                                            <input type="checkbox" checked={draftModelGroups.includes(g.no)} onChange={() => toggleDraftModelGroup(g.no)} />
+                                            {g.name}
+                                        </label>
+                                    ))}
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                        <input type="checkbox" checked={draftModelGroups.includes(0)} onChange={() => toggleDraftModelGroup(0)} />
+                                        Not in Group
+                                    </label>
+                                </div>
                             </div>
 
                             <div className="fg-inspector-field">

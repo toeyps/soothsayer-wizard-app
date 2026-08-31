@@ -155,10 +155,11 @@ export default function SensorSelection({
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
         // Includes group 0 ("Not in Group") — a sensor can be toggled into it
-        // exactly like any real group (creates/removes the same individual
-        // model, just with groupNo: 0), so it shows as a chip here too.
+        // exactly like any real group (adds/removes 0 from the same
+        // individual model's groupNos — see Dashboard.tsx's
+        // toggleSensorGroup), so it shows as a chip here too.
         const memberGroups = fgGroups.filter(g =>
-            fgModels.some(m => m.kind === 'individual' && m.groupNo === g.no && (m.targetSensor ?? '').toLowerCase() === sensor.toLowerCase())
+            fgModels.some(m => m.kind === 'individual' && m.groupNos.includes(g.no) && (m.targetSensor ?? '').toLowerCase() === sensor.toLowerCase())
         );
         const isInNotInGroup = memberGroups.some(g => g.no === 0);
         const menuOpen = groupMenuFor === sensor;

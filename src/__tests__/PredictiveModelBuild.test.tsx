@@ -66,7 +66,7 @@ const sensorMetadata: SensorMetadata[] = [
 // payload), so most tests seed `mockLoadWorkspaceData` with one of these.
 function makeStoredModel(overrides: Record<string, any> = {}) {
     return {
-        id: 'm1', groupNo: 1, name: 'A', kind: 'individual', category: null, notes: '', status: false,
+        id: 'm1', groupNos: [1], name: 'A', kind: 'individual', category: null, notes: '', status: false,
         targetSensor: 'TARGET1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',

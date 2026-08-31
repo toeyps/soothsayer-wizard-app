@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
-        id: 'm1', groupNo: 1, name: 'Model 1', kind: 'individual', category: null,
+        id: 'm1', groupNos: [1], name: 'Model 1', kind: 'individual', category: null,
         notes: '', status: false,
         targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
@@ -63,21 +63,21 @@ describe('FailureGroupsPanel', () => {
 
     describe('"Not in Group" card (group 0)', () => {
         it('renders once a model has groupNo 0, listed by its display label', () => {
-            const fgModels = [makeModel({ id: 'm1' }), makeModel({ id: 'm2', groupNo: 0, name: '', targetSensor: 'TAG1' })];
+            const fgModels = [makeModel({ id: 'm1' }), makeModel({ id: 'm2', groupNos: [0], name: '', targetSensor: 'TAG1' })];
             render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
             expect(screen.getByText('Not in Group')).toBeTruthy();
             expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         });
 
         it('has no rename/delete controls (it is a permanent, non-editable bucket)', () => {
-            const fgModels = [makeModel({ id: 'm1', groupNo: 0 })];
+            const fgModels = [makeModel({ id: 'm1', groupNos: [0] })];
             render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
             expect(screen.queryAllByTitle('Rename group')).toHaveLength(0);
             expect(screen.queryAllByTitle('Delete group')).toHaveLength(0);
         });
 
         it('does not count toward the "groups" stat (it is not a real failure group)', () => {
-            const fgModels = [makeModel({ id: 'm1', groupNo: 0 })];
+            const fgModels = [makeModel({ id: 'm1', groupNos: [0] })];
             const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
             const statBolds = container.querySelectorAll('b');
             expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '0']);
@@ -294,12 +294,31 @@ describe('FailureGroupsPanel', () => {
             expect(screen.queryByText('Model name')).toBeNull();
         });
 
-        it('opens the modal for the clicked group, showing its name in the header', () => {
+        it('opens the modal, pre-checking the group whose "+ Add model" button was clicked', () => {
             render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [] })} />);
             const addButtons = screen.getAllByText('Add model');
             fireEvent.click(addButtons[1]); // groupA, groupB in order -> index 1 = Group B
-            expect(document.querySelector('.quick-add-model-header')!.textContent).toContain('Group B');
-            expect(screen.getByText('Model name')).toBeTruthy();
+            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
+            expect(modal.getByText('Model name')).toBeTruthy();
+            const checkbox = modal.getByText('Group B').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+            expect(checkbox.checked).toBe(true);
+            const otherCheckbox = modal.getByText('Group A').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+            expect(otherCheckbox.checked).toBe(false);
+        });
+
+        it('a model can be checked into more than one Failure Group at once', () => {
+            const onQuickAddModel = vi.fn();
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [], onQuickAddModel })} />);
+            fireEvent.click(screen.getAllByText('Add model')[0]); // pre-checks Group A
+            const modal = within(document.querySelector('.quick-add-model-card') as HTMLElement);
+            fireEvent.click(modal.getByText('Group B')); // also check Group B
+            fireEvent.change(modal.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Shared Model' } });
+            fireEvent.click(modal.getByText('Individual'));
+            fireEvent.change(modal.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
+            fireEvent.click(modal.getByText('Create model'));
+
+            expect(onQuickAddModel).toHaveBeenCalledWith(expect.arrayContaining([groupA.no, groupB.no]), 'Shared Model', 'individual', 'TAG2', '', '');
+            expect(onQuickAddModel.mock.calls[0][0]).toHaveLength(2);
         });
 
         it('shows a single "Target sensor" picker for Individual/Relationship, but X/Y pickers for Clustering', () => {
@@ -353,7 +372,7 @@ describe('FailureGroupsPanel', () => {
             fireEvent.change(screen.getByDisplayValue('Select a sensor…'), { target: { value: 'TAG2' } });
             fireEvent.click(screen.getByText('Create model'));
 
-            expect(onQuickAddModel).toHaveBeenCalledWith(groupA.no, 'New Model', 'individual', 'TAG2', '', '');
+            expect(onQuickAddModel).toHaveBeenCalledWith([groupA.no], 'New Model', 'individual', 'TAG2', '', '');
             expect(screen.queryByText('Model name')).toBeNull();
         });
 
@@ -368,7 +387,7 @@ describe('FailureGroupsPanel', () => {
             fireEvent.change(ySelect, { target: { value: 'TAG2' } });
             fireEvent.click(screen.getByText('Create model'));
 
-            expect(onQuickAddModel).toHaveBeenCalledWith(groupA.no, 'Cluster Model', 'clustering', '', 'TAG1', 'TAG2');
+            expect(onQuickAddModel).toHaveBeenCalledWith([groupA.no], 'Cluster Model', 'clustering', '', 'TAG1', 'TAG2');
         });
 
         it('Cancel closes the modal without calling onQuickAddModel', () => {

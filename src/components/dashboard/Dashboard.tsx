@@ -220,9 +220,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // autosave so this window and any open Build Model window(s) editing
     // *different* groups can't clobber each other.
     //
-    // A sensor can belong to multiple groups at once, so membership is
-    // "does an individual model exist for (tag, groupNo)" rather than one
-    // model per tag.
+    // A sensor can belong to multiple groups at once (2026-08-25: a real
+    // many-to-many relationship — see FailureModel.groupNos in types.ts),
+    // so membership is "does tag's individual model's groupNos include
+    // groupNo" — one individual model per tag, not one per (tag, groupNo).
     const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
         initialState?.failureGroupState?.groups ?? [{ no: 0, name: 'Not in Group', isCollapsed: false }]
     );
@@ -261,9 +262,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Default PM build config for a freshly created model — mirrors
     // spawnPredictiveModel's own seed defaults below so a model behaves
     // identically whether it was created here or from Build Model.
-    const makeDefaultModel = useCallback((tag: string, groupNo: number): FailureModel => ({
+    const makeDefaultModel = useCallback((tag: string, groupNos: number[]): FailureModel => ({
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        groupNo,
+        groupNos,
         name: getSensorMeta(tag)?.description || tag,
         kind: 'individual',
         category: null,
@@ -295,21 +296,54 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         fgGroups.some(g => g.no !== 0 && g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase()),
     [fgGroups]);
 
+    // A sensor's quick-assign toggle (SensorSelection's FolderPlus menu) —
+    // 2026-08-25 redesign: a sensor can legitimately sit in several Failure
+    // Groups at once, and that's now expressed as ONE individual model with
+    // several entries in `groupNos`, not one duplicate model per group (the
+    // old behaviour, which meant editing one copy never touched the
+    // others). Toggling ON reuses this sensor's existing individual model
+    // if one exists (adding `groupNo`, dropping the `0` "Not in Group"
+    // sentinel now that it has a real group) or creates a fresh one.
+    // Toggling OFF removes just this one membership — falling back to
+    // `[0]` if it was the model's last group, never deleting the model
+    // outright, so its status/notes/etc. aren't silently lost.
     const toggleSensorGroup = useCallback((tag: string, groupNo: number) => {
-        const isMember = fgModels.some(m => m.kind === 'individual' && m.groupNo === groupNo && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase());
-        const nextModels = isMember
-            ? fgModels.filter(m => !(m.kind === 'individual' && m.groupNo === groupNo && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase()))
-            : [...fgModels, makeDefaultModel(tag, groupNo)];
+        const existing = fgModels.find(m => m.kind === 'individual' && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase());
+        const isMember = !!existing && existing.groupNos.includes(groupNo);
+        let nextModels: FailureModel[];
+        if (isMember) {
+            nextModels = fgModels.map(m => {
+                if (m !== existing) return m;
+                const remaining = m.groupNos.filter(n => n !== groupNo);
+                return { ...m, groupNos: remaining.length > 0 ? remaining : [0] };
+            });
+        } else if (existing) {
+            nextModels = fgModels.map(m => m === existing
+                ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }
+                : m);
+        } else {
+            nextModels = [...fgModels, makeDefaultModel(tag, [groupNo])];
+        }
         setFgModels(nextModels);
         persistFailureGroupState(fgGroups, nextModels);
     }, [fgModels, fgGroups, makeDefaultModel, persistFailureGroupState]);
 
+    // Same reuse-or-create logic as toggleSensorGroup above, for the "create
+    // a brand new group for this sensor" flow — the sensor's existing
+    // individual model (if any) gains the new group instead of a duplicate
+    // being created next to it.
     const createGroupForSensor = useCallback((tag: string, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
         const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
-        const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed, isCollapsed: false }];
-        const newModels = [...fgModels, makeDefaultModel(tag, maxNo + 1)];
+        const newGroupNo = maxNo + 1;
+        const newGroups = [...fgGroups, { no: newGroupNo, name: trimmed, isCollapsed: false }];
+        const existing = fgModels.find(m => m.kind === 'individual' && (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase());
+        const newModels = existing
+            ? fgModels.map(m => m === existing
+                ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
+                : m)
+            : [...fgModels, makeDefaultModel(tag, [newGroupNo])];
         setFgGroups(newGroups);
         setFgModels(newModels);
         persistFailureGroupState(newGroups, newModels);
@@ -317,9 +351,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Renaming/deleting a group is global (not tied to one sensor's model),
     // so these operate on fgGroups/fgModels directly rather than through
-    // toggleSensorGroup. Deleting removes every model across every sensor
-    // that belonged to that group, with no confirmation step here — the UI
-    // callers (FailureGroupsPanel, BuildModelWindow) confirm first.
+    // toggleSensorGroup.
     const renameGroup = useCallback((groupNo: number, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed, groupNo)) return;
@@ -328,10 +360,21 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupState(newGroups, fgModels);
     }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
 
+    // Deleting a group only strips THAT group from every model's
+    // `groupNos` (falling back to `[0]`, "Not in Group", if it was a
+    // model's last one) — it no longer deletes models outright the way it
+    // did before `groupNos[]` existed. A model that also belongs to
+    // another group keeps living there untouched; that's the whole point
+    // of the many-to-many redesign. No confirmation step here — the UI
+    // callers (FailureGroupsPanel, BuildModelWindow) confirm first.
     const deleteGroup = useCallback((groupNo: number) => {
         if (groupNo === 0) return;
         const newGroups = fgGroups.filter(g => g.no !== groupNo);
-        const newModels = fgModels.filter(m => m.groupNo !== groupNo);
+        const newModels = fgModels.map(m => {
+            if (!m.groupNos.includes(groupNo)) return m;
+            const remaining = m.groupNos.filter(n => n !== groupNo);
+            return { ...m, groupNos: remaining.length > 0 ? remaining : [0] };
+        });
         setFgGroups(newGroups);
         setFgModels(newModels);
         persistFailureGroupState(newGroups, newModels);
@@ -358,14 +401,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // "Quick add" a model straight from the Failure Groups tab's card,
     // right after creating the group it belongs to, without opening Build
     // Model first — added per explicit user request. Only the bare
-    // minimum needed to exist (name, kind, its kind-appropriate sensor(s));
-    // everything else (category, predictors, cluster ranges, …) is still
-    // only editable from Build Model afterward — the model shows
-    // "Incomplete" until then, same as any model created there directly.
-    const handleQuickAddModel = useCallback((groupNo: number, name: string, kind: ModelKind, target: string, xSensor: string, ySensor: string) => {
+    // minimum needed to exist (name, kind, its kind-appropriate sensor(s),
+    // and which group(s) it belongs to — checkboxes in the modal, per
+    // explicit user request that one model be assignable to several
+    // groups at once); everything else (category, predictors, cluster
+    // ranges, …) is still only editable from Build Model afterward — the
+    // model shows "Incomplete" until then, same as any model created
+    // there directly.
+    const handleQuickAddModel = useCallback((groupNos: number[], name: string, kind: ModelKind, target: string, xSensor: string, ySensor: string) => {
         const newModel: FailureModel = {
             id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            groupNo,
+            groupNos: groupNos.length > 0 ? groupNos : [0],
             name,
             kind,
             category: null,

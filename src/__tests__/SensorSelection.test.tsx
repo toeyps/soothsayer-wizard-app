@@ -10,7 +10,7 @@ const sensorMetadata: SensorMetadata[] = [
 
 const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
 const modelTag1InGroupA: FailureModel = {
-    id: 'm1', groupNo: 1, name: '', kind: 'individual', category: null, notes: '', status: false,
+    id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
     targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
     individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
     relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
@@ -213,6 +213,15 @@ describe('SensorSelection', () => {
             fireEvent.click(screen.getByTitle('Remove from Group A'));
             expect(onToggleSensorGroup).toHaveBeenCalledWith('TAG1', 1);
         });
+
+        it('shows one chip per group when a single model\'s groupNos lists several (2026-08-25: real many-to-many, not a duplicate model per group)', () => {
+            const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
+            const sharedModel: FailureModel = { ...modelTag1InGroupA, groupNos: [1, 2] };
+            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }, groupA, groupB], fgModels: [sharedModel] })} />);
+            expandPump();
+            expect(screen.getByText('Group A')).toBeTruthy();
+            expect(screen.getByText('Group B')).toBeTruthy();
+        });
     });
 
     describe('the group-assignment menu', () => {
@@ -296,7 +305,7 @@ describe('SensorSelection', () => {
 
             it('once a member, shows a remove control instead, and no rename/delete', () => {
                 const onToggleSensorGroup = vi.fn();
-                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNo: 0 }];
+                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
                 render(<SensorSelection {...makeProps({ fgModels: models, onToggleSensorGroup })} />);
                 expandPump();
                 fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1, already in group 0
@@ -313,7 +322,7 @@ describe('SensorSelection', () => {
             });
 
             it('renders a "Not in Group" chip alongside real-group chips once a sensor is a member', () => {
-                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNo: 0 }];
+                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
                 render(<SensorSelection {...makeProps({ fgModels: models })} />);
                 expandPump();
                 expect(screen.getByText('Group A')).toBeTruthy();

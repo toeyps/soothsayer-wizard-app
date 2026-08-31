@@ -185,15 +185,50 @@ function inferModelKind(modelType: string): ModelKind {
 }
 
 /**
+ * Ensures every model has `groupNos: number[]` (2026-08-25 redesign: the
+ * old singular `groupNo: number` field became a real many-to-many
+ * model<->group relationship — a sensor legitimately needs an individual,
+ * a relationship, AND a clustering model at once, and a single model
+ * needs to appear under more than one Failure Group without being
+ * duplicated into a second, independently-editable copy). A model that
+ * already has `groupNos` is returned as-is; one still carrying only the
+ * old `groupNo` becomes `groupNos: [groupNo]` (falling back to `[0]` —
+ * the permanent "Not in Group" sentinel — if even that's missing).
+ */
+function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
+    return models.map(m => {
+        const legacy = m as unknown as { groupNo?: number; groupNos?: number[] };
+        if (Array.isArray(legacy.groupNos)) return m;
+        const { groupNo, ...rest } = legacy as FailureModel & { groupNo?: number };
+        return { ...rest, groupNos: [typeof groupNo === 'number' ? groupNo : 0] } as FailureModel;
+    });
+}
+
+/**
  * One-time shim for workspaces saved before the Failure Group / Predictive
  * Model redesign: old `failureGroupState.rows: FailureSensorRow[]` +
  * global `predictiveModelState` become `failureGroupState.models: FailureModel[]`
- * with PM config folded per-model. No-ops once a workspace has already been
- * migrated (i.e. `failureGroupState.models` already exists).
+ * with PM config folded per-model. Also runs `normalizeModelGroups` on the
+ * already-migrated path, so a workspace saved between that redesign and
+ * the 2026-08-25 `groupNos[]` one still opens correctly. Both steps no-op
+ * once a workspace is fully current (`failureGroupState.models` exists and
+ * every model already has `groupNos`).
  */
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
     const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[] } | undefined;
-    if (!fg || Array.isArray(fg.models)) return state;
+    if (!fg) return state;
+
+    if (Array.isArray(fg.models)) {
+        const needsGroupNosMigration = fg.models.some(m => !Array.isArray((m as unknown as { groupNos?: unknown }).groupNos));
+        if (!needsGroupNosMigration) return state;
+        return {
+            ...state,
+            failureGroupState: {
+                groups: (fg.groups as FailureGroup[] | undefined) ?? [],
+                models: normalizeModelGroups(fg.models),
+            },
+        };
+    }
 
     const legacyRows = Array.isArray(fg.rows) ? fg.rows : [];
     const pm = state.predictiveModelState;
@@ -208,7 +243,7 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
             const kind = inferModelKind(row.modelType);
             return {
                 id: row.id,
-                groupNo: row.groupNo,
+                groupNos: [row.groupNo],
                 // Leave name empty rather than falling back to the raw tag —
                 // FailureGroupsPanel's display already falls back to the
                 // sensor's description when name is unset, which reads far

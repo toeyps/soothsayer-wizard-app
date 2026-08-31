@@ -65,7 +65,7 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
                 <button onClick={() => props.onCreateEmptyGroup('Empty Group')}>create-empty-group</button>
                 <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group-fg</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
-                <button onClick={() => props.onQuickAddModel(1, 'Quick Model', 'individual', 'TAG2', '', '')}>quick-add-model</button>
+                <button onClick={() => props.onQuickAddModel([1], 'Quick Model', 'individual', 'TAG2', '', '')}>quick-add-model</button>
                 <button onClick={() => props.onOpenBuildModel()}>open-build-model</button>
             </div>
         );
@@ -598,7 +598,7 @@ describe('Dashboard', () => {
             const patchResult = last(mockUpdateWorkspaceData.mock.results)!.value;
             return patchResult.then((state: any) => {
                 expect(state.failureGroupState.models).toHaveLength(1);
-                expect(state.failureGroupState.models[0]).toMatchObject({ kind: 'individual', targetSensor: 'TAG1', groupNo: 1 });
+                expect(state.failureGroupState.models[0]).toMatchObject({ kind: 'individual', targetSensor: 'TAG1', groupNos: [1] });
             });
         });
 
@@ -630,6 +630,109 @@ describe('Dashboard', () => {
             fireEvent.click(screen.getByText('delete-group'));
             state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups).toHaveLength(0);
+        });
+
+        describe('2026-08-25 redesign — a model can belong to more than one Failure Group at once (real many-to-many, not a duplicate model per group)', () => {
+            it('toggling a sensor into a SECOND group adds to its existing individual model\'s groupNos instead of creating a duplicate model', () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        failureGroupState: {
+                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }, { no: 2, name: 'Group B', isCollapsed: false }],
+                            models: [{
+                                id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
+                                targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                            }],
+                        },
+                    }),
+                });
+                // The mocked SensorSelection's toggle-group button always toggles TAG1 into group 1 -- use onToggleSensorGroup directly via the same mock button pattern isn't available for group 2, so drive it through sensorSelectionProps instead.
+                act(() => { last(sensorSelectionProps).onToggleSensorGroup('TAG1', 2); });
+                return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
+                    expect(state.failureGroupState.models).toHaveLength(1); // still just one record, not two
+                    expect(state.failureGroupState.models[0].groupNos).toEqual(expect.arrayContaining([1, 2]));
+                    expect(state.failureGroupState.models[0].groupNos).toHaveLength(2);
+                });
+            });
+
+            it('toggling a sensor OUT of its last group falls back to groupNos: [0] ("Not in Group") instead of deleting the model', () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        failureGroupState: {
+                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                            models: [{
+                                id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
+                                targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                            }],
+                        },
+                    }),
+                });
+                fireEvent.click(screen.getByText('toggle-group')); // toggles TAG1 out of group 1
+                return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
+                    expect(state.failureGroupState.models).toHaveLength(1); // model survives
+                    expect(state.failureGroupState.models[0].groupNos).toEqual([0]);
+                });
+            });
+
+            it('createGroupForSensor reuses the sensor\'s existing individual model instead of creating a duplicate', async () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        failureGroupState: {
+                            groups: [],
+                            models: [{
+                                id: 'm1', groupNos: [0], name: '', kind: 'individual', category: null, notes: '', status: false,
+                                targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                            }],
+                        },
+                    }),
+                });
+                fireEvent.click(screen.getByText('create-group-for-sensor')); // TAG1, 'New Group'
+                const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                expect(state.failureGroupState.models).toHaveLength(1); // still one record
+                const newGroupNo = state.failureGroupState.groups.find((g: any) => g.name === 'New Group').no;
+                expect(state.failureGroupState.models[0].groupNos).toEqual([newGroupNo]); // 0 dropped, replaced by the real group
+            });
+
+            it('deleteGroup only strips that one membership -- a model that also belongs to another group survives untouched there', async () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        failureGroupState: {
+                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }, { no: 2, name: 'Group B', isCollapsed: false }],
+                            models: [
+                                {
+                                    id: 'm1', groupNos: [1, 2], name: 'Shared', kind: 'individual', category: null, notes: '', status: false,
+                                    targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                                    individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                    relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                                },
+                                {
+                                    id: 'm2', groupNos: [1], name: 'OnlyInA', kind: 'individual', category: null, notes: '', status: false,
+                                    targetSensor: 'TAG2', predictorSensors: [], xSensor: '', ySensor: '',
+                                    individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                                    relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                                },
+                            ],
+                        },
+                    }),
+                });
+                fireEvent.click(screen.getByText('delete-group')); // deletes group 1 (mock always passes 1)
+                const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                expect(state.failureGroupState.models).toHaveLength(2); // neither model deleted
+                const shared = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+                const onlyInA = state.failureGroupState.models.find((m: any) => m.id === 'm2');
+                expect(shared.groupNos).toEqual([2]); // lost group 1, still in group 2
+                expect(onlyInA.groupNos).toEqual([0]); // lost its only group -> falls back to "Not in Group"
+            });
         });
     });
 
@@ -674,7 +777,7 @@ describe('Dashboard', () => {
             const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.models).toHaveLength(1);
             expect(state.failureGroupState.models[0]).toMatchObject({
-                groupNo: 1, name: 'Quick Model', kind: 'individual', category: null, status: false,
+                groupNos: [1], name: 'Quick Model', kind: 'individual', category: null, status: false,
                 targetSensor: 'TAG2', predictorSensors: [], xSensor: '', ySensor: '',
             });
         });

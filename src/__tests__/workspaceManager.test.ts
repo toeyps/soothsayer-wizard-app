@@ -274,8 +274,8 @@ describe('loadWorkspaceData', () => {
             expect(result?.failureGroupState).toBeUndefined();
         });
 
-        it('is a no-op when failureGroupState.models already exists (already migrated)', async () => {
-            const models = [{ id: 'm1', groupNo: 1, kind: 'individual' }];
+        it('is a no-op when every model already has groupNos (fully migrated)', async () => {
+            const models = [{ id: 'm1', groupNos: [1], kind: 'individual' }];
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',
                 failureGroupState: { groups: [], models },
@@ -283,6 +283,30 @@ describe('loadWorkspaceData', () => {
             const { loadWorkspaceData } = await freshModule();
             const result = await loadWorkspaceData('ws1');
             expect(result?.failureGroupState?.models).toEqual(models);
+        });
+
+        it('normalizes a model that still has the old singular groupNo into groupNos[] (2026-08-25 redesign, model<->group is now many-to-many)', async () => {
+            const models = [{ id: 'm1', groupNo: 1, kind: 'individual' }];
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: { groups: [], models },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            const migrated = result?.failureGroupState?.models;
+            expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [1] }]);
+        });
+
+        it('normalizes a model with neither groupNo nor groupNos into groupNos: [0] ("Not in Group")', async () => {
+            const models = [{ id: 'm1', kind: 'individual' }];
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: { groups: [], models },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const result = await loadWorkspaceData('ws1');
+            const migrated = result?.failureGroupState?.models;
+            expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [0] }]);
         });
 
         it('converts legacy rows into individual-kind models by default', async () => {
@@ -301,7 +325,7 @@ describe('loadWorkspaceData', () => {
             const models = result?.failureGroupState?.models;
             expect(models).toHaveLength(1);
             expect(models![0]).toMatchObject({
-                id: 'row-1', groupNo: 1, name: 'Vibration', kind: 'individual', category: null,
+                id: 'row-1', groupNos: [1], name: 'Vibration', kind: 'individual', category: null,
                 notes: 'note', status: true, targetSensor: 'TAG1',
             });
         });

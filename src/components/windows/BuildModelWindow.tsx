@@ -77,10 +77,10 @@ const FG_ACCENT: Record<string, string> = {
     slate: 'var(--text-faint)',
 };
 
-function makeDefaultModel(groupNo: number): FailureModel {
+function makeDefaultModel(groupNos: number[]): FailureModel {
     return {
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        groupNo,
+        groupNos,
         name: '',
         kind: 'individual',
         category: null,
@@ -186,7 +186,18 @@ export default function BuildModelWindow() {
     //      "+ Add Model" for a brand-new one) ----
     const [showForm, setShowForm] = useState(false);
     const [editingModelId, setEditingModelId] = useState<string | null>(null);
-    const [formGroupNo, setFormGroupNo] = useState<number | null>(null);
+    /** Which group(s) the form's model will belong to — a checkbox
+     *  multi-select (2026-08-25: one model can belong to several Failure
+     *  Groups at once, per explicit user request). */
+    const [formGroupNos, setFormGroupNos] = useState<number[]>([]);
+    /** Purely which group's "+ Add Model" the accordion is visually
+     *  anchored under while adding a brand-new model — independent of
+     *  `formGroupNos` (the actual checkbox selection for submission), since
+     *  the user may check additional groups without the form needing to
+     *  appear to open in more than one place at once. Irrelevant while
+     *  editing an existing model — that row's own section renders its own
+     *  form wherever that model appears (see `overviewModelRow`). */
+    const [formOriginGroupNo, setFormOriginGroupNo] = useState<number | null>(null);
     const [formName, setFormName] = useState('');
     const [formKind, setFormKind] = useState<ModelKind | null>(null);
     const [formCategory, setFormCategory] = useState<ModelCategory | null>(null);
@@ -328,7 +339,8 @@ export default function BuildModelWindow() {
     // ---- Model add/edit accordion ----
     const resetForm = () => {
         setEditingModelId(null);
-        setFormGroupNo(null);
+        setFormGroupNos([]);
+        setFormOriginGroupNo(null);
         setFormName('');
         setFormKind(null);
         setFormCategory(null);
@@ -343,13 +355,18 @@ export default function BuildModelWindow() {
 
     const openAddForm = (groupNo: number) => {
         resetForm();
-        setFormGroupNo(groupNo);
+        setFormGroupNos([groupNo]);
+        setFormOriginGroupNo(groupNo);
         setShowForm(true);
+    };
+
+    const toggleFormGroup = (groupNo: number) => {
+        setFormGroupNos(prev => prev.includes(groupNo) ? prev.filter(n => n !== groupNo) : [...prev, groupNo]);
     };
 
     const openEditForm = (model: FailureModel) => {
         setEditingModelId(model.id);
-        setFormGroupNo(model.groupNo);
+        setFormGroupNos(model.groupNos);
         setFormName(model.name);
         setFormKind(model.kind);
         setFormCategory(model.category);
@@ -370,7 +387,7 @@ export default function BuildModelWindow() {
     const formComponentTarget = formKind === 'clustering' ? formY : formTarget;
     const formComponent = formComponentTarget ? getComponent(formComponentTarget) : '';
 
-    const formValid = formName.trim() !== '' && formKind !== null && formCategory !== null && (
+    const formValid = formName.trim() !== '' && formKind !== null && formCategory !== null && formGroupNos.length > 0 && (
         formKind === 'individual' ? formTarget !== '' :
         formKind === 'relationship' ? formTarget !== '' && formPredictors.length >= 1 :
         formKind === 'clustering' ? formX !== '' && formY !== '' && (!formCriteria || formClusterRanges.every(r => r.min !== null && r.max !== null)) :
@@ -378,8 +395,9 @@ export default function BuildModelWindow() {
     );
 
     const commitForm = () => {
-        if (!formValid || !formKind || !formCategory || formGroupNo === null) return;
+        if (!formValid || !formKind || !formCategory) return;
         const fields = {
+            groupNos: formGroupNos,
             name: formName.trim(),
             kind: formKind,
             category: formCategory,
@@ -396,7 +414,7 @@ export default function BuildModelWindow() {
                 models: models.map(m => m.id === editingModelId ? { ...m, ...fields } : m),
             }));
         } else {
-            const model: FailureModel = { ...makeDefaultModel(formGroupNo), ...fields };
+            const model: FailureModel = { ...makeDefaultModel(formGroupNos), ...fields };
             persist((models, groups) => ({ groups, models: [...models, model] }));
         }
         resetForm();
@@ -436,14 +454,8 @@ export default function BuildModelWindow() {
     // under the fields box, at a fixed, predictable position, regardless
     // of how tall the fields are or how the surrounding list is scrolled.
     const renderModelFormFields = () => {
-        const formGroup = allGroups.find(g => g.no === formGroupNo);
-        const formAccent = FG_ACCENT[getFgGroupColor(formGroupNo ?? 0)];
         return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: formAccent, flexShrink: 0 }} />
-                FG-{formGroupNo}{formGroup ? ` · ${formGroup.name}` : ''}
-            </div>
             <div className="fg-inspector-field">
                 <div className="fg-inspector-field-label-row"><label>Model name</label></div>
                 <input
@@ -452,6 +464,30 @@ export default function BuildModelWindow() {
                     placeholder="e.g. Bearing vibration model"
                     onChange={e => setFormName(e.target.value)}
                 />
+            </div>
+
+            {/* Checkbox multi-select — 2026-08-25 redesign: one model can
+                belong to several Failure Groups at once (a real
+                many-to-many relationship, not a duplicate model per
+                group), per explicit user request. "Not in Group" (0) is a
+                selectable option here too, same as it is in the Sensor
+                tab's own quick-assign menu and the Dashboard quick-add
+                popup. */}
+            <div>
+                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
+                    {realGroups.map(g => (
+                        <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={formGroupNos.includes(g.no)} onChange={() => toggleFormGroup(g.no)} />
+                            <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(g.no)], flexShrink: 0 }} />
+                            FG-{g.no} · {g.name}
+                        </label>
+                    ))}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={formGroupNos.includes(0)} onChange={() => toggleFormGroup(0)} />
+                        Not in Group
+                    </label>
+                </div>
             </div>
 
             <div>
@@ -671,11 +707,18 @@ export default function BuildModelWindow() {
     // when active (accordion) — used by both the FG-grouped and
     // Component-grouped views.
     const overviewModelRow = (model: FailureModel, showFgTag: boolean) => {
-        const g = allGroups.find(x => x.no === model.groupNo);
+        // A model can belong to several groups now — the chip lists all of
+        // them (comma-separated), and the accordion's own accent border
+        // just picks the FIRST one as its primary color rather than trying
+        // to blend several.
+        const groupTags = model.groupNos.map(no => {
+            const grp = allGroups.find(x => x.no === no);
+            return no === 0 ? 'Not in Group' : `FG-${no}${grp ? ` · ${grp.name}` : ''}`;
+        }).join(', ');
         const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
         const component = targetTag ? getComponent(targetTag) : '';
         const isEditingThis = showForm && editingModelId === model.id;
-        const accent = FG_ACCENT[getFgGroupColor(model.groupNo)];
+        const accent = FG_ACCENT[getFgGroupColor(model.groupNos[0] ?? 0)];
         return (
             <div key={model.id} style={{ borderTop: '1px solid var(--border)' }}>
                 {/* A real border (not an absolutely-positioned left bar) so the
@@ -696,7 +739,7 @@ export default function BuildModelWindow() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
                                 {showFgTag && (
                                     <span className="model-chip model-chip--component" style={{ fontFamily: 'var(--mono)' }}>
-                                        FG-{model.groupNo}{g ? ` · ${g.name}` : ''}
+                                        {groupTags}
                                     </span>
                                 )}
                                 <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{modelDisplayLabel(model)}</span>
@@ -799,10 +842,10 @@ export default function BuildModelWindow() {
                     realGroups.length === 0 ? (
                         <div className="no-results">No failure groups yet</div>
                     ) : realGroups.map(g => {
-                        const models = allModels.filter(m => m.groupNo === g.no);
+                        const models = allModels.filter(m => m.groupNos.includes(g.no));
                         const color = getFgGroupColor(g.no);
                         const isExpanded = expandedGroupNo === g.no;
-                        const isAddingHere = showForm && editingModelId === null && formGroupNo === g.no;
+                        const isAddingHere = showForm && editingModelId === null && formOriginGroupNo === g.no;
                         // No `overflow: hidden` on the card below (despite the rounded
                         // corners) — it would clip the sticky Save/Remove footer instead
                         // of letting it stick to the viewport; nothing inside this card
@@ -899,8 +942,8 @@ export default function BuildModelWindow() {
                     // window is the only place a model can actually be added to
                     // it. No "Edit details" — it's not a real failure group, so
                     // there's no name/description/recommendation to edit.
-                    const ungroupedModels = allModels.filter(m => m.groupNo === 0);
-                    const isAddingHere = showForm && editingModelId === null && formGroupNo === 0;
+                    const ungroupedModels = allModels.filter(m => m.groupNos.includes(0));
+                    const isAddingHere = showForm && editingModelId === null && formOriginGroupNo === 0;
                     return (
                         <div className="fg-group-color-slate" style={{ border: '1px dashed var(--border)', borderRadius: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
