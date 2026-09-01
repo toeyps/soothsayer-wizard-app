@@ -90,6 +90,16 @@ failure context, but not decided yet.
 
 ## 3. "Ready / Pending" status toggle on sensor chips isn't self-explanatory
 
+**Resolved** (exact date unclear — a side effect of the wider Build Model
+redesign, not a dedicated fix pass; re-verified 2026-09-01 against current
+code). `FailureGroupCreation.tsx` itself is long gone; its successor,
+`BuildModelWindow.tsx`, renders the control as a pill that shows its own
+state as text directly on the button — `model-status-pill--complete` /
+`--incomplete` with the label `{model.status ? 'Complete' : 'Incomplete'}`
+(`BuildModelWindow.tsx:640-643`) — not a bare unlabeled switch. The
+original complaint (no indication of what flipping it means) no longer
+applies.
+
 **Found:** 2026-08-03, walking through `FailureGroupCreation.tsx`'s sensor
 chip UI.
 
@@ -114,6 +124,16 @@ before touching the implementation.
 ---
 
 ## 4. Raw mode feels slower than Aggregated mode, despite both rendering the same 4,000 points
+
+**Status re-checked 2026-09-01: main hypothesis still NOT confirmed or
+fixed** — nothing in the current code addresses the canvas-repaint-cost
+theory below. **The small side-finding IS moot now** (not because it was
+fixed, but because its target no longer exists): the whole "Data Insight"
+tab and its `useTablePage` query were removed entirely on 2026-08-16 (unit
+economics didn't justify keeping a tab nobody used — see
+`PROJECT_HANDOVER.md`), so there's no `activeDataTab === 'insight'` gate
+to add anymore. The main perf question this item is actually about
+remains open.
 
 **Found:** 2026-08-05, user reported the Line Chart feels noticeably less
 responsive in Raw sampling than in Aggregated (e.g. hourly avg) — more
@@ -179,6 +199,13 @@ whenever this gets picked up.
 
 ## 5. Pair Plot floods uncaught "(regl) context lost" errors with enough sensors selected
 
+**Re-checked 2026-09-01 (still open, not fixed):** `PairPlotCell.tsx` has
+no `webglcontextlost`/`webglcontextrestored` listener today — confirmed
+via grep, zero matches. It does have an `initError` guard, but that only
+covers `createScatterplot()` throwing at creation time, not a context lost
+*after* successful creation (tier 1 below). User's "fix this later" call
+still stands; nothing has touched this since.
+
 **Found:** 2026-08-06, user hit a runtime error overlay showing `UNCAUGHT
 ×65254` / `(regl) context lost`, stack trace bottoming out in
 `regl-scatterplot`'s internal `handleRAF` loop, while using Pair Plot.
@@ -235,6 +262,13 @@ later, parking as backlog for now.**
 ---
 
 ## 6. Moving Average / Rate of Change need real backend implementation
+
+**Re-checked 2026-09-01 (still open, not fixed):** grepped the whole repo
+for `moving_avg`/`rate_of_change` — zero matches anywhere, Rust or
+TypeScript. `operation_registry.rs`'s multi-ops are still just
+sum/mean/median. Still blocked on the user checking the exact formula with
+their stakeholder (see the two open questions below) — do not implement
+with a guessed default.
 
 **Found:** 2026-08-09, while redesigning the Add Special Sensor window
 (`AddSensorWindow.tsx`/`SensorTooling.tsx`) to fix a whitelist bug where
@@ -406,6 +440,11 @@ workspace files in the wild start depending on whichever shape gets picked.
 ---
 
 ## 8. Autosave debounce has no flush-before-close — a change made in the last 250ms before quitting can be lost
+
+**Re-checked 2026-09-01 (still open, not fixed):** grepped the whole repo
+for `onCloseRequested` — zero matches anywhere. User's "will come back to
+it later" call still stands; nothing has touched window-close lifecycle
+since.
 
 **Found:** performance audit requested by the user across the whole app
 (2026-08-15). `Dashboard.tsx`'s autosave effect used to call
