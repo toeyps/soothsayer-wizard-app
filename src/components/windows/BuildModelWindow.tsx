@@ -14,34 +14,10 @@ interface BuildModelData {
     metadata: CsvMetadata;
 }
 
-const KIND_LABELS: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relationship',
-    clustering: 'Clustering',
-};
-
 const KIND_ABBREV: Record<ModelKind, string> = {
     individual: 'I',
     relationship: 'R',
     clustering: 'C',
-};
-
-// Same per-kind colors as `.model-kind-icon--*` in App.css (the row's own
-// "I"/"R"/"C" badge) — the "Model kind" picker below used a single flat
-// accent color for all three regardless of which kind was active, so a
-// Relationship row's amber badge never matched its own picker's blue
-// highlight. Kept in sync manually since the badge is styled via CSS
-// classes but the picker is styled inline (matches its sibling Category
-// picker's existing per-option color pattern).
-const KIND_ACCENT: Record<ModelKind, string> = {
-    individual: 'var(--accent-color)',
-    relationship: 'var(--warn)',
-    clustering: 'var(--kind-clu)',
-};
-const KIND_ACCENT_MUTED: Record<ModelKind, string> = {
-    individual: 'var(--accent-muted)',
-    relationship: 'var(--warn-muted)',
-    clustering: 'var(--kind-clu-muted)',
 };
 
 const CATEGORY_LABELS: Record<ModelCategory, string> = {
@@ -109,8 +85,8 @@ type GroupBy = 'fg' | 'component';
  *   - 2026-08-31: there is no "add" flow anymore — toggling a sensor into
  *     a group (Sensor tab) is the sole way a model comes into existence
  *     now, always as kind 'individual'; this window only ever edits an
- *     existing model afterward, including changing its kind, per explicit
- *     user request ("เอาปุ่ม add model ออกเหมือนกัน ของหน้านี้").
+ *     existing model's detail afterward, per explicit user request
+ *     ("เอาปุ่ม add model ออกเหมือนกัน ของหน้านี้").
  *   - 2026-08-31: a Failure Group's own Name/Description/Recommendation
  *     are no longer editable here at all — that "Edit details" panel
  *     moved to Dashboard's Failure Groups tab entirely (not duplicated),
@@ -129,9 +105,15 @@ type GroupBy = 'fg' | 'component';
  *     exists; Relationship's predictors and Clustering's Y sensor stay
  *     freely editable, per explicit user request ("sensor ที่เป็น auto
  *     fill ... ต้องล็อคไว้ห้าม user เปลี่ยน ... ส่วน predictor ของ relation
- *     กับ y sensor ของ clustering สามารถเปลี่ยนได้"). Switching a model's
- *     kind in this form carries that locked sensor over to the new kind's
- *     own locked field (Target ↔ X) rather than leaving it blank.
+ *     กับ y sensor ของ clustering สามารถเปลี่ยนได้").
+ *   - 2026-09-01 (later): the "Model kind" picker itself is gone too — a
+ *     model's kind is decided once, on the Sensor tab (which I/R/C toggle
+ *     created it), and can no longer be switched afterward here, per
+ *     explicit user request ("ลบการเปลี่ยน model kind ออก เพราะว่าเราเลือก
+ *     model kind ที่หน้า dashboard แล้ว"). `formKind` still exists as
+ *     state (seeded from the model being edited) purely to pick which
+ *     kind-specific fields render below — it's fixed for the life of the
+ *     form.
  *
  * All of this is local state — no window spawn for any of it — which is
  * also what makes the earlier "two Build Model windows for the same
@@ -413,37 +395,6 @@ export default function BuildModelWindow() {
                 </div>
                 <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '4px' }}>
                     Managed from the Dashboard's Sensor tab.
-                </div>
-            </div>
-
-            <div>
-                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Model kind</label></div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                    {(['individual', 'relationship', 'clustering'] as ModelKind[]).map(k => (
-                        <button
-                            key={k}
-                            onClick={() => {
-                                setFormKind(k);
-                                // The Target/X sensor is locked once set (see the
-                                // fields below) — switching kind must carry that
-                                // same anchor sensor over, or a model switched to
-                                // Clustering here would land on a permanently
-                                // blank, un-settable X sensor with no interactive
-                                // way to fill it in.
-                                if (k === 'clustering') setFormX(prev => prev || formTarget);
-                                else setFormTarget(prev => prev || formX);
-                            }}
-                            style={{
-                                flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
-                                border: `1px solid ${formKind === k ? KIND_ACCENT[k] : 'var(--border)'}`,
-                                background: formKind === k ? KIND_ACCENT_MUTED[k] : 'none',
-                                color: formKind === k ? KIND_ACCENT[k] : 'var(--text-secondary)',
-                                fontWeight: formKind === k ? 600 : 400,
-                            }}
-                        >
-                            {KIND_LABELS[k]}
-                        </button>
-                    ))}
                 </div>
             </div>
 

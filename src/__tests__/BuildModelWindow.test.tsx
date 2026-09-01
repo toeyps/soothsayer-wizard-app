@@ -456,7 +456,7 @@ describe('BuildModelWindow', () => {
             expect(new Set([indColor, relColor, cluColor]).size).toBe(3);
         });
 
-        describe('edit form validation (2026-08-31: adapted from the removed "add model" flow — there is no add anymore, only editing an existing model, including switching its kind)', () => {
+        describe('edit form validation (2026-08-31: adapted from the removed "add model" flow — there is no add anymore, only editing an existing model)', () => {
             it('Save changes is disabled once the name is cleared, re-enabled once restored', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
@@ -473,58 +473,45 @@ describe('BuildModelWindow', () => {
                 expect(save.disabled).toBe(false);
             });
 
-            it('switching an existing model to Relationship requires at least one predictor before Save re-enables', async () => {
+            it('an existing Relationship model with no predictors keeps Save disabled until at least one is added', async () => {
+                const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
                 render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Model One'));
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+                fireEvent.click(screen.getByText('Rel Model'));
                 const form = within(screen.getByTestId('add-model-form'));
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
-                fireEvent.click(form.getByText('Relationship'));
-                expect(save.disabled).toBe(true); // target carries over, but no predictor yet
+                expect(save.disabled).toBe(true); // no predictor yet
 
                 fireEvent.change(form.getByDisplayValue('Add a predictor…'), { target: { value: 'TAG2' } });
                 expect(save.disabled).toBe(false);
             });
 
-            it('switching an existing model to Clustering carries its (locked) Target sensor over as X, requiring only Y before Save re-enables (2026-09-01: X is locked once set, so it can no longer be picked interactively)', async () => {
+            it('an existing Clustering model with no Y sensor keeps Save disabled until Y is filled in (X stays locked)', async () => {
+                const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '' });
                 render(<BuildModelWindow />);
-                await deliverData();
-                fireEvent.click(screen.getByText('Model One'));
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+                fireEvent.click(screen.getByText('Clu Model'));
                 const form = within(screen.getByTestId('add-model-form'));
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
-                fireEvent.click(form.getByText('Clustering'));
-                expect(save.disabled).toBe(true); // X carried over from Target (TAG1), Y still unset
+                expect(save.disabled).toBe(true); // Y still unset
                 expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked X readout
 
-                const yy = form.getByText('Select…').closest('select') as HTMLSelectElement; // only Y is still a select
+                const yy = form.getByText('Select…').closest('select') as HTMLSelectElement;
                 fireEvent.change(yy, { target: { value: 'TAG2' } });
                 expect(save.disabled).toBe(false);
             });
 
-            it('the "Model kind" picker\'s active color matches that kind\'s own row badge color (not one flat color for all three)', async () => {
+            it('shows no "Model kind" picker anywhere — a model\'s kind is decided once, on the Sensor tab, and can\'t be switched here anymore (2026-09-01, per explicit user request: "ลบการเปลี่ยน model kind ออก เพราะว่าเราเลือก model kind ที่หน้า dashboard แล้ว")', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
                 fireEvent.click(screen.getByText('Model One'));
                 const form = within(screen.getByTestId('add-model-form'));
-                const individualBtn = form.getByText('Individual').closest('button') as HTMLButtonElement;
-                const relBtn = form.getByText('Relationship').closest('button') as HTMLButtonElement;
-                const clusterBtn = form.getByText('Clustering').closest('button') as HTMLButtonElement;
-
-                fireEvent.click(individualBtn);
-                // Matches .model-kind-icon--individual.
-                expect(individualBtn.style.color).toBe('var(--accent-color)');
-
-                fireEvent.click(relBtn);
-                // Matches .model-kind-icon--relationship, not the flat accent color.
-                expect(relBtn.style.color).toBe('var(--warn)');
-                expect(individualBtn.style.color).toBe('var(--text-secondary)');
-
-                fireEvent.click(clusterBtn);
-                // Matches .model-kind-icon--clustering.
-                expect(clusterBtn.style.color).toBe('var(--kind-clu)');
-                expect(relBtn.style.color).toBe('var(--text-secondary)');
+                expect(form.queryByText('Model kind')).toBeNull();
+                expect(form.queryByText('Individual')).toBeNull();
+                expect(form.queryByText('Relationship')).toBeNull();
+                expect(form.queryByText('Clustering')).toBeNull();
             });
 
         });
