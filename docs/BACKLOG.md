@@ -475,6 +475,34 @@ exactly the kind unit tests can't fully substitute for a real close.
 native OS close control, inside and outside the 250ms window, before
 this is confidently done.**
 
+**2026-09-01, same day — hit exactly the predicted failure mode on the
+first real-app test: the window became impossible to close at all**,
+confirming the risk called out above wasn't hypothetical. Error toast:
+`window.destroy not allowed. Permissions associated with this command:
+core:window:allow-destroy`, repeated (×4, ×2) — happened on every close
+attempt, regardless of whether anything was actually pending.
+
+**Root cause:** `Window.close()` (the JS API) invokes `plugin:window|close`,
+which re-emits `closeRequested` rather than closing directly — that's
+what makes "prevent, flush, call `.close()` again" the correct pattern in
+the first place (confirmed against Tauri's own `onCloseRequested` docs).
+Once nothing is pending on the second pass, the Rust core finalizes the
+close by destroying the window — and *that* internal step requires the
+`core:window:allow-destroy` permission, which had never been needed
+before because no window in this app had ever registered an
+`onCloseRequested` listener at all (every close used to go through
+Tauri's un-intercepted default path, which apparently doesn't hit the
+same permission check). `src-tauri/capabilities/default.json` (covering
+`main`/`save-as`/`build-model`) had `core:window:allow-close` but not
+`core:window:allow-destroy` — added the missing permission; `cargo check`
+confirms the capabilities file is still valid.
+
+**Still not confidently done** — this class of bug is exactly what
+needed a real close to surface at all (unit tests, which mock
+`getCurrentWindow()` entirely, had no way to catch a missing OS-level
+permission). Needs another real close-app round before this is
+considered finished.
+
 **Found:** performance audit requested by the user across the whole app
 (2026-08-15). `Dashboard.tsx`'s autosave effect used to call
 `saveWorkspaceData(buildWorkspaceState())` on every single tracked state
