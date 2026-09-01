@@ -266,6 +266,16 @@ describe('Dashboard', () => {
         expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1']);
     });
 
+    it('shows no standalone "N Rows" badge next to the data tabs (2026-09-01: removed per explicit user request — it always duplicated the chart\'s own "X / Y pts (downsampled)" badge, both reading the same view.total_rows)', () => {
+        mockUseChartData.mockReturnValue({
+            view: { headers: ['TAG1'], timestamps: Array(10).fill('t'), series: [[]], total_rows: 159264, ts_min: null, ts_max: null },
+            loading: false, error: null,
+        });
+        renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+        expect(screen.queryByText(/Rows$/)).toBeNull();
+        expect(screen.queryByText('159,264 Rows')).toBeNull();
+    });
+
     it('autosaves on mount with the workspace name and lastRoute "dashboard" (after the debounce settles)', async () => {
         renderDashboard({ initialState: makeInitialState({ name: 'My Workspace' }) });
         await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalledWith(

@@ -1292,13 +1292,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
     }, [view, isMultiOp, displayHeaders]);
 
-    // Rows in the filtered (post-aggregation) population — the header badge
-    // count and the export-disabled check both read this. Sourced from the
-    // chart-data query itself (already running for the Line/Scatter view),
-    // not a separate fetch — `get_chart_data`'s response was already
-    // carrying this exact figure.
-    const tableTotalRows = view?.total_rows ?? 0;
-
     // Build workspace state helper for saving
     const buildWorkspaceState = useCallback((overrides?: Partial<WorkspaceState>): WorkspaceState => ({
         ...initialState!,
@@ -1831,11 +1824,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     ))}
                 </div>
                 <div className="section-header-actions">
-                    {/* Always visible regardless of which tab is active — previously
-                        this lived in the (now-removed) single-tab header and updated
-                        live as a filter sanity-check; keeping it tab-independent means
-                        a filter edit is still visible without leaving "Selected Sensor". */}
-                    <span className="section-badge">{tableTotalRows.toLocaleString()} Rows</span>
+                    {/* 2026-09-01: the "N Rows" sanity-check badge that used to sit
+                        here was removed per explicit user request — it always showed
+                        the exact same figure as the chart's own "X / Y pts
+                        (downsampled)" badge above (both read `view.total_rows`), so
+                        it was pure redundancy, not a second, independent number. */}
                     {activeDataTab === 'selected' && selectedSensors.length > 0 && (
                         <button
                             className="export-btn-header"
