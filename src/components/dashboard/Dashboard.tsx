@@ -130,16 +130,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // the CSV at all, only an `extraSensorMetadata` entry — was completely
     // absent from this list on every workspace reopen, even though
     // `selectedSensors`/`extraSensorMetadata` themselves restored fine.
-    // `SensorSelection`'s entire "all sensors" list is driven by this state
-    // (`sensors={sensorHeaders}` in the JSX below), so the sensor was
-    // reported as gone entirely — no name, not in the list at all — not
-    // merely "present but empty", which is what this looked like from
-    // reading the persistence code alone (see `specialSensorRecipes`'s own
-    // doc comment for that separate, deeper bug this fix now lets actually
-    // surface). The live "Add Special Sensor" flow already appends the new
-    // tag into `sensorHeaders` via the `add-sensor-selection` listener
-    // below — this just does the same thing once, on mount, for whatever
-    // was already persisted.
+    // `SensorSelection`'s "all sensors" list read this state directly, so
+    // the sensor was reported as gone entirely — no name, not in the list
+    // at all — not merely "present but empty" (see `specialSensorRecipes`'s
+    // own doc comment for that separate, deeper bug this fix now lets
+    // actually surface). The live "Add Special Sensor" flow already appends
+    // a new tag into `sensorHeaders` via the `add-sensor-selection`
+    // listener below — this just does the same thing once, on mount, for
+    // whatever was already persisted.
+    //
+    // 2026-09-01 (later): `SensorSelection` itself now actually reads the
+    // derived `allSensorTags` below, not this state directly — see that
+    // memo's own comment for a second, related gap this mount-seeding fix
+    // didn't cover.
     const [sensorHeaders, setSensorHeaders] = useState<string[]>(() => {
         const csvHeaders = metadata.headers.filter(h => {
             const lower = h.trim().toLowerCase();
@@ -179,6 +182,34 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [selectedSensors, setSelectedSensors] = useState<string[]>(initialState?.selectedSensors || []);
     const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(initialState?.operationConfig || null);
+
+    // 2026-09-01 fix: `sensorHeaders` above is meant to be kept in sync with
+    // `selectedSensors`/`extraSensorMetadata` via an imperative "push if
+    // missing" step inside the `add-sensor-selection` listener below — but
+    // a special sensor built by extending an ALREADY-special sensor (one
+    // whose own tag never came from the CSV) went missing from the Sensor
+    // tab's list entirely despite being correctly selected and plotted,
+    // reported by the user, and the exact mechanism wasn't pinned down with
+    // certainty from code alone. Rather than chase that specific gap,
+    // `allSensorTags` derives the full list fresh every render instead of
+    // relying on that imperative sync staying correct — a tag that's
+    // SELECTED or has metadata can now never be excluded from the list it
+    // must be pickable/searchable from, regardless of how it got there.
+    // This is what `SensorSelection` actually reads now (see the JSX
+    // below); `sensorHeaders` itself is unchanged (`request-sensors`,
+    // `add-sensor-selection`'s own bookkeeping, and persistence still all
+    // use it as before).
+    const allSensorTags = useMemo(() => {
+        const known = new Set(sensorHeaders.map(h => h.toLowerCase()));
+        const extras: string[] = [];
+        for (const tag of selectedSensors) {
+            if (!known.has(tag.toLowerCase())) { known.add(tag.toLowerCase()); extras.push(tag); }
+        }
+        for (const m of extraSensorMetadata) {
+            if (!known.has(m.tag.toLowerCase())) { known.add(m.tag.toLowerCase()); extras.push(m.tag); }
+        }
+        return extras.length > 0 ? [...sensorHeaders, ...extras] : sensorHeaders;
+    }, [sensorHeaders, selectedSensors, extraSensorMetadata]);
 
     // "Save As" (duplicate workspace under a new name) was removed entirely
     // per user request — button, File menu items, and this window's own
@@ -933,10 +964,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Event handling for Add Sensor Window communication
     // Use ref to keep track of latest state without re-binding listeners
-    const stateRef = useRef({ sensorHeaders, selectedSensors, sensorMetadata, metadata });
+    //
+    // 2026-09-01: tracks `allSensorTags` (not `sensorHeaders` directly) so
+    // AddSensorWindow's own "pick a source sensor" list has the same
+    // guaranteed-complete picture Dashboard's own Sensor tab does — a
+    // special sensor missing from here would mean it can't even be picked
+    // as an input for building another one on top of it.
+    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata });
     useEffect(() => {
-        stateRef.current = { sensorHeaders, selectedSensors, sensorMetadata, metadata };
-    }, [sensorHeaders, selectedSensors, sensorMetadata, metadata]);
+        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata };
+    }, [allSensorTags, selectedSensors, sensorMetadata, metadata]);
 
     useEffect(() => {
         let unlistenRequest: UnlistenFn | undefined;
@@ -947,9 +984,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // Listen for request from child window
             unlistenRequest = await listen('request-sensors', () => {
                 console.log("Dashboard received 'request-sensors', emitting data...");
-                const { sensorHeaders, selectedSensors, sensorMetadata } = stateRef.current;
+                const { allSensorTags, selectedSensors, sensorMetadata } = stateRef.current;
                 emit('sensors-data', {
-                    sensors: sensorHeaders,
+                    sensors: allSensorTags,
                     selectedSensors: selectedSensors,
                     sensorMetadata: sensorMetadata
                 });
@@ -1046,14 +1083,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 if (!initialState) return;
                 await emit('build-model-data', {
                     workspaceId: initialState.id,
-                    sensorHeaders,
+                    sensorHeaders: allSensorTags,
                     sensorMetadata,
                     metadata,
                 });
             });
         })();
         return () => { if (unlisten) unlisten(); };
-    }, [initialState, sensorHeaders, sensorMetadata, metadata]);
+    }, [initialState, allSensorTags, sensorMetadata, metadata]);
 
     // Guards the gap between the `getByLabel` existence check and the
     // `new WebviewWindow(...)` call below (both async IPC round-trips) so
@@ -2011,7 +2048,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 padding: '4px 6px', marginBottom: '-1px', cursor: 'pointer',
                             }}
                         >
-                            {tab === 'sensor' ? `Sensor (${sensorHeaders.length})` : 'Failure Groups'}
+                            {tab === 'sensor' ? `Sensor (${allSensorTags.length})` : 'Failure Groups'}
                         </button>
                     ))}
                 </div>
@@ -2026,7 +2063,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             <div className="widget-content">
                 {activeSensorTab === 'sensor' ? (
                     <SensorSelection
-                        sensors={sensorHeaders}
+                        sensors={allSensorTags}
                         selectedSensors={selectedSensors}
                         onSensorChange={setSelectedSensors}
                         maxSelectable={chartType === 'pair' ? MAX_PAIR_PLOT_SENSORS : undefined}

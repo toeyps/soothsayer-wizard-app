@@ -977,6 +977,20 @@ describe('Dashboard', () => {
             expect(lastProps.sensors.filter((s: string) => s === 'TAG1')).toHaveLength(1);
         });
 
+        it('a selected sensor is always in the Sensor tab\'s list, even if it never made it into sensorHeaders itself (2026-09-01: the reported case — building a special sensor from an ALREADY-special one, live, in one session — left the new tag selected and plotted but genuinely missing from sensorHeaders through a path this couldn\'t pin down with certainty; this derives the displayed list from selectedSensors/extraSensorMetadata too instead of trusting sensorHeaders\' own imperative bookkeeping to always stay complete)', () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    // Deliberately NOT in extraSensorMetadata either — simulates
+                    // whatever gap let `selectedSensors` end up with a tag that
+                    // `sensorHeaders` itself never received.
+                    selectedSensors: ['GHOST1'],
+                    visibleSensors: ['GHOST1'],
+                }),
+            });
+            const lastProps = last(sensorSelectionProps);
+            expect(lastProps.sensors).toContain('GHOST1');
+        });
+
         it('captures "newRecipes" from "add-sensor-selection" and persists them via autosave (2026-09-01: the recipe, not the metadata, is what rebuilds a special sensor\'s data on the next workspace reopen — see WorkspaceState.specialSensorRecipes)', async () => {
             const seedRecipe = { kind: 'formula' as const, tag: 'EXISTING1', formula: '$TAG1 * 2' };
             renderDashboard({ initialState: makeInitialState({ specialSensorRecipes: [seedRecipe] }) });
