@@ -146,6 +146,12 @@ describe('FailureGroupsPanel', () => {
             expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         });
 
+        it('falls back to the X sensor\'s "description (tag)" for a fresh clustering model whose Y is still unset (2026-09-01 fix — the row used to show the bare name with no tag at all here, unlike Individual/Relationship, reported by the user: "i/r เหมือนกัน แต่ c ไม่เหมือนกัน")', () => {
+            const model = makeModel({ name: '', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '' });
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [model] })} />);
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+        });
+
         it('falls back to "Untitled model" for a model with no name and no sensor picked yet', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: '' })] })} />);
             expect(screen.getByText('Untitled model')).toBeTruthy();

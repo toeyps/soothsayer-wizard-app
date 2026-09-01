@@ -118,6 +118,20 @@ type GroupBy = 'fg' | 'component';
  *     dashboard ด้วย"). This window's group cards are read-only headers
  *     now — name, FG badge, model count — nothing else to edit about the
  *     group itself.
+ *   - 2026-09-01: a model's own "Failure groups" list in the edit form is
+ *     now read-only too (a plain chip list, no checkboxes) — membership is
+ *     changed exclusively via the Sensor tab's per-kind toggle, per
+ *     explicit user request ("ไม่ควรแก้ FG ได้ในหน้านี้ ดูได้อย่างเดียว
+ *     ไปแก้ที่หน้า dashboard ที่ทำไว้แล้ว").
+ *   - 2026-09-01: each kind's auto-filled "identity" sensor — Individual/
+ *     Relationship's Target, Clustering's X — is locked (read-only) once
+ *     set, so it can't be changed by mistake after the model already
+ *     exists; Relationship's predictors and Clustering's Y sensor stay
+ *     freely editable, per explicit user request ("sensor ที่เป็น auto
+ *     fill ... ต้องล็อคไว้ห้าม user เปลี่ยน ... ส่วน predictor ของ relation
+ *     กับ y sensor ของ clustering สามารถเปลี่ยนได้"). Switching a model's
+ *     kind in this form carries that locked sensor over to the new kind's
+ *     own locked field (Target ↔ X) rather than leaving it blank.
  *
  * All of this is local state — no window spawn for any of it — which is
  * also what makes the earlier "two Build Model windows for the same
@@ -184,8 +198,15 @@ export default function BuildModelWindow() {
     // that instead of being truly unset (see workspaceManager.ts's
     // migration shim) — else "description (tag)" for the target sensor,
     // else a placeholder.
+    // Clustering's Y sensor stays blank until configured (see this file's
+    // own doc comment on "auto-fill sensor" locking below) — falling back
+    // to X keeps a fresh Clustering model's label/component the same as
+    // Individual/Relationship's instead of reading "Untitled"/Uncategorized
+    // until someone happens to fill in Y, which the user flagged as an
+    // inconsistency between the Dashboard's own FG tab and here (both
+    // derive from the same target-tag shape).
     const modelDisplayLabel = useCallback((model: FailureModel) => {
-        const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const trimmedName = model.name.trim();
         if (trimmedName && trimmedName !== targetTag) return trimmedName;
         if (!targetTag) return 'Untitled model';
@@ -193,7 +214,7 @@ export default function BuildModelWindow() {
     }, [sensorLabel]);
 
     const modelComponent = useCallback((model: FailureModel) => {
-        const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         if (!targetTag) return UNCATEGORIZED;
         return sensorMetaMap.get(normalizeSensorTag(targetTag))?.component || UNCATEGORIZED;
     }, [sensorMetaMap]);
@@ -274,10 +295,6 @@ export default function BuildModelWindow() {
         setFormCriteria('');
         setFormClusterRanges([]);
         setShowForm(false);
-    };
-
-    const toggleFormGroup = (groupNo: number) => {
-        setFormGroupNos(prev => prev.includes(groupNo) ? prev.filter(n => n !== groupNo) : [...prev, groupNo]);
     };
 
     const openEditForm = (model: FailureModel) => {
@@ -374,26 +391,28 @@ export default function BuildModelWindow() {
                 />
             </div>
 
-            {/* Checkbox multi-select — 2026-08-25 redesign: one model can
-                belong to several Failure Groups at once (a real
-                many-to-many relationship, not a duplicate model per
-                group), per explicit user request. "Not in Group" (0) is a
-                selectable option here too, same as it is in the Sensor
-                tab's own quick-assign menu. */}
+            {/* Read-only — 2026-09-01: group membership stopped being
+                editable here per explicit user request ("ไม่ควรแก้ FG ได้
+                ในหน้านี้ ดูได้อย่างเดียว ไปแก้ที่หน้า dashboard ที่ทำไว้แล้ว");
+                it's changed exclusively via the Sensor tab's per-kind
+                toggle now (see Dashboard.tsx's toggleSensorGroupKind), same
+                place that creates/removes a model altogether. This just
+                shows where the model currently sits. */}
             <div>
                 <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto', padding: '2px' }}>
-                    {realGroups.map(g => (
-                        <label key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                            <input type="checkbox" checked={formGroupNos.includes(g.no)} onChange={() => toggleFormGroup(g.no)} />
-                            <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(g.no)], flexShrink: 0 }} />
-                            FG-{g.no} · {g.name}
-                        </label>
-                    ))}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={formGroupNos.includes(0)} onChange={() => toggleFormGroup(0)} />
-                        Not in Group
-                    </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                    {formGroupNos.map(no => {
+                        const g = realGroups.find(x => x.no === no);
+                        return (
+                            <span key={no} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', padding: '3px 8px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(no)], flexShrink: 0 }} />
+                                {no === 0 ? 'Not in Group' : `FG-${no} · ${g?.name ?? ''}`}
+                            </span>
+                        );
+                    })}
+                </div>
+                <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '4px' }}>
+                    Managed from the Dashboard's Sensor tab.
                 </div>
             </div>
 
@@ -403,7 +422,17 @@ export default function BuildModelWindow() {
                     {(['individual', 'relationship', 'clustering'] as ModelKind[]).map(k => (
                         <button
                             key={k}
-                            onClick={() => setFormKind(k)}
+                            onClick={() => {
+                                setFormKind(k);
+                                // The Target/X sensor is locked once set (see the
+                                // fields below) — switching kind must carry that
+                                // same anchor sensor over, or a model switched to
+                                // Clustering here would land on a permanently
+                                // blank, un-settable X sensor with no interactive
+                                // way to fill it in.
+                                if (k === 'clustering') setFormX(prev => prev || formTarget);
+                                else setFormTarget(prev => prev || formX);
+                            }}
                             style={{
                                 flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
                                 border: `1px solid ${formKind === k ? KIND_ACCENT[k] : 'var(--border)'}`,
@@ -447,10 +476,8 @@ export default function BuildModelWindow() {
             {formKind === 'individual' && (
                 <div className="fg-inspector-field">
                     <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
-                    <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
-                        <option value="">Select a sensor…</option>
-                        {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
-                    </select>
+                    <div className="model-component-readout">{formTarget ? sensorLabel(formTarget) : '—'}</div>
+                    <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created, to prevent picking the wrong sensor by mistake.</div>
                 </div>
             )}
 
@@ -458,10 +485,8 @@ export default function BuildModelWindow() {
                 <>
                     <div className="fg-inspector-field">
                         <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
-                        <select className="fg-inspector-input" value={formTarget} onChange={e => setFormTarget(e.target.value)}>
-                            <option value="">Select a sensor…</option>
-                            {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
-                        </select>
+                        <div className="model-component-readout">{formTarget ? sensorLabel(formTarget) : '—'}</div>
+                        <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created, to prevent picking the wrong sensor by mistake.</div>
                     </div>
                     <div className="fg-inspector-field">
                         <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
@@ -494,10 +519,8 @@ export default function BuildModelWindow() {
                     <div style={{ display: 'flex', gap: '8px' }}>
                         <div className="fg-inspector-field" style={{ flex: 1 }}>
                             <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
-                            <select className="fg-inspector-input" value={formX} onChange={e => setFormX(e.target.value)}>
-                                <option value="">Select…</option>
-                                {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
-                            </select>
+                            <div className="model-component-readout">{formX ? sensorLabel(formX) : '—'}</div>
+                            <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created.</div>
                         </div>
                         <div className="fg-inspector-field" style={{ flex: 1 }}>
                             <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
@@ -623,7 +646,7 @@ export default function BuildModelWindow() {
             const grp = allGroups.find(x => x.no === no);
             return no === 0 ? 'Not in Group' : `FG-${no}${grp ? ` · ${grp.name}` : ''}`;
         }).join(', ');
-        const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const component = targetTag ? getComponent(targetTag) : '';
         const isEditingThis = showForm && editingModelId === model.id;
         const accent = FG_ACCENT[getFgGroupColor(model.groupNos[0] ?? 0)];

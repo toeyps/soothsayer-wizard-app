@@ -103,7 +103,13 @@ export default function FailureGroupsPanel({
     // group listed the exact same sensor description (several models named
     // after the same sensor were impossible to tell apart at a glance).
     const modelDisplayLabel = (model: FailureModel) => {
-        const targetTag = model.kind === 'clustering' ? model.ySensor : model.targetSensor;
+        // Clustering's Y sensor stays blank until configured in Build Model
+        // (Dashboard.tsx's makeDefaultModelForKind seeds X only) — falling
+        // back to X here keeps this label the same "description (tag)"
+        // shape Individual/Relationship always show, instead of silently
+        // dropping the tag, which the user flagged as an inconsistency
+        // ("i/r เหมือนกัน แต่ c ไม่เหมือนกัน").
+        const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const trimmedName = model.name.trim();
         if (!targetTag) return trimmedName || 'Untitled model';
         const label = (trimmedName && trimmedName !== targetTag) ? trimmedName : sensorMetaMap.get(normalizeSensorTag(targetTag))?.description;

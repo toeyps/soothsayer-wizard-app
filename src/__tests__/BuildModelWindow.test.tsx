@@ -203,15 +203,16 @@ describe('BuildModelWindow', () => {
             expect(mockEmit).not.toHaveBeenCalledWith('open-build-model', expect.anything());
         });
 
-        it('shows a "Failure groups" checkbox list inside the opened form, with the model\'s own group(s) pre-checked (2026-08-25: a model can belong to more than one group)', async () => {
+        it('shows the model\'s Failure Group membership as a read-only chip list, no checkboxes (2026-09-01: editing group membership moved to the Sensor tab entirely — "ไม่ควรแก้ FG ได้ในหน้านี้ ดูได้อย่างเดียว")', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [makeModel({ groupNos: [2] })] } });
             fireEvent.click(screen.getByText('Model One'));
-            const checkbox = screen.getByText('FG-2 · Group B').closest('label')!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-            expect(checkbox.checked).toBe(true);
+            const form = within(screen.getByTestId('add-model-form'));
+            expect(form.getByText('FG-2 · Group B')).toBeTruthy();
+            expect(form.queryByRole('checkbox')).toBeNull();
         });
 
-        it('a model can be checked into more than one Failure Group at once', async () => {
+        it('only lists the model\'s current Failure Groups — a group it does not belong to is neither shown nor selectable here (regression against the old checkbox list, which offered every group)', async () => {
             render(<BuildModelWindow />);
             await deliverData({
                 failureGroupState: {
@@ -220,7 +221,10 @@ describe('BuildModelWindow', () => {
                 },
             });
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByText('FG-2 · Group B'));
+            const form = within(screen.getByTestId('add-model-form'));
+            expect(form.getByText('FG-1 · Group A')).toBeTruthy();
+            expect(form.queryByText('FG-2 · Group B')).toBeNull();
+
             await act(async () => {
                 fireEvent.click(screen.getByText('Save changes'));
                 await Promise.resolve();
@@ -228,8 +232,7 @@ describe('BuildModelWindow', () => {
             });
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             const saved = state.failureGroupState.models.find((m: any) => m.id === 'm1');
-            expect(saved.groupNos).toEqual(expect.arrayContaining([1, 2]));
-            expect(saved.groupNos).toHaveLength(2);
+            expect(saved.groupNos).toEqual([1]); // unchanged
         });
 
         it('the Save changes footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own button, requiring exactly the right page scroll position to reach it)', async () => {
@@ -423,7 +426,7 @@ describe('BuildModelWindow', () => {
             expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         });
 
-        it('shows sensors as "description (tag)" in the summary line, predictor chips, and sensor pickers', async () => {
+        it('shows sensors as "description (tag)" in the summary line, predictor chips, and the locked Target readout', async () => {
             const rel = makeModel({ id: 'm1', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'] });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
@@ -431,9 +434,13 @@ describe('BuildModelWindow', () => {
 
             fireEvent.click(screen.getByText('Rel Model'));
             const form = within(screen.getByTestId('add-model-form'));
-            expect(form.getAllByText('Pump Temp (TAG2)').length).toBe(2);
-            expect(form.getAllByText('TAG3').length).toBe(2);
-            expect(form.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            // 2026-09-01: Target sensor is now a locked readout, not a select
+            // offering every sensor as an option — so each predictor's label
+            // only appears once now (the chip), not twice (chip + the
+            // Target select's own unrelated option list).
+            expect(form.getAllByText('Pump Temp (TAG2)').length).toBe(1);
+            expect(form.getAllByText('TAG3').length).toBe(1);
+            expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked Target readout
         });
 
         it('gives each model kind a distinct single-letter icon and color', async () => {
@@ -480,7 +487,7 @@ describe('BuildModelWindow', () => {
                 expect(save.disabled).toBe(false);
             });
 
-            it('switching an existing model to Clustering requires both X and Y before Save re-enables', async () => {
+            it('switching an existing model to Clustering carries its (locked) Target sensor over as X, requiring only Y before Save re-enables (2026-09-01: X is locked once set, so it can no longer be picked interactively)', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
                 fireEvent.click(screen.getByText('Model One'));
@@ -488,12 +495,11 @@ describe('BuildModelWindow', () => {
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
                 fireEvent.click(form.getByText('Clustering'));
-                expect(save.disabled).toBe(true); // Individual's target doesn't carry over to X/Y
+                expect(save.disabled).toBe(true); // X carried over from Target (TAG1), Y still unset
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked X readout
 
-                const selects = form.getAllByText('Select…').map(o => o.closest('select')!) as HTMLSelectElement[];
-                fireEvent.change(selects[0], { target: { value: 'TAG1' } });
-                expect(save.disabled).toBe(true);
-                fireEvent.change(selects[1], { target: { value: 'TAG2' } });
+                const yy = form.getByText('Select…').closest('select') as HTMLSelectElement; // only Y is still a select
+                fireEvent.change(yy, { target: { value: 'TAG2' } });
                 expect(save.disabled).toBe(false);
             });
 
@@ -521,16 +527,50 @@ describe('BuildModelWindow', () => {
                 expect(relBtn.style.color).toBe('var(--text-secondary)');
             });
 
-            it('the Component readout falls back to its placeholder once the target sensor is cleared', async () => {
+        });
+
+        describe('locked auto-fill sensor (2026-09-01: Target/X can no longer be changed after the model is created, per explicit user request — "ต้องล็อคไว้ห้าม user เปลี่ยน ... human error")', () => {
+            it('Individual\'s Target sensor is a read-only readout, not a select — the raw tag can\'t be reassigned', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
                 fireEvent.click(screen.getByText('Model One'));
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getByText('Pump')).toBeTruthy(); // Model One's own target (TAG1) already resolves a component
+                expect(form.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+                expect(form.getByText('Pump Pressure (TAG1)').closest('select')).toBeNull();
+            });
 
-                fireEvent.change(form.getByDisplayValue('Pump Pressure (TAG1)'), { target: { value: '' } });
-                expect(form.getByText('Auto-filled from target sensor')).toBeTruthy();
-                expect(form.queryByText('Pump')).toBeNull();
+            it('Relationship\'s Target sensor is locked too, but its Predictors stay a normal editable multi-select', async () => {
+                const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+                fireEvent.click(screen.getByText('Rel Model'));
+                const form = within(screen.getByTestId('add-model-form'));
+                expect(form.getByText('Pump Pressure (TAG1)').closest('select')).toBeNull(); // Target: locked
+
+                fireEvent.change(form.getByDisplayValue('Add a predictor…'), { target: { value: 'TAG3' } });
+                expect(form.getByText('TAG3')).toBeTruthy(); // Predictors: still freely editable
+            });
+
+            it('Clustering\'s X sensor is locked, but its Y sensor stays a normal editable select', async () => {
+                const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+                fireEvent.click(screen.getByText('Clu Model'));
+                const form = within(screen.getByTestId('add-model-form'));
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // X: locked
+
+                const ySelect = form.getByDisplayValue('Pump Temp (TAG2)') as HTMLSelectElement; // Y: still a select
+                fireEvent.change(ySelect, { target: { value: 'TAG3' } });
+                expect(ySelect.value).toBe('TAG3');
+            });
+
+            it('a fresh clustering model (X set, Y still unset) is grouped under its X sensor\'s component in "Group by Component" view, not left in "Uncategorized" (2026-09-01 fix — component derivation only looked at Y before)', async () => {
+                const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '' });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+                fireEvent.click(screen.getByText('Group by Component'));
+                expect(screen.getAllByText('Pump').length).toBeGreaterThan(0);
+                expect(screen.queryByText('Uncategorized')).toBeNull();
             });
         });
     });
