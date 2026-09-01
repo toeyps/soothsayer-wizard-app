@@ -125,12 +125,32 @@ export interface DashboardRef {
 const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata: sensorMetadataProp, onBack, initialState }, ref) => {
     const [localName, setLocalName] = useState(initialState?.name || "");
 
-    const [sensorHeaders, setSensorHeaders] = useState<string[]>(() =>
-        metadata.headers.filter(h => {
+    // 2026-09-01 fix: seeded from `metadata.headers` (the raw CSV columns)
+    // ALONE used to mean a special/calculated sensor — which has no row in
+    // the CSV at all, only an `extraSensorMetadata` entry — was completely
+    // absent from this list on every workspace reopen, even though
+    // `selectedSensors`/`extraSensorMetadata` themselves restored fine.
+    // `SensorSelection`'s entire "all sensors" list is driven by this state
+    // (`sensors={sensorHeaders}` in the JSX below), so the sensor was
+    // reported as gone entirely — no name, not in the list at all — not
+    // merely "present but empty", which is what this looked like from
+    // reading the persistence code alone (see `specialSensorRecipes`'s own
+    // doc comment for that separate, deeper bug this fix now lets actually
+    // surface). The live "Add Special Sensor" flow already appends the new
+    // tag into `sensorHeaders` via the `add-sensor-selection` listener
+    // below — this just does the same thing once, on mount, for whatever
+    // was already persisted.
+    const [sensorHeaders, setSensorHeaders] = useState<string[]>(() => {
+        const csvHeaders = metadata.headers.filter(h => {
             const lower = h.trim().toLowerCase();
             return lower !== 'timestamp' && lower !== 'time';
-        })
-    );
+        });
+        const known = new Set(csvHeaders.map(h => h.toLowerCase()));
+        const extraTags = (initialState?.extraSensorMetadata ?? [])
+            .map(m => m.tag)
+            .filter(tag => !known.has(tag.toLowerCase()));
+        return extraTags.length > 0 ? [...csvHeaders, ...extraTags] : csvHeaders;
+    });
 
     // Metadata for sensors created at runtime via "Add Special Sensor" --
     // the mapping-CSV-derived `sensorMetadataProp` never changes after

@@ -952,6 +952,31 @@ describe('Dashboard', () => {
             expect(lastProps.sensors).toContain('CALC1'); // merged into sensorHeaders too
         });
 
+        it('seeds sensorHeaders with a special sensor\'s tag from initialState.extraSensorMetadata on mount, not just on the live "add-sensor-selection" event (2026-09-01 fix — a special sensor has no row in the CSV at all, so it was completely absent from the Sensor tab\'s list on every reopen, reported by the user: "ปิดโปรแกรมเปิดใหม่แล้ว special sensor หาย")', () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['CALC1'],
+                    visibleSensors: ['CALC1'],
+                    extraSensorMetadata: [{ tag: 'CALC1', description: 'Calculated', unit: '', component: '' }],
+                }),
+            });
+            const lastProps = last(sensorSelectionProps);
+            expect(lastProps.sensors).toContain('CALC1');
+            // The real CSV headers (TAG1/TAG2/TAG3 — see makeMetadata) are
+            // still there too, not replaced by the extra tag.
+            expect(lastProps.sensors).toEqual(expect.arrayContaining(['TAG1', 'TAG2', 'TAG3', 'CALC1']));
+        });
+
+        it('does not duplicate a special sensor\'s tag in sensorHeaders if it happens to also be a real CSV column already', () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    extraSensorMetadata: [{ tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' }],
+                }),
+            });
+            const lastProps = last(sensorSelectionProps);
+            expect(lastProps.sensors.filter((s: string) => s === 'TAG1')).toHaveLength(1);
+        });
+
         it('captures "newRecipes" from "add-sensor-selection" and persists them via autosave (2026-09-01: the recipe, not the metadata, is what rebuilds a special sensor\'s data on the next workspace reopen — see WorkspaceState.specialSensorRecipes)', async () => {
             const seedRecipe = { kind: 'formula' as const, tag: 'EXISTING1', formula: '$TAG1 * 2' };
             renderDashboard({ initialState: makeInitialState({ specialSensorRecipes: [seedRecipe] }) });
