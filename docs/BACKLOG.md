@@ -291,6 +291,41 @@ computes the rolling result, and returns a new column the same way
 
 ## 7. Sensors created via "Add Special Sensor" don't survive closing and reopening the app
 
+**Resolved (2026-09-01)**, via the "recipe replay" approach discussed
+below (option 2) — commits `f9eba47`, `787d97e`, `c34d6ed`. Two separate
+bugs turned out to be stacked on top of each other, found across two
+rounds of real-app testing with the user:
+
+1. **The actual data loss** (this item's original root cause, confirmed
+   below): fixed by persisting a `SpecialSensorRecipe` per calculated
+   sensor (formula string, or source sensors + `SensorOperationConfig`) in
+   `WorkspaceState.specialSensorRecipes`, then replaying each one — in
+   creation order, since a later sensor can reference an earlier one — via
+   `DataUploadPage.tsx`'s `replaySpecialSensorRecipes()`, called right
+   after `load_csv` on every workspace reopen, before Dashboard ever
+   queries chart data. A recipe that fails to replay (source sensor
+   renamed/removed since) is skipped, not fatal, and surfaces as one
+   combined toast via the existing `reportError()`/`<ErrorToasts />`
+   mechanism (confirmed with the user via `AskUserQuestion` before
+   implementing — silent log vs. visible toast).
+2. **A second, unrelated bug this uncovered once #1 was fixed**: even
+   with the Rust-side data restored, the special sensor was still
+   completely absent from the Sensor tab's tree/search — `sensorHeaders`
+   (the list `SensorSelection` reads) was only ever seeded from the raw
+   CSV headers on mount, never merged with `extraSensorMetadata`. Fixed
+   by deriving a new `allSensorTags` memo (`sensorHeaders` ∪
+   `selectedSensors` ∪ `extraSensorMetadata` tags) that every consumer
+   (`SensorSelection`, the tab's sensor count, `AddSensorWindow`'s own
+   picker, Build Model's sensor dropdowns) now reads instead of
+   `sensorHeaders` directly — structural fix rather than chasing one
+   more imperative-sync gap, since a live repro (building a special
+   sensor from an already-special one, same session, no restart
+   involved) couldn't be pinned to an exact line from static reading
+   alone in an environment that can't run the actual Tauri app
+   interactively.
+
+Both confirmed fixed by the user testing the real app after each round.
+
 > **📋 2026-08-06 — superseded by [`docs/PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md).**
 > That doc has a full project-wide audit (this turned out to be the ONLY
 > place where actual *data* is lost, but there are 6 more places where
@@ -418,3 +453,42 @@ real close (custom titlebar button in `TitleBar.tsx` + the native OS close
 control) after an edit, both inside and outside the 250ms window, before
 considering this done — this is exactly the kind of change unit tests
 can't fully cover.
+
+---
+
+## 9. `echarts` bundle chunk exceeds Vite's 500kB warning threshold
+
+**Found:** 2026-09-01, during a full dead-code/unused-export audit
+(`knip` + `tsc --noEmit` + `cargo clippy`) requested by the user. `npm run
+build` reports `assets/echarts-*.js` at **1.14MB (381KB gzip)** — Vite's
+default chunk-size-warning threshold is 500kB.
+
+**Status: not a pressing problem today, explicitly deferred by the
+user — "เขียนทิ้งไว้ใน backlog กับ notion ด้วย แต่ยังไม่ทำนะ".**
+
+**Context that matters before touching this:** the app already does the
+one optimization that matters most — `App.tsx:9` lazy-loads `Dashboard`
+specifically so `echarts` + `regl-scatterplot` (the two heaviest deps)
+stay out of the initial bundle the upload screen has to parse:
+
+> "Dashboard pulls in echarts + regl-scatterplot (the app's two heaviest
+> dependencies) — deferring it until a workspace is actually open keeps
+> those out of the initial bundle the upload screen has to parse."
+
+Since this is a Tauri desktop app (assets ship inside the installer, not
+fetched over the network on every launch), the usual "large chunk = slow
+page load" framing mostly doesn't apply here. What actually remains:
+- A brief parse/execute delay the *first* time a workspace is opened in a
+  session (the lazy chunk has to be parsed before Dashboard finishes
+  mounting) — not on every subsequent workspace open in the same session.
+- Installer size, and update-package size if an auto-updater is ever
+  added.
+- RAM once parsed — but echarts needs that memory regardless of how many
+  pieces it's split into, since it's genuinely in use once a chart shows.
+
+**If picked up:** split `echarts` further by chart type actually used
+(Line/Scatter/Pair Plot each pull in different pieces today) rather than
+one monolithic chunk — bigger lift, touches `components/charts/*` import
+boundaries, and trades bundle size for more moving parts to maintain. Only
+worth it if a user actually reports the first-workspace-open delay as
+noticeable — not before.
