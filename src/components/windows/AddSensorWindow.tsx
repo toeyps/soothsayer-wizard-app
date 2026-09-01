@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
-import { SensorMetadata, SensorOperationConfig } from "../../types";
+import { SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
 
@@ -129,12 +129,21 @@ export default function AddSensorWindow() {
 
     /**
      * Run whatever calculation is currently configured (formula, legacy
-     * config, or none -- "add as-is") and return the resulting sensor list
-     * plus the master-data metadata (description/unit/component) for the
-     * newly created sensor -- the same fields a mapping CSV row supplies
-     * for an imported sensor.
+     * config, or none -- "add as-is") and return the resulting sensor list,
+     * the master-data metadata (description/unit/component) for the newly
+     * created sensor -- the same fields a mapping CSV row supplies for an
+     * imported sensor -- and its recipe.
+     *
+     * 2026-09-01: the recipe is new -- Rust's `calculate_new_sensor`/
+     * `evaluate_formula` compute the new column ONCE and push it straight
+     * onto the in-memory session (`AppState.data`); nothing before this
+     * persisted anything that could recreate it, so the column was
+     * silently gone after every app restart even though its name/
+     * description survived (see `newMetadata`). The recipe is exactly
+     * what's needed to invoke the same command again after a workspace
+     * reopen -- see `WorkspaceState.specialSensorRecipes`.
      */
-    const computeCurrentRound = async (): Promise<{ sensorsForEmit: string[]; newMetadata: SensorMetadata[] }> => {
+    const computeCurrentRound = async (): Promise<{ sensorsForEmit: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
         if (formulaMode && formulaExpression.trim()) {
             const newSensorName = await invoke<string>('evaluate_formula', {
                 formula: formulaExpression,
@@ -148,6 +157,7 @@ export default function AddSensorWindow() {
                     unit: unit.trim(),
                     component: component.trim() || 'Uncategorized',
                 }],
+                newRecipes: [{ kind: 'formula', tag: newSensorName, formula: formulaExpression }],
             };
         }
         if (operationConfig) {
@@ -163,9 +173,10 @@ export default function AddSensorWindow() {
                     unit: unit.trim(),
                     component: component.trim() || 'Uncategorized',
                 }],
+                newRecipes: [{ kind: 'operation', tag: newSensorName, sourceSensors: selectedSensors, operationConfig }],
             };
         }
-        return { sensorsForEmit: selectedSensors, newMetadata: [] };
+        return { sensorsForEmit: selectedSensors, newMetadata: [], newRecipes: [] };
     };
 
     // Creates the sensor currently configured, tells Dashboard about it right
@@ -180,7 +191,7 @@ export default function AddSensorWindow() {
         setNameMissing(false);
         setLoading(true);
         try {
-            const { sensorsForEmit, newMetadata } = await computeCurrentRound();
+            const { sensorsForEmit, newMetadata, newRecipes } = await computeCurrentRound();
             const nextPending = Array.from(new Set([...pendingSensors, ...sensorsForEmit]));
             setPendingSensors(nextPending);
 
@@ -199,6 +210,7 @@ export default function AddSensorWindow() {
                 sensors: nextPending,
                 operation: null,
                 newMetadata,
+                newRecipes,
             });
 
             showToast(createdName ? `Added: ${newMetadata[0].description || createdName}` : `Added ${sensorsForEmit.length} sensor(s)`);

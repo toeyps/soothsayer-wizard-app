@@ -22,7 +22,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useDataUpload } from "../../hooks/useDataUpload";
 import { useMappingData, buildSensorMetadataFromMapping } from "../../hooks/useMappingData";
-import type { CsvMetadata, SensorMetadata, WorkspaceState, WorkspaceMetadata } from "../../types";
+import type { CsvMetadata, SensorMetadata, SpecialSensorRecipe, WorkspaceState, WorkspaceMetadata } from "../../types";
 import {
   saveWorkspaceData,
   loadWorkspaceData,
@@ -31,6 +31,7 @@ import {
   renameWorkspaceFile,
 } from "../../workspaceManager";
 import { formatDateTime } from "../../utils/dateFormat";
+import { reportError } from "../../errorReporter";
 
 interface DataUploadPageProps {
   onDataReady: (
@@ -38,6 +39,52 @@ interface DataUploadPageProps {
     workspaceState: WorkspaceState,
     sensorMetadata?: SensorMetadata[] | null
   ) => void;
+}
+
+/**
+ * Rebuilds every "Add Special Sensor" column in the Rust backend's
+ * in-memory session, in creation order, right after `load_csv` on a
+ * workspace reopen -- see `WorkspaceState.specialSensorRecipes`'s own doc
+ * comment for why this is necessary at all: `calculate_new_sensor`/
+ * `evaluate_formula` push the computed column straight onto that session's
+ * memory, which is wiped on every app restart and re-created fresh from
+ * the ORIGINAL CSV (no calculated columns) -- without this replay, a
+ * special sensor's name/description would still show up (from
+ * `extraSensorMetadata`) but plot no data at all, silently.
+ *
+ * `customName` is always forced to the recipe's own `tag`, so the
+ * recreated column's header matches `extraSensorMetadata`/`selectedSensors`
+ * exactly regardless of Rust's own auto-naming.
+ *
+ * A recipe that fails to replay (most likely: a source sensor was renamed
+ * or removed from the mapping since) is skipped, not fatal for the whole
+ * workspace open -- the rest still get their data back. Failures are
+ * surfaced together as one toast via the global error reporter.
+ */
+async function replaySpecialSensorRecipes(recipes: SpecialSensorRecipe[]): Promise<void> {
+  const failed: string[] = [];
+  for (const recipe of recipes) {
+    try {
+      if (recipe.kind === 'formula') {
+        await invoke('evaluate_formula', { formula: recipe.formula, customName: recipe.tag });
+      } else {
+        await invoke('calculate_new_sensor', {
+          sensors: recipe.sourceSensors,
+          config: { ...recipe.operationConfig, customName: recipe.tag },
+        });
+      }
+    } catch (err) {
+      console.warn(`Failed to restore special sensor "${recipe.tag}":`, err);
+      failed.push(recipe.tag);
+    }
+  }
+  if (failed.length > 0) {
+    reportError(
+      'special-sensor-restore',
+      `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed.join(', ')}`,
+      'Their source sensor(s) may have been renamed or removed since they were created.'
+    );
+  }
 }
 
 /* ---------------------------------------------------------------- */
@@ -268,6 +315,14 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       const state = await loadWorkspaceData(id);
       if (!state) throw new Error("Workspace not found");
       const dataMetadata = await invoke<CsvMetadata>("load_csv", { paths: state.dataFilePaths });
+
+      // Must happen before `onDataReady` hands off to Dashboard, so the
+      // very first chart render already has real data for every special
+      // sensor instead of a "ghost" entry that only gets fixed on the next
+      // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
+      if (state.specialSensorRecipes?.length) {
+        await replaySpecialSensorRecipes(state.specialSensorRecipes);
+      }
 
       let sm: SensorMetadata[] | null = null;
       if (state.mappingFilePath && state.mappingKeyColumn) {

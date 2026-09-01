@@ -42,6 +42,14 @@ export interface SensorOperationConfig {
     customName?: string;
 }
 
+/** What to re-run to rebuild one "Add Special Sensor" column after a
+ *  workspace reopen -- see `WorkspaceState.specialSensorRecipes` for the
+ *  full story. `tag` is the sensor's persisted name (forced back as the
+ *  recomputation's customName on replay, not just a label). */
+export type SpecialSensorRecipe =
+    | { kind: 'formula'; tag: string; formula: string }
+    | { kind: 'operation'; tag: string; sourceSensors: string[]; operationConfig: SensorOperationConfig };
+
 export interface WorkspaceMetadata {
     id: string;
     name: string;
@@ -373,8 +381,29 @@ export interface WorkspaceState {
      *  get no entry there). Merged with the mapping-CSV-derived
      *  `sensorMetadata` in Dashboard.tsx -- kept separate here rather than
      *  folded into one array because `sensorMetadata` itself is re-derived
-     *  fresh from the mapping CSV on every load, not persisted directly. */
+     *  fresh from the mapping CSV on every load, not persisted directly.
+     *
+     *  Cosmetic only (name/description/unit/component) -- see
+     *  `specialSensorRecipes` below for what actually reconstructs the
+     *  sensor's data on reload. */
     extraSensorMetadata?: SensorMetadata[];
+    /** 2026-09-01: what to re-run, in order, right after `load_csv` on
+     *  workspace open, to rebuild each "Add Special Sensor" column in the
+     *  Rust backend's in-memory session -- that computed column previously
+     *  only ever lived in that session's memory (`calculate_new_sensor`/
+     *  `evaluate_formula` push directly onto `AppState.data`), so it was
+     *  silently gone after every restart: `extraSensorMetadata` kept the
+     *  cosmetic name/description around, but the sensor plotted no data at
+     *  all, with no error -- a "ghost" entry in the sensor list. This is
+     *  the actual recipe (not the result) needed to recreate it, in the
+     *  same spirit as the rest of the app never caching computed data (see
+     *  PM fit results, CSV rows themselves). `tag` is always forced back as
+     *  the recomputation's `customName` so the recreated column's header
+     *  matches `extraSensorMetadata`/`selectedSensors` exactly, regardless
+     *  of Rust's own auto-naming. Entries must replay in array order --
+     *  formula sensors can reference an earlier "Add Special Sensor" round
+     *  by tag, and Rust needs that earlier column to already exist. */
+    specialSensorRecipes?: SpecialSensorRecipe[];
     /** Per-sensor line-color override, set via the pipette in the Selected
      *  Sensor tab. Sensors absent from this map fall back to the default
      *  palette (see `resolvedSensorColors` in Dashboard.tsx). */

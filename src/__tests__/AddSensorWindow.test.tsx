@@ -145,7 +145,7 @@ describe('AddSensorWindow', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', { sensors: ['TAG1'], operation: null, newMetadata: [] });
+        expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', { sensors: ['TAG1'], operation: null, newMetadata: [], newRecipes: [] });
         expect(screen.getByText(/Added 1 sensor/)).toBeTruthy();
     });
 
@@ -191,6 +191,12 @@ describe('AddSensorWindow', () => {
             sensors: ['TAG1', 'CALC1'],
             operation: null,
             newMetadata: [{ tag: 'CALC1', description: 'My Description', unit: 'bar', component: 'Pump' }],
+            newRecipes: [{
+                kind: 'operation',
+                tag: 'CALC1',
+                sourceSensors: ['TAG1'],
+                operationConfig: { mode: 'single', singleOp: { type: 'add', value: 1 }, customName: 'MyCalc' },
+            }],
         });
         expect(screen.getByText(/Added: My Description/)).toBeTruthy();
         // New sensor becomes pickable for the next round.
@@ -220,6 +226,12 @@ describe('AddSensorWindow', () => {
         });
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
             sensors: ['TAG1', 'TAG2', 'FORMULA1'],
+        }));
+        // 2026-09-01: the recipe (not just the metadata) is what lets a
+        // reopened workspace recreate this column — see
+        // WorkspaceState.specialSensorRecipes.
+        expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
+            newRecipes: [{ kind: 'formula', tag: 'FORMULA1', formula: '$TAG1 + $TAG2' }],
         }));
     });
 

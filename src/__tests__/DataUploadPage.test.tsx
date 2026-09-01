@@ -10,6 +10,7 @@ import type {
 import type { CsvLoadReport, MappingData, MappingResult } from '../types/dataUpload';
 import type { UseDataUploadReturn } from '../hooks/useDataUpload';
 import type { UseMappingDataReturn } from '../hooks/useMappingData';
+import { getErrors, dismissAllErrors } from '../errorReporter';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Mocks
@@ -728,6 +729,93 @@ describe('F. Load workspace flow', () => {
     });
     // Spinner is gone (loadingWorkspace cleared)
     expect(screen.queryByText('Loading workspace…')).toBeNull();
+  });
+
+  describe('special sensor recipe replay (2026-09-01: rebuilds "Add Special Sensor" columns in the Rust backend\'s in-memory session right after load_csv — see WorkspaceState.specialSensorRecipes)', () => {
+    beforeEach(() => {
+      dismissAllErrors();
+    });
+
+    it("F32. replays a formula recipe via evaluate_formula, forcing customName to the recipe's own tag, before onDataReady fires", async () => {
+      mockLoadWorkspace.mockResolvedValue({
+        ...baseLoadedWs,
+        specialSensorRecipes: [{ kind: 'formula', tag: 'CALC1', formula: '$sensor_a * 2' }],
+      });
+      const invokeOrder: string[] = [];
+      mockInvoke.mockImplementation((cmd: string) => {
+        invokeOrder.push(cmd);
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') return Promise.resolve('CALC1');
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: '$sensor_a * 2', customName: 'CALC1' });
+      // Replayed right after load_csv, before Dashboard ever sees the data.
+      expect(invokeOrder.indexOf('load_csv')).toBeLessThan(invokeOrder.indexOf('evaluate_formula'));
+      expect(getErrors()).toHaveLength(0); // it succeeded — no toast
+    });
+
+    it('F33. replays an operation recipe via calculate_new_sensor with sourceSensors + operationConfig, customName forced', async () => {
+      mockLoadWorkspace.mockResolvedValue({
+        ...baseLoadedWs,
+        specialSensorRecipes: [{
+          kind: 'operation', tag: 'CALC2', sourceSensors: ['sensor_a'],
+          operationConfig: { mode: 'single', singleOp: { type: 'add', value: 5 } },
+        }],
+      });
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'calculate_new_sensor') return Promise.resolve('CALC2');
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      expect(mockInvoke).toHaveBeenCalledWith('calculate_new_sensor', {
+        sensors: ['sensor_a'],
+        config: { mode: 'single', singleOp: { type: 'add', value: 5 }, customName: 'CALC2' },
+      });
+    });
+
+    it('F34. replays multiple recipes in array order, and one that throws does not block the rest or the workspace from opening — reported as one combined toast instead', async () => {
+      mockLoadWorkspace.mockResolvedValue({
+        ...baseLoadedWs,
+        specialSensorRecipes: [
+          { kind: 'formula', tag: 'BROKEN1', formula: '$deleted_sensor + 1' },
+          { kind: 'formula', tag: 'CALC1', formula: '$sensor_a * 2' },
+        ],
+      });
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') {
+          if (args?.customName === 'BROKEN1') return Promise.reject(new Error('Sensor not found: deleted_sensor'));
+          return Promise.resolve('CALC1');
+        }
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+
+      // The workspace still opens — one failing recipe isn't fatal.
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+      // The second (valid) recipe still got replayed.
+      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: '$sensor_a * 2', customName: 'CALC1' });
+      // One toast naming the sensor that failed, not one per attempt.
+      const errors = getErrors();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].source).toBe('special-sensor-restore');
+      expect(errors[0].message).toContain('BROKEN1');
+    });
   });
 });
 

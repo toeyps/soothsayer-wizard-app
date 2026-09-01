@@ -3,7 +3,7 @@ import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
 import {
-    CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig,
+    CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
     FailureGroup, FailureModel, ModelKind, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
 } from '../../types';
@@ -139,6 +139,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `sensorMetadata` every child actually reads.
     const [extraSensorMetadata, setExtraSensorMetadata] = useState<SensorMetadata[]>(
         initialState?.extraSensorMetadata ?? []
+    );
+    // What actually rebuilds a special sensor's data on the NEXT workspace
+    // open (DataUploadPage.tsx replays these, in order, right after
+    // `load_csv`) -- `extraSensorMetadata` above is cosmetic only. See
+    // `WorkspaceState.specialSensorRecipes`'s own doc comment for why this
+    // exists at all.
+    const [specialSensorRecipes, setSpecialSensorRecipes] = useState<SpecialSensorRecipe[]>(
+        initialState?.specialSensorRecipes ?? []
     );
     const sensorMetadata = useMemo(() => {
         if (extraSensorMetadata.length === 0) return sensorMetadataProp;
@@ -928,12 +936,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             });
 
             // Listen for new selections from child window
-            unlistenAdd = await listen<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[] }>('add-sensor-selection', async (event) => {
+            unlistenAdd = await listen<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[], newRecipes?: SpecialSensorRecipe[] }>('add-sensor-selection', async (event) => {
                 console.log("Dashboard received 'add-sensor-selection'", event.payload);
 
                 let newSelectedSensors: string[] = [];
                 let newOperationConfig: SensorOperationConfig | null = null;
                 let newMetadata: SensorMetadata[] = [];
+                let newRecipes: SpecialSensorRecipe[] = [];
 
                 if (Array.isArray(event.payload)) {
                     newSelectedSensors = event.payload;
@@ -942,6 +951,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     newSelectedSensors = event.payload.sensors;
                     newOperationConfig = event.payload.operation;
                     newMetadata = event.payload.newMetadata ?? [];
+                    newRecipes = event.payload.newRecipes ?? [];
                 }
 
                 // Update selection
@@ -952,6 +962,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     setExtraSensorMetadata(prev => {
                         const byTag = new Map(prev.map(m => [m.tag.toLowerCase(), m]));
                         for (const m of newMetadata) byTag.set(m.tag.toLowerCase(), m);
+                        return Array.from(byTag.values());
+                    });
+                }
+
+                if (newRecipes.length > 0) {
+                    // Append-or-replace by tag, but otherwise preserve
+                    // existing array order -- replay order matters (a
+                    // later formula sensor can reference an earlier one).
+                    setSpecialSensorRecipes(prev => {
+                        const byTag = new Map(prev.map(r => [r.tag.toLowerCase(), r]));
+                        for (const r of newRecipes) byTag.set(r.tag.toLowerCase(), r);
                         return Array.from(byTag.values());
                     });
                 }
@@ -1244,6 +1265,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
         extraSensorMetadata,
+        specialSensorRecipes,
         sensorColors,
         sensorAxisRange,
         scatterAxisPins,
@@ -1257,7 +1279,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, alarmLinesEnabled, scatterAxes,
-        extraSensorMetadata, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
+        extraSensorMetadata, specialSensorRecipes, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 

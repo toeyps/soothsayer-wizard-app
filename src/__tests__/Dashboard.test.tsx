@@ -951,6 +951,46 @@ describe('Dashboard', () => {
             );
             expect(lastProps.sensors).toContain('CALC1'); // merged into sensorHeaders too
         });
+
+        it('captures "newRecipes" from "add-sensor-selection" and persists them via autosave (2026-09-01: the recipe, not the metadata, is what rebuilds a special sensor\'s data on the next workspace reopen — see WorkspaceState.specialSensorRecipes)', async () => {
+            const seedRecipe = { kind: 'formula' as const, tag: 'EXISTING1', formula: '$TAG1 * 2' };
+            renderDashboard({ initialState: makeInitialState({ specialSensorRecipes: [seedRecipe] }) });
+            await act(async () => { await Promise.resolve(); });
+
+            const newRecipe = { kind: 'operation' as const, tag: 'CALC1', sourceSensors: ['TAG1'], operationConfig: { mode: 'single' as const, singleOp: { type: 'add' as const, value: 1 } } };
+            await act(async () => {
+                for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
+                    cb({
+                        payload: {
+                            sensors: ['CALC1'],
+                            operation: null,
+                            newMetadata: [{ tag: 'CALC1', description: 'Calculated', unit: '', component: '' }],
+                            newRecipes: [newRecipe],
+                        },
+                    });
+                }
+            });
+
+            // Appends alongside the seeded recipe, not replacing the array.
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes).toEqual([seedRecipe, newRecipe]);
+            });
+
+            // A second round for the SAME tag updates that entry in place
+            // rather than appending a duplicate (e.g. the user re-picks the
+            // same custom name for a tweaked formula).
+            const revisedRecipe = { kind: 'operation' as const, tag: 'CALC1', sourceSensors: ['TAG1', 'TAG2'], operationConfig: { mode: 'single' as const, singleOp: { type: 'multiply' as const, value: 2 } } };
+            await act(async () => {
+                for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
+                    cb({ payload: { sensors: ['CALC1'], operation: null, newMetadata: [], newRecipes: [revisedRecipe] } });
+                }
+            });
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes).toEqual([seedRecipe, revisedRecipe]);
+            });
+        });
     });
 
     describe('Build Model', () => {
