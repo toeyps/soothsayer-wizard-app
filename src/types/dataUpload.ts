@@ -6,7 +6,7 @@ export interface CsvLoadReport {
   warnings: string[];
 }
 
-export interface ColumnInfo {
+interface ColumnInfo {
   name: string;
   dtype: 'datetime' | 'numeric';
   null_count: number;

@@ -30,11 +30,3 @@ export function firstMatchingHighlight(timestamp: string | null | undefined, hig
     }
     return null;
 }
-
-/** Whether `timestamp` falls inside ANY enabled highlight window — cheaper
- *  than `firstMatchingHighlight` when the caller only needs a yes/no signal
- *  (e.g. PairPlotCell's size-based emphasis, which doesn't distinguish which
- *  highlight matched). */
-export function isTimestampHighlighted(timestamp: string | null | undefined, highlights: TimeHighlight[]): boolean {
-    return firstMatchingHighlight(timestamp, highlights) !== null;
-}

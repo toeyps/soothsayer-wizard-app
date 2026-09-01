@@ -19,7 +19,7 @@ interface State {
  * Instead we show the actual error (message + stack), persist it to the
  * error log, and offer Reload / Copy so the user can recover and report.
  */
-export class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundary extends Component<Props, State> {
     state: State = { error: null, componentStack: null, logPath: null, copied: false };
 
     static getDerivedStateFromError(error: Error): Partial<State> {

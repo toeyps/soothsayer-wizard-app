@@ -62,7 +62,7 @@ function Toast({ error }: { error: AppError }) {
     );
 }
 
-export function ErrorToasts() {
+function ErrorToasts() {
     const errors = useSyncExternalStore(subscribeErrors, getErrors);
     const [logPath, setLogPath] = useState<string | null>(null);
 

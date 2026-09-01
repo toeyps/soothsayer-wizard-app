@@ -18,7 +18,7 @@ const NEEDS_BASE_SENSOR = new Set(['efficiency_pct']);
 const CHAIN_SYMBOL_TO_FASTEVAL: Record<string, string> = { '+': '+', '−': '-', '×': '*', '÷': '/' };
 
 /** What clicking "Add sensor" should actually do. */
-export type CalcBuildResult =
+type CalcBuildResult =
   | { kind: 'none' }
   | { kind: 'legacy'; config: SensorOperationConfig }
   | { kind: 'formula'; expression: string };

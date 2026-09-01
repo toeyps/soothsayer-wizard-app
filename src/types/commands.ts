@@ -1,7 +1,3 @@
-import { SensorMetadata, SensorOperationConfig } from '../types';
-import { CsvLoadReport, MappingData, MappingResult } from './dataUpload';
-import type { FormulaValidationResult } from './calculationEngine';
-
 /**
  * Response shape from the Python sidecar's `preview_relationship` action.
  *
@@ -50,7 +46,7 @@ export interface IndividualModelInfo {
 }
 
 /** Ellipse parameters from a single Gaussian fit (one cluster). */
-export interface EllipseFit {
+interface EllipseFit {
   x_center: number;
   y_center: number;
   x_sd: number;
@@ -65,13 +61,13 @@ export interface EllipseFit {
  * `wizard.py`'s `-inf` / `+inf` round-trips through JSON without
  * relying on non-finite floats).
  */
-export interface ClusterRange {
+interface ClusterRange {
   min: number | null;
   max: number | null;
 }
 
 /** Per-cluster ellipse fit returned by `compute_clustering_preview`. */
-export interface ClusterDetail {
+interface ClusterDetail {
   /** 1-based cluster id, matching `wizard.py`'s string keys ("1", "2", …). */
   cluster_id: number;
   /** `null` for the single-cluster path (no criteria split). */
@@ -183,215 +179,3 @@ export interface ScatterSample {
   /** Rows actually returned (`=== rows.length`). */
   sampled: number;
 }
-
-export type TauriCommands = {
-  /** Updated: now returns CsvLoadReport instead of CsvMetadata */
-  load_csv: {
-    args: { paths: string[] };
-    returns: CsvLoadReport;
-  };
-  /** New: Load a mapping CSV and return raw rows/columns */
-  load_mapping_csv: {
-    args: { path: string };
-    returns: MappingData;
-  };
-  /** New: Apply sensor tag-to-name mapping */
-  apply_sensor_mapping: {
-    args: {
-      tag_column: string;
-      name_column: string;
-      mapping_data: MappingData;
-      dataset_headers: string[];
-    };
-    returns: MappingResult;
-  };
-  get_loaded_paths: {
-    args: Record<string, never>;
-    returns: string[];
-  };
-  /**
-   * Bounded columnar chart payload: filter → operation transform → optional
-   * hourly aggregation → min/max decimation, all in Rust. The response never
-   * exceeds `max_points` x-positions, so chart rendering stays O(max_points)
-   * regardless of dataset size.
-   */
-  get_chart_data: {
-    args: {
-      filter: DashboardDataFilter;
-      sampling: ChartSamplingMethod;
-      operation: SensorOperationConfig | null;
-      max_points: number;
-    };
-    returns: ChartViewData;
-  };
-  /** One page of the post-op/post-aggregation row set for the data table. */
-  get_table_page: {
-    args: {
-      filter: DashboardDataFilter;
-      sampling: ChartSamplingMethod;
-      operation: SensorOperationConfig | null;
-      page: number;
-      page_size: number;
-    };
-    returns: TablePageData;
-  };
-  get_all_sensors: {
-    args: Record<string, never>;
-    returns: string[];
-  };
-  load_metadata_command: {
-    args: { path: string };
-    returns: SensorMetadata[];
-  };
-  calculate_new_sensor: {
-    args: { sensors: string[]; config: SensorOperationConfig };
-    returns: string;
-  };
-  /**
-   * Run a Relationship-model preview (LinearGAM) via the Python sidecar.
-   * Returns the raw JSON payload from the sidecar — see `RelationshipPreviewResult`.
-   *
-   * `filter` is optional and mirrors the dashboard's filter shape; when
-   * supplied the preview is built off the filtered slice (same rows the
-   * user is looking at on the previous page). Pass `null`/omit to use
-   * every row.
-   */
-  preview_relationship_model: {
-    args: {
-      predictors: string[];
-      target: string;
-      lambda: number;
-      filter?: {
-        timestamp_start: string | null;
-        timestamp_end: string | null;
-        value_filters: {
-          sensor: string;
-          operation: string;
-          value1: number | null;
-          value2: number | null;
-        }[];
-      } | null;
-    };
-    returns: RelationshipPreviewResult;
-  };
-  /** Evaluate a formula expression and create a new sensor column */
-  evaluate_formula: {
-    args: { formula: string; custom_name: string | null };
-    returns: string;
-  };
-  /** Validate a formula without executing it */
-  validate_formula: {
-    args: { formula: string };
-    returns: FormulaValidationResult;
-  };
-  /** Train + persist an Individual model. Writes INDV_INFO_*.json under
-   *  `{save_path}/output/{target}/` and returns the JSON payload. */
-  train_individual_model: {
-    args: {
-      target: string;
-      model_name: string | null;
-      save_path: string;
-    };
-    returns: IndividualModelInfo;
-  };
-  /**
-   * GMM ellipse fit preview — supports 1..N clusters. When
-   * `n_clusters === 1`, both `criteria_sensor` and `cluster_ranges` are
-   * ignored (single-cluster path uses all rows). When `n_clusters > 1`,
-   * both are required: rows are split into clusters by whether the
-   * criteria sensor's value falls in `[range.min, range.max)`, and one
-   * Gaussian is fit per cluster. No disk write — preview only.
-   */
-  compute_clustering_preview: {
-    args: {
-      first_sensor: string;
-      second_sensor: string;
-      n_clusters: number;
-      criteria_sensor: string | null;
-      cluster_ranges: ClusterRange[] | null;
-    };
-    returns: ClusteringPreview;
-  };
-  /** Train + persist a Clustering model (1..N clusters). Writes
-   *  CLUS_INFO_*.json under `{save_path}/output/{second_sensor}/`,
-   *  matching wizard.py's CLUSTERING_INFO shape including the
-   *  per-cluster criteria-range fields. */
-  train_clustering_model: {
-    args: {
-      first_sensor: string;
-      second_sensor: string;
-      n_clusters: number;
-      criteria_sensor: string | null;
-      cluster_ranges: ClusterRange[] | null;
-      model_name: string | null;
-      save_path: string;
-    };
-    returns: ClusteringModelInfo;
-  };
-  /** Train + persist a Relationship (LinearGAM) model. Sidecar writes the
-   *  pickled .pkl; Rust writes the REL_INFO_*.json alongside it. */
-  train_relationship_model: {
-    args: {
-      predictors: string[];
-      target: string;
-      lambda: number;
-      save_path: string;
-      model_name: string | null;
-    };
-    returns: RelationshipTrainResult;
-  };
-  /**
-   * Return a bounded uniform random sample of the (filtered) dataset for
-   * scatter / pair-plot rendering. The sample never exceeds `maxPoints` rows,
-   * keeping IPC, heap, and GPU bounded for arbitrarily large datasets.
-   *
-   * `filter.sensors` selects which sensor columns to project (the chart's
-   * visible sensors). Timestamp / value filters mirror `get_filtered_data`.
-   * `max_points` uses snake_case to match the Rust param exactly, like the
-   * other commands in this file (Tauri matches the key verbatim).
-   */
-  get_scatter_sample: {
-    args: {
-      filter: {
-        sensors: string[];
-        timestamp_start: string | null;
-        timestamp_end: string | null;
-        value_filters: {
-          sensor: string;
-          operation: string;
-          value1: number | null;
-          value2: number | null;
-        }[];
-      };
-      max_points: number;
-    };
-    returns: ScatterSample;
-  };
-  /**
-   * Write arbitrary bytes to a user-picked file path (CSV / PDF / PNG exports).
-   * Bridges through Rust so it bypasses the fs plugin's scope restrictions
-   * (Phase 2 will limit the fs plugin to `$APPDATA/**`). `contents` is the
-   * `Vec<u8>` payload — Tauri IPC serializes it as `number[]`.
-   */
-  write_user_file: {
-    args: { path: string; contents: number[] };
-    returns: void;
-  };
-  /**
-   * Append one error entry to the persistent error log
-   * (`<app-log-dir>/frontend-errors.log`, e.g. `%LOCALAPPDATA%/<identifier>/logs`
-   * on Windows). Called by the global error reporter (window.onerror,
-   * unhandledrejection, React ErrorBoundary) so production failures — where
-   * DevTools don't exist — leave a trail the user can inspect or send back.
-   * Returns the log file's absolute path so the UI can point at it.
-   */
-  log_frontend_error: {
-    args: { message: string; detail: string | null };
-    returns: string;
-  };
-  /** Absolute path of the error log file (for display next to error toasts). */
-  get_error_log_path: {
-    args: {};
-    returns: string;
-  };
-};

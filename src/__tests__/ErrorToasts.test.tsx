@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 async function freshModules() {
     vi.resetModules();
     const errorReporter = await import('../errorReporter');
-    const { ErrorToasts } = await import('../components/ErrorToasts');
+    const { default: ErrorToasts } = await import('../components/ErrorToasts');
     return { errorReporter, ErrorToasts };
 }
 

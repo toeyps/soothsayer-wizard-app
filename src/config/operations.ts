@@ -18,7 +18,7 @@ import type { OperationDefinition } from '../types/calculationEngine';
  * selecting them previously built a config the backend silently rejected,
  * so the sensor was added with no calculation applied at all.
  */
-export const OPERATIONS: {
+const OPERATIONS: {
   single: OperationDefinition[];
   multi: OperationDefinition[];
 } = {

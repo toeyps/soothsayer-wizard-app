@@ -66,7 +66,7 @@ export interface WorkspaceSensorFilter {
     value2: string;
 }
 
-export interface WorkspaceFilterState {
+interface WorkspaceFilterState {
     timestampStart: string;
     timestampEnd: string;
     sensorFilters: WorkspaceSensorFilter[];
@@ -199,12 +199,12 @@ export interface FailureModel extends PredictiveModelStateSlice {
     ySensor: string;
 }
 
-export interface FailureGroupStateSlice {
+interface FailureGroupStateSlice {
     groups: FailureGroup[];
     models: FailureModel[];
 }
 
-export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';
+type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';
 
 /**
  * Fixed positions on the Dashboard that any panel can occupy. Naming is
@@ -244,7 +244,7 @@ export interface DashboardLayoutSizes {
 /** A single pinned axis bound for the Scatter chart — which sensor it was
  *  set against, plus min/max (either may be omitted to keep that side
  *  auto-fitting). */
-export interface ScatterAxisPin {
+interface ScatterAxisPin {
     sensor: string;
     min?: number;
     max?: number;

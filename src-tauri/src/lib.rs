@@ -724,9 +724,9 @@ impl ResolvedFilter {
             let ok = match val {
                 None => false,
                 Some(v) => match rf.operation.as_str() {
-                    "greater_than" => rf.value1.map_or(true, |v1| v > v1),
-                    "less_than" => rf.value1.map_or(true, |v1| v < v1),
-                    "equals" => rf.value1.map_or(true, |v1| (v - v1).abs() < f64::EPSILON),
+                    "greater_than" => rf.value1.is_none_or(|v1| v > v1),
+                    "less_than" => rf.value1.is_none_or(|v1| v < v1),
+                    "equals" => rf.value1.is_none_or(|v1| (v - v1).abs() < f64::EPSILON),
                     "between" => match (rf.value1, rf.value2) {
                         (Some(v1), Some(v2)) => v >= v1 && v <= v2,
                         _ => true,
@@ -2128,6 +2128,7 @@ fn calculate_new_sensor(
 /// Supports two patterns:
 ///   - `$SensorName` (alphanumeric, underscores, dots)
 ///   - `${Sensor Name With Spaces}` (anything inside braces)
+///
 /// Returns a Vec of (full_match_token, sensor_name) pairs.
 fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
     let mut refs = Vec::new();
