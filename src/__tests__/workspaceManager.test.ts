@@ -313,7 +313,7 @@ describe('loadWorkspaceData', () => {
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',
                 failureGroupState: {
-                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    groups: [{ no: 1, name: 'Group A' }],
                     rows: [{
                         id: 'row-1', groupNo: 1, conceptSensor: 'Vibration', mappedSensorTag: 'TAG1',
                         mappedSensorName: 'Tag One', modelType: '', modelNotes: 'note', additionalNotes: '', status: true,
@@ -334,7 +334,7 @@ describe('loadWorkspaceData', () => {
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',
                 failureGroupState: {
-                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    groups: [{ no: 1, name: 'Group A' }],
                     rows: [{
                         id: 'row-1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1',
                         mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false,
@@ -355,7 +355,7 @@ describe('loadWorkspaceData', () => {
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',
                 failureGroupState: {
-                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    groups: [{ no: 1, name: 'Group A' }],
                     rows: [
                         { id: 'r1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1', mappedSensorName: '', modelType: 'Relationship model', modelNotes: '', additionalNotes: '', status: false },
                         { id: 'r2', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG2', mappedSensorName: '', modelType: 'Clustering', modelNotes: '', additionalNotes: '', status: false },
@@ -376,7 +376,7 @@ describe('loadWorkspaceData', () => {
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',
                 failureGroupState: {
-                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    groups: [{ no: 1, name: 'Group A' }],
                     rows: [{ id: 'blank', groupNo: 1, conceptSensor: '', mappedSensorTag: '', mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false }],
                 },
             }));
@@ -395,7 +395,7 @@ describe('loadWorkspaceData', () => {
                     clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
                 },
                 failureGroupState: {
-                    groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                    groups: [{ no: 1, name: 'Group A' }],
                     rows: [
                         { id: 'r1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1', mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false },
                         { id: 'r2', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG2', mappedSensorName: '', modelType: '', modelNotes: '', additionalNotes: '', status: false },

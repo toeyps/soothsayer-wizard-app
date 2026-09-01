@@ -424,6 +424,14 @@ describe('PredictiveModelBuild', () => {
             const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
             expect(confirmBtn.disabled).toBe(true);
         });
+
+        it('the "Filters on training data" footnote reflects only this page\'s own filters now (2026-09-01: `dashboardSnapshot` removed as dead code — it was never written by anything, so Dashboard\'s own filters never actually carried into training; removing it changes nothing observable)', async () => {
+            await renderHydrated();
+            fireEvent.click(screen.getByText('Save Model'));
+            expect(screen.getByText(/Filters on training data:/)).toBeTruthy();
+            expect(screen.getByText(/none — using the full dataset\./)).toBeTruthy();
+            expect(screen.queryByText(/Dashboard sensor filter/)).toBeNull();
+        });
     });
 
     describe('persistence', () => {

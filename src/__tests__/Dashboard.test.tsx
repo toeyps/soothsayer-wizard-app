@@ -592,7 +592,7 @@ describe('Dashboard', () => {
     describe('failure-group wiring (from the Sensor tab quick-assign)', () => {
         it('toggling a sensor into a group persists via updateWorkspaceData with a new individual-kind model', () => {
             renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
             });
             fireEvent.click(screen.getByText('toggle-group'));
             const patchResult = last(mockUpdateWorkspaceData.mock.results)!.value;
@@ -602,17 +602,19 @@ describe('Dashboard', () => {
             });
         });
 
-        it('creating a group for a sensor adds both the group and its model', async () => {
+        it('creating a group for a sensor adds both the group and its model, with no dead "isCollapsed" field (2026-09-01: removed — nothing in the app ever read or toggled it)', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('create-group-for-sensor'));
             const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups.map((g: any) => g.name)).toContain('New Group');
             expect(state.failureGroupState.models[0].targetSensor).toBe('TAG1');
+            const newGroup = state.failureGroupState.groups.find((g: any) => g.name === 'New Group');
+            expect(newGroup).not.toHaveProperty('isCollapsed');
         });
 
         it('does not create a duplicate-named group for a sensor', async () => {
             renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'New Group', isCollapsed: false }], models: [] } }),
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'New Group' }], models: [] } }),
             });
             mockUpdateWorkspaceData.mockClear();
             fireEvent.click(screen.getByText('create-group-for-sensor')); // sensor mock always uses 'New Group'
@@ -621,7 +623,7 @@ describe('Dashboard', () => {
 
         it('renaming and deleting a group updates fgGroups accordingly', async () => {
             renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
             });
             fireEvent.click(screen.getByText('rename-group'));
             let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
@@ -637,7 +639,7 @@ describe('Dashboard', () => {
                 renderDashboard({
                     initialState: makeInitialState({
                         failureGroupState: {
-                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }, { no: 2, name: 'Group B', isCollapsed: false }],
+                            groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
                             models: [{
                                 id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
@@ -661,7 +663,7 @@ describe('Dashboard', () => {
                 renderDashboard({
                     initialState: makeInitialState({
                         failureGroupState: {
-                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                            groups: [{ no: 1, name: 'Group A' }],
                             models: [{
                                 id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
@@ -714,7 +716,7 @@ describe('Dashboard', () => {
                 renderDashboard({
                     initialState: makeInitialState({
                         failureGroupState: {
-                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                            groups: [{ no: 1, name: 'Group A' }],
                             models: [{
                                 id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
@@ -762,7 +764,7 @@ describe('Dashboard', () => {
                 renderDashboard({
                     initialState: makeInitialState({
                         failureGroupState: {
-                            groups: [{ no: 1, name: 'Group A', isCollapsed: false }, { no: 2, name: 'Group B', isCollapsed: false }],
+                            groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
                             models: [
                                 {
                                     id: 'm1', groupNos: [1, 2], name: 'Shared', kind: 'individual', category: null, notes: '', status: false,
@@ -794,18 +796,20 @@ describe('Dashboard', () => {
     });
 
     describe('Failure Groups tab (group-centric preview)', () => {
-        it('create-empty-group round-trips through updateWorkspaceData', async () => {
+        it('create-empty-group round-trips through updateWorkspaceData, with no dead "isCollapsed" field', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('Failure Groups'));
 
             fireEvent.click(screen.getByText('create-empty-group'));
             const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups.map((g: any) => g.name)).toContain('Empty Group');
+            const newGroup = state.failureGroupState.groups.find((g: any) => g.name === 'Empty Group');
+            expect(newGroup).not.toHaveProperty('isCollapsed');
         });
 
         it('updating group details (name/description/recommendation) and deleting from the preview panel itself also round-trip (2026-08-31: this "Edit details" editing moved here from Build Model window entirely, per explicit user request)', async () => {
             renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A', isCollapsed: false }], models: [] } }),
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
             });
             fireEvent.click(screen.getByText('Failure Groups'));
 
@@ -824,7 +828,7 @@ describe('Dashboard', () => {
             renderDashboard({
                 initialState: makeInitialState({
                     failureGroupState: {
-                        groups: [{ no: 1, name: 'Group A', isCollapsed: false }],
+                        groups: [{ no: 1, name: 'Group A' }],
                         models: [{
                             id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
                             targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',

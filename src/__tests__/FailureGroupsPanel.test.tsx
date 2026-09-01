@@ -15,9 +15,9 @@ function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     };
 }
 
-const notInGroup: FailureGroup = { no: 0, name: 'Not in Group', isCollapsed: false };
-const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
-const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
+const notInGroup: FailureGroup = { no: 0, name: 'Not in Group' };
+const groupA: FailureGroup = { no: 1, name: 'Group A' };
+const groupB: FailureGroup = { no: 2, name: 'Group B' };
 
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },

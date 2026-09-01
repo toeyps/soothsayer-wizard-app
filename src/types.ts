@@ -64,20 +64,9 @@ export interface WorkspaceFilterState {
     sensorFilters: WorkspaceSensorFilter[];
 }
 
-// Snapshot of Dashboard's applied filtering/processing state captured on Save & Continue.
-// Used by Step 2/3 so filtering context carries forward.
-export interface DashboardSnapshot {
-    selectedSensors: string[];
-    visibleSensors: string[];
-    operationConfig: SensorOperationConfig | null;
-    filters: WorkspaceFilterState;
-    samplingMethod: 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';
-}
-
 export interface FailureGroup {
     no: number;
     name: string;
-    isCollapsed: boolean;
     /** Free-text description of the failure mode this group tracks. */
     description?: string;
     /** Free-text recommended action/response for this failure mode. */
@@ -219,9 +208,8 @@ export type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';
 export type DashboardSlot = 'left-top' | 'left-bottom' | 'right-top';
 
 /**
- * The swappable panels on the Dashboard. Save & Continue is NOT a
- * panel — it lives permanently at the bottom of the right column. Filter
- * is NOT a panel either — it's a tab inside the `data` panel.
+ * The swappable panels on the Dashboard. Filter is NOT a panel — it's a
+ * tab inside the `data` panel.
  */
 export type DashboardPanel = 'chart' | 'data' | 'sensors';
 
@@ -355,7 +343,6 @@ export interface WorkspaceState {
     collapsedPanels?: string[];
     mappingFilePath?: string | null;
     mappingKeyColumn?: string | null;
-    dashboardSnapshot?: DashboardSnapshot;
     failureGroupState?: FailureGroupStateSlice;
     /** @deprecated Legacy global PM slot from before PM config was folded
      *  into each `FailureModel`. Only read by the workspace-load migration

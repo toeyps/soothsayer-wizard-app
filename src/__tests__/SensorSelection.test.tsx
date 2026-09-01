@@ -8,7 +8,7 @@ const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG2', description: 'Pump Temp', unit: 'C', component: 'Pump' },
 ];
 
-const groupA: FailureGroup = { no: 1, name: 'Group A', isCollapsed: false };
+const groupA: FailureGroup = { no: 1, name: 'Group A' };
 const modelTag1InGroupA: FailureModel = {
     id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
     targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
@@ -23,7 +23,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof SensorSelectio
         selectedSensors: [] as string[],
         onSensorChange: vi.fn(),
         sensorMetadata,
-        fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }, groupA],
+        fgGroups: [{ no: 0, name: 'Not in Group' }, groupA],
         fgModels: [modelTag1InGroupA],
         getGroupColor: () => 'blue',
         onToggleSensorGroupKind: vi.fn(),
@@ -219,9 +219,9 @@ describe('SensorSelection', () => {
         });
 
         it('shows one chip per group when a single model\'s groupNos lists several (2026-08-25: real many-to-many, not a duplicate model per group)', () => {
-            const groupB: FailureGroup = { no: 2, name: 'Group B', isCollapsed: false };
+            const groupB: FailureGroup = { no: 2, name: 'Group B' };
             const sharedModel: FailureModel = { ...modelTag1InGroupA, groupNos: [1, 2] };
-            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }, groupA, groupB], fgModels: [sharedModel] })} />);
+            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }, groupA, groupB], fgModels: [sharedModel] })} />);
             expandPump();
             expect(screen.getByText('Group A')).toBeTruthy();
             expect(screen.getByText('Group B')).toBeTruthy();
@@ -309,7 +309,7 @@ describe('SensorSelection', () => {
         });
 
         it('shows "No failure groups yet" when there are none besides the sentinel', () => {
-            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }] })} />);
+            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }] })} />);
             expandPump();
             fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
             expect(screen.getByText('No failure groups yet')).toBeTruthy();
@@ -317,7 +317,7 @@ describe('SensorSelection', () => {
 
         describe('"Not in Group" (FG-0) entry', () => {
             it('is always offered in the menu, even with zero real groups', () => {
-                render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group', isCollapsed: false }] })} />);
+                render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }] })} />);
                 expandPump();
                 fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
                 expect(screen.getByText('Not in Group')).toBeTruthy();

@@ -46,7 +46,7 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 
 function makeGroup(overrides: Record<string, any> = {}) {
-    return { no: 1, name: 'Group A', isCollapsed: false, description: '', recommendation: '', ...overrides };
+    return { no: 1, name: 'Group A', description: '', recommendation: '', ...overrides };
 }
 
 function makeModel(overrides: Record<string, any> = {}) {

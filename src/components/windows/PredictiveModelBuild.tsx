@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CsvRecord, SensorMetadata, FailureModel, ModelKind, DashboardSnapshot, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
+import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -171,7 +171,6 @@ interface PredictiveModelBuildProps {
 
 export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, onBack }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
-    const [dashboardSnapshot, setDashboardSnapshot] = useState<DashboardSnapshot | null>(null);
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
     // effect, save/train calls, etc.) didn't need a mechanical rename pass.
@@ -230,18 +229,20 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // (target + predictors), enforced by the UI's select.
     const [pmSensorFilters, setPmSensorFilters] = useState<WorkspaceSensorFilter[]>([]);
 
-    // ── Dashboard filter passed through to every Rust data-reading command ──
-    // The Dashboard "Save & Continue" path snapshots its FilterPanel state into
-    // `dashboardSnapshot.filters`. We translate that into the snake_case shape
-    // Rust expects (`PreviewFilter`) and forward it on every invoke so target
-    // chart, σ markers, clustering preview, and all `train_*` commands operate
-    // on the same filtered slice the user explored.
+    // ── Filter payload passed through to every Rust data-reading command ──
+    // Translates `pmSensorFilters` (this page's own per-sensor value
+    // filters) into the snake_case shape Rust expects (`PreviewFilter`) and
+    // forwards it on every invoke so target chart, σ markers, clustering
+    // preview, and all `train_*` commands operate on the same filtered
+    // slice.
     //
-    // PM-page-local `pmSensorFilters` are appended to the dashboard's sensor
-    // filters with AND semantics — the dashboard slice is the base, PM
-    // filters narrow further per-sensor. Time range still comes only from
-    // dashboard (PM page exposes its own time inputs but those remain
-    // purely cosmetic for now; wire them in later if needed).
+    // 2026-09-01: this used to also merge in a `dashboardSnapshot` carried
+    // over from Dashboard's own filter panel via a "Save & Continue" flow —
+    // that flow was removed earlier in the project and nothing has written
+    // `dashboardSnapshot` since, so it always read as empty here; removed
+    // as dead code (no behavior change — the merge was already a no-op).
+    // Dashboard's filters currently do NOT carry into PM training/preview
+    // at all; only this page's own filters do.
     //
     // Returns `null` when no filter is active — Rust then falls back to "use
     // every row" (legacy behavior, plus identical request shape for tests).
@@ -251,12 +252,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // after the filter inputs avoids a temporal-dead-zone reference during
     // render.
     const dashboardFilterPayload = useMemo(() => {
-        const dash = dashboardSnapshot?.filters;
-        const dashSensorFilters = dash?.sensorFilters ?? [];
-        const tsStart = dash?.timestampStart || null;
-        const tsEnd = dash?.timestampEnd || null;
-
-        const valueFilters = [...dashSensorFilters, ...pmSensorFilters]
+        const valueFilters = pmSensorFilters
             .filter(sf => sf.value1 !== '')
             .map(sf => ({
                 sensor: sf.sensor,
@@ -265,13 +261,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
             }));
 
-        if (!tsStart && !tsEnd && valueFilters.length === 0) return null;
+        if (valueFilters.length === 0) return null;
         return {
-            timestamp_start: tsStart,
-            timestamp_end: tsEnd,
+            timestamp_start: null,
+            timestamp_end: null,
             value_filters: valueFilters,
         };
-    }, [dashboardSnapshot, pmSensorFilters]);
+    }, [pmSensorFilters]);
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -551,7 +547,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 if (cancelled) return;
                 if (ws?.name) setWorkspaceName(ws.name);
                 found = ws?.failureGroupState?.models.find(m => m.id === modelId);
-                if (ws?.dashboardSnapshot) setDashboardSnapshot(ws.dashboardSnapshot);
                 // Hydrate the remembered save folder so the next picker
                 // defaults to wherever the user last picked.
                 if (ws?.outputDir) setOutputDir(ws.outputDir);
@@ -1725,13 +1720,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
 
     // Aggregated filter footnote shown in the confirm dialog so users
     // know the filtered slice will carry into training (catches the
-    // "why is my model trained on only 200 rows?" surprise).
+    // "why is my model trained on only 200 rows?" surprise). Only this
+    // page's own filters (`pmSensorFilters`) count — see
+    // `dashboardFilterPayload` above for why Dashboard's own filters never
+    // factor in here.
     const activeFilterCount = useMemo(() => {
-        const dash = dashboardSnapshot?.filters?.sensorFilters?.filter(f => f.value1 !== '').length ?? 0;
         const pm = pmSensorFilters.filter(f => f.value1 !== '').length;
-        const hasTime = !!(dashboardSnapshot?.filters?.timestampStart || dashboardSnapshot?.filters?.timestampEnd);
-        return { dash, pm, hasTime };
-    }, [dashboardSnapshot, pmSensorFilters]);
+        return { pm };
+    }, [pmSensorFilters]);
 
     const canConfirmSave = useMemo(() => {
         if (!targetSensor) return false;
@@ -3342,18 +3338,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         lineHeight: 1.45,
                                     }}>
                                         <strong style={{ color: 'var(--text-primary)' }}>Filters on training data:</strong>{" "}
-                                        {activeFilterCount.dash + activeFilterCount.pm === 0 && !activeFilterCount.hasTime
+                                        {activeFilterCount.pm === 0
                                             ? 'none — using the full dataset.'
-                                            : (
-                                                <>
-                                                    {activeFilterCount.hasTime && <>time range</>}
-                                                    {activeFilterCount.hasTime && (activeFilterCount.dash > 0 || activeFilterCount.pm > 0) && ', '}
-                                                    {activeFilterCount.dash > 0 && <>{activeFilterCount.dash} Dashboard sensor filter{activeFilterCount.dash !== 1 ? 's' : ''}</>}
-                                                    {activeFilterCount.dash > 0 && activeFilterCount.pm > 0 && ', '}
-                                                    {activeFilterCount.pm > 0 && <>{activeFilterCount.pm} PM-page sensor filter{activeFilterCount.pm !== 1 ? 's' : ''}</>}
-                                                    {'.'}
-                                                </>
-                                            )
+                                            : <>{activeFilterCount.pm} PM-page sensor filter{activeFilterCount.pm !== 1 ? 's' : ''}.</>
                                         }
                                     </div>
 

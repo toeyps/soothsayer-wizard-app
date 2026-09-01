@@ -225,7 +225,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // so membership is "does tag's individual model's groupNos include
     // groupNo" — one individual model per tag, not one per (tag, groupNo).
     const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
-        initialState?.failureGroupState?.groups ?? [{ no: 0, name: 'Not in Group', isCollapsed: false }]
+        initialState?.failureGroupState?.groups ?? [{ no: 0, name: 'Not in Group' }]
     );
     const [fgModels, setFgModels] = useState<FailureModel[]>(
         initialState?.failureGroupState?.models ?? []
@@ -379,7 +379,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
         const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
         const newGroupNo = maxNo + 1;
-        const newGroups = [...fgGroups, { no: newGroupNo, name: trimmed, isCollapsed: false }];
+        const newGroups = [...fgGroups, { no: newGroupNo, name: trimmed }];
         const existing = findModelForKind(tag, 'individual');
         const newModels = existing
             ? fgModels.map(m => m === existing
@@ -461,7 +461,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
         const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
-        const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed, isCollapsed: false }];
+        const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed }];
         setFgGroups(newGroups);
         persistFailureGroupState(newGroups, fgModels);
     }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
@@ -972,9 +972,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     return changed ? newHeaders : prevHeaders;
                 });
             });
-            // NOTE: the Save & Continue button registers its own one-shot listener that
-            // includes workspaceId + dashboardSnapshot and then closes the dashboard. We do
-            // not register a duplicate listener here to avoid double-emitting stale data.
         };
 
         setupListeners();
