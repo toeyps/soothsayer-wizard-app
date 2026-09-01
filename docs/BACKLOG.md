@@ -199,12 +199,24 @@ whenever this gets picked up.
 
 ## 5. Pair Plot floods uncaught "(regl) context lost" errors with enough sensors selected
 
-**Re-checked 2026-09-01 (still open, not fixed):** `PairPlotCell.tsx` has
-no `webglcontextlost`/`webglcontextrestored` listener today — confirmed
-via grep, zero matches. It does have an `initError` guard, but that only
-covers `createScatterplot()` throwing at creation time, not a context lost
-*after* successful creation (tier 1 below). User's "fix this later" call
-still stands; nothing has touched this since.
+**Resolved — but via a different mechanism than either tier proposed
+below.** Corrected 2026-09-01: an earlier re-check of this file only
+looked for tier 1's exact proposed fix (a `webglcontextlost` listener,
+still genuinely absent) and wrongly called the item still-open on that
+basis — the user pointed out sensor count was capped instead, which
+*is* the real fix. `MAX_PAIR_PLOT_SENSORS = 4` (`ChartTypes.ts:12`) is
+enforced as a hard cap in multiple places — `SensorSelection`'s
+`maxSelectable` prop, and `Dashboard.tsx`/`PairPlotChart.tsx` both
+blocking Pair Plot mode outright above it — bounding total WebGL
+contexts at `n(n+1)/2 = 10` for `n=4`, down from the uncapped 36 at
+`n=8` from the original report. `PairPlotCell.tsx:185`'s own comment
+references `MAX_PAIR_PLOT_SENSORS` specifically in the context-count
+discussion, confirming the cap was added *because of* this item, not
+coincidentally. This satisfies (and goes further than) tier 2's own
+"~5 sensors (15 contexts)" proposal below. Tier 1's reactive listener
+(catching a context loss if the cap still isn't enough headroom on a
+weak GPU) was never added — left as a possible defense-in-depth
+follow-up, not required for this item to count as done.
 
 **Found:** 2026-08-06, user hit a runtime error overlay showing `UNCAUGHT
 ×65254` / `(regl) context lost`, stack trace bottoming out in
@@ -263,12 +275,17 @@ later, parking as backlog for now.**
 
 ## 6. Moving Average / Rate of Change need real backend implementation
 
-**Re-checked 2026-09-01 (still open, not fixed):** grepped the whole repo
-for `moving_avg`/`rate_of_change` — zero matches anywhere, Rust or
-TypeScript. `operation_registry.rs`'s multi-ops are still just
-sum/mean/median. Still blocked on the user checking the exact formula with
-their stakeholder (see the two open questions below) — do not implement
-with a guessed default.
+**Resolved by decision, 2026-09-01 — not by implementing them.** Corrected
+after the user clarified: these were never wired to anything real to
+begin with (see "Context" below — the old dropdown entries silently did
+nothing when picked), so there's no live feature depending on them.
+Decision is to leave them removed rather than build real backend support
+— confirmed via re-grep, `moving_avg`/`rate_of_change` are correctly
+absent everywhere (Rust and TypeScript both), matching the 2026-08-09
+removal described below. The open questions about the exact formula
+(below) are moot now — nothing to check with a stakeholder for a feature
+that isn't being built. Revisit only if a real user need for either comes
+up later; this item itself needs no further action.
 
 **Found:** 2026-08-09, while redesigning the Add Special Sensor window
 (`AddSensorWindow.tsx`/`SensorTooling.tsx`) to fix a whitelist bug where
