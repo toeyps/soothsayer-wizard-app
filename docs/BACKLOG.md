@@ -458,10 +458,22 @@ workspace files in the wild start depending on whichever shape gets picked.
 
 ## 8. Autosave debounce has no flush-before-close — a change made in the last 250ms before quitting can be lost
 
-**Re-checked 2026-09-01 (still open, not fixed):** grepped the whole repo
-for `onCloseRequested` — zero matches anywhere. User's "will come back to
-it later" call still stands; nothing has touched window-close lifecycle
-since.
+**Implemented 2026-09-01, per the "Proposed fix" below — pending real-app
+close testing before this counts as fully done.** `Dashboard.tsx` now
+tracks the currently-scheduled autosave as a promise
+(`pendingSaveRef`), and a new `onCloseRequested` handler on the main
+window checks it: if something is still pending, `preventDefault()`s the
+close, awaits the flush, then calls `.close()` itself; if nothing is
+pending, the handler does nothing and the close proceeds exactly as
+before (no added delay on the common case). Unit tests cover both paths
+(`Dashboard.test.tsx`'s "close-flush" describe block) with a mocked
+`getCurrentWindow()`, but — same caveat the original "why not fixed in
+the same pass" section below already called out — this specific class of
+bug (get it wrong and the window becomes impossible to close at all) is
+exactly the kind unit tests can't fully substitute for a real close.
+**Needs an actual close via both the custom titlebar button and the
+native OS close control, inside and outside the 250ms window, before
+this is confidently done.**
 
 **Found:** performance audit requested by the user across the whole app
 (2026-08-15). `Dashboard.tsx`'s autosave effect used to call

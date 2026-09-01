@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
 import {
@@ -1340,6 +1341,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 
+    // 2026-09-01: what the close-flush effect below awaits before actually
+    // letting the window close — see its own comment for why this exists.
+    // Always overwritten to the LATEST scheduled save on every effect rerun
+    // (a superseded save's promise is simply abandoned, never left
+    // dangling — nothing else ever holds a reference to it), so this always
+    // points at "the save that still needs to land on disk", never a stale
+    // one from an edit that's already been superseded by a newer one.
+    const pendingSaveRef = useRef<Promise<void> | null>(null);
+
     // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
     // burst of rapid edits (typing, dragging a slider, resizing panels)
     // coalesces into ONE disk write instead of one per intermediate state.
@@ -1350,11 +1360,40 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // useChartData/useScatterSample/useTablePage debounce this mirrors.
     useEffect(() => {
         if (!initialState) return;
-        const timer = setTimeout(() => {
-            saveWorkspaceData(buildWorkspaceState());
-        }, AUTOSAVE_DEBOUNCE_MS);
+        let timer: ReturnType<typeof setTimeout>;
+        pendingSaveRef.current = new Promise<void>((resolve) => {
+            timer = setTimeout(async () => {
+                await saveWorkspaceData(buildWorkspaceState());
+                pendingSaveRef.current = null;
+                resolve();
+            }, AUTOSAVE_DEBOUNCE_MS);
+        });
         return () => clearTimeout(timer);
     }, [buildWorkspaceState, initialState]);
+
+    // 2026-09-01: flush a pending autosave before the window is actually
+    // allowed to close, instead of letting a change made in the last
+    // AUTOSAVE_DEBOUNCE_MS before quitting get silently lost — per
+    // `docs/BACKLOG.md` item 8. `preventDefault()` on its own only BLOCKS
+    // the close; it's still on us to call `.close()` ourselves once the
+    // flush is done, or the window would become impossible to close at all
+    // (a worse regression than the data loss this fixes). Only intercepts
+    // the close when there's actually something pending — an already-saved
+    // Dashboard closes exactly as before, no added delay.
+    useEffect(() => {
+        let unlisten: (() => void) | undefined;
+        (async () => {
+            const win = getCurrentWindow();
+            unlisten = await win.onCloseRequested(async (event) => {
+                const pending = pendingSaveRef.current;
+                if (!pending) return;
+                event.preventDefault();
+                await pending;
+                await win.close();
+            });
+        })();
+        return () => { if (unlisten) unlisten(); };
+    }, []);
 
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
     // A 2 GB CSV is millions of rows; pushing every point to WebGL exhausts

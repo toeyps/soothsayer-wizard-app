@@ -153,6 +153,23 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
     message: (text: string, opts: unknown) => mockMessage(text, opts),
 }));
 
+// 2026-09-01: getCurrentWindow().onCloseRequested — the close-flush effect
+// (docs/BACKLOG.md item 8). `mockCloseRequestedHandler` captures the
+// registered handler so tests can invoke it directly, simulating the user
+// requesting a close.
+const mockWindowClose = vi.fn().mockResolvedValue(undefined);
+let mockCloseRequestedHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
+const mockOnCloseRequested = vi.fn((handler: (event: { preventDefault: () => void }) => void | Promise<void>) => {
+    mockCloseRequestedHandler = handler;
+    return Promise.resolve(() => { mockCloseRequestedHandler = null; });
+});
+vi.mock('@tauri-apps/api/window', () => ({
+    getCurrentWindow: () => ({
+        onCloseRequested: (handler: any) => mockOnCloseRequested(handler),
+        close: () => mockWindowClose(),
+    }),
+}));
+
 const splitCalls: any[] = [];
 const mockSplitDestroy = vi.fn();
 vi.mock('split.js', () => ({
@@ -231,6 +248,9 @@ beforeEach(() => {
     mockUpdateWorkspaceData.mockClear().mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id }));
     mockLoadWorkspaceData.mockClear().mockResolvedValue(null);
     mockReportError.mockClear();
+    mockWindowClose.mockClear().mockResolvedValue(undefined);
+    mockOnCloseRequested.mockClear();
+    mockCloseRequestedHandler = null;
 });
 
 afterEach(() => {
@@ -272,6 +292,49 @@ describe('Dashboard', () => {
         // Let the debounce settle past the last change.
         act(() => { vi.advanceTimersByTime(150); });
         expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // exactly one write, not three
+    });
+
+    describe('close-flush (docs/BACKLOG.md item 8: a change made in the last AUTOSAVE_DEBOUNCE_MS before quitting used to be lost silently)', () => {
+        it('flushes a pending autosave before letting the window close, then closes it itself', async () => {
+            vi.useFakeTimers();
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); }); // let the on-mount autosave settle
+            mockSaveWorkspaceData.mockClear();
+            expect(mockCloseRequestedHandler).not.toBeNull();
+
+            // Trigger an edit -- schedules a new debounced save, still pending.
+            act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+
+            const preventDefault = vi.fn();
+            let closePromise!: Promise<void>;
+            await act(async () => {
+                closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
+                await Promise.resolve(); // let preventDefault's synchronous call land
+            });
+            expect(preventDefault).toHaveBeenCalledTimes(1); // blocks the close immediately
+            expect(mockWindowClose).not.toHaveBeenCalled(); // not yet -- the save hasn't landed on disk
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(250); // let the debounced save actually fire
+                await closePromise;
+            });
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // the pending edit was actually flushed
+            expect(mockWindowClose).toHaveBeenCalledTimes(1); // then, and only then, the window closes
+        });
+
+        it('does not intercept the close at all once nothing is pending -- an already-saved Dashboard closes exactly as before, no added delay', async () => {
+            vi.useFakeTimers();
+            renderDashboard();
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); }); // on-mount autosave settles -- nothing pending now
+            expect(mockCloseRequestedHandler).not.toBeNull();
+
+            const preventDefault = vi.fn();
+            await act(async () => {
+                await mockCloseRequestedHandler!({ preventDefault });
+            });
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(mockWindowClose).not.toHaveBeenCalled(); // we never call close ourselves -- Tauri's own default handles an unintercepted close
+        });
     });
 
     describe('panel collapse / expand', () => {
