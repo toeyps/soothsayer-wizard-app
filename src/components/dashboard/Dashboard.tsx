@@ -390,34 +390,28 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Toggling ON reuses this sensor's existing model of that kind if one
     // exists (adding `groupNo`, dropping the `0` "Not in Group" sentinel
     // now that it has a real group) or creates a fresh one. Toggling OFF
-    // removes just this one (group, kind) membership — falling back to
-    // `[0]` if it was the model's last group, or deleting the model
-    // outright if it was already at `[0]` (nothing left to represent).
+    // removes just this one (group, kind) membership — deleting the model
+    // outright once it has no group left to represent (whether the group
+    // just removed was a real one or `0` itself).
+    //
+    // 2026-09-02: removing a sensor's LAST real group used to fall back to
+    // `groupNos: [0]` ("Not in Group") instead of deleting — the model
+    // itself (and whatever config it already had) wasn't lost, just
+    // unlinked from a failure mode. Reported by the user as unwanted: the
+    // chip's X is expected to make the membership disappear entirely, not
+    // reappear parked under "Not in Group" — so this now deletes the model
+    // the same way removing it from `0` already did (2026-08-31 fix, same
+    // reasoning: no group left to represent it), rather than special-casing
+    // groupNo 0 vs. a real group.
     const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
         const existing = findModelForKind(tag, kind);
         const isMember = !!existing && existing.groupNos.includes(groupNo);
         let nextModels: FailureModel[];
         if (isMember) {
             const remaining = existing!.groupNos.filter(n => n !== groupNo);
-            if (remaining.length > 0) {
-                nextModels = fgModels.map(m => m === existing ? { ...m, groupNos: remaining } : m);
-            } else if (groupNo === 0) {
-                // 2026-08-31: removing "Not in Group" when it's the
-                // model's ONLY membership used to fall back to `[0]` —
-                // i.e. put the exact same sentinel right back, making the
-                // X button a silent no-op (confirmed bug, reported by
-                // user: "add แล้วไม่สามารถเอาออกได้"). There's no other
-                // group left to represent, so delete the model outright
-                // instead — confirmed via AskUserQuestion over leaving
-                // the X disabled.
-                nextModels = fgModels.filter(m => m !== existing);
-            } else {
-                // Removing the last REAL group still falls back to the
-                // "Not in Group" sentinel — the model itself (and
-                // whatever config it already has) isn't lost, just no
-                // longer tied to a failure mode.
-                nextModels = fgModels.map(m => m === existing ? { ...m, groupNos: [0] } : m);
-            }
+            nextModels = remaining.length > 0
+                ? fgModels.map(m => m === existing ? { ...m, groupNos: remaining } : m)
+                : fgModels.filter(m => m !== existing);
         } else if (existing) {
             nextModels = fgModels.map(m => m === existing
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }

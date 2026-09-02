@@ -732,7 +732,7 @@ describe('Dashboard', () => {
                 });
             });
 
-            it('toggling a sensor OUT of its last group falls back to groupNos: [0] ("Not in Group") instead of deleting the model', () => {
+            it('toggling a sensor OUT of its last group deletes the model outright (2026-09-02: used to fall back to groupNos: [0] "Not in Group" — reported by the user as unwanted, the chip\'s X is expected to make it disappear, not reappear parked under "Not in Group")', () => {
                 renderDashboard({
                     initialState: makeInitialState({
                         failureGroupState: {
@@ -749,8 +749,7 @@ describe('Dashboard', () => {
                 });
                 fireEvent.click(screen.getByText('toggle-group')); // toggles TAG1 out of group 1
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
-                    expect(state.failureGroupState.models).toHaveLength(1); // model survives
-                    expect(state.failureGroupState.models[0].groupNos).toEqual([0]);
+                    expect(state.failureGroupState.models).toHaveLength(0);
                 });
             });
 
