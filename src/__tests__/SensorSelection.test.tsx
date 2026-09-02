@@ -287,6 +287,36 @@ describe('SensorSelection', () => {
             expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 1, 'relationship');
         });
 
+        it('tints the row background for a group the sensor already belongs to (2026-09-02: helps the active group stand out once there are many groups)', () => {
+            render(<SensorSelection {...makeProps()} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1 — already a member of Group A
+            // "Group A" renders twice while the menu is open: the chip above
+            // the menu, and the menu's own row — the row is the later one.
+            const occurrences = screen.getAllByText('Group A');
+            const menuRow = occurrences[occurrences.length - 1].closest('div') as HTMLElement;
+            expect(menuRow.style.background).toBe('var(--fg-tint)');
+        });
+
+        it('leaves a group the sensor does not belong to untinted', () => {
+            const groupB: FailureGroup = { no: 2, name: 'Group B' };
+            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }, groupA, groupB] })} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1 — not in Group B
+            const row = screen.getByText('Group B').closest('div') as HTMLElement;
+            expect(row.style.background).toBe('');
+        });
+
+        it('tints the "Not in Group" row too, once the sensor is a member of it', () => {
+            const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
+            render(<SensorSelection {...makeProps({ fgModels: models })} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1 — also a member of group 0
+            const occurrences = screen.getAllByText('Not in Group');
+            const menuRow = occurrences[occurrences.length - 1].closest('div') as HTMLElement;
+            expect(menuRow.style.background).toBe('var(--fg-tint)');
+        });
+
         it('renaming a group commits via Enter or the check button', () => {
             const onRenameGroup = vi.fn();
             render(<SensorSelection {...makeProps({ onRenameGroup })} />);

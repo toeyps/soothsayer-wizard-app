@@ -203,6 +203,13 @@ export default function SensorSelection({
         );
         const isMemberOfKind = (groupNo: number, kind: ModelKind) =>
             memberEntries.some(e => e.group.no === groupNo && e.kind === kind);
+        // Is the sensor a member of this group in ANY kind — used to tint
+        // the row in the group-assignment menu so an active group doesn't
+        // get lost among a long list of groups (2026-09-02, reported by the
+        // user as "ตาลาย" once there are 10+ groups: the toggle buttons'
+        // own highlight isn't enough at a glance, the row itself needs it).
+        const isMemberOfGroup = (groupNo: number) =>
+            memberEntries.some(e => e.group.no === groupNo);
         const menuOpen = groupMenuFor === sensor;
 
         // Three small per-kind toggle buttons for one group (or "Not in
@@ -437,7 +444,10 @@ export default function SensorSelection({
                                 <div
                                     key={g.no}
                                     className={`fg-group-color-${getGroupColor(g.no)}`}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px' }}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px',
+                                        background: isMemberOfGroup(g.no) ? 'var(--fg-tint)' : undefined,
+                                    }}
                                 >
                                     <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
                                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-primary)' }}>{g.name}</span>
@@ -472,7 +482,10 @@ export default function SensorSelection({
                             model built for it. */}
                         <div
                             className="fg-group-color-slate"
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '8px' }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '8px',
+                                background: isMemberOfGroup(0) ? 'var(--fg-tint)' : undefined,
+                            }}
                         >
                             <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
                             <span style={{ flex: 1, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Not in Group</span>
