@@ -588,3 +588,95 @@ one monolithic chunk — bigger lift, touches `components/charts/*` import
 boundaries, and trades bundle size for more moving parts to maintain. Only
 worth it if a user actually reports the first-workspace-open delay as
 noticeable — not before.
+
+---
+
+## 10. Line chart plots a downsampled preview even at full raw-data resolution — no way to actually see every row without narrowing the time range
+
+**Status: deferred by the user — "เก็บเป็น backlog ไว้เดี๋ยวผมทำทีหลัง"
+(2026-09-01). Design agreed in conversation, not started.**
+
+**Found:** 2026-09-01, user asked how to plot the Line chart without any
+resampling at all. Investigated the actual mechanism and options with
+them before they picked a direction.
+
+**Current behavior (confirmed by reading the code):** `get_chart_data`'s
+`decimate()` (`chart_query.rs`) always caps the Line chart at
+`LINE_MAX_POINTS` (4,000) regardless of how much of the filtered
+population it represents — for the reported case, 4,000 points standing
+in for 159,264 rows. The chart's own interactive zoom
+(`LineChart.tsx:677`'s `dataZoom`, both the `inside` scroll/pinch gesture
+and the bottom `slider`) is **purely a client-side ECharts feature** —
+confirmed via grep, there's no listener anywhere that turns a zoom
+gesture into a new backend query. Zooming in today just stretches the
+same already-decimated 4,000 points; it never reveals more real detail,
+which the user hadn't realized until this was pointed out.
+
+**Options discussed (five), with the user's own words on the risk that
+matters most:**
+1. Remove the cap entirely — real crash/freeze risk on large files (app
+   supports CSVs up to 2GB, this dataset's 159k rows is nowhere near the
+   worst case), rejected implicitly by not being the direction chosen.
+2. Switch the Line chart to ECharts' `large`/WebGL rendering mode —
+   raises the practical ceiling a lot, but ECharts may still sample
+   internally at very large row counts, so it doesn't guarantee "zero
+   resampling, ever." Not chosen, but not ruled out as a *complementary*
+   future improvement on top of #3.
+3. **Chosen direction — level-of-detail: re-fetch a decimated view scoped
+   to the current zoom window instead of stretching a fixed one.** Same
+   4,000-point cap applies, but now against a narrower time range, so
+   resolution increases as the user zooms in — and once the zoomed
+   window's actual row count drops to ≤ 4,000, `decimate()` becomes a
+   no-op and the chart is showing 100% raw, unmodified data. This is the
+   same technique tools like Grafana use. Confirmed with the user this
+   correctly describes what they were picturing.
+4. Just raise the cap moderately (e.g. 4,000 → 20-50k) — simplest,
+   lowest-risk, but not discussed further once #3 was chosen as the real
+   fix; still worth doing as a cheap complement regardless.
+5. Rewrite the Line chart onto the same WebGL point-renderer
+   (`regl-scatterplot`) already used for Scatter/Pair Plot — explicitly
+   the biggest lift (axis formatting, tooltips, alarm mark-lines,
+   per-sensor colors are all ECharts-specific today) and not pursued.
+
+**The redesign problem that came up once #3 was picked:** the app has
+**three separate ways to change the visible time range**, and only two of
+them are safe to wire straight into a backend refetch:
+1. The "Time Range" text inputs (top of Dashboard) — discrete, already
+   drives `filters.timestampStart/End` → `useChartData` refetches. Fine
+   as-is.
+2. The relative-range quick-select buttons (Y/M/W/D/H + amount) — also
+   discrete, same `filters` pipeline. Fine as-is.
+3. **The chart's own interactive zoom (drag the slider, scroll/pinch
+   inside the plot)** — continuous, fires on every intermediate step of a
+   drag gesture (comparable to `mousemove` frequency). User specifically
+   flagged this as "the biggest problem" — correctly: wiring every
+   intermediate `dataZoom` event straight to a Rust `invoke` would hammer
+   the backend during a single drag.
+
+**Proposed fix, when picked up:**
+- Route path 3 through the *same* `filters.timestampStart/End` state
+  paths 1 and 2 already write to — no new/parallel state, no new fetch
+  code path, it just becomes a third writer into the existing pipeline
+  `useChartData` already reacts to.
+- **Debounce only path 3's write into `filters`** (~300-500ms after the
+  zoom gesture settles) — same debounce shape already used elsewhere in
+  this app (`AUTOSAVE_DEBOUNCE_MS`, the existing filter-driven
+  `useChartData`/`useScatterSample`/`useTablePage` debounces), just a new
+  trigger source. During the drag itself, ECharts keeps handling the
+  live visual pan/zoom entirely client-side against whatever's already
+  loaded — exactly today's behavior, no backend calls — so nothing about
+  drag responsiveness changes. Only once the user stops does one fetch
+  land, at the new (narrower, more detailed) range.
+- Sync the "Time Range" text inputs to reflect the zoomed range too once
+  it commits, so all three controls stay showing the same state instead
+  of the inputs silently going stale while the chart itself has zoomed.
+- Natural correctness check once built: zoom in far enough that the
+  visible window's row count drops below `LINE_MAX_POINTS` and confirm
+  the chart is now reading genuinely raw (non-decimated) data — same
+  "escape hatch" reasoning discussed with the user, not something to
+  special-case in code, it just falls out of reusing `decimate()`
+  unchanged.
+- Worth deciding alongside this (not blocking it): whether Scatter/Pair
+  Plot's own sampling (`useScatterSample`, a different reservoir-sampling
+  mechanism, not `decimate()`) should get the same zoom-to-refetch
+  treatment, or whether this item is Line-chart-only for now.
