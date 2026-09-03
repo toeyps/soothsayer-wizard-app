@@ -413,6 +413,86 @@ describe('Dashboard', () => {
             expect(lastChart.sensorColors).toEqual({ TAG1: 'c0', TAG2: 'c1' });
         });
 
+        // 2026-09-02: reported as "un-ticking a sensor in the right-hand panel
+        // makes the chart flash a different colour before the line goes away".
+        // Colours used to come from the sensor's index in `selectedSensors`, so
+        // removing one re-packed every sensor after it onto a new slot, while
+        // useChartData deliberately keeps the previous view on screen during
+        // the refetch — old lines, new colours. These pin the fix.
+        describe('palette colours survive changes to the selection', () => {
+            const lineColors = () => last(chartProps.filter((p) => p.chartType === 'line')).sensorColors;
+
+            it('does not re-colour the remaining sensors when one is removed', () => {
+                renderDashboard();
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2', 'TAG3']); });
+                expect(lineColors()).toMatchObject({ TAG1: 'c0', TAG2: 'c1', TAG3: 'c2' });
+
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG3']); });
+                // Before the fix TAG3 shifted from 'c2' to 'c1' here — the flash.
+                expect(lineColors()).toMatchObject({ TAG1: 'c0', TAG3: 'c2' });
+            });
+
+            it('keeps a just-removed sensor in the map, so its line does not change colour while the stale view is still on screen', () => {
+                renderDashboard();
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2']); });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1']); });
+                // TAG2's line is still drawn from the previous fetch until the
+                // next one lands; without an entry here LineChart would fall
+                // back to defaultSensorColor() and repaint it mid-flight.
+                expect(lineColors().TAG2).toBe('c1');
+            });
+
+            it('gives a re-selected sensor its original colour back', () => {
+                renderDashboard();
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2', 'TAG3']); });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1']); });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG3']); });
+                expect(lineColors().TAG3).toBe('c2'); // not 'c1', the next free slot
+            });
+
+            it('hands a brand-new sensor the lowest free slot rather than one already in use', () => {
+                renderDashboard();
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2']); });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG2']); });   // frees c0
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG2', 'TAG4']); });
+                expect(lineColors()).toMatchObject({ TAG2: 'c1', TAG4: 'c0' });
+            });
+
+            it('still lets an explicit colour override win over the assigned slot', () => {
+                // The sensor has to start out selected: an existing effect prunes
+                // explicit overrides for anything not in selectedSensors, so
+                // seeding a colour for an unselected sensor would be dropped on
+                // mount before this could observe it.
+                renderDashboard({
+                    initialState: makeInitialState({
+                        selectedSensors: ['TAG1', 'TAG2'],
+                        visibleSensors: ['TAG1', 'TAG2'],
+                        sensorColors: { TAG2: '#abcdef' },
+                    }),
+                });
+                expect(lineColors()).toMatchObject({ TAG1: 'c0', TAG2: '#abcdef' });
+            });
+
+            it('still prunes an explicit override when its sensor is deselected — remembering the palette SLOT must not resurrect a user-picked colour', () => {
+                // Guards the interaction between the slot memory added here and
+                // the older deliberate rule that a deselected sensor loses its
+                // hand-picked colour (so re-adding it never silently restores
+                // one). The slot is remembered; the override is not.
+                renderDashboard({
+                    initialState: makeInitialState({
+                        selectedSensors: ['TAG1', 'TAG2'],
+                        visibleSensors: ['TAG1', 'TAG2'],
+                        sensorColors: { TAG2: '#abcdef' },
+                    }),
+                });
+                expect(lineColors().TAG2).toBe('#abcdef');
+
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1']); });
+                act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2']); });
+                expect(lineColors().TAG2).toBe('c1'); // back to its remembered slot, not '#abcdef'
+            });
+        });
+
         it('Clear all empties selectedSensors', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             fireEvent.click(screen.getByText('Clear all'));

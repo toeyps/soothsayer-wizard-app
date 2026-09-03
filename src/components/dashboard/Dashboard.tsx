@@ -713,20 +713,76 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setSensorColors(prev => ({ ...prev, [sensor]: color }));
     }, []);
 
+    // Palette slot each sensor has been handed, remembered for the lifetime
+    // of this window. Once a sensor owns a slot it keeps it — see
+    // `resolvedSensorColors` below for why that matters.
+    const colorSlotsRef = useRef<Map<string, number>>(new Map());
+
     // Fills in a default for every selected sensor that doesn't have an
-    // explicit override, keyed by position in `selectedSensors` (stable —
-    // only appended/filtered, never reordered by hide/show) rather than
-    // hashing the tag. Hashing let unrelated sensors collide onto the same
-    // palette slot, or land on adjacent blue/indigo/violet entries that
-    // read as "basically the same color" on a thin line trace — the report
-    // that prompted this. Index-based assignment guarantees every
-    // simultaneously-selected sensor (up to the 6-color palette) gets a
-    // visually distinct color instead of leaving it to chance.
+    // explicit override. Assignment is by palette SLOT, not by hashing the
+    // tag: hashing let unrelated sensors collide onto the same slot, or land
+    // on adjacent blue/indigo/violet entries that read as "basically the same
+    // color" on a thin line trace — the report that prompted the original
+    // change. Slots guarantee every simultaneously-selected sensor (up to the
+    // palette size) gets a visually distinct color.
+    //
+    // 2026-09-02: slots are now REMEMBERED instead of recomputed as
+    // `selectedSensors[i]`, which made a sensor's color depend on the
+    // composition of the list rather than on the sensor. Un-ticking one
+    // sensor in the right-hand panel re-packed every sensor after it onto a
+    // new slot, and `useChartData` deliberately keeps the previous view on
+    // screen while the next query is in flight ("so the chart never flashes
+    // blank") — so for ~250ms the OLD lines were redrawn in NEW colors. The
+    // sensor being removed was worse still: it dropped out of this map
+    // immediately, so LineChart fell back to `defaultSensorColor()`, a
+    // different (hash-based) color, and its line visibly changed color just
+    // before vanishing. That is the flicker the user reported.
+    //
+    // Two rules fix it: an assigned slot never moves, and a sensor keeps its
+    // entry here after being deselected, so a line still on screen from the
+    // previous fetch keeps the color it was drawn with.
     const resolvedSensorColors = useMemo(() => {
+        const slots = colorSlotsRef.current;
+        const assigned = new Map<string, number>();
+        const taken = new Set<number>();
+
+        // 1) Honour slots already handed out (selection order breaks ties if
+        //    two sensors somehow remember the same one).
+        for (const sensor of selectedSensors) {
+            const slot = slots.get(sensor);
+            if (slot !== undefined && !taken.has(slot)) {
+                assigned.set(sensor, slot);
+                taken.add(slot);
+            }
+        }
+        // 2) Everything new takes the lowest free slot. Once the palette is
+        //    exhausted, wrap — same as the old behaviour past that point.
+        let overflow = 0;
+        for (const sensor of selectedSensors) {
+            if (assigned.has(sensor)) continue;
+            let slot = 0;
+            while (slot < LINE_CHART_COLORS.length && taken.has(slot)) slot++;
+            if (slot === LINE_CHART_COLORS.length) {
+                slot = overflow % LINE_CHART_COLORS.length;
+                overflow++;
+            } else {
+                taken.add(slot);
+            }
+            assigned.set(sensor, slot);
+        }
+        for (const [sensor, slot] of assigned) slots.set(sensor, slot);
+
+        // Every sensor that has ever held a slot, not just the currently
+        // selected ones — a line from the in-flight previous view is still
+        // being drawn and must not lose its color mid-flight.
         const map: Record<string, string> = {};
-        selectedSensors.forEach((sensor, i) => {
-            map[sensor] = sensorColors[sensor] ?? LINE_CHART_COLORS[i % LINE_CHART_COLORS.length];
-        });
+        for (const [sensor, slot] of slots) {
+            map[sensor] = sensorColors[sensor] ?? LINE_CHART_COLORS[slot];
+        }
+        // An explicit user-picked color always wins.
+        for (const [sensor, color] of Object.entries(sensorColors)) {
+            map[sensor] = color;
+        }
         return map;
     }, [selectedSensors, sensorColors]);
 
