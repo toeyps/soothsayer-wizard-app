@@ -10,7 +10,7 @@ use csv_processor::{
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use tauri::State;
 
 // ---------------------------------------------------------------------------
@@ -419,7 +419,7 @@ struct SessionData {
     paths: Vec<String>,
 }
 
-struct AppState(Mutex<Option<SessionData>>);
+struct AppState(RwLock<Option<SessionData>>);
 
 #[tauri::command]
 fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport, String> {
@@ -432,7 +432,7 @@ fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport,
     let merge_result = csv_processor::read_merge_csvs_with_report(paths.clone())?;
     let report = csv_processor::build_load_report(&merge_result);
 
-    let mut state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     *state_lock = Some(SessionData {
         data: merge_result.data,
         paths,
@@ -443,7 +443,7 @@ fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport,
 
 #[tauri::command]
 fn get_loaded_paths(state: State<AppState>) -> Result<Vec<String>, String> {
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     match &*state_lock {
         Some(session) => Ok(session.paths.clone()),
         None => Ok(Vec::new()),
@@ -452,7 +452,7 @@ fn get_loaded_paths(state: State<AppState>) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn get_all_sensors(state: State<AppState>) -> Result<Vec<String>, String> {
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     Ok(session.data.headers.clone())
 }
@@ -498,7 +498,7 @@ fn compute_sensor_stats(
 ) -> Result<SensorStats, String> {
     use rayon::prelude::*;
 
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     let data = &session.data;
 
@@ -921,7 +921,7 @@ async fn preview_relationship_model(
     // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
     // `y` is n_rows.  We collect into owned data and drop the lock before any await.
     let (x_matrix, y_vector) = {
-        let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
 
@@ -1138,7 +1138,7 @@ fn train_individual_model(
         .map_err(|e| format!("target: {}", e))?;
     validate_save_dir(&save_path)?;
 
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     let data = &session.data;
 
@@ -1328,7 +1328,7 @@ fn compute_clustering_preview(
         return Err("Both sensors are required.".into());
     }
 
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     let data = &session.data;
 
@@ -1531,7 +1531,7 @@ fn train_clustering_model(
     // filter — distinct from the per-cluster criteria range — does narrow
     // it, so we gate rows by `resolved.keeps(row)` here too.
     let (start_date, end_date) = {
-        let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
         let i1 = data.headers.iter().position(|h| h == &first_sensor).unwrap();
@@ -1714,7 +1714,7 @@ async fn train_relationship_model(
     // `training_set.to_csv(...)` (which writes the DataFrame's DatetimeIndex
     // as the unnamed first column).
     let (x_matrix, y_vector, row_timestamps, time_bounds) = {
-        let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+        let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
 
@@ -2039,7 +2039,7 @@ fn calculate_new_sensor(
     config: SensorOperationConfig,
     state: State<AppState>,
 ) -> Result<String, String> {
-    let mut state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     let session = state_lock.as_mut().ok_or("No data loaded")?;
     let data = &mut session.data;
 
@@ -2360,7 +2360,7 @@ fn validate_formula(
 ) -> Result<FormulaValidationResult, String> {
     check_formula_limits(&formula)?;
 
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     let data = &session.data;
 
@@ -2432,7 +2432,7 @@ fn evaluate_formula(
 ) -> Result<String, String> {
     check_formula_limits(&formula)?;
 
-    let mut state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     let session = state_lock.as_mut().ok_or("No data loaded")?;
     let data = &mut session.data;
 
@@ -2595,7 +2595,7 @@ fn get_chart_data(
     max_points: usize,
     state: State<AppState>,
 ) -> Result<chart_query::ChartView, String> {
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     Ok(chart_query::build_chart_view(
         &session.data,
@@ -2618,7 +2618,7 @@ fn get_table_page(
     page_size: usize,
     state: State<AppState>,
 ) -> Result<chart_query::TablePage, String> {
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     Ok(chart_query::build_table_page(
         &session.data,
@@ -2697,7 +2697,7 @@ fn get_scatter_sample(
     max_points: usize,
     state: State<AppState>,
 ) -> Result<ScatterSample, String> {
-    let state_lock = state.0.lock().map_err(|e| e.to_string())?;
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     Ok(sample_dataset(&session.data, &filter, max_points))
 }
@@ -2976,7 +2976,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .manage(AppState(Mutex::new(None)))
+        .manage(AppState(RwLock::new(None)))
         .invoke_handler(tauri::generate_handler![
             load_csv,
             get_all_sensors,

@@ -276,6 +276,42 @@ describe('Dashboard', () => {
         expect(screen.queryByText('159,264 Rows')).toBeNull();
     });
 
+    it('skips an autosave whose payload is already on disk — a failure-group toggle costs one write, not two (2026-09-02: persistFailureGroupState writes immediately so a Build Model window opened right after reads fresh data, and the debounced autosave then rewrote the identical payload 250ms later)', async () => {
+        vi.useFakeTimers();
+        renderDashboard({
+            initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+        });
+        // Let the on-mount autosave land so the "already on disk" payload is primed.
+        await act(async () => { vi.advanceTimersByTime(300); });
+        mockSaveWorkspaceData.mockClear();
+
+        act(() => { fireEvent.click(screen.getByText('toggle-group')); });
+        // The immediate cross-window persist still happens, unchanged.
+        expect(mockUpdateWorkspaceData).toHaveBeenCalled();
+        // Let its .then record what the disk now holds.
+        await act(async () => { await Promise.resolve(); });
+
+        await act(async () => { vi.advanceTimersByTime(300); });
+        expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+    });
+
+    it('still autosaves normally when the state actually changed after a failure-group write', async () => {
+        vi.useFakeTimers();
+        renderDashboard({
+            initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+        });
+        await act(async () => { vi.advanceTimersByTime(300); });
+        act(() => { fireEvent.click(screen.getByText('toggle-group')); });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { vi.advanceTimersByTime(300); });
+        mockSaveWorkspaceData.mockClear();
+
+        // A change the failure-group write knows nothing about must still reach disk.
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+        await act(async () => { vi.advanceTimersByTime(300); });
+        expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+    });
+
     it('autosaves on mount with the workspace name and lastRoute "dashboard" (after the debounce settles)', async () => {
         renderDashboard({ initialState: makeInitialState({ name: 'My Workspace' }) });
         await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalledWith(
@@ -313,7 +349,11 @@ describe('Dashboard', () => {
             expect(mockCloseRequestedHandler).not.toBeNull();
 
             // Trigger an edit -- schedules a new debounced save, still pending.
-            act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+            // It has to be a REAL change: since 2026-09-02 the autosave skips a
+            // write whose payload is byte-identical to what is already on disk,
+            // so re-selecting the already-selected TAG1 (as this test used to
+            // do) would legitimately write nothing at all.
+            act(() => { fireEvent.click(screen.getByText('select-none')); });
 
             const preventDefault = vi.fn();
             let closePromise!: Promise<void>;

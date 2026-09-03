@@ -291,12 +291,34 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         initialState?.failureGroupState?.models ?? []
     );
 
+    // Serialized WorkspaceState that is already known to be on disk. The
+    // debounced autosave below compares against this and skips a write whose
+    // payload would be byte-identical — see its own comment for why that
+    // matters. Every path that actually persists updates this.
+    const lastSavedPayloadRef = useRef<string | null>(null);
+    // Latest `buildWorkspaceState`, reachable from callbacks declared above
+    // it. It is defined much further down, so naming it directly here (or in
+    // a dependency array) would be a temporal-dead-zone error at render time.
+    const buildWorkspaceStateRef = useRef<((overrides?: Partial<WorkspaceState>) => WorkspaceState) | null>(null);
+
     const persistFailureGroupState = useCallback((groups: FailureGroup[], models: FailureModel[]) => {
         if (!initialState) return;
         updateWorkspaceData(initialState.id, prev => ({
             ...prev,
             failureGroupState: { groups, models },
-        })).catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
+        }))
+            .then(() => {
+                // 2026-09-02: this write already made the new failure-group
+                // state durable, so record what the disk now holds. Without
+                // it the debounced autosave rewrote the very same content
+                // ~250ms later, making every single toggle cost one disk read
+                // plus two full-state writes.
+                const build = buildWorkspaceStateRef.current;
+                if (build) {
+                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: { groups, models } }));
+                }
+            })
+            .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
     }, [initialState]);
 
     // BuildModelWindow and PredictiveModelBuild persist failureGroupState
@@ -1328,6 +1350,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 
+    // Keeps `buildWorkspaceStateRef` pointing at the current builder so the
+    // callbacks declared above it (persistFailureGroupState) can reach it.
+    // Runs after every render, so it is always current by the time any click
+    // handler fires.
+    useEffect(() => { buildWorkspaceStateRef.current = buildWorkspaceState; });
+
     // 2026-09-01: what the close-flush effect below awaits before actually
     // letting the window close — see its own comment for why this exists.
     // Always overwritten to the LATEST scheduled save on every effect rerun
@@ -1350,7 +1378,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let timer: ReturnType<typeof setTimeout>;
         pendingSaveRef.current = new Promise<void>((resolve) => {
             timer = setTimeout(async () => {
-                await saveWorkspaceData(buildWorkspaceState());
+                const next = buildWorkspaceState();
+                const payload = JSON.stringify(next);
+                // 2026-09-02: skip the write when the state is byte-identical
+                // to what is already on disk. Primarily this removes the
+                // second of the two writes every failure-group toggle used to
+                // cause — persistFailureGroupState writes immediately (so a
+                // Build Model window opened right after reads fresh data),
+                // then this autosave rewrote the exact same content 250ms
+                // later — but it also covers any other path that reschedules
+                // an autosave without actually changing anything.
+                if (payload !== lastSavedPayloadRef.current) {
+                    await saveWorkspaceData(next);
+                    lastSavedPayloadRef.current = payload;
+                }
                 pendingSaveRef.current = null;
                 resolve();
             }, AUTOSAVE_DEBOUNCE_MS);

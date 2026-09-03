@@ -243,6 +243,45 @@ describe('SensorSelection', () => {
         });
     });
 
+    // 2026-09-02 perf: membership moved from a per-row scan of every model
+    // into one memoized index keyed by sensor tag. These two cases pin the
+    // identification rules the index has to encode, since getting either
+    // wrong would silently show a sensor as belonging to nothing.
+    describe('membership index', () => {
+        it('matches a Clustering model by its xSensor, not targetSensor', () => {
+            const clusteringModel: FailureModel = {
+                ...modelTag1InGroupA, id: 'm3', kind: 'clustering', targetSensor: '', xSensor: 'TAG1',
+            };
+            render(<SensorSelection {...makeProps({ fgModels: [clusteringModel] })} />);
+            expandPump();
+            expect(screen.getByTitle('Remove Clustering from Group A')).toBeTruthy();
+        });
+
+        it('matches sensor tags case-insensitively', () => {
+            const lowerCaseModel: FailureModel = { ...modelTag1InGroupA, targetSensor: 'tag1' };
+            render(<SensorSelection {...makeProps({ fgModels: [lowerCaseModel] })} />);
+            expandPump();
+            expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
+        });
+
+        it('keeps a sensor that belongs to several groups AND several kinds fully resolved', () => {
+            const groupB: FailureGroup = { no: 2, name: 'Group B' };
+            const models: FailureModel[] = [
+                { ...modelTag1InGroupA, groupNos: [1, 2] },
+                { ...modelTag1InGroupA, id: 'm2', kind: 'relationship', groupNos: [2] },
+            ];
+            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }, groupA, groupB], fgModels: models })} />);
+            expandPump();
+            expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
+            expect(screen.getByTitle('Remove Individual from Group B')).toBeTruthy();
+            expect(screen.getByTitle('Remove Relationship from Group B')).toBeTruthy();
+            // …but NOT a relationship membership in Group A, which no model has.
+            // "Add …" lives on the menu's toggles, so the menu has to be open.
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
+            expect(screen.getByTitle('Add Relationship to Group A')).toBeTruthy();
+        });
+    });
+
     describe('the group-assignment menu', () => {
         it('opens via the FolderPlus button and via right-click', () => {
             render(<SensorSelection {...makeProps()} />);

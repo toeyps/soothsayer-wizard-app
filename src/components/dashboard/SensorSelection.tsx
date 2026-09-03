@@ -60,13 +60,16 @@ const KIND_LABEL: Record<ModelKind, string> = {
 };
 const ALL_KINDS: ModelKind[] = ['individual', 'relationship', 'clustering'];
 
-/** Does model `m` (of kind `kind`) represent sensor `tag`? Individual/
- *  Relationship key off targetSensor; Clustering keys off xSensor, since a
- *  Clustering model created from this single-sensor toggle flow seeds that
- *  sensor as X and leaves Y for later (see Dashboard.tsx's
- *  makeDefaultModelForKind). */
-const modelMatchesSensorKind = (m: FailureModel, kind: ModelKind, tag: string) =>
-    m.kind === kind && (kind === 'clustering' ? (m.xSensor ?? '') : (m.targetSensor ?? '')).toLowerCase() === tag.toLowerCase();
+/** Which sensor does model `m` represent? Individual/Relationship key off
+ *  targetSensor; Clustering keys off xSensor, since a Clustering model
+ *  created from the single-sensor toggle flow seeds that sensor as X and
+ *  leaves Y for later (see Dashboard.tsx's makeDefaultModelForKind).
+ *  Lower-cased because tags are matched case-insensitively. */
+const modelSensorTag = (m: FailureModel) =>
+    (m.kind === 'clustering' ? (m.xSensor ?? '') : (m.targetSensor ?? '')).toLowerCase();
+
+/** Key for one (group, kind) membership inside the index below. */
+const membershipKey = (groupNo: number, kind: ModelKind) => `${groupNo}:${kind}`;
 
 export default function SensorSelection({
     sensors,
@@ -184,32 +187,54 @@ export default function SensorSelection({
 
     const isFilterActive = searchTerm !== '';
 
+    // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
+    //
+    // 2026-09-02 perf: this used to be derived inside renderSensorRow as
+    // `fgGroups.flatMap(g => ALL_KINDS.filter(kind => fgModels.some(...)))`,
+    // i.e. a full scan of `fgModels` for every (group, kind) pair of every
+    // rendered row — O(rows x groups x kinds x models), recomputed on every
+    // render, so every keystroke in the search box paid for all of it. With
+    // 11 groups x 3 kinds that was 33 whole-array scans per row. Building
+    // the index once per `fgModels` change makes each row's lookups O(1).
+    const membershipIndex = useMemo(() => {
+        const index = new Map<string, Set<string>>();
+        for (const m of fgModels) {
+            const tag = modelSensorTag(m);
+            if (!tag) continue;
+            let keys = index.get(tag);
+            if (!keys) { keys = new Set<string>(); index.set(tag, keys); }
+            for (const groupNo of m.groupNos) keys.add(membershipKey(groupNo, m.kind));
+        }
+        return index;
+    }, [fgModels]);
+
     const handleClearFilter = () => {
         setSearchTerm('');
     };
 
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
-        // Which (group, kind) pairs this sensor actually belongs to — a
-        // sensor can carry more than one model kind per group now (e.g.
-        // both an Individual and a Relationship model), so membership is
-        // tracked per kind, not just per group. Includes group 0 ("Not in
-        // Group") — a sensor can be toggled into it exactly like any real
-        // group (see Dashboard.tsx's toggleSensorGroupKind).
-        const memberEntries: { group: FailureGroup; kind: ModelKind }[] = fgGroups.flatMap(g =>
-            ALL_KINDS
-                .filter(kind => fgModels.some(m => modelMatchesSensorKind(m, kind, sensor) && m.groupNos.includes(g.no)))
-                .map(kind => ({ group: g, kind }))
-        );
+        // This sensor's own membership keys, straight out of the index
+        // above — one Map lookup instead of re-scanning every model.
+        const ownMemberships = membershipIndex.get(sensor.toLowerCase());
         const isMemberOfKind = (groupNo: number, kind: ModelKind) =>
-            memberEntries.some(e => e.group.no === groupNo && e.kind === kind);
+            ownMemberships?.has(membershipKey(groupNo, kind)) ?? false;
         // Is the sensor a member of this group in ANY kind — used to tint
         // the row in the group-assignment menu so an active group doesn't
         // get lost among a long list of groups (2026-09-02, reported by the
         // user as "ตาลาย" once there are 10+ groups: the toggle buttons'
         // own highlight isn't enough at a glance, the row itself needs it).
         const isMemberOfGroup = (groupNo: number) =>
-            memberEntries.some(e => e.group.no === groupNo);
+            ALL_KINDS.some(kind => isMemberOfKind(groupNo, kind));
+        // Which (group, kind) pairs this sensor belongs to, in group order —
+        // a sensor can carry more than one model kind per group (e.g. both an
+        // Individual and a Relationship model), so membership is per kind,
+        // not just per group. Includes group 0 ("Not in Group"), which a
+        // sensor can be toggled into exactly like any real group (see
+        // Dashboard.tsx's toggleSensorGroupKind).
+        const memberEntries: { group: FailureGroup; kind: ModelKind }[] = fgGroups.flatMap(g =>
+            ALL_KINDS.filter(kind => isMemberOfKind(g.no, kind)).map(kind => ({ group: g, kind }))
+        );
         const menuOpen = groupMenuFor === sensor;
 
         // Three small per-kind toggle buttons for one group (or "Not in
