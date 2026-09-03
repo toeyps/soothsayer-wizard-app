@@ -243,7 +243,7 @@ describe('SensorSelection', () => {
         });
     });
 
-    // 2026-09-02 perf: membership moved from a per-row scan of every model
+    // 2026-09-03 perf: membership moved from a per-row scan of every model
     // into one memoized index keyed by sensor tag. These two cases pin the
     // identification rules the index has to encode, since getting either
     // wrong would silently show a sensor as belonging to nothing.

@@ -189,7 +189,7 @@ export default function SensorSelection({
 
     // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
     //
-    // 2026-09-02 perf: this used to be derived inside renderSensorRow as
+    // 2026-09-03 perf: this used to be derived inside renderSensorRow as
     // `fgGroups.flatMap(g => ALL_KINDS.filter(kind => fgModels.some(...)))`,
     // i.e. a full scan of `fgModels` for every (group, kind) pair of every
     // rendered row — O(rows x groups x kinds x models), recomputed on every

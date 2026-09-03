@@ -3,7 +3,7 @@ import { debugLog } from '../utils/debugLog';
 
 /**
  * `debugLog` replaced 17 bare `console.log` calls that were shipping in
- * production paths (2026-09-02). These tests pin the two properties the rest
+ * production paths (2026-09-03). These tests pin the two properties the rest
  * of the app relies on: it forwards to console.log while `import.meta.env.DEV`
  * is true (dev + tests), and it is a plain pass-through — no formatting, no
  * swallowing of arguments — so a call site reads the same as the console.log

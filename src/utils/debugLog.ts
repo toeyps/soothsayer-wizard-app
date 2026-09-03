@@ -1,7 +1,7 @@
 /**
  * `console.log` that stays silent in production builds.
  *
- * Added 2026-09-02: a project-wide review found 17 bare `console.log` calls
+ * Added 2026-09-03: a project-wide review found 17 bare `console.log` calls
  * left in shipped code paths — five of them in `workspaceManager`'s save path,
  * which runs on every 250 ms autosave, and three in `TitleBar` that just print
  * "minimize" / "maximize" / "close". None of them help a user, they leak

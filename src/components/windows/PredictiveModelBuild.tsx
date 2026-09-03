@@ -174,7 +174,7 @@ interface PredictiveModelBuildProps {
  * Per-cluster palette — mirrors the multi-series colour set used elsewhere in
  * the app (LineChart). Cycles when there are more clusters than colours.
  *
- * 2026-09-02: hoisted out of the component. It is a plain constant, so
+ * 2026-09-03: hoisted out of the component. It is a plain constant, so
  * rebuilding the array on every render bought nothing and gave the useMemo
  * that depends on it a new identity each time.
  */

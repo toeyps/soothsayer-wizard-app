@@ -6,7 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 /**
  * Flat ESLint config (ESLint 9).
  *
- * Added 2026-09-02. Before this the repo had ELEVEN
+ * Added 2026-09-03. Before this the repo had ELEVEN
  * `// eslint-disable-next-line react-hooks/exhaustive-deps` comments and no
  * ESLint installed at all — suppressions for a linter that never ran, so the
  * one rule that actually catches stale-closure bugs (the class of bug this

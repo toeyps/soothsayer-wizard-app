@@ -276,7 +276,7 @@ describe('Dashboard', () => {
         expect(screen.queryByText('159,264 Rows')).toBeNull();
     });
 
-    it('skips an autosave whose payload is already on disk — a failure-group toggle costs one write, not two (2026-09-02: persistFailureGroupState writes immediately so a Build Model window opened right after reads fresh data, and the debounced autosave then rewrote the identical payload 250ms later)', async () => {
+    it('skips an autosave whose payload is already on disk — a failure-group toggle costs one write, not two (2026-09-03: persistFailureGroupState writes immediately so a Build Model window opened right after reads fresh data, and the debounced autosave then rewrote the identical payload 250ms later)', async () => {
         vi.useFakeTimers();
         renderDashboard({
             initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
@@ -349,7 +349,7 @@ describe('Dashboard', () => {
             expect(mockCloseRequestedHandler).not.toBeNull();
 
             // Trigger an edit -- schedules a new debounced save, still pending.
-            // It has to be a REAL change: since 2026-09-02 the autosave skips a
+            // It has to be a REAL change: since 2026-09-03 the autosave skips a
             // write whose payload is byte-identical to what is already on disk,
             // so re-selecting the already-selected TAG1 (as this test used to
             // do) would legitimately write nothing at all.
@@ -413,7 +413,7 @@ describe('Dashboard', () => {
             expect(lastChart.sensorColors).toEqual({ TAG1: 'c0', TAG2: 'c1' });
         });
 
-        // 2026-09-02: reported as "un-ticking a sensor in the right-hand panel
+        // 2026-09-03: reported as "un-ticking a sensor in the right-hand panel
         // makes the chart flash a different colour before the line goes away".
         // Colours used to come from the sensor's index in `selectedSensors`, so
         // removing one re-packed every sensor after it onto a new slot, while

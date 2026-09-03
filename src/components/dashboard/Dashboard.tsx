@@ -309,7 +309,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             failureGroupState: { groups, models },
         }))
             .then(() => {
-                // 2026-09-02: this write already made the new failure-group
+                // 2026-09-03: this write already made the new failure-group
                 // state durable, so record what the disk now holds. Without
                 // it the debounced autosave rewrote the very same content
                 // ~250ms later, making every single toggle cost one disk read
@@ -726,7 +726,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // change. Slots guarantee every simultaneously-selected sensor (up to the
     // palette size) gets a visually distinct color.
     //
-    // 2026-09-02: slots are now REMEMBERED instead of recomputed as
+    // 2026-09-03: slots are now REMEMBERED instead of recomputed as
     // `selectedSensors[i]`, which made a sensor's color depend on the
     // composition of the list rather than on the sensor. Un-ticking one
     // sensor in the right-hand panel re-packed every sensor after it onto a
@@ -1437,7 +1437,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             timer = setTimeout(async () => {
                 const next = buildWorkspaceState();
                 const payload = JSON.stringify(next);
-                // 2026-09-02: skip the write when the state is byte-identical
+                // 2026-09-03: skip the write when the state is byte-identical
                 // to what is already on disk. Primarily this removes the
                 // second of the two writes every failure-group toggle used to
                 // cause — persistFailureGroupState writes immediately (so a

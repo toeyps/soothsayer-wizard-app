@@ -1,6 +1,6 @@
 name: CI
 
-# Added 2026-09-02. Until now the only workflow in this repo was
+# Added 2026-09-03. Until now the only workflow in this repo was
 # release.yml, which builds installers on a version tag — nothing ever ran
 # `tsc`, `vitest`, `cargo test` or `clippy` automatically. CLAUDE.md states
 # that "every code change ships with a test change in the same pass", but
@@ -91,7 +91,7 @@ jobs:
       # since their signatures must mirror the frontend). What this DOES
       # catch is clippy's deny-by-default lints — exactly the class that had
       # `cargo clippy --all-targets` failing to compile at all until
-      # 2026-09-02, unnoticed because nothing ran it.
+      # 2026-09-03, unnoticed because nothing ran it.
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets
