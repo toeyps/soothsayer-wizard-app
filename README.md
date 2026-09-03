@@ -29,7 +29,7 @@ work and known issues across sessions, see
    - **Clustering** — GMM ellipse fits split by a criteria sensor (Rust).
    - **Relationship** — sensor-to-sensor relationship model (Python sidecar,
      LinearGAM under the hood — surfaced in the UI as "Relation model" only).
-   - Results export to PNG/PDF reports.
+   - Results export to PNG reports.
 5. **Workspaces** — every project (dataset selection, filters, chart
    settings, failure groups, model config) persists as a workspace you can
    reopen later from the Recent list.
@@ -140,9 +140,9 @@ src/
 │  ├─ dashboard/           Dashboard, FailureGroupsPanel, SensorSelection, DataTable, FilterPanel
 │  ├─ charts/              LineChart, ScatterChart, PairPlotChart/Cell
 │  ├─ windows/              secondary windows: AddSensor, PredictiveModelBuild, SaveAs (also serves Rename)
-│  └─ reports/              PM PDF/PNG report template
+│  └─ reports/              PM report shared types (pmReportTypes.ts)
 ├─ hooks/                  data-fetching + Tauri-binding hooks (useChartData, useScatterSample, ...)
-├─ types/commands.ts       single source of truth for every Tauri command signature
+├─ types/commands.ts       shared payload types for Tauri command args/results
 └─ workspaceManager.ts     save/load/list/delete/duplicate/rename workspace files
 
 src-tauri/
@@ -159,7 +159,7 @@ src-tauri/
 ## Security notes
 
 - CSV files are capped at 2 GB each.
-- Writes to user-picked paths (CSV/PDF/PNG export) go through a dedicated
+- Writes to user-picked paths (CSV/PNG export) go through a dedicated
   Rust command — the fs plugin itself is scoped to `$APPDATA` only.
 - The Relationship model's underlying algorithm name must never appear in
   user-facing text (say "Relation model").

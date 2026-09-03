@@ -26,15 +26,15 @@ description: "Frontend Logic Agent — creates React hooks, TypeScript type defi
 ## Coding Standards
 - Every `invoke()` call must have a typed return value
 - Define shared interfaces in `src/types/`
-- Update `src/types/commands.ts` when adding new Tauri commands
+- Put a new command's shared arg/result types in `src/types/` (there is no central command-signature map — the old `TauriCommands` map was deleted 2026-09-01; don't recreate it)
 - Custom hooks should follow `use[Name]` naming convention
 - Never store large data in `plugin-store` — use filesystem for heavy data
 
-## Contract-First Rule
+## Contract Rule
 When a new feature requires backend integration:
-1. Define the command type in `src/types/commands.ts`
-2. Create the TypeScript interfaces for args and return types
-3. Document in `docs/contracts/interface.md`
+1. Add the command's shared arg/result interfaces to `src/types/`, next to whatever consumes them — there is **no** central `TauriCommands` map any more (deleted 2026-09-01 after an audit found nothing imported it; don't recreate it)
+2. Give every `invoke()` call an explicit return type — that call site is where the contract is actually enforced
+3. Send snake_case arg keys, and confirm the Rust side carries `#[tauri::command(rename_all = "snake_case")]`
 4. Only THEN can the Rust agent and FE-UI agent proceed
 
 ## On Completion

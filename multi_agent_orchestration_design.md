@@ -133,7 +133,7 @@ As a [role], I want [capability] so that [benefit].
 # Task Breakdown: [Feature Name]
 
 ## Phase 1: Contract Definition
-- [ ] [fe-logic-agent] Update `src/types/commands.ts` with new command types + write/update its own test
+- [ ] [fe-logic-agent] Add the new command's shared arg/result types to `src/types/` + write/update its own test
 - [ ] [rust-agent] Implement Tauri commands matching contract + inline `#[cfg(test)]`
 
 ## Phase 2: Implementation

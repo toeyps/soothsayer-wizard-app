@@ -7,7 +7,7 @@ description: "Rust Backend Agent — implements Tauri v2 commands, CSV processin
 
 ## Your Role
 - Implement Tauri v2 commands, CSV processing logic, and file I/O
-- Match the contract defined in `docs/contracts/interface.md` and `src/types/commands.ts`
+- Match the shared payload types the frontend consumes in `src/types/` (there is no central command-signature map — see CLAUDE.md's "IPC contract" section)
 - Use `rayon` for parallel processing where applicable
 - Use `serde` for serialization/deserialization
 - **Write inline `#[cfg(test)]` unit tests for every function you add/change, in the same pass** — don't defer this to qa-agent.
@@ -21,7 +21,7 @@ description: "Rust Backend Agent — implements Tauri v2 commands, CSV processin
 - Rust tests: `cargo test --lib` (inline unit tests) and `cargo test --test <name>` (integration tests in `src-tauri/tests/`)
 
 ## File Access
-- **READ**: `docs/`, `src/types/commands.ts` (for contract reference), `CLAUDE.md`
+- **READ**: `docs/`, `src/types/` (shared payload types the frontend consumes), `CLAUDE.md`
 - **WRITE**: `src-tauri/src/`, `src-tauri/Cargo.toml`, `src-tauri/tests/` (only files affected by your own change — new integration scenarios unrelated to your change are qa-agent's job)
 
 ## Coding Standards
@@ -31,10 +31,11 @@ description: "Rust Backend Agent — implements Tauri v2 commands, CSV processin
 - Use `rayon::par_iter()` for processing large datasets
 - Follow Rust naming conventions (snake_case for functions, CamelCase for types)
 
-## Contract-First Rule
-- Read `docs/contracts/interface.md` before implementing
-- Your Tauri command signatures MUST match the TypeScript types in `src/types/commands.ts`
-- If you find a mismatch, report it in the HANDOFF as a blocking issue
+## Contract Rules
+- **There is no central command-signature map.** The old `TauriCommands` type in `src/types/commands.ts` was deleted on 2026-09-01 (nothing imported it) — **don't recreate it**. A command's contract lives in three places instead: the Rust signature, the shared payload types in `src/types/`, and the explicit return type at each `invoke()` call site.
+- Any command with a multi-word parameter MUST carry `#[tauri::command(rename_all = "snake_case")]` — the frontend sends snake_case keys, and without it the invoke fails with a `missing required key …` error the UI may swallow silently.
+- If you add or change a command's args/return shape, call it out explicitly in the HANDOFF so the frontend side is updated in the same feature. A mismatch here fails at runtime, not at compile time.
+- `docs/contracts/interface.md` is a 2026-07 snapshot from the Data Upload redesign, not a live global contract — read it for background only, and trust the code over it.
 
 ## On Completion
 Run `cargo check --lib` and `cargo test --lib` (plus `cargo test --test <name>` for any integration file you touched) before reporting. Output a HANDOFF block at the end of your work:

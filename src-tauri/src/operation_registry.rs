@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn single_round_two_decimals() {
-        assert_eq!(execute_single_op("round", 3.14159, 2.0).unwrap(), Some(3.14));
+        assert_eq!(execute_single_op("round", 1.23456, 2.0).unwrap(), Some(1.23));
     }
 
     #[test]

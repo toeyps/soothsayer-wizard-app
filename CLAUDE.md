@@ -37,7 +37,7 @@ npm run tauri:build               # release bundle; per-target + installer scrip
 
 ### IPC contract — conventions that break silently if violated
 
-- `src/types/commands.ts` (`TauriCommands`) is the **single source of truth** for command signatures. Every command registered in `lib.rs`'s `invoke_handler` must be typed there **before** UI work begins (contract-first).
+- **There is no central command-signature map.** `src/types/commands.ts` holds the shared *payload* types that hooks and components import (`ChartViewData`, `DashboardDataFilter`, `RelationshipPreviewResult`, …) — it is not a registry of every command. The `TauriCommands` type-map that used to live there was deleted on 2026-09-01 after an audit found nothing in the codebase imported it (see `docs/PROJECT_HANDOVER.md`); **don't recreate it**. A command's contract is enforced by the two rules below plus the explicit return type at each `invoke()` call site.
 - **Arg-key casing (the #1 silent-failure trap)**: this codebase sends **snake_case keys from TS** matching the Rust parameter names (`max_points`, `first_sensor`, `save_path`). But Tauri v2's command macro expects **camelCase keys by default**, so every command with a multi-word parameter MUST carry `#[tauri::command(rename_all = "snake_case")]`. Missing it → invoke rejects with `missing required key maxPoints`-style errors, which hooks may swallow, so the feature just silently does nothing.
 - Never call `invoke()` without an explicit TypeScript return type.
 
@@ -62,7 +62,9 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 
 ### Report export (PM page)
 
-`usePMReport` exports PNG (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) and PDF (`@react-pdf/renderer` with `PMReportTemplate.tsx`). Note: react-pdf's yoga-layout engine compiles **WebAssembly at runtime** — the production `script-src` in `tauri.conf.json` includes `'unsafe-eval'` for this reason (the narrower `'wasm-unsafe-eval'` also satisfies it if the CSP is ever tightened). Dev mode uses the looser `devCsp`, so CSP regressions in PDF export only surface in **installed builds** — always test export from a real installer build after touching CSP or report code.
+`usePMReport` exports **PNG only** (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) — it returns just `{ exportPNG }`. PDF export and `@react-pdf/renderer` were removed; `src/components/reports/` holds only `pmReportTypes.ts` now. Don't re-add a PDF path without asking.
+
+**CSP note (open item)**: the production `script-src` in `tauri.conf.json` still carries `'unsafe-eval'`, but the reason it was added — react-pdf's yoga-layout engine compiling WebAssembly at runtime — is gone with react-pdf. Nothing under `src/` calls `eval`/`new Function`, and the only `new Function` left in any shipped chunk is a legacy `JSON.parse` fallback inside ECharts' `registerMap` (geo maps, unused here), so `'unsafe-eval'` is a live candidate for removal. Dev mode uses the looser `devCsp`, so CSP regressions surface **only in installed builds** — if you tighten it, verify from a real installer: line chart, scatter, pair plot, and PNG export.
 
 ## Release checklist — required before every `.exe`/installer build
 
@@ -126,7 +128,7 @@ The user tracks all work in the Notion database **"wizard application plan impro
 | `rust-agent`     | `src-tauri/src/`, `src-tauri/Cargo.toml`         | inline `#[cfg(test)]` in the same file | Tauri commands, CSV parsing, file I/O   |
 | `qa-agent`       | —                                                 | `src/__tests__/`, `src-tauri/tests/` | Final integration/regression sweep across everything workers built — not the sole test author |
 
-**Workflow**: pm-agent plans in `docs/task.md` → workers implement phase by phase, **each writing the tests for the code they just wrote in the same pass** (matches the "test with every change" rule above — don't defer your own unit tests to qa-agent) → **contract-first**: backend-facing features update `src/types/commands.ts` before UI → qa-agent runs last, writes cross-cutting integration tests, and re-runs the full suite → **pm-agent runs `npx tsc --noEmit` + `cargo check --lib` + the full frontend/Rust test suites itself before reporting to the user** — don't just trust workers' individual HANDOFF claims (a signature change in one zone silently broke a test file owned by another agent once already; see `docs/task.md`'s Feature 3 closing note). Load only files needed for the current task; do not scan the full repo.
+**Workflow**: pm-agent plans in `docs/task.md` → workers implement phase by phase, **each writing the tests for the code they just wrote in the same pass** (matches the "test with every change" rule above — don't defer your own unit tests to qa-agent) → **shared types first**: backend-facing features add their arg/result types to `src/types/` before UI (there is no central command map — see "IPC contract" above) → qa-agent runs last, writes cross-cutting integration tests, and re-runs the full suite → **pm-agent runs `npx tsc --noEmit` + `cargo check --lib` + the full frontend/Rust test suites itself before reporting to the user** — don't just trust workers' individual HANDOFF claims (a signature change in one zone silently broke a test file owned by another agent once already; see `docs/task.md`'s Feature 3 closing note). Load only files needed for the current task; do not scan the full repo.
 
 When your task is complete, output this block before stopping:
 
