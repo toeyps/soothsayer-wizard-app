@@ -7,6 +7,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
+import { debugLog } from "../../utils/debugLog";
 
 export default function AddSensorWindow() {
     const [sensors, setSensors] = useState<string[]>([]);
@@ -62,7 +63,7 @@ export default function AddSensorWindow() {
                 selectedSensors: string[],
                 sensorMetadata: SensorMetadata[]
             }>('sensors-data', (event) => {
-                console.log("Received sensors-data:", event.payload);
+                debugLog("Received sensors-data:", event.payload);
                 setSensors(event.payload.sensors);
                 // Deliberately NOT pre-checking `event.payload.selectedSensors`
                 // (whatever's currently plotted on the Dashboard chart) --

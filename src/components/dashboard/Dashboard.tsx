@@ -29,6 +29,7 @@ import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaM
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
 import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
+import { debugLog } from '../../utils/debugLog';
 
 // Panel configuration
 const PANELS = {
@@ -997,10 +998,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let unlistenAdd: UnlistenFn | undefined;
 
         const setupListeners = async () => {
-            console.log("Setting up Dashboard listeners");
+            debugLog("Setting up Dashboard listeners");
             // Listen for request from child window
             unlistenRequest = await listen('request-sensors', () => {
-                console.log("Dashboard received 'request-sensors', emitting data...");
+                debugLog("Dashboard received 'request-sensors', emitting data...");
                 const { allSensorTags, selectedSensors, sensorMetadata } = stateRef.current;
                 emit('sensors-data', {
                     sensors: allSensorTags,
@@ -1011,7 +1012,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
             // Listen for new selections from child window
             unlistenAdd = await listen<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[], newRecipes?: SpecialSensorRecipe[] }>('add-sensor-selection', async (event) => {
-                console.log("Dashboard received 'add-sensor-selection'", event.payload);
+                debugLog("Dashboard received 'add-sensor-selection'", event.payload);
 
                 let newSelectedSensors: string[] = [];
                 let newOperationConfig: SensorOperationConfig | null = null;

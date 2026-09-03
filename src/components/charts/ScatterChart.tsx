@@ -490,6 +490,9 @@ function ScatterChart({
             // `width` (even to its own value) is a standard trick that
             // forces the browser to reinitialize — and thus fully clear —
             // a canvas's backing bitmap regardless of which API drew to it.
+            // (ESLint reads the line below as a self-assign bug; it is the
+            // documented canvas-clearing idiom described just above.)
+            // eslint-disable-next-line no-self-assign
             if (haloCanvas) haloCanvas.width = haloCanvas.width;
         };
     }, [innerDims.width, innerDims.height, rebuildNonce, hasEnabledHighlights, resetHaloDraw]);

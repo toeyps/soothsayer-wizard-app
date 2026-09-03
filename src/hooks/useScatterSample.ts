@@ -105,6 +105,11 @@ export function useScatterSample(
         return () => {
             clearTimeout(timer);
             // Invalidate the in-flight request so its late resolve is ignored.
+            // exhaustive-deps warns about reading a ref in cleanup because
+            // that advice is written for refs holding DOM nodes; this one is a
+            // monotonic race-guard counter and the cleanup MUST see its live
+            // value — copying it into a local would defeat the whole guard.
+            // eslint-disable-next-line react-hooks/exhaustive-deps
             fetchIdRef.current++;
         };
         // `filter` / `maxPoints` are captured via `key`; depending on `key`

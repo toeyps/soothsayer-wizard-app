@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
 import { useIsMacOS } from "../hooks/useIsMacOS";
+import { debugLog } from "../utils/debugLog";
 
 interface TitleBarProps {
   workspaceName?: string;
@@ -113,7 +114,7 @@ export default function TitleBar({
             <button
               className="titlebar-button"
               onClick={() => {
-                console.log("minimize");
+                debugLog("minimize");
                 appWindow.minimize();
               }}
             >
@@ -122,7 +123,7 @@ export default function TitleBar({
             <button
               className="titlebar-button"
               onClick={() => {
-                console.log("maximize");
+                debugLog("maximize");
                 appWindow.toggleMaximize();
               }}
             >
@@ -131,7 +132,7 @@ export default function TitleBar({
             <button
               className="titlebar-button close"
               onClick={() => {
-                console.log("close");
+                debugLog("close");
                 appWindow.close();
               }}
             >

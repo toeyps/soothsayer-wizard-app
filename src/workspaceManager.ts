@@ -2,6 +2,7 @@ import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, ModelKind } from './types';
+import { debugLog } from './utils/debugLog';
 
 const STORE_FILE = 'settings.json';
 
@@ -84,7 +85,7 @@ export async function saveWorkspaceData(state: WorkspaceState) {
     }
 
     isSaving = true;
-    console.log("Saving Workspace Data for:", state.id);
+    debugLog("Saving Workspace Data for:", state.id);
     
     try {
         const workspacesDir = 'workspaces';
@@ -92,12 +93,12 @@ export async function saveWorkspaceData(state: WorkspaceState) {
         // Ensure directory exists
         const dirExists = await exists(workspacesDir, { baseDir: BaseDirectory.AppData });
         if (!dirExists) {
-            console.log("Creating workspaces directory in AppData...");
+            debugLog("Creating workspaces directory in AppData...");
             await mkdir(workspacesDir, { recursive: true, baseDir: BaseDirectory.AppData });
         }
         
         const filePath = `${workspacesDir}/${state.id}.json`;
-        console.log("Writing workspace JSON to:", filePath);
+        debugLog("Writing workspace JSON to:", filePath);
         
         // Serialize state
         const json = JSON.stringify(state);
@@ -125,7 +126,7 @@ export async function saveWorkspaceData(state: WorkspaceState) {
         
         await saveRecentWorkspaces(recent);
 
-        console.log("Workspace save successful.");
+        debugLog("Workspace save successful.");
     } catch (e) {
         console.error("CRITICAL: Failed to save workspace:", e);
     } finally {
@@ -286,7 +287,7 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
 }
 
 export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
-    console.log("Loading Workspace Data for ID:", id);
+    debugLog("Loading Workspace Data for ID:", id);
     try {
         const recent = await getRecentWorkspaces();
         const meta = recent.find(w => w.id === id);

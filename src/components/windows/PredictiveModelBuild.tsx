@@ -19,6 +19,7 @@ import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
 import { useChartData } from "../../hooks/useChartData";
+import { debugLog } from "../../utils/debugLog";
 
 // Point budget for the target-sensor time series. Rust's `get_chart_data`
 // min/max-decimates the filtered rows down to at most this many x-positions,
@@ -168,6 +169,25 @@ interface PredictiveModelBuildProps {
      *  parent's local page state back. */
     onBack: () => void;
 }
+
+/**
+ * Per-cluster palette — mirrors the multi-series colour set used elsewhere in
+ * the app (LineChart). Cycles when there are more clusters than colours.
+ *
+ * 2026-09-02: hoisted out of the component. It is a plain constant, so
+ * rebuilding the array on every render bought nothing and gave the useMemo
+ * that depends on it a new identity each time.
+ */
+const CLUSTER_PALETTE = [
+    '#3b82f6', // blue
+    '#10b981', // emerald
+    '#f59e0b', // amber
+    '#8b5cf6', // violet
+    '#f43f5e', // rose
+    '#14b8a6', // teal
+    '#ec4899', // pink
+    '#6366f1', // indigo
+];
 
 export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, onBack }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
@@ -1055,21 +1075,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         };
     }, [relPreview, effectiveScatterX, targetSensor]);
 
-    /**
-     * Per-cluster palette — palette mirrors the multi-series colour set
-     * used elsewhere in the app (LineChart). Cycles when there are more
-     * clusters than colours.
-     */
-    const CLUSTER_PALETTE = [
-        '#3b82f6', // blue
-        '#10b981', // emerald
-        '#f59e0b', // amber
-        '#8b5cf6', // violet
-        '#f43f5e', // rose
-        '#14b8a6', // teal
-        '#ec4899', // pink
-        '#6366f1', // indigo
-    ];
 
     const clusteringScatterOption = useMemo(() => {
         if (!clusteringPreview) return null;
@@ -1280,7 +1285,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             if (r.error) throw new Error(r.error);
             setRelPreview({ result: r, predictorsAtApply: predictorsForFit });
             setRelError(null);
-            console.log("Multivariate relationship preview updated:", {
+            debugLog("Multivariate relationship preview updated:", {
                 predictors: predictorsForFit,
                 rows: r.predicted?.length ?? 0,
             });
@@ -1370,13 +1375,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             }
             if (myGen === subModelsGenRef.current) {
                 setSubModels(results);
-                console.log("Sub-model fits complete:", results.map(r => ({
+                debugLog("Sub-model fits complete:", results.map(r => ({
                     predictors: r.predictors,
                     rows: r.result.predicted.length,
                     r2: r.result.r2_per_step[r.result.r2_per_step.length - 1],
                 })));
             } else {
-                console.log(`[PM] Discarding stale sub-models result (gen ${myGen} vs current ${subModelsGenRef.current})`);
+                debugLog(`[PM] Discarding stale sub-models result (gen ${myGen} vs current ${subModelsGenRef.current})`);
             }
         } catch (e) {
             if (myGen === subModelsGenRef.current) {
@@ -1565,7 +1570,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 filter: dashboardFilterPayload,
             });
             setClusteringPreview(result);
-            console.log("Clustering preview:", result);
+            debugLog("Clustering preview:", result);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setClusteringError(msg);
@@ -1819,7 +1824,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 return;
             }
             setSaveStatus({ kind: 'success', message: written.join('\n') });
-            console.log("Save model success:", written);
+            debugLog("Save model success:", written);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setSaveStatus({ kind: 'error', message: msg });

@@ -1,0 +1,101 @@
+name: CI
+
+# Added 2026-09-02. Until now the only workflow in this repo was
+# release.yml, which builds installers on a version tag — nothing ever ran
+# `tsc`, `vitest`, `cargo test` or `clippy` automatically. CLAUDE.md states
+# that "every code change ships with a test change in the same pass", but
+# that rule was enforced by discipline alone: the 853-test frontend suite and
+# the 137 Rust unit tests could go red and nobody would find out until
+# someone happened to run them by hand. This workflow closes that gap.
+#
+# Deliberately does NOT build the app or the Python sidecar — that is
+# release.yml's job and takes 8-15 minutes per platform. This is the fast
+# feedback loop: type-check, lint, test, and prove the frontend bundles.
+
+on:
+  push:
+    branches: ['**']
+    # Tag pushes are release.yml's territory; no need to run both.
+    tags-ignore: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, lint, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # matches release.yml
+          cache: 'npm'
+
+      - run: npm ci
+
+      # tsconfig.json runs strict with noUnusedLocals/noUnusedParameters, so
+      # this catches most real breakage on its own.
+      - name: Type-check
+        run: npm run typecheck
+
+      # eslint.config.js is scoped narrowly: errors are things worth blocking
+      # on, while known debt (the `any`s, the exhaustive-deps findings) is
+      # warnings, which do not fail the run. Keep it that way — flipping
+      # warnings to errors should be a deliberate, separate decision.
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # Proves the app still bundles — catches things type-checking cannot,
+      # like a dependency whose ESM/CJS shape changed under a version bump.
+      - name: Build
+        run: npm run build
+
+  rust:
+    name: Rust (clippy, tests)
+    # windows-latest rather than ubuntu: Tauri's Linux build needs webkit2gtk
+    # and friends installed first, while the Windows toolchain needs nothing
+    # extra — and Windows is this project's primary target anyway.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # tauri-build validates that every `externalBin` in tauri.conf.json
+      # actually exists, and the Python sidecar is gitignored (release.yml
+      # compiles it with Nuitka, which costs 8-15 minutes). An empty file with
+      # the right name satisfies that check — nothing here ever executes it.
+      - name: Stub the Python sidecar
+        shell: bash
+        run: |
+          mkdir -p src-tauri/bin
+          touch src-tauri/bin/backend-x86_64-pc-windows-msvc.exe
+
+      # No `-D warnings`: three known warnings are deliberate (two Tauri
+      # commands legitimately exceed clippy's argument-count preference,
+      # since their signatures must mirror the frontend). What this DOES
+      # catch is clippy's deny-by-default lints — exactly the class that had
+      # `cargo clippy --all-targets` failing to compile at all until
+      # 2026-09-02, unnoticed because nothing ran it.
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --lib
