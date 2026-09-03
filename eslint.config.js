@@ -56,7 +56,7 @@ export default tseslint.config(
             // 39 pre-existing `any`s; tightening them is its own task.
             '@typescript-eslint/no-explicit-any': 'warn',
             // Dev-only logging goes through `debugLog()` (src/utils/debugLog.ts),
-            // which compiles out of production builds. console.warn/error are
+            // which stays silent in production builds. console.warn/error are
             // fine — real problems should be visible in a shipped app.
             'no-console': ['warn', { allow: ['warn', 'error'] }],
         },
