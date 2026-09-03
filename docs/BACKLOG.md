@@ -7,6 +7,75 @@ without needing the conversation that found it.
 
 ---
 
+## ⏸️ WHERE THINGS STAND — 2026-09-03 (read this first on a fresh machine)
+
+Written specifically so this can be picked up on the other machine without
+the chat history. Items 11-19 below are all new as of this date.
+
+### 🔴 The one thing blocking everything else
+
+**v0.4.0 is built but its CSP change is unverified, and nothing has been
+pushed.**
+
+- Installer: `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Wizard_0.4.0_x64-setup.exe`
+  (60.3 MB, built 2026-09-03 15:24 from `c266167`). **This file lives on the
+  other machine only — it is not in git.** Rebuild with `npm run installer:win`
+  if it is not there.
+- **17 commits + 2 tags (`v0.3.0`, `v0.4.0`) are unpushed.** Tags need their
+  own push (`git push personal v0.3.0 v0.4.0`), a plain `git push` will not
+  carry them. Push target is `personal` only — never `origin`.
+- **What still needs testing, and why only an installer will do:** 0.4.0
+  removed `'unsafe-eval'` from the production `csp` in `tauri.conf.json`.
+  Dev mode uses a separate `devCsp` that still allows it, so `tauri dev`
+  proves nothing here. Install the .exe and open: **line chart, scatter,
+  pair plot, and PNG export**. A chart rendering blank (rather than
+  erroring) is the failure mode to watch for.
+- If it fails: try `'wasm-unsafe-eval'` in place of `'unsafe-eval'` (narrower
+  but still permissive), or revert that one string. Everything else in 0.4.0
+  is independent of it.
+- Note that `errorReporter` only hooks `error` and `unhandledrejection`, not
+  `securitypolicyviolation`, so a CSP block swallowed inside a library will
+  not produce a toast or reach
+  `%LOCALAPPDATA%\com.prompt-solution.tauri-app\logs\frontend-errors.log`.
+  Judge by whether the charts actually draw. (Adding that listener was
+  offered and not taken up — it is a ~10-line change if wanted later.)
+- The installed binary is `tauri-app.exe`, not `Wizard.exe` — see item 17.
+
+### ✅ Manual testing already done (2026-09-03, in `tauri dev`)
+
+Everything except the installer pass above: closing the app (both the custom
+titlebar X and the OS close, immediately after an edit and after idling),
+workspace persistence across close/reopen, concurrent chart+table fetches
+after the `Mutex` → `RwLock` change, the Sensor panel's failure-group chips
+and search, and the removed "N Rows" badge. One bug came out of it — the
+chart colour flicker — which is fixed in `3eac8a4` and **is** included in the
+0.4.0 build, but has not been re-tested since the fix.
+
+### 📋 Reported but never analysed — tracked only in Notion
+
+These predate the 2026-09-03 code review and nothing has been looked at yet.
+Listed here so they are visible from this file too:
+
+- **"FG page back to dashboard → ACTUAL: back to start program"** — sounds
+  like a navigation bug, probably the highest-value one in this group.
+- **"distance of lineplot 10 min and 10 hr distance is same"** — the time
+  axis may not be scaling to the real interval.
+- **"auto selected period time from data (start date and end date), not auto
+  start date from date now"**
+- **"selected between raw data and sampling data"** — feature request;
+  overlaps with item 10 below.
+- **"if 1 model in more than one failure group must be train model more than
+  1 time"** — status "In progress" in Notion, but no code work has happened.
+
+### 🗂️ Everything else outstanding
+
+Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by
+explicit request. Items 1, 3, 5, 6, 7 are resolved; 2 is moot; 4 was never
+confirmed; 8 is now fully done (its status block is updated).
+
+---
+
+
 ## 1. FG → Dashboard sync is one-way only
 
 **Resolved (2026-08-06) — moot, not fixed.** `FailureGroupCreation.tsx` was
@@ -458,8 +527,13 @@ workspace files in the wild start depending on whichever shape gets picked.
 
 ## 8. Autosave debounce has no flush-before-close — a change made in the last 250ms before quitting can be lost
 
-**Implemented 2026-09-01, per the "Proposed fix" below — pending real-app
-close testing before this counts as fully done.** `Dashboard.tsx` now
+**Resolved.** Implemented 2026-09-01 per the "Proposed fix" below, and the
+real-app close testing it was waiting on was done on 2026-09-03 (closing
+immediately after an edit, closing after idling, via both the custom titlebar
+X and the OS close) — all passed. Note the follow-up bug this caused and its
+fix: the first attempt made the window impossible to close at all, because
+Tauri needs the `core:window:allow-destroy` permission once anything
+registers an `onCloseRequested` handler (commit `f7889aa`). `Dashboard.tsx` now
 tracks the currently-scheduled autosave as a promise
 (`pendingSaveRef`), and a new `onCloseRequested` handler on the main
 window checks it: if something is still pending, `preventDefault()`s the
@@ -680,3 +754,263 @@ them are safe to wire straight into a backend refetch:
   Plot's own sampling (`useScatterSample`, a different reservoir-sampling
   mechanism, not `decimate()`) should get the same zoom-to-refetch
   treatment, or whether this item is Line-chart-only for now.
+
+---
+
+## 11. Seven real `react-hooks/exhaustive-deps` findings, newly visible
+
+**Status: found 2026-09-03 the moment ESLint was installed for the first
+time. Not touched — each one needs its own judgement call, and adding a
+dependency can turn a one-shot effect into a loop.**
+
+ESLint had never been installed in this project, yet eleven
+`// eslint-disable-next-line react-hooks/exhaustive-deps` comments were
+scattered through the code — suppressions for a linter that never ran. With
+`eslint.config.js` in place (`npm run lint`), 51 warnings remain, of which
+these seven are the ones worth reasoning about:
+
+| Where | Finding |
+|---|---|
+| `ScatterChart.tsx:427` | missing dep `resetDraw` |
+| `ScatterChart.tsx:749` | unnecessary dep `visibleBounds` on a `useMemo` |
+| `FilterPanel.tsx:170` | missing dep `draft` |
+| `PredictiveModelBuild.tsx:759` | missing dep `dashboardFilterPayload` |
+| `PredictiveModelBuild.tsx:784` | missing dep `dashboardFilterPayload` |
+| `SensorTooling.tsx:84` | missing dep `engine` |
+| `LineChart.test.tsx:36` | missing dep `props` (test harness, low value) |
+
+The other 44 warnings are recorded debt, deliberately left as warnings so
+`npm run lint` exits 0 and CI can gate on errors: 39 `no-explicit-any` and
+5 `no-useless-assignment` (defensive initialisers that every branch
+overwrites — removing them is churn, not a fix).
+
+**How to approach:** one at a time, and for each decide whether the omission
+was deliberate. Three similar-looking cases were already resolved this way on
+2026-09-03: `useChartData` / `useScatterSample` / `useTablePage` all warn
+about reading `fetchIdRef.current` in cleanup, which is a false positive —
+that advice is written for refs holding DOM nodes, while these hold a
+monotonic race-guard counter whose live value the cleanup must see. They now
+carry documented suppressions. Expect some of the seven to be the same kind
+of intentional omission; the ones that are not are exactly the stale-closure
+bugs this project has hit repeatedly.
+
+---
+
+## 12. `PredictiveModelBuild.tsx` and `Dashboard.tsx` are too large to reason about
+
+**Status: identified 2026-09-03 during the project-wide review. Not started —
+this is the largest item in the backlog and should be split into several
+passes, never done in one go.**
+
+| File | Lines | `useState` | `useEffect` |
+|---|---|---|---|
+| `src/components/windows/PredictiveModelBuild.tsx` | 3,573 | **42** | 16 |
+| `src/components/dashboard/Dashboard.tsx` | 2,222 | **34** | 18 |
+| `src/components/upload/DataUploadPage.tsx` | 1,514 | 13 | 6 |
+
+Forty-two independent state variables and sixteen effects in one component
+means the number of interactions a reader has to hold in their head grows
+quadratically. This is the structural reason behind the recurring "fixed one
+thing, broke another" pattern in this project's history — the bugs are
+symptoms, this is the cause.
+
+**Approach:** collapse state that always changes together into `useReducer`,
+or lift cohesive groups into custom hooks (`useFailureGroupState()`,
+`useChartFilters()`, …). Do it one cluster at a time with the test suite
+green in between; there are 862 frontend tests to lean on. Do not attempt a
+single sweeping refactor.
+
+---
+
+## 13. `App.css` is 9,048 lines with duplicate rules that silently cancel out
+
+**Status: identified 2026-09-03. Not started.**
+
+One stylesheet, 9,048 lines, 25 `!important` declarations, and selectors
+defined several times over. The worst example: `.fg-sensor-dropdown-item` is
+declared **four times** (lines ~2565, ~3389, ~3983, ~5015), plus its
+`:hover` / `.selected` / `-tag` / `-desc` variants — 18 blocks in total. The
+copies at 2565 and 3389 are byte-identical; the one at 3983 differs only in
+`padding` (`0.35rem 0.6rem` vs `0.55rem`).
+
+Because they have equal specificity, **only the last one wins** and the first
+three are dead code that still looks live. Editing the wrong copy and seeing
+nothing change is an easy hour to lose — and the 25 `!important`s look like
+scar tissue from exactly that.
+
+**Approach:** find duplicate selectors first (they are the trap), keep the
+last-wins copy, delete the rest. Splitting the file by feature can follow,
+but de-duplication is the part that removes the hazard.
+
+---
+
+## 14. `docs/PROJECT_HANDOVER.md` has outgrown being readable in one pass
+
+**Status: identified 2026-09-03. Not started. Gets worse with every task, since
+every finished task appends to it.**
+
+Currently ~850 KB / ~1,500 lines / roughly 280,000 tokens — larger than most
+model context windows, so it can no longer be read whole. That directly
+breaks the release process defined in `CLAUDE.md`, which says the handover's
+dated entries are the primary source for the changelog and instructs the
+reader to "read every entry dated after the previous shipped version's date".
+Today that only works via `grep` and range reads.
+
+**Approach:** split the chronological log by month into `docs/handover/YYYY-MM.md`
+and leave `PROJECT_HANDOVER.md` as the §1-§9 reference sections plus an index
+of the monthly files. Update `CLAUDE.md`'s release checklist to point at the
+monthly files. One-time job; makes the existing rule workable again.
+
+---
+
+## 15. Two stale claims left in `CLAUDE.md`
+
+**Status: identified 2026-09-03. Not started — small, ~15 minutes.**
+
+Eight other stale spots were corrected on 2026-09-03 (the deleted
+`TauriCommands` contract, and the PDF-export paragraph that was also the
+standing justification for `'unsafe-eval'`). These two remain:
+
+- **`CLAUDE.md:46`** lists the sub-windows as `predictive-model`, `save-as`,
+  `add-sensor`. Predictive Model was folded into the Build Model window
+  (0.4.0), and the window labels the capabilities actually cover are `main`,
+  `save-as`, `build-model`.
+- **`CLAUDE.md:155`** — "Repo state snapshot (2026-07-14)" still says
+  `main @ v0.2.1 is canonical`. 0.3.0 shipped on 2026-08-20 and 0.4.0 is
+  built. The section flags itself as needing verification, which helps, but
+  the content is wrong.
+
+These matter more than normal documentation drift: `CLAUDE.md` and
+`.claude/agents/*.md` are loaded as instructions, so a wrong statement here
+actively misdirects work.
+
+---
+
+## 16. `.msi` references left in the release workflow and the build script
+
+**Status: identified 2026-09-03. Not started — cosmetic, but actively
+misleading.**
+
+`src-tauri/tauri.windows.conf.json` sets `"targets": ["nsis"]` on purpose, so
+Windows builds produce only the NSIS `.exe`. Two places still expect an MSI:
+
+- `.github/workflows/release.yml` — header comment (lines 10-11), the copy
+  step at line 226, and `release-assets/*.msi` at line 263.
+- `scripts/build-installer-windows.ps1` — header comment (line 23), the
+  "Building Tauri app + NSIS/MSI installers" banner (line 193), and the MSI
+  lookup at lines 203-232.
+
+Neither breaks: both guard with `Test-Path` / `|| true`, so the globs simply
+match nothing. But the banner tells whoever runs it that an MSI is coming,
+and the workflow advertises an asset that will never exist.
+
+---
+
+## 17. The installed executable is named `tauri-app.exe`, not `Wizard.exe`
+
+**Status: identified 2026-09-03 while reading the 0.4.0 build output. Not
+started — see the upgrade caveat before doing it.**
+
+`productName` is `"Wizard"`, but the binary keeps the Cargo crate name
+because `tauri.conf.json` does not set `mainBinaryName`. The build log says
+it plainly: `Built application at: …\release\tauri-app.exe`. Users see
+`tauri-app.exe` in Task Manager, in the install directory, and in any
+firewall prompt.
+
+**Fix:** add `"mainBinaryName": "Wizard"` to `tauri.conf.json` — safer than
+renaming the Cargo crate, which also changes the lib/binary target names.
+
+**Caveat, and the reason this is not a five-minute job:** an existing
+installation upgraded in place may leave the old `tauri-app.exe` behind, and
+shortcuts created by the previous installer point at the old name. Do this
+alongside a version bump and actually test an upgrade over an installed
+0.4.0, not just a clean install.
+
+**Do not** change `"identifier": "com.prompt-solution.tauri-app"` while doing
+this. It determines the `$APPDATA` path where every workspace lives; changing
+it orphans all existing user data.
+
+---
+
+## 18. Two disagreeing default-colour systems for sensors
+
+**Status: found 2026-09-03 while fixing the chart colour flicker. Only the
+flicker was fixed; the duplication is untouched.**
+
+There are two different ways a sensor's default line colour gets decided:
+
+- `Dashboard.tsx`'s `resolvedSensorColors` — palette **slot** per sensor,
+  remembered so it never moves (this is the 2026-09-03 fix).
+- `LineChart.tsx:117`'s `defaultSensorColor(sensor)` — a **hash of the tag**,
+  used as the fallback at lines 446 and 700 whenever the map has no entry.
+
+Their comments give directly contradicting rationales: the LineChart one says
+it exists *because* index-based assignment "silently disagreed" with the
+swatch picker, while the Dashboard one says it uses position *rather than*
+hashing because "hashing let unrelated sensors collide". Both survive, so the
+codebase argues with itself, and the two produce different colours for the
+same sensor.
+
+The flicker this caused is fixed, because the map now also covers sensors
+that were just deselected, so the fallback is no longer hit during the window
+where a stale line is still on screen. But the fallback remains reachable,
+and whoever touches sensor colouring next will meet both systems.
+
+**Approach:** pick one source of truth (the remembered slot is the better
+behaviour — stable, and distinct across simultaneously-selected sensors),
+make the other delegate to it, and reconcile the two comments so the history
+reads as one decision instead of two contradictory ones.
+
+---
+
+## 19. Custom NSIS installer UI — design approved, never implemented
+
+**Status: design signed off 2026-09-02, implementation not started. The
+0.4.0 installer is still stock NSIS.**
+
+The user asked to redesign the Windows installer, which "looks old". Five
+pages were mocked up and approved after two rounds of feedback:
+[design canvas](https://claude.ai/code/artifact/f05ff513-e59a-49fd-a656-bfcc6680696f)
+— Welcome, License, Choose Install Location, Installing, Finish, in the app's
+navy/gold brand.
+
+**What was decided:**
+
+- Full-page custom backgrounds via a real `nsDialogs` page, not just the two
+  small bitmap slots MUI2 offers.
+- Buttons custom-drawn (owner-draw) rather than native Windows buttons.
+- `SetCtlColors` / `CreateFont` / `PBM_SETBARCOLOR` for surfaces, text and
+  the progress bar fill.
+- Controls that cannot be safely restyled are left plainly native: the
+  License radio dots, the Finish checkbox, and the progress bar's track.
+- A navy title bar needs `DwmSetWindowAttribute` / `DWMWA_CAPTION_COLOR`,
+  which is **Windows 11 only** — Windows 10 falls back to the default light
+  bar.
+- **Explicitly rejected:** a fully borderless custom-chrome window. Much
+  bigger and riskier (custom drag, resize hit-testing, DPI, taskbar and
+  accessibility behaviour) and the user chose to skip it.
+
+**What is left:** writing the actual `.nsi` template and wiring it into
+`bundle.windows.nsis` in `tauri.conf.json` (which currently sets only
+`installerIcon`, `installMode`, `languages`, `displayLanguageSelector` — no
+`headerImage`, no `sidebarImage`, no custom template). If the full custom
+template turns out to be more than it is worth, `headerImage` (150×57 BMP)
+and `sidebarImage` (164×314 BMP) alone would already remove most of the
+"looks old" complaint for a fraction of the effort.
+
+---
+
+## 20. Housekeeping picked up during the review, not worth its own entry
+
+**Status: identified 2026-09-03. Not started, all small.**
+
+- **`npx update-browserslist-db@latest`** — `caniuse-lite` is ~10 months old
+  and warns on every build. Harmless here (the only target is WebView2) but
+  noisy.
+- **`npm audit`: 7 vulnerabilities, all devDependencies** — `@babel/core`,
+  `browserslist`, `esbuild`, `nanoid`, `postcss`. None ship in the app. The
+  one that did (`echarts`) was fixed in 0.4.0. `esbuild` needs a Vite major
+  bump, so it is not a quick `npm audit fix`.
+- **39 `any` and `noUncheckedIndexedAccess`** — turning the flag on was
+  measured on 2026-09-03: **247 type errors**. Worth doing eventually, its
+  own dedicated pass, definitely not a side quest.
