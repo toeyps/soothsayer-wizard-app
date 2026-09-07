@@ -12,7 +12,29 @@ without needing the conversation that found it.
 Written specifically so this can be picked up on the other machine without
 the chat history. Items 11-19 below are all new as of this date.
 
-### 🔴 The one thing blocking everything else
+### ✅ Resolved 2026-09-07 — and it found a real bug
+
+The CSP question below is **answered**: removing `'unsafe-eval'` broke the
+Scatter and Pair Plot charts (regl compiles its draw commands at runtime), so
+0.4.0 shipped broken and **0.4.1 reverts it**. 0.4.1 was built, installed and
+tested on 2026-09-07: line chart, scatter, pair plot, PNG export, a
+from-scratch CSV import, workspace persistence across a restart, concurrent
+chart+table loading against the release build, closing the app, and the
+sensor-colour fix — **all passed**.
+
+**Still untested, deliberately deferred:** training a **Relationship model**,
+which is the only path that exercises the bundled Python sidecar. In dev the
+sidecar resolves out of `src-tauri/bin/`; in an installed build it sits beside
+the exe, so this is genuinely installer-only and cannot be substituted. The
+user has not reached the model-building stage of their workflow yet. Nothing
+else is known to be at risk.
+
+The historical account below is kept because the trap it describes is worth
+knowing about; the conclusion in it about `'unsafe-eval'` being removable is
+**wrong** — see `CLAUDE.md`'s CSP section.
+
+<details>
+<summary>Original entry (superseded)</summary>
 
 **v0.4.0 is built but its CSP change is unverified, and nothing has been
 pushed.**
@@ -40,6 +62,8 @@ pushed.**
   Judge by whether the charts actually draw. (Adding that listener was
   offered and not taken up — it is a ~10-line change if wanted later.)
 - The installed binary is `tauri-app.exe`, not `Wizard.exe` — see item 17.
+
+</details>
 
 ### ✅ Manual testing already done (2026-09-03, in `tauri dev`)
 

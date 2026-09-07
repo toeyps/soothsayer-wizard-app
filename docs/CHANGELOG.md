@@ -6,7 +6,7 @@
 
 ---
 
-## [0.4.1] — 2026-09-03
+## [0.4.1] — 2026-09-07
 
 Patch release. 0.4.0 shipped a Content-Security-Policy that breaks the Scatter
 and Pair Plot charts; this reverts it. Nothing else changed.
