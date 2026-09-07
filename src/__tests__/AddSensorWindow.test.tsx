@@ -275,6 +275,136 @@ describe('AddSensorWindow', () => {
         expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('boom'));
     });
 
+    // ---- Manage tab -----------------------------------------------------
+    //
+    // Deleting a special sensor is a cross-window handshake: this window
+    // decides whether it is safe, then emits 'delete-special-sensors' and
+    // Dashboard does the removing. The undo window sits in between, and
+    // nothing has left this window until it closes.
+
+    const specialA = { kind: 'formula', tag: 'special A', formula: '$TAG1 * 2' };
+    const specialB = { kind: 'formula', tag: 'special B', formula: '${special A} + 10' };
+
+    async function openManage(payload: Record<string, unknown>) {
+        render(<AddSensorWindow />);
+        await act(async () => {
+            for (const cb of listenCallbacks['sensors-data'] ?? []) {
+                cb({ payload: { sensors: ['TAG1'], selectedSensors: [], sensorMetadata: [], ...payload } });
+            }
+        });
+        // Let the extract_formula_refs lookup settle.
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Manage/ })); });
+    }
+
+    it('lists the special sensors the Dashboard sent, and only those', async () => {
+        mockInvoke.mockImplementation((cmd: string) =>
+            cmd === 'extract_formula_refs' ? Promise.resolve([[ 'TAG1' ]]) : Promise.resolve([]));
+        await openManage({ specialSensorRecipes: [specialA] });
+        expect(screen.getByText('special A')).toBeTruthy();
+        expect(screen.getByRole('tab', { name: 'Manage (1)' })).toBeTruthy();
+    });
+
+    it('holds the delete back for the undo window, then tells the Dashboard', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            mockInvoke.mockImplementation((cmd: string) =>
+                cmd === 'extract_formula_refs' ? Promise.resolve([[ 'TAG1' ]]) : Promise.resolve([]));
+            await openManage({ specialSensorRecipes: [specialA] });
+
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete special A')); });
+            // Gone from the list immediately, but not yet from the workspace.
+            expect(screen.queryByLabelText('Delete special A')).toBeNull();
+            expect(mockEmit).not.toHaveBeenCalledWith('delete-special-sensors', expect.anything());
+
+            await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+            expect(mockEmit).toHaveBeenCalledWith('delete-special-sensors', { tags: ['special A'] });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('undo puts the sensor back and never tells the Dashboard', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            mockInvoke.mockImplementation((cmd: string) =>
+                cmd === 'extract_formula_refs' ? Promise.resolve([[ 'TAG1' ]]) : Promise.resolve([]));
+            await openManage({ specialSensorRecipes: [specialA] });
+
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete special A')); });
+            await act(async () => { fireEvent.click(screen.getByText('Undo')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+
+            expect(screen.getByLabelText('Delete special A')).toBeTruthy();
+            expect(mockEmit).not.toHaveBeenCalledWith('delete-special-sensors', expect.anything());
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('closing the window commits a deletion still inside its undo window', async () => {
+        mockInvoke.mockImplementation((cmd: string) =>
+            cmd === 'extract_formula_refs' ? Promise.resolve([[ 'TAG1' ]]) : Promise.resolve([]));
+        await openManage({ specialSensorRecipes: [specialA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Delete special A')); });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Close'));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mockEmit).toHaveBeenCalledWith('delete-special-sensors', { tags: ['special A'] });
+        expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('refuses to delete a sensor another special sensor was built on', async () => {
+        mockInvoke.mockImplementation((cmd: string) =>
+            cmd === 'extract_formula_refs'
+                ? Promise.resolve([['TAG1'], ['special A']])
+                : Promise.resolve([]));
+        await openManage({ specialSensorRecipes: [specialA, specialB] });
+
+        expect((screen.getByLabelText('Delete special A') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByLabelText('Delete special B') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('refuses to delete a sensor a Failure Group model uses', async () => {
+        mockInvoke.mockImplementation((cmd: string) =>
+            cmd === 'extract_formula_refs' ? Promise.resolve([[ 'TAG1' ]]) : Promise.resolve([]));
+        await openManage({
+            specialSensorRecipes: [specialA],
+            models: [{
+                id: 'm1', groupNos: [1], name: 'Boiler efficiency', kind: 'individual', category: null,
+                notes: '', status: false, targetSensor: 'special A', predictorSensors: [], xSensor: '', ySensor: '',
+                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
+                clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
+                filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+            }],
+        });
+        expect((screen.getByLabelText('Delete special A') as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('a sensor created on the Create tab shows up on the Manage tab', async () => {
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'calculate_new_sensor') return Promise.resolve('MyCalc');
+            if (cmd === 'extract_formula_refs') return Promise.resolve([]);
+            return Promise.resolve([]);
+        });
+        render(<AddSensorWindow />);
+        await deliverSensorsData(['TAG1']);
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config'));
+        await act(async () => {
+            fireEvent.click(screen.getByText('Add sensor'));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Manage/ })); });
+        // By its delete button, not its name -- the "Added: MyCalc" toast is
+        // still on screen and matches the name too.
+        expect(screen.getByLabelText('Delete MyCalc')).toBeTruthy();
+    });
+
     it('Close closes the window', async () => {
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1']);

@@ -4,14 +4,27 @@ import { X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
-import { SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from "../../types";
+import { FailureModel, SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
+import ManageSpecialSensors from "./ManageSpecialSensors";
 import { debugLog } from "../../utils/debugLog";
+
+/** How long a deleted special sensor can still be brought back. Nothing has
+ *  left this window yet during that time — see `commitDelete`. */
+const UNDO_WINDOW_MS = 8000;
+
+/** Tag comparison is case-insensitive everywhere else the app matches sensor
+ *  tags (Dashboard's own `byTag` maps, `specialSensorDeps`), so it is here. */
+const sameTag = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 export default function AddSensorWindow() {
     const [sensors, setSensors] = useState<string[]>([]);
     const [selectedSensors, setSelectedSensors] = useState<string[]>([]);
+    // What the dashboard chart is currently plotting. Distinct from
+    // `selectedSensors` above, which is this window's own picker (deliberately
+    // left empty on open -- see the sensors-data handler).
+    const [plottedSensors, setPlottedSensors] = useState<string[]>([]);
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [loading, setLoading] = useState(true);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(null);
@@ -37,6 +50,23 @@ export default function AddSensorWindow() {
 
     // UI State
     const [searchTerm, setSearchTerm] = useState("");
+    const [activeTab, setActiveTab] = useState<'create' | 'manage'>('create');
+
+    // Everything the Manage tab needs. `recipes` is this window's own copy of
+    // the dashboard's `specialSensorRecipes` -- it arrives with sensors-data,
+    // grows as sensors are created here, and shrinks as they are deleted.
+    const [recipes, setRecipes] = useState<SpecialSensorRecipe[]>([]);
+    const [models, setModels] = useState<FailureModel[]>([]);
+    // Formula tag -> sensors it references, from Rust. Null until the lookup
+    // answers; Manage refuses to delete anything while it is null, because an
+    // empty map would look exactly like "nothing depends on anything".
+    const [formulaRefs, setFormulaRefs] = useState<Map<string, string[]> | null>(null);
+
+    // A deletion inside its undo window: already gone from the list here, not
+    // yet told to the dashboard.
+    const [pendingDelete, setPendingDelete] = useState<{ tags: string[]; label: string } | null>(null);
+    const pendingDeleteRef = useRef<{ tags: string[]; label: string } | null>(null);
+    const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         // Initialize Split.js
@@ -61,7 +91,9 @@ export default function AddSensorWindow() {
             unlistenData = await listen<{
                 sensors: string[],
                 selectedSensors: string[],
-                sensorMetadata: SensorMetadata[]
+                sensorMetadata: SensorMetadata[],
+                specialSensorRecipes?: SpecialSensorRecipe[],
+                models?: FailureModel[]
             }>('sensors-data', (event) => {
                 debugLog("Received sensors-data:", event.payload);
                 setSensors(event.payload.sensors);
@@ -76,6 +108,9 @@ export default function AddSensorWindow() {
                 // before the previous "Add sensor" click, which read as "did
                 // my sensor not get added?".
                 setSensorMetadata(event.payload.sensorMetadata);
+                setPlottedSensors(event.payload.selectedSensors ?? []);
+                setRecipes(event.payload.specialSensorRecipes ?? []);
+                setModels(event.payload.models ?? []);
                 setLoading(false);
             });
 
@@ -107,10 +142,107 @@ export default function AddSensorWindow() {
         return () => {
             if (unlistenData) unlistenData();
             if (toastTimer.current) clearTimeout(toastTimer.current);
+            if (deleteTimer.current) clearTimeout(deleteTimer.current);
         };
     }, []);
 
+    // Ask Rust which sensors each formula references. Done here rather than
+    // with a substring scan in TypeScript because sensor names nest: `test` is
+    // a substring of `test extend`, so `formula.includes(tag)` would report a
+    // dependency that isn't there and leave `test` permanently undeletable.
+    // `extract_formula_refs` reuses the evaluator's own parser.
+    useEffect(() => {
+        const formulaRecipes = recipes.filter(r => r.kind === 'formula');
+        if (formulaRecipes.length === 0) {
+            setFormulaRefs(new Map());
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                const refs = await invoke<string[][]>('extract_formula_refs', {
+                    formulas: formulaRecipes.map(r => (r as { formula: string }).formula),
+                });
+                if (cancelled) return;
+                setFormulaRefs(new Map(formulaRecipes.map((r, i) => [r.tag.trim().toLowerCase(), refs[i] ?? []])));
+            } catch (err) {
+                console.error('Failed to read formula references:', err);
+                // Stay null: Manage keeps deletion disabled rather than
+                // deciding it is safe on missing information.
+                if (!cancelled) setFormulaRefs(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [recipes]);
+
+    /**
+     * Actually delete: tell the dashboard (which drops the recipe, the
+     * metadata, the chart line and the tag itself) and forget the sensor here
+     * too, so it can no longer be picked as an input for a new one.
+     */
+    const commitDelete = useCallback(async (tags: string[]) => {
+        if (tags.length === 0) return;
+        const gone = (tag: string) => tags.some(t => sameTag(t, tag));
+        setRecipes(prev => prev.filter(r => !gone(r.tag)));
+        setSensors(prev => prev.filter(t => !gone(t)));
+        setSensorMetadata(prev => (prev ? prev.filter(m => !gone(m.tag)) : prev));
+        setSelectedSensors(prev => prev.filter(t => !gone(t)));
+        setPlottedSensors(prev => prev.filter(t => !gone(t)));
+        // pendingSensors is what the next 'add-sensor-selection' emit replays
+        // as the dashboard's whole plotted selection -- leaving a deleted tag
+        // in it would put the sensor straight back on the chart.
+        setPendingSensors(prev => prev.filter(t => !gone(t)));
+        try {
+            await emit('delete-special-sensors', { tags });
+        } catch (err) {
+            console.error('Failed to tell the dashboard about the deletion:', err);
+        }
+    }, []);
+
+    /** Commit whatever is mid-undo right now (window closing, or a second
+     *  delete starting). Safe to call when nothing is pending. */
+    const flushPendingDelete = useCallback(async () => {
+        const pending = pendingDeleteRef.current;
+        if (!pending) return;
+        if (deleteTimer.current) clearTimeout(deleteTimer.current);
+        deleteTimer.current = null;
+        pendingDeleteRef.current = null;
+        setPendingDelete(null);
+        await commitDelete(pending.tags);
+    }, [commitDelete]);
+
+    const handleDeleteSensor = useCallback(async (tag: string) => {
+        await flushPendingDelete();
+        const pending = { tags: [tag], label: tag };
+        pendingDeleteRef.current = pending;
+        setPendingDelete(pending);
+        deleteTimer.current = setTimeout(() => {
+            deleteTimer.current = null;
+            pendingDeleteRef.current = null;
+            setPendingDelete(null);
+            void commitDelete(pending.tags);
+        }, UNDO_WINDOW_MS);
+    }, [commitDelete, flushPendingDelete]);
+
+    const handleUndoDelete = useCallback(() => {
+        if (deleteTimer.current) clearTimeout(deleteTimer.current);
+        deleteTimer.current = null;
+        pendingDeleteRef.current = null;
+        setPendingDelete(null);
+    }, []);
+
+    /** Rows the Manage tab shows: a sensor inside its undo window is already
+     *  gone from here, which is also what unlocks anything built on top of
+     *  it for deletion in the same breath. */
+    const manageRecipes = useMemo(() => {
+        if (!pendingDelete) return recipes;
+        return recipes.filter(r => !pendingDelete.tags.some(t => sameTag(t, r.tag)));
+    }, [recipes, pendingDelete]);
+
     const handleClose = async () => {
+        // A pending delete has not left this window yet; closing is the user
+        // saying they meant it, so make it real before the window goes.
+        await flushPendingDelete();
         await getCurrentWindow().close();
     };
 
@@ -205,6 +337,12 @@ export default function AddSensorWindow() {
                     const existing = prev ?? [];
                     return existing.some(m => m.tag === createdName) ? existing : [...existing, newMetadata[0]];
                 });
+                // Show up on the Manage tab right away, without waiting for
+                // the dashboard to send a fresh sensors-data.
+                setRecipes(prev => {
+                    const others = prev.filter(r => !newRecipes.some(n => sameTag(n.tag, r.tag)));
+                    return [...others, ...newRecipes];
+                });
             }
 
             await emit('add-sensor-selection', {
@@ -273,7 +411,7 @@ export default function AddSensorWindow() {
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', position: 'relative' }}>
             {/* Header — matches View Table dialog (.pair-regl-modal-header) */}
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
-                <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Add Special Sensor</h2>
+                <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Special Sensors</h2>
                 <button
                     onClick={handleClose}
                     className="scatter-regl-btn scatter-regl-btn-icon"
@@ -283,8 +421,35 @@ export default function AddSensorWindow() {
                 </button>
             </div>
 
-            {/* Main Content (Split.js) */}
-            <div className="flex-1 flex min-h-0 overflow-hidden">
+            {/* Tabs — creating and managing are the same window because the
+                two are the same job: you build a sensor, then you want to see
+                what you built and get rid of what you no longer use. */}
+            <div className="flex shrink-0 gap-1 px-4 pt-2" style={{ backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }} role="tablist">
+                {(['create', 'manage'] as const).map(tab => (
+                    <button
+                        key={tab}
+                        role="tab"
+                        aria-selected={activeTab === tab}
+                        onClick={() => setActiveTab(tab)}
+                        className="px-3 py-1.5 rounded-t"
+                        style={{
+                            fontSize: '12px',
+                            fontWeight: activeTab === tab ? 600 : 500,
+                            color: activeTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
+                            backgroundColor: activeTab === tab ? 'var(--card-bg)' : 'transparent',
+                            borderBottom: `2px solid ${activeTab === tab ? 'var(--accent-color)' : 'transparent'}`,
+                        }}
+                    >
+                        {tab === 'create' ? 'Create' : `Manage${recipes.length > 0 ? ` (${recipes.length})` : ''}`}
+                    </button>
+                ))}
+            </div>
+
+            {/* Main Content (Split.js).
+                Kept mounted while the Manage tab is showing: Split.js binds to
+                #split-0/#split-1 once on mount, and unmounting them would
+                leave it pointing at elements that no longer exist. */}
+            <div className="flex-1 min-h-0 overflow-hidden" style={{ display: activeTab === 'create' ? 'flex' : 'none' }}>
                 {/* Left: Explorer */}
                 <div id="split-0" className="flex flex-col h-full min-h-0 divide-y" style={{ borderColor: 'var(--border)' }}>
                     <div className="flex-1 min-h-0 overflow-hidden">
@@ -323,16 +488,33 @@ export default function AddSensorWindow() {
                 </div>
             </div>
 
+            {activeTab === 'manage' && (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <ManageSpecialSensors
+                        recipes={manageRecipes}
+                        sensorMetadata={sensorMetadata}
+                        models={models}
+                        selectedSensors={plottedSensors}
+                        formulaRefs={formulaRefs}
+                        onDelete={handleDeleteSensor}
+                        pendingDelete={pendingDelete}
+                        onUndo={handleUndoDelete}
+                    />
+                </div>
+            )}
+
             {/* Footer */}
             <div className="flex flex-col gap-2 px-4 py-3 border-t shrink-0" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
-                {nameMissing && (
+                {nameMissing && activeTab === 'create' && (
                     <p className="text-xs" style={{ color: 'var(--danger)' }}>
                         Give this sensor a name before adding it.
                     </p>
                 )}
                 <div className="flex justify-end gap-2">
                     <button onClick={handleClose} className="px-4 py-1.5 rounded text-sm" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>Close</button>
-                    <button onClick={handleAdd} className="px-4 py-1.5 rounded text-white text-sm font-medium" style={{ backgroundColor: 'var(--accent-color)' }}>Add sensor</button>
+                    {activeTab === 'create' && (
+                        <button onClick={handleAdd} className="px-4 py-1.5 rounded text-white text-sm font-medium" style={{ backgroundColor: 'var(--accent-color)' }}>Add sensor</button>
+                    )}
                 </div>
             </div>
 

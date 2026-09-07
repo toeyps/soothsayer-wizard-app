@@ -1222,6 +1222,88 @@ describe('Dashboard', () => {
                 expect(saved.specialSensorRecipes).toEqual([seedRecipe, revisedRecipe]);
             });
         });
+
+        it('sends the recipes and the failure-group models along with "sensors-data" (the add-sensor window\'s Manage tab needs both to work out what still depends on a special sensor before offering to delete it)', async () => {
+            const recipe = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
+            const model = {
+                id: 'm1', groupNos: [1], name: 'Boiler efficiency', kind: 'individual' as const, category: null,
+                notes: '', status: false,
+                targetSensor: 'CALC1', predictorSensors: [], xSensor: '', ySensor: '',
+                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+            };
+            renderDashboard({
+                initialState: makeInitialState({
+                    specialSensorRecipes: [recipe],
+                    failureGroupState: { groups: [{ no: 0, name: 'Not in Group' }], models: [model] },
+                }),
+            });
+            await act(async () => {
+                for (const cb of listenCallbacks['request-sensors'] ?? []) cb({});
+            });
+            expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({
+                specialSensorRecipes: [recipe],
+                models: [model],
+            }));
+        });
+
+        it('"delete-special-sensors" takes the sensor out of the recipes, the metadata, the chart and the sensor list — dropping the recipe is what stops it being rebuilt on the next workspace open', async () => {
+            const doomed = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
+            const kept = { kind: 'formula' as const, tag: 'CALC2', formula: '$TAG2 * 3' };
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1', 'CALC1'],
+                    visibleSensors: ['TAG1', 'CALC1'],
+                    specialSensorRecipes: [doomed, kept],
+                    extraSensorMetadata: [
+                        { tag: 'CALC1', description: 'Doomed', unit: '', component: '' },
+                        { tag: 'CALC2', description: 'Kept', unit: '', component: '' },
+                    ],
+                }),
+            });
+            // The delete listener is the third `await listen(...)` in that
+            // effect, so its callback is only registered a couple of
+            // microtasks in.
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+            await act(async () => {
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) {
+                    cb({ payload: { tags: ['CALC1'] } });
+                }
+            });
+
+            const lastProps = last(sensorSelectionProps);
+            expect(lastProps.sensors).not.toContain('CALC1');
+            expect(lastProps.sensors).toContain('CALC2');
+            expect(lastProps.selectedSensors).toEqual(['TAG1']);
+
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes).toEqual([kept]);
+                expect(saved.extraSensorMetadata).toEqual([{ tag: 'CALC2', description: 'Kept', unit: '', component: '' }]);
+                expect(saved.selectedSensors).toEqual(['TAG1']);
+            });
+        });
+
+        it('"delete-special-sensors" matches tags case-insensitively, and ignores an empty list', async () => {
+            const recipe = { kind: 'formula' as const, tag: 'Calc1', formula: '$TAG1 * 2' };
+            renderDashboard({ initialState: makeInitialState({ specialSensorRecipes: [recipe] }) });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+            await act(async () => {
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { tags: [] } });
+            });
+            expect(last(sensorSelectionProps).sensors).toContain('TAG1');
+
+            await act(async () => {
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { tags: ['  calc1  '] } });
+            });
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes).toEqual([]);
+            });
+        });
     });
 
     describe('Build Model', () => {

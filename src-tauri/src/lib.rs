@@ -2185,6 +2185,34 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
     refs
 }
 
+/// Which sensors does each formula reference?
+///
+/// Exposed to the frontend so the "Special Sensors" management view can work
+/// out what depends on what before allowing a delete. It deliberately reuses
+/// `extract_sensor_refs` rather than reimplementing the scan in TypeScript:
+/// the reference syntax has two forms (`$Name` and `${Name With Spaces}`) and
+/// a second parser would drift from this one the moment either changes.
+///
+/// Substring matching is NOT a valid substitute on the frontend side — with
+/// sensors named `test` and `test extend`, asking whether a formula "contains"
+/// `test` answers yes for both.
+///
+/// Returns one de-duplicated list per input formula, in the same order.
+#[tauri::command]
+fn extract_formula_refs(formulas: Vec<String>) -> Vec<Vec<String>> {
+    formulas
+        .iter()
+        .map(|formula| {
+            let mut seen = std::collections::HashSet::new();
+            extract_sensor_refs(formula)
+                .into_iter()
+                .map(|(_, name)| name)
+                .filter(|name| seen.insert(name.clone()))
+                .collect()
+        })
+        .collect()
+}
+
 /// Convert sensor references to fasteval-safe variable names.
 /// Returns (transformed_expression, map_of_safe_name -> original_sensor_name).
 ///
@@ -2225,6 +2253,67 @@ fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
         ("log10", [x]) => Some(x.log10()),
         ("pow", [x, y]) => Some(x.powf(*y)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod extract_formula_refs_tests {
+    use super::*;
+
+    #[test]
+    fn reads_both_reference_forms() {
+        let out = extract_formula_refs(vec![
+            "$11PT1214A.PV * 2".to_string(),
+            "${test extend} + 10".to_string(),
+        ]);
+        assert_eq!(out[0], vec!["11PT1214A.PV"]);
+        assert_eq!(out[1], vec!["test extend"]);
+    }
+
+    #[test]
+    fn keeps_one_entry_per_input_formula_in_order() {
+        let out = extract_formula_refs(vec![
+            "$a + $b".to_string(),
+            "42".to_string(),
+            "$c".to_string(),
+        ]);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0], vec!["a", "b"]);
+        assert!(out[1].is_empty(), "a formula with no references yields an empty list, not a missing entry");
+        assert_eq!(out[2], vec!["c"]);
+    }
+
+    #[test]
+    fn de_duplicates_repeated_references() {
+        let out = extract_formula_refs(vec!["$a + $a * $a".to_string()]);
+        assert_eq!(out[0], vec!["a"]);
+    }
+
+    /// The whole reason this command exists rather than a substring check on
+    /// the frontend: one sensor name can be a prefix of another. Asking
+    /// whether the formula "contains" `test` would answer yes for both of
+    /// these, which would wrongly mark `test` as depended-upon and block its
+    /// deletion forever.
+    #[test]
+    fn does_not_confuse_a_name_with_a_longer_name_starting_the_same_way() {
+        let out = extract_formula_refs(vec!["${test extend} + 1".to_string()]);
+        assert_eq!(out[0], vec!["test extend"]);
+        assert!(!out[0].contains(&"test".to_string()));
+
+        let out2 = extract_formula_refs(vec!["${test} + 1".to_string()]);
+        assert_eq!(out2[0], vec!["test"]);
+        assert!(!out2[0].contains(&"test extend".to_string()));
+    }
+
+    #[test]
+    fn ignores_an_unclosed_brace_rather_than_capturing_the_rest() {
+        let out = extract_formula_refs(vec!["${never closed + 1".to_string()]);
+        assert!(out[0].is_empty());
+    }
+
+    #[test]
+    fn handles_an_empty_input_list() {
+        assert!(extract_formula_refs(vec![]).is_empty());
     }
 }
 
@@ -2991,6 +3080,7 @@ pub fn run() {
             get_table_page,
             evaluate_formula,
             validate_formula,
+            extract_formula_refs,
             train_individual_model,
             compute_clustering_preview,
             train_clustering_model,

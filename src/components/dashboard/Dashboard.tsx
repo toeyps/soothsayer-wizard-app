@@ -1044,25 +1044,34 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // guaranteed-complete picture Dashboard's own Sensor tab does — a
     // special sensor missing from here would mean it can't even be picked
     // as an input for building another one on top of it.
-    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata });
+    //
+    // 2026-09-07: also carries `specialSensorRecipes` and `fgModels` — the
+    // add-sensor window's "Manage" tab needs both to work out what still
+    // depends on a special sensor before offering to delete it (see
+    // `buildSpecialSensorUsage`). They travel on the same
+    // request-sensors/sensors-data handshake rather than a second one.
+    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels });
     useEffect(() => {
-        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata };
-    }, [allSensorTags, selectedSensors, sensorMetadata, metadata]);
+        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels };
+    }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels]);
 
     useEffect(() => {
         let unlistenRequest: UnlistenFn | undefined;
         let unlistenAdd: UnlistenFn | undefined;
+        let unlistenDelete: UnlistenFn | undefined;
 
         const setupListeners = async () => {
             debugLog("Setting up Dashboard listeners");
             // Listen for request from child window
             unlistenRequest = await listen('request-sensors', () => {
                 debugLog("Dashboard received 'request-sensors', emitting data...");
-                const { allSensorTags, selectedSensors, sensorMetadata } = stateRef.current;
+                const { allSensorTags, selectedSensors, sensorMetadata, specialSensorRecipes, fgModels } = stateRef.current;
                 emit('sensors-data', {
                     sensors: allSensorTags,
                     selectedSensors: selectedSensors,
-                    sensorMetadata: sensorMetadata
+                    sensorMetadata: sensorMetadata,
+                    specialSensorRecipes,
+                    models: fgModels,
                 });
             });
 
@@ -1124,6 +1133,39 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     return changed ? newHeaders : prevHeaders;
                 });
             });
+
+            // Sensors deleted from the add-sensor window's "Manage" tab.
+            //
+            // The window has already checked that nothing depends on them
+            // (`buildSpecialSensorUsage`) and has already run its own undo
+            // window, so this side just applies the removal — dropping the
+            // recipe is what actually makes it stick, since the recipes are
+            // what DataUploadPage replays to rebuild these columns on the
+            // next workspace open.
+            //
+            // The column itself stays in the Rust session's in-memory data
+            // until then: there is no command to drop one, and adding one is
+            // not worth it for state that is discarded at app close anyway.
+            // Removing the tag from all three lists below is what takes it
+            // out of every list, picker and chart in the meantime.
+            //
+            // No explicit save call — every setter here feeds
+            // `buildWorkspaceState`, so the debounced autosave writes it.
+            unlistenDelete = await listen<{ tags: string[] }>('delete-special-sensors', (event) => {
+                const drop = new Set((event.payload?.tags ?? []).map(t => t.trim().toLowerCase()));
+                if (drop.size === 0) return;
+                debugLog('Dashboard received delete-special-sensors', event.payload);
+                const kept = <T,>(list: T[], tagOf: (item: T) => string) =>
+                    list.filter(item => !drop.has(tagOf(item).trim().toLowerCase()));
+
+                setSpecialSensorRecipes(prev => kept(prev, r => r.tag));
+                setExtraSensorMetadata(prev => kept(prev, m => m.tag));
+                // visibleSensors, sensorColors, sensorAxisRange and
+                // alarmLinesEnabled all follow selectedSensors through
+                // existing effects, so deselecting is enough to clear them.
+                setSelectedSensors(prev => kept(prev, s => s));
+                setSensorHeaders(prev => kept(prev, h => h));
+            });
         };
 
         setupListeners();
@@ -1131,6 +1173,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => {
             if (unlistenRequest) unlistenRequest();
             if (unlistenAdd) unlistenAdd();
+            if (unlistenDelete) unlistenDelete();
         };
     }, []);
 
