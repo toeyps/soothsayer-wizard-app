@@ -6,6 +6,30 @@
 
 ---
 
+## [0.4.1] — 2026-09-03
+
+Patch release. 0.4.0 shipped a Content-Security-Policy that breaks the Scatter
+and Pair Plot charts; this reverts it. Nothing else changed.
+
+### 🐛 Bug fixes
+
+- **Scatter และ Pair Plot ใช้ไม่ได้ใน build ที่ติดตั้งจริงของ 0.4.0** — 0.4.0 ถอด
+  `'unsafe-eval'` ออกจาก CSP ของ production ด้วยความเข้าใจว่าไม่มีอะไรต้องใช้แล้ว
+  แต่ **`regl-scatterplot` ต้องใช้จริง**: regl สร้างโค้ด draw command เป็น string
+  แล้วคอมไพล์ตอน runtime ด้วย Function constructor (`regl.js:6015`,
+  `Function.apply(null, …)`) ซึ่งเป็นกลไกหลักของมัน ไม่ใช่ทางเลือกเสริม —
+  พอ CSP บล็อก การสร้างกราฟจะโยน `EvalError` ทิ้งไปเงียบ ๆ กราฟจึงว่างเปล่า
+  **ใส่ `'unsafe-eval'` กลับเข้า CSP แล้ว** กราฟ Scatter/Pair Plot กลับมาทำงานปกติ
+
+  อาการนี้โผล่เฉพาะใน build ที่ติดตั้งจริงเท่านั้น — dev mode ใช้ `devCsp`
+  คนละตัวซึ่งยังอนุญาต `'unsafe-eval'` อยู่ ทำให้ `tauri dev` ไม่มีทางเจอ
+
+**หมายเหตุสำหรับผู้ใช้ 0.4.0**: ถ้าติดตั้ง 0.4.0 ไปแล้วและกราฟ Scatter หรือ
+Pair Plot ขึ้นเป็นพื้นที่ว่าง นั่นคือบั๊กตัวนี้ — อัปเดตเป็น 0.4.1 แล้วหายทันที
+ส่วนกราฟ Line, การนำเข้าข้อมูล, Failure Group และการเทรนโมเดลไม่ได้รับผลกระทบ
+
+---
+
 ## [0.4.0] — 2026-09-03
 
 รวมงานสะสมตั้งแต่ `12e51ec` (จุดที่ bump 0.3.0, 2026-08-24) — 46 commit — installer build จริงครั้งที่ 3 ของโปรเจกต์
@@ -46,7 +70,7 @@
 ### 🔒 ความปลอดภัย
 
 - **อัปเดต ECharts เป็น 6.1.0 ปิดช่องโหว่ XSS** (GHSA-fgmj-fm8m-jvvx) — สำคัญเป็นพิเศษกับแอปเดสก์ท็อป เพราะข้อความที่กราฟเอาไปแสดง (ชื่อ/คำอธิบาย sensor) มาจากไฟล์ CSV ที่ผู้ใช้นำเข้าเอง และหน้าต่างแอปเข้าถึงคำสั่งอ่าน/เขียนไฟล์ได้
-- **ถอด `'unsafe-eval'` ออกจาก CSP ของ production build** — เดิมเปิดไว้เพราะไลบรารีทำ PDF ซึ่งถูกถอดออกไปตั้งแต่ 0.3.0 แล้ว ตรวจแล้วว่าไม่มีโค้ดส่วนไหนต้องใช้อีก
+- ~~**ถอด `'unsafe-eval'` ออกจาก CSP ของ production build**~~ — **ถูก revert ใน 0.4.1** เพราะทำให้กราฟ Scatter และ Pair Plot ใช้ไม่ได้ (`regl-scatterplot` ต้องใช้ eval จริง) ดูรายละเอียดใน 0.4.1 ด้านบน
 
 ### ⚡ Performance
 

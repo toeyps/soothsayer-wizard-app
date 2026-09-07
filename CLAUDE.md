@@ -64,7 +64,13 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 
 `usePMReport` exports **PNG only** (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) — it returns just `{ exportPNG }`. PDF export and `@react-pdf/renderer` were removed; `src/components/reports/` holds only `pmReportTypes.ts` now. Don't re-add a PDF path without asking.
 
-**CSP note (open item)**: the production `script-src` in `tauri.conf.json` still carries `'unsafe-eval'`, but the reason it was added — react-pdf's yoga-layout engine compiling WebAssembly at runtime — is gone with react-pdf. Nothing under `src/` calls `eval`/`new Function`, and the only `new Function` left in any shipped chunk is a legacy `JSON.parse` fallback inside ECharts' `registerMap` (geo maps, unused here), so `'unsafe-eval'` is a live candidate for removal. Dev mode uses the looser `devCsp`, so CSP regressions surface **only in installed builds** — if you tighten it, verify from a real installer: line chart, scatter, pair plot, and PNG export.
+**CSP note — `'unsafe-eval'` is REQUIRED, do not remove it**: the production `script-src` in `tauri.conf.json` carries `'unsafe-eval'` because **`regl-scatterplot` cannot work without it**. regl generates its draw commands as source strings and compiles them at runtime through the Function constructor (`node_modules/regl/dist/regl.js:6015`, `Function.apply(null, …)`) — that codegen *is* regl's execution model, not an optional path. Block it and creating a scatterplot throws `EvalError`, so the Scatter and Pair Plot charts render as empty panels.
+
+This was tried and reverted on 2026-09-03 (shipped broken in 0.4.0, fixed in 0.4.1). Two traps to know about if anyone reconsiders it:
+- **Grepping the bundle is not enough.** The removal was justified by searching the built chunks for `new Function(` / `eval(` and finding only a dead ECharts fallback. regl reaches the constructor via `Function.apply`, so every one of those greps missed it. Only executing the code under the policy found it.
+- **Dev mode cannot see it.** `devCsp` still allows `'unsafe-eval'`, so `tauri dev` passes regardless. Any CSP change has to be checked in an installed build, or against the built `dist/` served under the production policy.
+
+`'wasm-unsafe-eval'` does not help here — it permits WebAssembly compilation, not JavaScript eval.
 
 ## Release checklist — required before every `.exe`/installer build
 
