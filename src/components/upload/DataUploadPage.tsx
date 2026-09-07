@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
+import { recomputeCall } from "../../utils/specialSensorRecompute";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useDataUpload } from "../../hooks/useDataUpload";
@@ -52,9 +53,10 @@ interface DataUploadPageProps {
  * special sensor's name/description would still show up (from
  * `extraSensorMetadata`) but plot no data at all, silently.
  *
- * `customName` is always forced to the recipe's own `tag`, so the
- * recreated column's header matches `extraSensorMetadata`/`selectedSensors`
- * exactly regardless of Rust's own auto-naming.
+ * `customName` is always forced to the recipe's own `tag` (see
+ * `recomputeCall`), so the recreated column's header matches
+ * `extraSensorMetadata`/`selectedSensors` exactly regardless of Rust's own
+ * auto-naming.
  *
  * A recipe that fails to replay (most likely: a source sensor was renamed
  * or removed from the mapping since) is skipped, not fatal for the whole
@@ -65,14 +67,12 @@ async function replaySpecialSensorRecipes(recipes: SpecialSensorRecipe[]): Promi
   const failed: string[] = [];
   for (const recipe of recipes) {
     try {
-      if (recipe.kind === 'formula') {
-        await invoke('evaluate_formula', { formula: recipe.formula, customName: recipe.tag });
-      } else {
-        await invoke('calculate_new_sensor', {
-          sensors: recipe.sourceSensors,
-          config: { ...recipe.operationConfig, customName: recipe.tag },
-        });
-      }
+      // Same call the "Manage" tab's edit-and-recompute path builds, from
+      // one place, so the two can't drift apart. `replace: true` makes no
+      // difference on a fresh load (nothing to replace yet) but keeps a
+      // second replay in the same session idempotent.
+      const { cmd, args } = recomputeCall(recipe);
+      await invoke(cmd, args);
     } catch (err) {
       console.warn(`Failed to restore special sensor "${recipe.tag}":`, err);
       failed.push(recipe.tag);

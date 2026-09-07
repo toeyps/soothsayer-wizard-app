@@ -13,6 +13,16 @@ export interface ChartDataQuery {
     sampling: ChartSamplingMethod;
     operation: SensorOperationConfig | null;
     maxPoints: number;
+    /**
+     * Bumped when the data behind an unchanged query has changed underneath
+     * it — today, when a special sensor's recipe is edited and its column is
+     * recomputed in the Rust session. Nothing about the query itself moves in
+     * that case, so without this the chart would keep showing values computed
+     * from the old recipe until something else happened to change.
+     *
+     * It is part of the cache key only; it is never sent to the backend.
+     */
+    revision?: number;
 }
 
 export interface UseChartDataResult {

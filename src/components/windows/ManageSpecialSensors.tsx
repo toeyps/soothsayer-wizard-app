@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Trash2, Lock, Search, Undo2 } from "lucide-react";
+import { Trash2, Lock, Search, Undo2, Pencil } from "lucide-react";
 import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
 import { buildSpecialSensorUsage, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
+import SpecialSensorEditor from "./SpecialSensorEditor";
 
 interface Props {
     /** Special sensors to list — already excluding anything in an open undo
@@ -22,6 +23,16 @@ interface Props {
     /** Set while a deletion is inside its undo window. */
     pendingDelete: { tags: string[]; label: string } | null;
     onUndo: () => void;
+    /** Every tag that can be used as an input when editing an operation. */
+    availableSensors: string[];
+    /** Which row has its editor open, if any. Owned by the caller so the
+     *  editor's save state and error live next to the recompute that
+     *  produces them. */
+    editingTag: string | null;
+    onEdit: (tag: string | null) => void;
+    onSaveEdit: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata }) => void;
+    savingEdit: boolean;
+    editError: string | null;
 }
 
 /** How the recipe reads in the list — the formula as typed, or the operation
@@ -59,6 +70,7 @@ function blockedSummary(usage: SpecialSensorUsage): string | null {
 
 export default function ManageSpecialSensors({
     recipes, sensorMetadata, models, selectedSensors, formulaRefs, onDelete, pendingDelete, onUndo,
+    availableSensors, editingTag, onEdit, onSaveEdit, savingEdit, editError,
 }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedTag, setExpandedTag] = useState<string | null>(null);
@@ -131,6 +143,7 @@ export default function ManageSpecialSensors({
                     // actually answered — see `formulaRefs` above.
                     const canDelete = info.deletable && formulaRefs !== null;
                     const expanded = expandedTag === recipe.tag;
+                    const expandedEditor = editingTag === recipe.tag;
                     return (
                         <div key={recipe.tag} className="rounded" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)' }}>
                             <div className="flex items-center gap-3 px-3 py-2.5">
@@ -186,6 +199,23 @@ export default function ManageSpecialSensors({
 
                                 <button
                                     type="button"
+                                    onClick={() => onEdit(expandedEditor ? null : recipe.tag)}
+                                    disabled={savingEdit}
+                                    title={`Edit ${recipe.tag}`}
+                                    aria-label={`Edit ${recipe.tag}`}
+                                    aria-expanded={expandedEditor}
+                                    className="flex items-center justify-center shrink-0 rounded"
+                                    style={{
+                                        width: 26, height: 26,
+                                        color: expandedEditor ? 'var(--accent-color)' : 'var(--text-secondary)',
+                                        border: `1px solid ${expandedEditor ? 'var(--accent-color)' : 'var(--border)'}`,
+                                    }}
+                                >
+                                    <Pencil size={13} />
+                                </button>
+
+                                <button
+                                    type="button"
                                     onClick={() => onDelete(recipe.tag)}
                                     disabled={!canDelete}
                                     title={canDelete ? `Delete ${recipe.tag}` : 'Something still uses this sensor'}
@@ -229,6 +259,22 @@ export default function ManageSpecialSensors({
                                         )}
                                     </div>
                                 </div>
+                            )}
+
+                            {expandedEditor && (
+                                <SpecialSensorEditor
+                                    // Remount on tag change so the form never
+                                    // shows one sensor's values under another's
+                                    // name (the fields are seeded from props).
+                                    key={recipe.tag}
+                                    recipe={recipe}
+                                    metadata={meta}
+                                    availableSensors={availableSensors}
+                                    onCancel={() => onEdit(null)}
+                                    onSave={onSaveEdit}
+                                    saving={savingEdit}
+                                    error={editError}
+                                />
                             )}
                         </div>
                     );

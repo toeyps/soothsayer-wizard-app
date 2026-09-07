@@ -37,6 +37,12 @@ function renderList(overrides: Partial<React.ComponentProps<typeof ManageSpecial
         onDelete: vi.fn(),
         pendingDelete: null,
         onUndo: vi.fn(),
+        availableSensors: ['11PT1214A.PV', '11FT1601.PV', '11FT1602.PV'],
+        editingTag: null,
+        onEdit: vi.fn(),
+        onSaveEdit: vi.fn(),
+        savingEdit: false,
+        editError: null,
         ...overrides,
     };
     return { ...render(<ManageSpecialSensors {...props} />), props };
@@ -127,6 +133,37 @@ describe('ManageSpecialSensors', () => {
         expect(screen.getByText(/Deleted/)).toBeTruthy();
         fireEvent.click(screen.getByText('Undo'));
         expect(props.onUndo).toHaveBeenCalled();
+    });
+
+    it('opens the editor for the row whose pencil was clicked', () => {
+        const { props } = renderList();
+        fireEvent.click(screen.getByLabelText('Edit special A'));
+        expect(props.onEdit).toHaveBeenCalledWith('special A');
+    });
+
+    it('clicking the pencil again closes the editor', () => {
+        const { props } = renderList({ editingTag: 'special A' });
+        fireEvent.click(screen.getByLabelText('Edit special A'));
+        expect(props.onEdit).toHaveBeenCalledWith(null);
+    });
+
+    it('shows the editor inline under the row being edited, and only that row', () => {
+        renderList({
+            recipes: [specialA, totalFlow],
+            formulaRefs: new Map([['special a', ['11PT1214A.PV']]]),
+            editingTag: 'special A',
+        });
+        expect(screen.getByLabelText('Formula')).toBeTruthy();
+        expect(screen.getAllByText('Save changes')).toHaveLength(1);
+    });
+
+    it('a sensor that cannot be deleted can still be edited — that is what the downstream recompute is for', () => {
+        renderList({
+            recipes: [specialA, specialB],
+            formulaRefs: new Map([['special a', ['11PT1214A.PV']], ['special b', ['special A']]]),
+        });
+        expect(deleteButton('special A').disabled).toBe(true);
+        expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(false);
     });
 
     it('filters the list by name, description or recipe', () => {

@@ -9,6 +9,8 @@ import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
 import ManageSpecialSensors from "./ManageSpecialSensors";
 import { debugLog } from "../../utils/debugLog";
+import { buildSpecialSensorUsage, cycleConflicts, dependentsToRecompute } from "../../utils/specialSensorDeps";
+import { recomputeSpecialSensors } from "../../utils/specialSensorRecompute";
 
 /** How long a deleted special sensor can still be brought back. Nothing has
  *  left this window yet during that time — see `commitDelete`. */
@@ -67,6 +69,11 @@ export default function AddSensorWindow() {
     const [pendingDelete, setPendingDelete] = useState<{ tags: string[]; label: string } | null>(null);
     const pendingDeleteRef = useRef<{ tags: string[]; label: string } | null>(null);
     const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Which row has its editor open, and how the last save attempt went.
+    const [editingTag, setEditingTag] = useState<string | null>(null);
+    const [savingEdit, setSavingEdit] = useState(false);
+    const [editError, setEditError] = useState<string | null>(null);
 
     useEffect(() => {
         // Initialize Split.js
@@ -238,6 +245,88 @@ export default function AddSensorWindow() {
         if (!pendingDelete) return recipes;
         return recipes.filter(r => !pendingDelete.tags.some(t => sameTag(t, r.tag)));
     }, [recipes, pendingDelete]);
+
+    /**
+     * Save an edited special sensor.
+     *
+     * Editing is not a local change. The sensor's column was computed once and
+     * lives in the Rust session; changing the recipe means recomputing it, and
+     * anything built on top of it was computed from the OLD values and is
+     * stale the moment this lands. So the edit recomputes the sensor and then
+     * replays every downstream recipe, in recipe order.
+     *
+     * Two things get refused rather than repaired afterwards: a formula that
+     * references nothing (there would be no column to compute), and one that
+     * makes the sensor depend on itself — directly or through the chain.
+     * Nothing later in the app would catch a cycle: the recipes would just
+     * replay in order on the next workspace open, each reading whatever stale
+     * column happened to be there.
+     */
+    const handleSaveEdit = useCallback(async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata }) => {
+        setSavingEdit(true);
+        setEditError(null);
+        try {
+            // Any deletion still mid-undo is settled first, so the dependency
+            // graph this reasons about matches what the dashboard holds.
+            await flushPendingDelete();
+
+            let nextInputs: string[];
+            if (next.recipe.kind === 'formula') {
+                const refs = await invoke<string[][]>('extract_formula_refs', { formulas: [next.recipe.formula] });
+                nextInputs = refs[0] ?? [];
+                if (nextInputs.length === 0) {
+                    throw new Error('This formula doesn\'t reference any sensor. Use $Name, or ${Name With Spaces}.');
+                }
+            } else {
+                nextInputs = next.recipe.sourceSensors;
+            }
+
+            const usage = buildSpecialSensorUsage({
+                recipes: manageRecipes,
+                formulaRefs: formulaRefs ?? new Map(),
+                models,
+                selectedSensors: plottedSensors,
+            });
+
+            const conflicts = cycleConflicts(manageRecipes, usage, next.recipe.tag, nextInputs);
+            if (conflicts.length > 0) {
+                throw new Error(
+                    `"${next.recipe.tag}" can't be built from ${conflicts.join(', ')} — that would make it depend on itself.`,
+                );
+            }
+
+            const downstream = dependentsToRecompute(manageRecipes, usage, next.recipe.tag);
+            await recomputeSpecialSensors([next.recipe, ...downstream], (cmd, args) => invoke(cmd, args));
+
+            setRecipes(prev => prev.map(r => (sameTag(r.tag, next.recipe.tag) ? next.recipe : r)));
+            setSensorMetadata(prev => {
+                const existing = prev ?? [];
+                return existing.some(m => sameTag(m.tag, next.metadata.tag))
+                    ? existing.map(m => (sameTag(m.tag, next.metadata.tag) ? next.metadata : m))
+                    : [...existing, next.metadata];
+            });
+
+            await emit('update-special-sensor', {
+                recipe: next.recipe,
+                metadata: next.metadata,
+                recomputed: [next.recipe.tag, ...downstream.map(r => r.tag)],
+            });
+
+            setEditingTag(null);
+            showToast(
+                downstream.length > 0
+                    ? `Updated ${next.recipe.tag} — recomputed ${downstream.length} sensor(s) built on it`
+                    : `Updated ${next.recipe.tag}`,
+            );
+        } catch (err) {
+            setEditError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setSavingEdit(false);
+        }
+        // `showToast` is a stable-enough local helper defined above; it reads
+        // only refs and setters.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [flushPendingDelete, manageRecipes, formulaRefs, models, plottedSensors]);
 
     const handleClose = async () => {
         // A pending delete has not left this window yet; closing is the user
@@ -499,6 +588,12 @@ export default function AddSensorWindow() {
                         onDelete={handleDeleteSensor}
                         pendingDelete={pendingDelete}
                         onUndo={handleUndoDelete}
+                        availableSensors={sensors}
+                        editingTag={editingTag}
+                        onEdit={tag => { setEditError(null); setEditingTag(tag); }}
+                        onSaveEdit={handleSaveEdit}
+                        savingEdit={savingEdit}
+                        editError={editError}
                     />
                 </div>
             )}

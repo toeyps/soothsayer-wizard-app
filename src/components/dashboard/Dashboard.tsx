@@ -173,6 +173,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [specialSensorRecipes, setSpecialSensorRecipes] = useState<SpecialSensorRecipe[]>(
         initialState?.specialSensorRecipes ?? []
     );
+    // Bumped when a special sensor's column is recomputed in the Rust session
+    // after its recipe was edited. The chart and scatter queries are unchanged
+    // by that — same sensors, same filters — so they would happily keep
+    // showing values from the old recipe; this is what tells them to refetch.
+    // Deliberately NOT part of `buildWorkspaceState`: it describes this
+    // session's in-memory data, not anything worth persisting.
+    const [dataRevision, setDataRevision] = useState(0);
     const sensorMetadata = useMemo(() => {
         if (extraSensorMetadata.length === 0) return sensorMetadataProp;
         const known = new Set((sensorMetadataProp ?? []).map(m => m.tag.toLowerCase()));
@@ -1059,6 +1066,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let unlistenRequest: UnlistenFn | undefined;
         let unlistenAdd: UnlistenFn | undefined;
         let unlistenDelete: UnlistenFn | undefined;
+        let unlistenUpdate: UnlistenFn | undefined;
 
         const setupListeners = async () => {
             debugLog("Setting up Dashboard listeners");
@@ -1166,6 +1174,32 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 setSelectedSensors(prev => kept(prev, s => s));
                 setSensorHeaders(prev => kept(prev, h => h));
             });
+
+            // A special sensor's recipe was edited in the "Manage" tab. The
+            // window has already recomputed its column — and every column
+            // built on top of it — in the Rust session, so this side only
+            // records the new recipe and metadata (autosave persists them)
+            // and bumps `dataRevision` so the charts refetch the new values.
+            //
+            // The tag never changes: an edit cannot rename a sensor, because
+            // the name is what other formulas, models and chart entries point
+            // at. So nothing here has to be re-keyed.
+            unlistenUpdate = await listen<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata }>('update-special-sensor', (event) => {
+                const { recipe, metadata } = event.payload ?? {};
+                if (!recipe) return;
+                debugLog('Dashboard received update-special-sensor', event.payload);
+                const isTarget = (tag: string) => tag.trim().toLowerCase() === recipe.tag.trim().toLowerCase();
+
+                setSpecialSensorRecipes(prev => prev.map(r => (isTarget(r.tag) ? recipe : r)));
+                if (metadata) {
+                    setExtraSensorMetadata(prev => (
+                        prev.some(m => isTarget(m.tag))
+                            ? prev.map(m => (isTarget(m.tag) ? metadata : m))
+                            : [...prev, metadata]
+                    ));
+                }
+                setDataRevision(n => n + 1);
+            });
         };
 
         setupListeners();
@@ -1174,6 +1208,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             if (unlistenRequest) unlistenRequest();
             if (unlistenAdd) unlistenAdd();
             if (unlistenDelete) unlistenDelete();
+            if (unlistenUpdate) unlistenUpdate();
         };
     }, []);
 
@@ -1346,6 +1381,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 sampling: samplingMethod,
                 operation: operationConfig,
                 maxPoints: LINE_MAX_POINTS,
+                revision: dataRevision,
             }
             : null
     );
@@ -1557,6 +1593,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         scatterFilter,
         scatterMaxPoints,
         scatterActive,
+        dataRevision,
     );
     useEffect(() => {
         if (scatterSample.error) reportError('scatter-sample', scatterSample.error);

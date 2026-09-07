@@ -82,6 +82,30 @@ describe('useChartData', () => {
         expect(result.current.error).toBeNull();
     });
 
+    it('refetches when only `revision` changes, and never sends it to the backend', async () => {
+        // The data behind an unchanged query can change underneath it: editing
+        // a special sensor's recipe recomputes its column in the Rust session
+        // under the same name. Nothing in the query moves, so this is the only
+        // thing that tells the chart to go and look again.
+        mockInvoke.mockResolvedValue(viewResult);
+        const { rerender } = renderHook(
+            ({ q }: { q: ChartDataQuery }) => useChartData(q),
+            { initialProps: { q: { ...baseQuery, revision: 0 } } },
+        );
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(Object.keys(mockInvoke.mock.calls[0][1])).not.toContain('revision');
+
+        rerender({ q: { ...baseQuery, revision: 1 } });
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+
+        // ...and an unchanged revision still does not refetch.
+        rerender({ q: { ...baseQuery, revision: 1 } });
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
     it('clears the view when the query becomes null (sensors deselected)', async () => {
         mockInvoke.mockResolvedValue(viewResult);
         const { result, rerender } = renderHook(

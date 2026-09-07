@@ -158,3 +158,67 @@ export function usageFor(
 ): SpecialSensorUsage | undefined {
     return usage.get(key(tag));
 }
+
+/**
+ * Everything that has to be recomputed after `tag`'s recipe changes, in the
+ * order it must be recomputed in.
+ *
+ * Editing a special sensor is not a local change: a sensor built on top of it
+ * was computed from its OLD values and is stale the moment it is saved. So the
+ * edit has to be followed by replaying the whole downstream chain — not just
+ * the direct dependents, since those have dependents of their own.
+ *
+ * The result is drawn from `recipes` in array order, which is what makes it
+ * safe to run straight through: a recipe can only reference sensors created
+ * before it, so an earlier entry is never waiting on a later one. (This is the
+ * same ordering guarantee the workspace-reopen replay relies on — see
+ * `WorkspaceState.specialSensorRecipes`.)
+ *
+ * `tag` itself is not included; the caller recomputes it first.
+ */
+export function dependentsToRecompute(
+    recipes: SpecialSensorRecipe[],
+    usage: Map<string, SpecialSensorUsage>,
+    tag: string,
+): SpecialSensorRecipe[] {
+    const stale = new Set<string>();
+    const queue = [key(tag)];
+    while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const dependent of usage.get(current)?.dependentSensors ?? []) {
+            if (stale.has(key(dependent))) continue;
+            stale.add(key(dependent));
+            queue.push(key(dependent));
+        }
+    }
+    return recipes.filter(r => stale.has(key(r.tag)));
+}
+
+/**
+ * Which of `nextInputs` would make `tag` depend on itself.
+ *
+ * An edit can introduce a cycle that creating never could: `B = $A + 1` is
+ * fine, but then editing A to read `${B} * 2` closes the loop. Nothing in the
+ * app would catch that later — the recipes would simply replay in order on the
+ * next workspace open, each reading whatever stale column happened to be
+ * there — so it has to be refused at the point of editing.
+ *
+ * Returns the offending input names (empty when the edit is safe), so the UI
+ * can name them rather than just saying no.
+ */
+export function cycleConflicts(
+    recipes: SpecialSensorRecipe[],
+    usage: Map<string, SpecialSensorUsage>,
+    tag: string,
+    nextInputs: string[],
+): string[] {
+    const forbidden = new Set<string>([key(tag)]);
+    for (const r of dependentsToRecompute(recipes, usage, tag)) forbidden.add(key(r.tag));
+
+    const seen = new Set<string>();
+    return nextInputs.filter(input => {
+        if (!forbidden.has(key(input)) || seen.has(key(input))) return false;
+        seen.add(key(input));
+        return true;
+    });
+}

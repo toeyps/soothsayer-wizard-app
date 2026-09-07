@@ -754,7 +754,11 @@ describe('F. Load workspace flow', () => {
       fireEvent.click(screen.getByText('Engine pressure run'));
 
       await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
-      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: '$sensor_a * 2', customName: 'CALC1' });
+      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula',
+        // `replace: true` since 2026-09-07: recomputing a recipe has to
+        // overwrite the column of that name rather than append a second,
+        // unreachable one. On a fresh load there is nothing to replace.
+        { formula: '$sensor_a * 2', customName: 'CALC1', replace: true });
       // Replayed right after load_csv, before Dashboard ever sees the data.
       expect(invokeOrder.indexOf('load_csv')).toBeLessThan(invokeOrder.indexOf('evaluate_formula'));
       expect(getErrors()).toHaveLength(0); // it succeeded — no toast
@@ -782,6 +786,7 @@ describe('F. Load workspace flow', () => {
       expect(mockInvoke).toHaveBeenCalledWith('calculate_new_sensor', {
         sensors: ['sensor_a'],
         config: { mode: 'single', singleOp: { type: 'add', value: 5 }, customName: 'CALC2' },
+        replace: true,
       });
     });
 
@@ -809,7 +814,11 @@ describe('F. Load workspace flow', () => {
       // The workspace still opens — one failing recipe isn't fatal.
       await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
       // The second (valid) recipe still got replayed.
-      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: '$sensor_a * 2', customName: 'CALC1' });
+      expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula',
+        // `replace: true` since 2026-09-07: recomputing a recipe has to
+        // overwrite the column of that name rather than append a second,
+        // unreachable one. On a fresh load there is nothing to replace.
+        { formula: '$sensor_a * 2', customName: 'CALC1', replace: true });
       // One toast naming the sensor that failed, not one per attempt.
       const errors = getErrors();
       expect(errors).toHaveLength(1);

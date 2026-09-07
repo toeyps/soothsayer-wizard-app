@@ -99,15 +99,16 @@ vi.mock('../components/dashboard/HighlightsPanel', () => ({
 
 // ── Data hooks — controllable, no debounce/invoke timing to fight ─────────
 
-const mockUseChartData = vi.fn((_query?: unknown) => ({ view: null, loading: false, error: null } as any));
-vi.mock('../hooks/useChartData', () => ({ useChartData: (query: unknown) => mockUseChartData(query) }));
+const mockUseChartData = vi.fn((_query?: { revision?: number } | null) => ({ view: null, loading: false, error: null } as any));
+vi.mock('../hooks/useChartData', () => ({ useChartData: (query: unknown) => mockUseChartData(query as any) }));
 
 const mockUseScatterSample = vi.fn(
-    (_filter?: unknown, _max?: unknown, _active?: unknown) =>
+    (_filter?: unknown, _max?: unknown, _active?: unknown, _revision?: number) =>
         ({ rows: [], headers: [], total: 0, sampled: 0, loading: false, error: null } as any),
 );
 vi.mock('../hooks/useScatterSample', () => ({
-    useScatterSample: (filter: unknown, max: unknown, active: unknown) => mockUseScatterSample(filter, max, active),
+    useScatterSample: (filter: unknown, max: unknown, active: unknown, revision?: number) =>
+        mockUseScatterSample(filter, max, active, revision),
 }));
 
 // ── Tauri / infra mocks ────────────────────────────────────────────────
@@ -1284,6 +1285,63 @@ describe('Dashboard', () => {
                 expect(saved.extraSensorMetadata).toEqual([{ tag: 'CALC2', description: 'Kept', unit: '', component: '' }]);
                 expect(saved.selectedSensors).toEqual(['TAG1']);
             });
+        });
+
+        it('"update-special-sensor" stores the edited recipe and metadata under the same tag', async () => {
+            const before = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
+            const after = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 5' };
+            renderDashboard({
+                initialState: makeInitialState({
+                    specialSensorRecipes: [before, { kind: 'formula', tag: 'CALC2', formula: '$TAG2' }],
+                    extraSensorMetadata: [{ tag: 'CALC1', description: 'Doubled', unit: '', component: '' }],
+                }),
+            });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+            await act(async () => {
+                for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        recipe: after,
+                        metadata: { tag: 'CALC1', description: 'Five times', unit: 'bar', component: 'Pump' },
+                        recomputed: ['CALC1'],
+                    } });
+                }
+            });
+
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                // Replaced in place — the array keeps its order, because a
+                // later recipe can reference an earlier one on replay.
+                expect(saved.specialSensorRecipes[0]).toEqual(after);
+                expect(saved.specialSensorRecipes).toHaveLength(2);
+                expect(saved.extraSensorMetadata).toEqual([
+                    { tag: 'CALC1', description: 'Five times', unit: 'bar', component: 'Pump' },
+                ]);
+            });
+        });
+
+        it('"update-special-sensor" makes the chart and scatter refetch, even though the query itself has not changed (the column was recomputed in the Rust session under the same name)', async () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['CALC1'],
+                    visibleSensors: ['CALC1'],
+                    specialSensorRecipes: [{ kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 2' }],
+                    extraSensorMetadata: [{ tag: 'CALC1', description: '', unit: '', component: '' }],
+                }),
+            });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+            const revisionBefore = last(mockUseChartData.mock.calls)[0]?.revision ?? 0;
+            const scatterRevisionBefore = last(mockUseScatterSample.mock.calls)[3] ?? 0;
+
+            await act(async () => {
+                for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                    cb({ payload: { recipe: { kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 5' }, recomputed: ['CALC1'] } });
+                }
+            });
+
+            expect(last(mockUseChartData.mock.calls)[0]?.revision).toBe(revisionBefore + 1);
+            expect(last(mockUseScatterSample.mock.calls)[3]).toBe(scatterRevisionBefore + 1);
         });
 
         it('"delete-special-sensors" matches tags case-insensitively, and ignores an empty list', async () => {

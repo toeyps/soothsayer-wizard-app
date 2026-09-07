@@ -60,6 +60,10 @@ export function useScatterSample(
     filter: ScatterSampleFilter | null,
     maxPoints: number,
     enabled: boolean,
+    /** Bumped when the underlying columns are recomputed without the query
+     *  itself changing — see `ChartDataQuery.revision`. Part of the cache key
+     *  only; never sent to the backend. */
+    revision: number = 0,
 ): UseScatterSampleResult {
     const [state, setState] = useState<UseScatterSampleResult>(EMPTY);
     const fetchIdRef = useRef(0);
@@ -67,7 +71,7 @@ export function useScatterSample(
     // Serialise the inputs so the effect only re-runs on a real change (the
     // caller passes freshly-built objects every render).
     const key = enabled && filter && filter.sensors.length > 0
-        ? JSON.stringify({ filter, maxPoints })
+        ? JSON.stringify({ filter, maxPoints, revision })
         : null;
 
     useEffect(() => {

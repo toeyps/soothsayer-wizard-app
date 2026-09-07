@@ -2033,18 +2033,54 @@ struct SensorOperationConfig {
     custom_name: Option<String>,
 }
 
+/// Put a freshly computed column into the session under `name`.
+///
+/// `replace` is what makes EDITING a special sensor possible. Recomputing a
+/// recipe under its existing name has to overwrite that column in place,
+/// keeping its position among the headers. Appending a second column with the
+/// same name would not work at all: every lookup in this file resolves a
+/// sensor with `headers.iter().position(...)`, which returns the FIRST match,
+/// so the recomputed values would be stored and then never read.
+///
+/// Creating still appends (`replace` false or absent) — a brand-new special
+/// sensor that happens to share a name with an existing column must not
+/// silently overwrite it.
+fn put_sensor_column(data: &mut ColumnarData, name: &str, col: Vec<f64>, replace: bool) {
+    if replace {
+        if let Some(idx) = data.headers.iter().position(|h| h == name) {
+            data.columns[idx] = col;
+            return;
+        }
+    }
+    data.columns.push(col);
+    data.headers.push(name.to_string());
+}
+
 #[tauri::command]
 fn calculate_new_sensor(
     sensors: Vec<String>,
     config: SensorOperationConfig,
+    replace: Option<bool>,
     state: State<AppState>,
 ) -> Result<String, String> {
+    let replace = replace.unwrap_or(false);
     let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     let session = state_lock.as_mut().ok_or("No data loaded")?;
     let data = &mut session.data;
 
     if sensors.is_empty() {
         return Err("No sensors selected".to_string());
+    }
+
+    // A recomputation must not read the column it is about to overwrite: it
+    // would compute from the OLD values and then replace them, so the sensor
+    // would drift a little further every time it was saved.
+    if replace {
+        if let Some(target) = config.custom_name.as_deref().map(str::trim) {
+            if !target.is_empty() && sensors.iter().any(|s| s == target) {
+                return Err(format!("'{}' cannot be built from itself", target));
+            }
+        }
     }
 
     let mut indices = Vec::new();
@@ -2114,8 +2150,7 @@ fn calculate_new_sensor(
         }
     }
 
-    data.columns.push(new_col);
-    data.headers.push(new_sensor_name.clone());
+    put_sensor_column(data, &new_sensor_name, new_col, replace);
 
     Ok(new_sensor_name)
 }
@@ -2253,6 +2288,63 @@ fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
         ("log10", [x]) => Some(x.log10()),
         ("pow", [x, y]) => Some(x.powf(*y)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod put_sensor_column_tests {
+    use super::*;
+
+    fn dataset() -> ColumnarData {
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into(), "B".into()],
+            vec![Some("2020-01-01T00:00".into()), Some("2020-01-01T00:01".into())],
+            vec![
+                vec![f64::NAN; 2],
+                vec![1.0, 2.0],
+                vec![10.0, 20.0],
+            ],
+        )
+    }
+
+    #[test]
+    fn appends_a_new_column_at_the_end() {
+        let mut data = dataset();
+        put_sensor_column(&mut data, "C", vec![5.0, 6.0], false);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B", "C"]);
+        assert_eq!(data.columns[3], vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn replacing_overwrites_in_place_and_keeps_the_column_order() {
+        let mut data = dataset();
+        put_sensor_column(&mut data, "A", vec![7.0, 8.0], true);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B"], "no second 'A' header");
+        assert_eq!(data.columns[1], vec![7.0, 8.0], "same slot, new values");
+        assert_eq!(data.columns[2], vec![10.0, 20.0], "B untouched");
+    }
+
+    /// Without `replace`, a second column of the same name is unreachable:
+    /// every sensor lookup here takes the FIRST header match, so the new
+    /// values would be computed and then never read. This is the behaviour
+    /// that made editing a special sensor impossible before.
+    #[test]
+    fn appending_over_an_existing_name_shadows_the_new_column() {
+        let mut data = dataset();
+        put_sensor_column(&mut data, "A", vec![7.0, 8.0], false);
+        assert_eq!(data.headers.iter().filter(|h| *h == "A").count(), 2);
+        let first = data.headers.iter().position(|h| h == "A").unwrap();
+        assert_eq!(data.columns[first], vec![1.0, 2.0], "lookups still find the OLD column");
+    }
+
+    #[test]
+    fn replacing_a_name_that_is_not_there_yet_appends_instead() {
+        // What a workspace reopen does: the recipes replay against freshly
+        // loaded CSV data where none of the special sensors exist yet.
+        let mut data = dataset();
+        put_sensor_column(&mut data, "C", vec![5.0, 6.0], true);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B", "C"]);
+        assert_eq!(data.columns[3], vec![5.0, 6.0]);
     }
 }
 
@@ -2517,9 +2609,11 @@ fn validate_formula(
 fn evaluate_formula(
     formula: String,
     custom_name: Option<String>,
+    replace: Option<bool>,
     state: State<AppState>,
 ) -> Result<String, String> {
     check_formula_limits(&formula)?;
+    let replace = replace.unwrap_or(false);
 
     let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     let session = state_lock.as_mut().ok_or("No data loaded")?;
@@ -2538,6 +2632,17 @@ fn evaluate_formula(
     for sensor_name in &unique_sensors {
         if !data.headers.iter().any(|h| h == sensor_name) {
             return Err(format!("Sensor not found: {}", sensor_name));
+        }
+    }
+
+    // A recomputation must not read the column it is about to overwrite —
+    // see `put_sensor_column`. `$self + 1` would otherwise creep upward by
+    // one every time the formula was saved.
+    if replace {
+        if let Some(target) = custom_name.as_deref().map(str::trim) {
+            if !target.is_empty() && unique_sensors.iter().any(|s| s == target) {
+                return Err(format!("'{}' cannot be built from itself", target));
+            }
         }
     }
 
@@ -2606,9 +2711,9 @@ fn evaluate_formula(
         _ => format!("f({})", formula),
     };
 
-    // 7. Append the new column
-    data.columns.push(new_col);
-    data.headers.push(new_sensor_name.clone());
+    // 7. Store the column — appending a new one, or overwriting the existing
+    //    one of that name when this is a recomputation after an edit.
+    put_sensor_column(data, &new_sensor_name, new_col, replace);
 
     Ok(new_sensor_name)
 }

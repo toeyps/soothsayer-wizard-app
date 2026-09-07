@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureModel, SpecialSensorRecipe } from '../types';
-import { buildSpecialSensorUsage, usageFor } from '../utils/specialSensorDeps';
+import {
+    buildSpecialSensorUsage,
+    usageFor,
+    dependentsToRecompute,
+    cycleConflicts,
+} from '../utils/specialSensorDeps';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -158,5 +163,74 @@ describe('buildSpecialSensorUsage', () => {
         // Under-reporting, not inventing: callers must wait for the lookup.
         const usage = build({ recipes: [formula('A', '$RAW.PV'), formula('B', '${A} + 1')] });
         expect(usageFor(usage, 'A')!.deletable).toBe(true);
+    });
+});
+
+describe('dependentsToRecompute', () => {
+    // A -> B -> C, plus an unrelated D. Array order is creation order, which
+    // is what makes the returned list safe to run straight through.
+    const chain = [
+        formula('A', '$RAW.PV'),
+        formula('B', '${A} + 1'),
+        formula('C', '${B} * 2'),
+        formula('D', '$RAW2.PV'),
+    ];
+    const refs = { A: ['RAW.PV'], B: ['A'], C: ['B'], D: ['RAW2.PV'] };
+    const usageOf = () => build({ recipes: chain, formulaRefs: refs });
+
+    it('follows the chain past the direct dependents', () => {
+        expect(dependentsToRecompute(chain, usageOf(), 'A').map(r => r.tag)).toEqual(['B', 'C']);
+    });
+
+    it('returns them in recipe order, so each one runs after what it reads', () => {
+        const reversed = [chain[3], chain[2], chain[1], chain[0]];
+        // Order comes from the array it is given, not from discovery order.
+        expect(dependentsToRecompute(reversed, usageOf(), 'A').map(r => r.tag)).toEqual(['C', 'B']);
+    });
+
+    it('leaves out the edited sensor itself and anything unrelated to it', () => {
+        const tags = dependentsToRecompute(chain, usageOf(), 'B').map(r => r.tag);
+        expect(tags).toEqual(['C']);
+        expect(tags).not.toContain('D');
+    });
+
+    it('is empty for a sensor nothing was built on', () => {
+        expect(dependentsToRecompute(chain, usageOf(), 'D')).toEqual([]);
+    });
+
+    it('terminates on a cycle instead of looping forever', () => {
+        // Not a state the app can reach through the UI (cycleConflicts
+        // refuses it), but a corrupted workspace file could carry one.
+        const cyclic = [formula('X', '${Y} + 1'), formula('Y', '${X} + 1')];
+        const usage = build({ recipes: cyclic, formulaRefs: { X: ['Y'], Y: ['X'] } });
+        expect(dependentsToRecompute(cyclic, usage, 'X').map(r => r.tag).sort()).toEqual(['X', 'Y']);
+    });
+});
+
+describe('cycleConflicts', () => {
+    const chain = [formula('A', '$RAW.PV'), formula('B', '${A} + 1'), formula('C', '${B} * 2')];
+    const usage = () => build({ recipes: chain, formulaRefs: { A: ['RAW.PV'], B: ['A'], C: ['B'] } });
+
+    it('allows an edit that only reads raw columns', () => {
+        expect(cycleConflicts(chain, usage(), 'A', ['RAW.PV', 'OTHER.PV'])).toEqual([]);
+    });
+
+    it('refuses a sensor reading itself', () => {
+        expect(cycleConflicts(chain, usage(), 'A', ['A'])).toEqual(['A']);
+    });
+
+    it('refuses a sensor reading something built on top of it, directly or further down', () => {
+        expect(cycleConflicts(chain, usage(), 'A', ['B'])).toEqual(['B']);
+        // C is two steps downstream — still a loop.
+        expect(cycleConflicts(chain, usage(), 'A', ['C'])).toEqual(['C']);
+    });
+
+    it('still allows reading an UPSTREAM sensor', () => {
+        // C already reads B; making it read A as well is not a cycle.
+        expect(cycleConflicts(chain, usage(), 'C', ['A', 'B'])).toEqual([]);
+    });
+
+    it('names each offending input once, in the order given', () => {
+        expect(cycleConflicts(chain, usage(), 'A', ['RAW.PV', 'C', 'B', 'c'])).toEqual(['C', 'B']);
     });
 });

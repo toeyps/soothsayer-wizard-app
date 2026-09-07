@@ -405,6 +405,144 @@ describe('AddSensorWindow', () => {
         expect(screen.getByLabelText('Delete MyCalc')).toBeTruthy();
     });
 
+    // ---- Manage tab: editing --------------------------------------------
+    //
+    // Editing is not a local change: the sensor's column lives in the Rust
+    // session and anything built on top of it was computed from the OLD
+    // values, so a save recomputes the sensor and then replays the whole
+    // downstream chain before telling the dashboard.
+
+    const chainA = { kind: 'formula', tag: 'A', formula: '$TAG1 * 2' };
+    const chainB = { kind: 'formula', tag: 'B', formula: '${A} + 1' };
+    const chainC = { kind: 'formula', tag: 'C', formula: '${B} * 3' };
+
+    /** extract_formula_refs answers per formula text, so a mid-edit lookup for
+     *  the NEW formula gets the right answer too. */
+    function refsByFormula(map: Record<string, string[]>) {
+        return (cmd: string, args?: any) => {
+            if (cmd === 'extract_formula_refs') {
+                return Promise.resolve((args.formulas as string[]).map(f => map[f] ?? []));
+            }
+            return Promise.resolve([]);
+        };
+    }
+
+    const chainRefs = {
+        '$TAG1 * 2': ['TAG1'],
+        '${A} + 1': ['A'],
+        '${B} * 3': ['B'],
+    };
+
+    it('editing a sensor recomputes it and everything built on top of it, in order', async () => {
+        mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '$TAG1 * 5': ['TAG1'] }));
+        await openManage({ specialSensorRecipes: [chainA, chainB, chainC] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        const recomputes = mockInvoke.mock.calls
+            .filter(([cmd]) => cmd === 'evaluate_formula')
+            .map(([, args]) => args.customName);
+        // A first (it is what changed), then its dependents in recipe order.
+        expect(recomputes).toEqual(['A', 'B', 'C']);
+        // Every one of them overwrites its column rather than appending.
+        for (const [cmd, args] of mockInvoke.mock.calls) {
+            if (cmd === 'evaluate_formula') expect(args.replace).toBe(true);
+        }
+    });
+
+    it('tells the Dashboard about the edit, with the new recipe under the same tag', async () => {
+        mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '$TAG1 * 5': ['TAG1'] }));
+        await openManage({ specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'bar' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: { kind: 'formula', tag: 'A', formula: '$TAG1 * 5' },
+            metadata: expect.objectContaining({ tag: 'A', unit: 'bar' }),
+            recomputed: ['A'],
+        }));
+    });
+
+    it('refuses an edit that would make a sensor depend on itself, and changes nothing', async () => {
+        mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '${C} + 1': ['C'] }));
+        await openManage({ specialSensorRecipes: [chainA, chainB, chainC] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        // A reading C, which is two steps downstream of A, closes the loop.
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '${C} + 1' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(screen.getByRole('alert').textContent).toContain('depend on itself');
+        expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
+        expect(mockInvoke.mock.calls.some(([cmd, args]) => cmd === 'evaluate_formula' && args.replace)).toBe(false);
+    });
+
+    it('refuses a formula that references no sensor at all', async () => {
+        mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '42': [] }));
+        await openManage({ specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '42' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(screen.getByRole('alert').textContent).toContain('reference any sensor');
+        expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
+    });
+
+    it('a failed recompute keeps the editor open and says which sensor failed', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'extract_formula_refs') {
+                return Promise.resolve((args.formulas as string[]).map((f: string) => (chainRefs as any)[f] ?? ['TAG1']));
+            }
+            if (cmd === 'evaluate_formula') return Promise.reject('Sensor not found: TAG1');
+            return Promise.resolve([]);
+        });
+        await openManage({ specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$GONE * 2' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(screen.getByRole('alert').textContent).toContain('Could not recompute "A"');
+        expect(screen.getByText('Save changes')).toBeTruthy();
+        expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
+    });
+
+    it('closes the editor and shows the edited recipe in the list after a successful save', async () => {
+        mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '$TAG1 * 5': ['TAG1'] }));
+        await openManage({ specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(screen.queryByLabelText('Formula')).toBeNull();
+        expect(screen.getByText('$TAG1 * 5')).toBeTruthy();
+    });
+
     it('Close closes the window', async () => {
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1']);

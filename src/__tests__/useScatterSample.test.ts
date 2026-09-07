@@ -33,6 +33,28 @@ afterEach(() => {
 });
 
 describe('useScatterSample', () => {
+    it('refetches when only `revision` changes, and never sends it to the backend', async () => {
+        // Same reason as useChartData's own revision: a special sensor's
+        // column can be recomputed under the same name, leaving the query
+        // identical but the data behind it different.
+        mockInvoke.mockResolvedValue({ headers: ['A', 'B'], rows: [], total: 0, sampled: 0 });
+        const { rerender } = renderHook(
+            ({ r }: { r: number }) => useScatterSample(filter, 200_000, true, r),
+            { initialProps: { r: 0 } },
+        );
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(Object.keys(mockInvoke.mock.calls[0][1])).not.toContain('revision');
+
+        rerender({ r: 1 });
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+
+        rerender({ r: 1 });
+        await act(async () => { await vi.runAllTimersAsync(); });
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
     it('does not fetch while disabled (no scatter/pair chart on screen)', async () => {
         renderHook(() => useScatterSample(filter, 200_000, false));
         await act(async () => { await vi.runAllTimersAsync(); });
