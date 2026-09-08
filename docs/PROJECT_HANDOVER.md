@@ -1634,3 +1634,13 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึก root cause + fix เต็ม
   - ไฟล์ที่แก้: `src/components/windows/SensorTooling.tsx`, `src/__tests__/SensorTooling.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-08 (ต่อในวันเดียวกัน) — 🎨 UX: ปิดการกดปุ่มเครื่องหมายบวก/ลบ ("Combine with operators") ตอนเลือก "Combine all" shortcut ไว้แล้ว**: ผู้ใช้ส่งสกรีนช็อตมาว่าเลือก "Sum all" (Combine All) ไว้แล้ว แต่ปุ่มเครื่องหมาย "+" ระหว่าง sensor แต่ละคู่ด้านบนยังกดได้อยู่ ทำให้งง
+  - **ปัญหาจริง ไม่ใช่แค่ความสับสน**: กดปุ่ม "+" ตอนที่ shortcut กำลัง active อยู่ **ไม่ใช่แค่ไม่มีผล** แต่ `engine.setChainOp()` (ที่ปุ่มนี้เรียก) จะ **ยกเลิก shortcut ที่เลือกไว้แล้วสลับกลับไปโหมด chain ทันทีแบบเงียบ ๆ** โดยไม่มีสัญญาณอะไรบอกตอนกด — ผู้ใช้อาจกดโดยไม่ตั้งใจแล้วไม่รู้ตัวว่าการตั้งค่าเปลี่ยนไปแล้ว
+  - **แก้**: ที่ `ChainBuilder` ใน `SensorTooling.tsx` — ปุ่มเครื่องหมายทุกปุ่มถูก `disabled` และแถวทั้งแถบจาง (`opacity: 0.45`) เมื่อมี shortcut ถูกเลือกอยู่ พร้อมข้อความอธิบายใต้แถบว่า "A shortcut below is selected, so these signs aren't used." — กดปุ่มที่ disabled แล้วไม่มีอะไรเกิดขึ้นเลย (dropdown ไม่เปิด, shortcut ไม่หลุด) พอยกเลิก shortcut ปุ่มกลับมากดได้ทันที
+  - **ยืนยันว่าเทสต์จับได้จริง**: ปิด `disabled` ชั่วคราวเป็น `false` แล้วรันเทสต์ใหม่ — fail ตรงตามที่คาดทั้ง 2 ตัว แล้วใส่กลับเข้าไปรันซ้ำ — ผ่าน
+  - เทสต์ +3 ใน `SensorTooling.test.tsx`: ปุ่มถูก disable ตอนเลือก shortcut, กดปุ่มที่ disabled แล้วไม่มีอะไรเกิดขึ้น (shortcut ไม่หลุด), ปุ่มกลับมากดได้ตอนยกเลิก shortcut
+  - Verify: `npx tsc --noEmit` สะอาด, `npx eslint` 0 error (warning `exhaustive-deps` 2 จุดเดิม ไม่ใช่ของใหม่), `npm test` **950/950**
+  - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึกไว้
+  - ไฟล์ที่แก้: `src/components/windows/SensorTooling.tsx`, `src/__tests__/SensorTooling.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว ยังไม่ push**

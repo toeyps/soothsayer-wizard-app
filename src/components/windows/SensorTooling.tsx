@@ -426,6 +426,15 @@ function ChainBuilder({
   // user has clicked an operator -- so its "active" styling must track that
   // same condition, not a separate touched-it-once flag.
   const chainActive = !engine.operationId;
+  // A shortcut (Sum all, Compare one against the rest, ...) computes the
+  // WHOLE result on its own -- the per-pair signs below have no effect on it
+  // at all while one is chosen. Leaving them clickable read as "pick a sign,
+  // see nothing change" (worse: clicking one silently DID something --
+  // `engine.setChainOp` deselects the shortcut and switches back to chain
+  // mode -- just not anything visible at the point of the click). Disabling
+  // them here makes "only one calculation can be active" visible instead of
+  // implicit.
+  const disabled = !chainActive;
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] mb-1">
@@ -433,7 +442,7 @@ function ChainBuilder({
       </div>
       <div
         className="flex flex-wrap items-center gap-1.5 p-2.5 rounded"
-        style={{ backgroundColor: "var(--input-bg)" }}
+        style={{ backgroundColor: "var(--input-bg)", opacity: disabled ? 0.45 : 1, transition: "opacity 0.15s" }}
       >
         {selectedSensors.map((tag, i) => (
           <span key={tag} className="contents">
@@ -446,17 +455,20 @@ function ChainBuilder({
             {i < selectedSensors.length - 1 && (
               <span className="relative">
                 <button
-                  onClick={() => setOpenIndex(openIndex === i ? null : i)}
+                  disabled={disabled}
+                  onClick={() => { if (!disabled) setOpenIndex(openIndex === i ? null : i); }}
+                  title={disabled ? "Clear the shortcut below to pick a sign here instead" : undefined}
                   className="min-w-[26px] px-2 py-0.5 rounded text-xs font-semibold border"
                   style={{
                     borderColor: chainActive ? "var(--accent-color)" : "var(--border)",
                     color: chainActive ? "var(--accent-color)" : "var(--text-primary)",
                     backgroundColor: "var(--card-bg)",
+                    cursor: disabled ? "not-allowed" : "pointer",
                   }}
                 >
                   {engine.chainOps[i] ?? "+"}
                 </button>
-                {openIndex === i && (
+                {!disabled && openIndex === i && (
                   <div
                     className="absolute z-50 mt-1 rounded border shadow-lg overflow-hidden"
                     style={{
@@ -484,6 +496,11 @@ function ChainBuilder({
           </span>
         ))}
       </div>
+      {disabled && (
+        <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+          A shortcut below is selected, so these signs aren't used. Click the shortcut again to go back to combining with signs.
+        </p>
+      )}
     </div>
   );
 }

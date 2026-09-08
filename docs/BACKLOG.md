@@ -204,6 +204,27 @@ regression: reverted the fix locally, watched the new test fail exactly as
 expected, restored it, watched it pass. Tests +2 in `SensorTooling.test.tsx`
 → 947/947, `tsc`/`eslint` clean.
 
+### 🎨 UX fix 2026-09-08 — chain-operator signs stayed clickable (and silently effective) while a "Combine all" shortcut was active
+
+User feedback while poking at the Create tab after the Component fix above:
+pick "Sum all" (or any other "Combine all" / "Compare one against the rest"
+shortcut), and the per-pair sign buttons in "Combine with operators" above
+it stayed fully clickable with no sign they'd stopped mattering — clicking
+one didn't just do nothing, it silently deselected the shortcut and
+switched back to chain mode (`useCalculationEngine.setChainOp` always clears
+`operationId`), with no visible feedback at the point of the click. Read as
+confusing: two calculation modes looked simultaneously "live."
+
+Fix, in `SensorTooling.tsx`'s `ChainBuilder`: the sign buttons are now
+`disabled` and the whole operator row dims (`opacity: 0.45`) whenever a
+shortcut is chosen, with a line under it explaining why ("A shortcut below
+is selected..."). Clicking a disabled button is a no-op — the shortcut
+stays picked, the popover never opens. Re-selecting/deselecting the
+shortcut re-enables them immediately. Verified the same way: reverted
+`disabled` to `false` locally, watched 2 new tests fail exactly as
+expected, restored it, watched them pass. Tests +3 in
+`SensorTooling.test.tsx` → 950/950, `tsc`/`eslint` clean.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

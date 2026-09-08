@@ -106,6 +106,39 @@ describe('SensorTooling', () => {
             expect(onFormulaSubmit).toHaveBeenLastCalledWith('$A * $B', undefined);
         });
 
+        // Regression: picking a "Combine all" shortcut left the per-pair
+        // chain-operator buttons ("Combine with operators") fully clickable
+        // even though they no longer had any effect on the result. Worse,
+        // clicking one silently switched calculations right back to the
+        // chain (`engine.setChainOp` always deselects the current
+        // shortcut) with no visible sign of what just happened -- reported
+        // as confusing.
+        it('disables the chain-operator buttons once a "Combine all" shortcut is picked', () => {
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
+            fireEvent.click(screen.getByText('Sum all'));
+            expect((screen.getByText('+') as HTMLButtonElement).disabled).toBe(true);
+            expect(screen.getByText(/A shortcut below is selected/)).toBeTruthy();
+        });
+
+        it('clicking a disabled chain-operator button does nothing -- the shortcut stays picked', () => {
+            const onConfigChange = vi.fn();
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'], onConfigChange })} />);
+            fireEvent.click(screen.getByText('Sum all'));
+            onConfigChange.mockClear();
+
+            fireEvent.click(screen.getByText('+'));
+            expect(screen.queryByText('Multiply (×)')).toBeNull(); // dropdown never opened
+            expect(onConfigChange).not.toHaveBeenCalled(); // shortcut wasn't deselected
+        });
+
+        it('re-enables the chain-operator buttons once the shortcut is cleared', () => {
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
+            fireEvent.click(screen.getByText('Sum all'));
+            fireEvent.click(screen.getByText('Sum all')); // toggle it back off
+            expect((screen.getByText('+') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.queryByText(/A shortcut below is selected/)).toBeNull();
+        });
+
         it('offers pairwise-only shortcuts (Absolute difference) only with exactly 2 sensors', () => {
             const { rerender } = render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
             expect(screen.getByText('Absolute difference')).toBeTruthy();
