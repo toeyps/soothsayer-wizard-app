@@ -114,17 +114,24 @@ installer isn't certain). Full result file: ask the project owner for
   say so explicitly, which likely read as "the feature to do this is
   missing." **Fixed** — step reworded to say "type directly into the Formula
   field, no separate combine button."
-- **SPC-6 ⚠️ open — could not reproduce from code alone**: "no warning
-  message appeared; couldn't click Add, only Close." Traced the whole
-  name-required path (`AddSensorWindow.handleAdd`'s `nameMissing` check,
-  both the formula-mode and legacy-operation-mode branches, and
-  `SensorTooling`'s `customName` wiring) and every path correctly sets
-  `nameMissing` and renders the red warning text when the name field is
-  empty — the Add button itself is never `disabled`. Nothing found that
-  would produce "can't click Add, no message." Needs a re-test with the
-  exact steps recorded (formula vs. button/operation mode, how many sensors
-  were selected, whether the name field was visible at all before clicking
-  Add) before a code fix can be attempted.
+- **SPC-6 ✅ fixed 2026-09-08** — the user reported a follow-up detail after
+  the first analysis ("no warning appears, but I think I see text flash and
+  then disappear") that pinpointed it. Root cause: `SensorTooling.tsx` called
+  `engine.build()` directly on every render (`const buildResult =
+  engine.build();`) instead of memoizing the result. `engine.build` itself is
+  a properly-deps'd `useCallback`, but *calling* it always returns a fresh
+  object literal — so two `useEffect`s keyed on `buildResult`
+  (`onConfigChange`/`onFormulaSubmit`) re-fired on **any** re-render of this
+  component, including ones with nothing to do with the calculation (e.g. the
+  parent, `AddSensorWindow`, re-rendering because it just set
+  `nameMissing(true)`). `handleConfigChange` unconditionally clears
+  `nameMissing` on every call, so the warning got shown for one render and
+  wiped by the very next effect flush — reading as "flashes and disappears."
+  Fix: `const buildResult = useMemo(() => engine.build(), [engine.build]);`.
+  Verified the fix actually catches the regression, not just passes
+  incidentally: 2 new tests in `SensorTooling.test.tsx` fail against the
+  pre-fix code (confirmed by reverting locally and re-running) and pass
+  against the fix.
 - **EDT-15 ⚠️ open — could not reproduce from code alone**: "editing a
   special sensor's formula updates the Line chart but not the Scatter
   chart." This is the `dataRevision` mechanism added the same day (see the

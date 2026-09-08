@@ -173,6 +173,51 @@ describe('SensorTooling', () => {
         });
     });
 
+    describe('re-rendering without the calculation itself changing', () => {
+        // Regression: `engine.build()` was called fresh on every render and
+        // its result handed straight to `useEffect`s that call
+        // `onConfigChange`/`onFormulaSubmit` when it changes. A plain object
+        // literal is a new reference every call, so ANY re-render of this
+        // component — including one caused entirely by the parent's own
+        // unrelated state, with every prop passed in unchanged — re-fired
+        // those effects as if the calculation had just changed.
+        //
+        // The reported symptom: AddSensorWindow shows "name missing" for one
+        // frame after a failed Add click, then its own re-render (setting
+        // that very state) cascades down here, re-invokes onConfigChange,
+        // and `handleConfigChange` unconditionally clears the warning right
+        // back off — so it reads as "flashes and disappears".
+        it('does not re-fire onConfigChange after a re-render with nothing about the calculation changed', () => {
+            const onConfigChange = vi.fn();
+            const props = makeProps({ selectedSensors: ['A', 'B'], onConfigChange });
+            const { rerender } = render(<SensorTooling {...props} />);
+            fireEvent.click(screen.getByText('Sum all'));
+            expect(onConfigChange).toHaveBeenCalled();
+            onConfigChange.mockClear();
+
+            // Same props object, same references throughout — simulates the
+            // parent re-rendering for a reason that has nothing to do with
+            // the calculation.
+            rerender(<SensorTooling {...props} />);
+
+            expect(onConfigChange).not.toHaveBeenCalled();
+        });
+
+        it('does not re-fire onFormulaSubmit after a re-render with nothing about the calculation changed', () => {
+            const onFormulaSubmit = vi.fn();
+            const props = makeProps({ selectedSensors: ['A', 'B'], onFormulaSubmit });
+            const { rerender } = render(<SensorTooling {...props} />);
+            // No shortcut picked -- the default "+" operator chain, which
+            // resolves via onFormulaSubmit rather than onConfigChange.
+            expect(onFormulaSubmit).toHaveBeenCalled();
+            onFormulaSubmit.mockClear();
+
+            rerender(<SensorTooling {...props} />);
+
+            expect(onFormulaSubmit).not.toHaveBeenCalled();
+        });
+    });
+
     describe('changing the selection resets the operation', () => {
         it('clears the picked operation and master-data fields when selectedSensors changes', () => {
             const onDescriptionChange = vi.fn();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { SensorOperationConfig, SensorMetadata } from "../../types";
 import { useCalculationEngine, FORMULA_MULTI_IDS } from "../../hooks/useCalculationEngine";
 import type { UseCalculationEngineReturn } from "../../hooks/useCalculationEngine";
@@ -83,7 +83,17 @@ export default function SensorTooling({
     }
   }, [selectedSensors, engine.setOperationId, engine.setWrapFunc, onDescriptionChange, onUnitChange, onComponentChange]);
 
-  const buildResult = engine.build();
+  // `engine.build` is already a properly-deps'd `useCallback` (stable unless
+  // the calculation actually changed), but CALLING it always returns a fresh
+  // object literal -- memoizing here is what makes `buildResult` itself
+  // stable. Without this, any unrelated re-render of this component (e.g.
+  // the parent window toggling its own local state) called `build()` again,
+  // got a new-but-equal object back, and the two effects below -- keyed on
+  // `buildResult` -- fired again as if the calculation had changed. The
+  // visible symptom: `AddSensorWindow` shows "name missing" for one frame
+  // after a failed Add click, then a re-render (nothing to do with the name)
+  // calls `onConfigChange` again, which clears that warning right back off.
+  const buildResult = useMemo(() => engine.build(), [engine.build]);
 
   // Whether "Add sensor" would actually create a new derived sensor (vs.
   // just adding the selected sensor(s) through as-is) -- gates the
