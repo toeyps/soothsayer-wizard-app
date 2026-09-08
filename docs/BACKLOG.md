@@ -152,6 +152,27 @@ installer isn't certain). Full result file: ask the project owner for
   line to confirm whether the event/revision bump even fired before
   suspecting the chart itself.
 
+### 👀 Close button unresponsive on the Import page (2026-09-08) — confirmed dev-server artifact, not an app bug
+
+User report: the window's X button did nothing while on the "Get started"
+(Import) page, but worked normally once inside a workspace's Dashboard.
+Traced every close-related path in the source — `TitleBar.tsx`'s close
+button (unconditional `appWindow.close()`, same DOM element mounted once at
+the `App.tsx` level for both pages, never remounted on navigation), the
+titlebar's CSS (`z-index: 9999`, nothing else in the app goes higher), the
+`core:window:allow-close`/`allow-destroy` capability grant (unconditional on
+the `main` window), and the one place in the whole codebase that intercepts
+a close request at all (`Dashboard.tsx`'s `onCloseRequested` handler, which
+only exists while Dashboard is mounted — i.e. never on the Import page,
+and even then only *delays* a close pending an autosave flush, never blocks
+one outright). None of it explains the reported direction of the symptom.
+
+User then restarted the Vite dev server (`npm run tauri dev` fresh, rather
+than reusing one left running) and the problem was gone. Confirms this was
+a stale dev-server/HMR artifact, not a defect in the app itself — no code
+change needed. Left here only so a repeat report isn't re-investigated from
+scratch.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

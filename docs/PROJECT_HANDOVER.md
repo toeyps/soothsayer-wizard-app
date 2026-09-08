@@ -1610,3 +1610,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **บทเรียน**: การขอ follow-up detail จากคนเทส ("เหมือนเห็นอะไรแว็บ ๆ") มีค่ามากกว่าคำอธิบายแรกที่กว้างเกินไป ("ไม่มีอะไรเด้งบอก") — คำแรกทำให้ไล่โค้ดแล้วสรุปผิดว่า "หาไม่เจอ" ทั้งที่จริงบั๊กอยู่ในโค้ดที่ไล่ผ่านไปแล้วตั้งแต่รอบแรก แค่ไม่ได้คิดถึงมุม re-render cascade
   - ไฟล์ที่แก้: `src/components/windows/SensorTooling.tsx`, `src/__tests__/SensorTooling.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ทดสอบแอปจริง — และยัง build installer ใหม่ไม่ได้ทำ)
+
+- **🆕 2026-09-08 (ต่อในวันเดียวกัน) — 🔍 ไล่บั๊ก "ปุ่มปิดหน้าต่างใช้ไม่ได้ที่หน้า Import" → ยืนยันเป็น dev server ค้าง ไม่ใช่บั๊กแอป**: ผู้ใช้แจ้งพร้อมสกรีนช็อตว่ากด X ที่หน้า "Get started" ไม่ปิด ต้องเข้า Dashboard ก่อนถึงปิดได้
+  - ไล่ทุกจุดที่เกี่ยวกับการปิดหน้าต่าง: `TitleBar.tsx` (ปุ่ม X เรียก `appWindow.close()` ตรง ๆ ไม่มีเงื่อนไข และ mount ครั้งเดียวระดับ `App.tsx` ไม่ remount ตอนสลับหน้า — เป็น element เดียวกันทั้งสองหน้า), CSS (`.titlebar` z-index 9999 ไม่มีอะไรบังทับได้), capability (`core:window:allow-close`/`allow-destroy` ให้สิทธิ์ window `main` แบบไม่มีเงื่อนไข), และจุดเดียวที่ "ดัก" การปิดในทั้งโปรเจกต์คือ `onCloseRequested` ใน `Dashboard.tsx` — **ซึ่ง mount เฉพาะตอนอยู่ Dashboard เท่านั้น ไม่มีทางอธิบายว่าทำไม Import ถึงปิดไม่ได้แต่ Dashboard ปิดได้ (ตรงข้ามกับกลไกที่มีจริง)**
+  - หาจุดผิดในโค้ดไม่เจอ ขอให้ผู้ใช้ยืนยันว่ารันด้วย dev mode หรือตัวติดตั้ง
+  - **ผลยืนยัน**: ผู้ใช้ปิด dev server เก่าที่ค้างอยู่แล้วรัน `npm run tauri dev` ใหม่สด ๆ → ใช้งานได้ปกติ ยืนยันว่าเป็น **Vite dev server / HMR ค้างจากรอบก่อน ๆ ไม่ใช่บั๊กจริงในแอป**
+  - **ไม่มีการแก้โค้ดในรอบนี้** — บันทึกไว้ใน `docs/BACKLOG.md` เผื่อมีรายงานซ้ำจะได้ไม่ต้องไล่ใหม่ตั้งแต่ต้น
+  - ไฟล์ที่แก้: `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
