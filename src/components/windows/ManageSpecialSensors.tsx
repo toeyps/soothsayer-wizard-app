@@ -268,7 +268,7 @@ export default function ManageSpecialSensors({
                                     // name (the fields are seeded from props).
                                     key={recipe.tag}
                                     recipe={recipe}
-                                    metadata={meta}
+                                    sensorMetadata={sensorMetadata}
                                     availableSensors={availableSensors}
                                     onCancel={() => onEdit(null)}
                                     onSave={onSaveEdit}

@@ -1,13 +1,11 @@
-import { useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Star, X } from "lucide-react";
 import {
-    MultiOperationType,
     SensorMetadata,
-    SensorOperationConfig,
-    SingleOperationType,
     SpecialSensorRecipe,
 } from "../../types";
-import { findOperation } from "../../config/operations";
+import { useCalculationEngine, CalculationEngineSeed } from "../../hooks/useCalculationEngine";
+import { ButtonBuilder, BASE_OP_IDS } from "./SensorTooling";
 
 /**
  * Edit one special sensor in place.
@@ -22,23 +20,27 @@ import { findOperation } from "../../config/operations";
  * does the formula parse, does it create a cycle — is decided by the caller,
  * which has the backend and the dependency graph; it reports back through
  * `error`.
+ *
+ * An operation-kind recipe (`sum(...)`, `a + 10`, ...) is edited with the
+ * SAME single-sensor-vs-combine button UI Create uses (`ButtonBuilder`),
+ * driven by a `useCalculationEngine` instance seeded from the existing
+ * config — not a separate, narrower dropdown. That UI switches shape as
+ * source sensors are added or removed, exactly like Create does, and can
+ * resolve to either an operation config OR a formula (picking a
+ * formula-backed shortcut, or leaving the "Combine with operators" chain
+ * active, upgrades the saved recipe from `operation` to `formula` kind --
+ * the same thing that happens creating one from scratch). A formula-kind
+ * recipe is still edited as raw text: that's already strictly more
+ * expressive than anything the button UI could represent, and is exactly
+ * the "Edit as text instead" escape hatch Create itself offers.
  */
-
-/** Operations a recipe can actually store — the named multi ops in the
- *  registry (`temp_spread`, `abs_diff`, `efficiency_pct`) are built as
- *  formulas instead, so they arrive here as formula recipes, not operations. */
-const SINGLE_OPS: SingleOperationType[] = [
-    'add', 'subtract', 'multiply', 'divide', 'power',
-    'abs', 'sqrt', 'log10', 'exp', 'ceil', 'floor', 'round',
-];
-const MULTI_OPS: MultiOperationType[] = ['sum', 'mean', 'median'];
-
-const opLabel = (mode: 'single' | 'multi', id: string) => findOperation(mode, id)?.label ?? id;
-const opTakesValue = (id: string) => findOperation('single', id)?.requiresValue ?? false;
 
 interface Props {
     recipe: SpecialSensorRecipe;
-    metadata: SensorMetadata | undefined;
+    /** Full sensor metadata list — not just this recipe's own entry. Needed
+     *  to show SOURCE sensors by their description (`getSensorName`, same
+     *  as Create), not just this sensor's own name/unit/component fields. */
+    sensorMetadata: SensorMetadata[] | null;
     /** Every tag that can be used as an input to an operation recipe. */
     availableSensors: string[];
     onCancel: () => void;
@@ -68,23 +70,68 @@ const labelStyle: React.CSSProperties = {
     display: 'block',
 };
 
-export default function SpecialSensorEditor({
-    recipe, metadata, availableSensors, onCancel, onSave, saving, error,
-}: Props) {
-    const [description, setDescription] = useState(metadata?.description ?? '');
-    const [unit, setUnit] = useState(metadata?.unit ?? '');
-    const [component, setComponent] = useState(metadata?.component ?? '');
+/** Seed a fresh `useCalculationEngine` from an existing operation-kind
+ *  recipe, so its button UI opens showing what's actually configured
+ *  instead of a blank form. `undefined` for a formula-kind recipe (that
+ *  branch never mounts the engine at all — see the component below). */
+function seedFromRecipe(recipe: SpecialSensorRecipe): CalculationEngineSeed | undefined {
+    if (recipe.kind !== 'operation') return undefined;
+    const config = recipe.operationConfig;
+    if (config.mode === 'single' && config.singleOp) {
+        return { operationId: config.singleOp.type, value: config.singleOp.value };
+    }
+    if (config.mode === 'multi' && config.multiOp) {
+        return { operationId: config.multiOp.type };
+    }
+    return undefined;
+}
 
-    const [formula, setFormula] = useState(recipe.kind === 'formula' ? recipe.formula : '');
-    const [sources, setSources] = useState<string[]>(recipe.kind === 'operation' ? recipe.sourceSensors : []);
-    const [config, setConfig] = useState<SensorOperationConfig>(
-        recipe.kind === 'operation'
-            ? recipe.operationConfig
-            : { mode: 'single', singleOp: { type: 'add', value: 0 } },
-    );
+export default function SpecialSensorEditor({
+    recipe, sensorMetadata, availableSensors, onCancel, onSave, saving, error,
+}: Props) {
+    const meta = sensorMetadata?.find(m => m.tag.toLowerCase() === recipe.tag.toLowerCase());
+    const [description, setDescription] = useState(meta?.description ?? '');
+    const [unit, setUnit] = useState(meta?.unit ?? '');
+    const [component, setComponent] = useState(meta?.component ?? '');
 
     const isFormula = recipe.kind === 'formula';
-    const singleType = config.singleOp?.type ?? 'add';
+
+    // ---- Formula-kind editing: unchanged, raw text -------------------------
+    const [formula, setFormula] = useState(recipe.kind === 'formula' ? recipe.formula : '');
+
+    // ---- Operation-kind editing: the same engine + button UI as Create -----
+    const [sources, setSources] = useState<string[]>(recipe.kind === 'operation' ? recipe.sourceSensors : []);
+    const [openChainDropdown, setOpenChainDropdown] = useState<number | null>(null);
+    // Seeded once at mount from the recipe as it was when this row's editor
+    // opened -- safe because `ManageSpecialSensors` remounts this component
+    // (via `key={recipe.tag}`) whenever which sensor is being edited changes,
+    // so "once at mount" always means "once per edit session", never stale.
+    const engine = useCalculationEngine(sources, useMemo(() => seedFromRecipe(recipe), [])); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Same reset `SensorTooling` itself does when its `selectedSensors` prop
+    // changes -- and for the same reason: an operation/shortcut picked for
+    // one set of source sensors doesn't mean anything for a different set
+    // (e.g. a "starting value" that's no longer even selected). This isn't
+    // inside `useCalculationEngine` itself, so reusing the engine here
+    // doesn't get it for free; it has to be replicated on this side of the
+    // seam too. Guarded to skip the very first render so the seeded
+    // operation survives mounting the editor.
+    const prevSourcesKey = useRef(sources.join("|"));
+    useEffect(() => {
+        const key = sources.join("|");
+        if (key !== prevSourcesKey.current) {
+            prevSourcesKey.current = key;
+            engine.setOperationId(null);
+            engine.setWrapFunc(null);
+        }
+    }, [sources, engine.setOperationId, engine.setWrapFunc]);
+
+    const getSensorName = (tag: string) => {
+        const m = sensorMetadata?.find(s => s.tag === tag);
+        return m ? m.description || tag : tag;
+    };
+
+    const pickingBase = engine.opGroup === "multi" && BASE_OP_IDS.includes(engine.operationId ?? "");
 
     const addable = useMemo(
         () => availableSensors.filter(
@@ -94,29 +141,44 @@ export default function SpecialSensorEditor({
         [availableSensors, sources, recipe.tag],
     );
 
-    // What the caller would be asked to save. Single-sensor operations take
-    // exactly one input; multi-sensor ones need at least two to combine.
-    const sourcesOk = config.mode === 'single' ? sources.length === 1 : sources.length >= 2;
-    const canSave = !saving && (isFormula ? formula.trim().length > 0 : sourcesOk);
+    // Same fix as `SensorTooling`'s own `buildResult`: `engine.build` is a
+    // properly-deps'd `useCallback`, but calling it returns a fresh object
+    // every time, so this has to be memoized on the call itself or every
+    // unrelated re-render would look like the calculation just changed.
+    const buildResult = useMemo(() => engine.build(), [engine.build]);
+
+    const canSave = !saving && (isFormula ? formula.trim().length > 0 : buildResult.kind !== 'none');
 
     const submit = () => {
         const nextMetadata: SensorMetadata = {
-            ...(metadata ?? { tag: recipe.tag, description: '', unit: '', component: '' }),
+            ...(meta ?? { tag: recipe.tag, description: '', unit: '', component: '' }),
             tag: recipe.tag,
             description: description.trim(),
             unit: unit.trim(),
             component: component.trim() || 'Uncategorized',
         };
-        const nextRecipe: SpecialSensorRecipe = isFormula
-            ? { kind: 'formula', tag: recipe.tag, formula: formula.trim() }
-            : {
+
+        let nextRecipe: SpecialSensorRecipe;
+        if (isFormula) {
+            nextRecipe = { kind: 'formula', tag: recipe.tag, formula: formula.trim() };
+        } else if (buildResult.kind === 'legacy') {
+            nextRecipe = {
                 kind: 'operation',
                 tag: recipe.tag,
                 sourceSensors: sources,
                 // The name is forced back so a recomputation can never rename
                 // the column out from under everything pointing at it.
-                operationConfig: { ...config, customName: recipe.tag },
+                operationConfig: { ...buildResult.config, customName: recipe.tag },
             };
+        } else if (buildResult.kind === 'formula') {
+            // Picking a formula-backed shortcut (or leaving the operator
+            // chain active) resolves to a formula, not an operation config --
+            // the saved recipe's kind follows that, exactly like creating a
+            // new sensor this way would.
+            nextRecipe = { kind: 'formula', tag: recipe.tag, formula: buildResult.expression };
+        } else {
+            return; // canSave already guards this; nothing to submit.
+        }
         onSave({ recipe: nextRecipe, metadata: nextMetadata });
     };
 
@@ -155,23 +217,38 @@ export default function SpecialSensorEditor({
                         <div>
                             <span style={labelStyle}>Source sensors</span>
                             <div className="flex flex-wrap gap-1.5 mb-1.5">
-                                {sources.map(sensor => (
-                                    <span
-                                        key={sensor}
-                                        className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-                                        style={{ fontSize: '11px', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)' }}
-                                    >
-                                        {sensor}
-                                        <button
-                                            type="button"
-                                            aria-label={`Remove ${sensor}`}
-                                            onClick={() => setSources(prev => prev.filter(s => s !== sensor))}
-                                            style={{ color: 'var(--text-faint)', display: 'flex' }}
+                                {sources.map(sensor => {
+                                    const isBase = pickingBase && (engine.baseSensor || sources[0]) === sensor;
+                                    return (
+                                        <span
+                                            key={sensor}
+                                            onClick={pickingBase ? () => engine.setBaseSensor(sensor) : undefined}
+                                            className="flex items-center gap-1 px-1.5 py-0.5 rounded"
+                                            style={{
+                                                fontSize: '11px',
+                                                cursor: pickingBase ? 'pointer' : 'default',
+                                                backgroundColor: isBase ? 'var(--accent-color)' : 'var(--card-bg)',
+                                                color: isBase ? 'white' : 'var(--text-primary)',
+                                                border: `1px solid ${isBase ? 'var(--accent-color)' : 'var(--border)'}`,
+                                            }}
+                                            title={pickingBase ? 'Click to mark as the starting value' : undefined}
                                         >
-                                            <X size={10} />
-                                        </button>
-                                    </span>
-                                ))}
+                                            {isBase && <Star size={9} fill="currentColor" />}
+                                            {getSensorName(sensor)}
+                                            <button
+                                                type="button"
+                                                aria-label={`Remove ${sensor}`}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSources(prev => prev.filter(s => s !== sensor));
+                                                }}
+                                                style={{ color: 'var(--text-faint)', display: 'flex' }}
+                                            >
+                                                <X size={10} />
+                                            </button>
+                                        </span>
+                                    );
+                                })}
                                 {sources.length === 0 && (
                                     <span style={{ fontSize: '11px', color: 'var(--text-faint)' }}>None picked yet</span>
                                 )}
@@ -187,57 +264,26 @@ export default function SpecialSensorEditor({
                                 <option value="">Add a sensor…</option>
                                 {addable.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
-                            {!sourcesOk && (
-                                <p style={{ fontSize: '11px', color: 'var(--warn)', marginTop: 3 }}>
-                                    {config.mode === 'single'
-                                        ? 'Pick exactly one sensor for this operation.'
-                                        : 'Pick at least two sensors to combine.'}
+                            {pickingBase && (
+                                <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
+                                    Click a sensor above to mark it as the input.
                                 </p>
                             )}
                         </div>
 
-                        <div className="flex gap-2">
-                            <div style={{ flex: 1 }}>
-                                <span style={labelStyle}>Operation</span>
-                                {config.mode === 'single' ? (
-                                    <select
-                                        value={singleType}
-                                        aria-label="Operation"
-                                        onChange={e => setConfig(c => ({
-                                            ...c,
-                                            singleOp: { type: e.target.value as SingleOperationType, value: c.singleOp?.value ?? 0 },
-                                        }))}
-                                        style={fieldStyle}
-                                    >
-                                        {SINGLE_OPS.map(id => <option key={id} value={id}>{opLabel('single', id)}</option>)}
-                                    </select>
-                                ) : (
-                                    <select
-                                        value={config.multiOp?.type ?? 'sum'}
-                                        aria-label="Operation"
-                                        onChange={e => setConfig(c => ({ ...c, multiOp: { type: e.target.value as MultiOperationType } }))}
-                                        style={fieldStyle}
-                                    >
-                                        {MULTI_OPS.map(id => <option key={id} value={id}>{opLabel('multi', id)}</option>)}
-                                    </select>
-                                )}
-                            </div>
-                            {config.mode === 'single' && opTakesValue(singleType) && (
-                                <div style={{ width: 110 }}>
-                                    <span style={labelStyle}>Value</span>
-                                    <input
-                                        type="number"
-                                        aria-label="Value"
-                                        value={config.singleOp?.value ?? 0}
-                                        onChange={e => setConfig(c => ({
-                                            ...c,
-                                            singleOp: { type: c.singleOp?.type ?? 'add', value: Number(e.target.value) },
-                                        }))}
-                                        style={fieldStyle}
-                                    />
-                                </div>
-                            )}
-                        </div>
+                        {sources.length === 0 ? (
+                            <p style={{ fontSize: '11.5px', color: 'var(--text-faint)' }}>
+                                Pick at least one sensor above to configure a calculation.
+                            </p>
+                        ) : (
+                            <ButtonBuilder
+                                engine={engine}
+                                selectedSensors={sources}
+                                openChainDropdown={openChainDropdown}
+                                setOpenChainDropdown={setOpenChainDropdown}
+                                getSensorName={getSensorName}
+                            />
+                        )}
                     </>
                 )}
 

@@ -32,7 +32,12 @@ interface SensorToolingProps {
 const NUMBER_OP_IDS = ["add", "subtract", "multiply", "divide", "power"];
 const TRANSFORM_OP_IDS = ["abs", "sqrt", "log10", "exp", "ceil", "floor", "round"];
 const AGG_OP_IDS = ["sum", "mean", "median", "temp_spread", "abs_diff"];
-const BASE_OP_IDS = ["efficiency_pct"];
+// Exported so `SpecialSensorEditor.tsx` can replicate the same "click a
+// sensor chip to mark it as the starting value" interaction its own Source
+// Sensors chips need for Efficiency % -- that picking step lives in the
+// chip list, not inside `ButtonBuilder` itself, so it isn't covered by
+// reusing that component alone.
+export const BASE_OP_IDS = ["efficiency_pct"];
 const WRAP_OP_IDS = ["abs", "sqrt", "log10", "exp", "ceil", "floor", "round"];
 const CHAIN_OPERATORS = [
   { symbol: "+", label: "Add" },
@@ -339,7 +344,15 @@ interface ButtonBuilderProps {
   getSensorName: (tag: string) => string;
 }
 
-function ButtonBuilder({
+/**
+ * Exported so the "Manage" tab's edit form (`SpecialSensorEditor.tsx`) can
+ * render the exact same single-sensor-vs-combine UI this file uses for
+ * creation, driven by its own seeded `useCalculationEngine` instance --
+ * rather than a separate, narrower dropdown that drifts out of sync with
+ * what creating a sensor actually offers. Nothing else about this file
+ * needs to change for that; this component only ever reads its props.
+ */
+export function ButtonBuilder({
   engine,
   selectedSensors,
   openChainDropdown,

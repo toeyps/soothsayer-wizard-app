@@ -245,4 +245,41 @@ describe('useCalculationEngine', () => {
         const { result } = renderHook(() => useCalculationEngine(['A']));
         expect(result.current.currentOperation).toBeUndefined();
     });
+
+    // ── seed ───────────────────────────────────────────────────────────
+    // What lets `SpecialSensorEditor.tsx`'s edit form open showing an
+    // existing recipe's config instead of a blank one.
+
+    it('seeds operationId and value, and build() reflects them without any setter calls', () => {
+        const { result } = renderHook(() => useCalculationEngine(['A'], { operationId: 'multiply', value: 5 }));
+        expect(result.current.operationId).toBe('multiply');
+        expect(result.current.value).toBe(5);
+        expect(result.current.build()).toEqual({
+            kind: 'legacy',
+            config: { mode: 'single', singleOp: { type: 'multiply', value: 5 }, customName: undefined },
+        });
+    });
+
+    it('seeds chainOps and wrapFunc for a multi-sensor chain that was left unshortened', () => {
+        const { result } = renderHook(() =>
+            useCalculationEngine(['A', 'B', 'C'], { chainOps: ['−', '×'], wrapFunc: 'abs' }),
+        );
+        expect(result.current.build()).toEqual({
+            kind: 'formula',
+            expression: 'abs($A - $B * $C)',
+        });
+    });
+
+    it('a seed does not stop the normal setters from working afterward', () => {
+        const { result } = renderHook(() => useCalculationEngine(['A'], { operationId: 'add', value: 10 }));
+        act(() => result.current.setOperationId('subtract'));
+        expect(result.current.operationId).toBe('subtract');
+        expect(result.current.value).toBe(0); // setOperationId's own reset, unaffected by the seed
+    });
+
+    it('an absent seed behaves exactly like no seed was passed at all', () => {
+        const seeded = renderHook(() => useCalculationEngine(['A'], undefined));
+        const unseeded = renderHook(() => useCalculationEngine(['A']));
+        expect(seeded.result.current.build()).toEqual(unseeded.result.current.build());
+    });
 });

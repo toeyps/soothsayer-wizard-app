@@ -41,7 +41,15 @@ vi.mock('../components/windows/SensorExplorer', () => ({
 }));
 
 const toolingProps: any[] = [];
-vi.mock('../components/windows/SensorTooling', () => ({
+// Partial mock: the Create tab's own tooling panel is stubbed out below
+// (this file drives it through a handful of fake buttons rather than the
+// real button UI), but `ButtonBuilder`/`BASE_OP_IDS` are re-exported from
+// the real module untouched -- `SpecialSensorEditor` (rendered for real,
+// not mocked, when the Manage tab's editor opens) imports those directly
+// and needs the genuine component to exercise editing an operation-kind
+// recipe end to end.
+vi.mock('../components/windows/SensorTooling', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../components/windows/SensorTooling')>()),
     default: (props: any) => {
         toolingProps.push(props);
         return (
@@ -541,6 +549,70 @@ describe('AddSensorWindow', () => {
 
         expect(screen.queryByLabelText('Formula')).toBeNull();
         expect(screen.getByText('$TAG1 * 5')).toBeTruthy();
+    });
+
+    // Editing an operation-kind recipe (`sum(...)`, `a + 10`, ...) uses the
+    // same button UI as Create (`ButtonBuilder`, seeded from the existing
+    // config) rather than a separate dropdown -- see
+    // `SpecialSensorEditor.test.tsx` for that component's own coverage.
+    // These two exercise the real end-to-end wiring through
+    // `handleSaveEdit`: recompute, persist, and tell the Dashboard.
+    const opRecipe = {
+        kind: 'operation' as const, tag: 'Total flow', sourceSensors: ['TAG1', 'TAG2'],
+        operationConfig: { mode: 'multi' as const, multiOp: { type: 'sum' as const }, customName: 'Total flow' },
+    };
+
+    it('editing an operation recipe (Sum all -> Average all) recomputes via calculate_new_sensor and stays an operation recipe', async () => {
+        mockInvoke.mockImplementation((cmd: string) => (cmd === 'calculate_new_sensor' ? Promise.resolve('Total flow') : Promise.resolve([])));
+        await openManage({ specialSensorRecipes: [opRecipe] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit Total flow')); });
+        fireEvent.click(screen.getByText('Average all'));
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(mockInvoke).toHaveBeenCalledWith('calculate_new_sensor', {
+            sensors: ['TAG1', 'TAG2'],
+            config: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'Total flow' },
+            replace: true,
+        });
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: {
+                kind: 'operation', tag: 'Total flow', sourceSensors: ['TAG1', 'TAG2'],
+                operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'Total flow' },
+            },
+        }));
+    });
+
+    // The capability the whole button-UI reuse was for: a formula-backed
+    // shortcut (unreachable through the old plain dropdown) upgrades the
+    // SAVED recipe from operation-kind to formula-kind, exactly like
+    // building one this way from scratch would.
+    it('editing an operation recipe into a formula-backed shortcut (Absolute difference) recomputes via evaluate_formula and switches to a formula recipe', async () => {
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'evaluate_formula') return Promise.resolve('Total flow');
+            // handleSaveEdit resolves a formula-kind result's references
+            // before recomputing it -- the sensors it will actually read.
+            if (cmd === 'extract_formula_refs') return Promise.resolve([['TAG1', 'TAG2']]);
+            return Promise.resolve([]);
+        });
+        await openManage({ specialSensorRecipes: [opRecipe] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit Total flow')); });
+        fireEvent.click(screen.getByText('Absolute difference'));
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', {
+            formula: 'abs($TAG1 - $TAG2)', customName: 'Total flow', replace: true,
+        });
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: { kind: 'formula', tag: 'Total flow', formula: 'abs($TAG1 - $TAG2)' },
+        }));
     });
 
     it('Close closes the window', async () => {

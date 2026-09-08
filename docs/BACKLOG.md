@@ -225,6 +225,63 @@ shortcut re-enables them immediately. Verified the same way: reverted
 expected, restored it, watched them pass. Tests +3 in
 `SensorTooling.test.tsx` → 950/950, `tsc`/`eslint` clean.
 
+### ⚡ Feature parity 2026-09-08 — editing an operation-kind special sensor now uses the exact same button UI as creating one
+
+User feedback (screenshot): "when creating a sensor, a single sensor gets
+sign+fixed-value operations and 2+ sensors get combine — but when *editing*
+one, the formula menu mostly disappears, including that switching; make it
+work the same as create." Confirmed: `SpecialSensorEditor.tsx`'s "Operation"
+section was a flat `<select>` limited to `add/subtract/multiply/divide/
+power/abs/sqrt/log10/exp/ceil/floor/round` (single) or `sum/mean/median`
+(multi) only — none of Create's shortcuts (Absolute difference, Spread,
+Efficiency %), no operator chain, no "Then apply to the result" wrap, and
+no automatic single-vs-multi UI switching as source sensors were added or
+removed (the dropdown's *options* changed, but nothing about its *shape*).
+
+Rather than reimplement that richness a second time (guaranteed to drift
+from Create's the next time either one changes), the edit form now reuses
+Create's actual `ButtonBuilder` component directly:
+
+- **`useCalculationEngine.ts`**: gained an optional `seed` parameter
+  (`CalculationEngineSeed`) so a fresh engine instance can open pre-loaded
+  with an existing operation config instead of always starting blank. Only
+  applies via `useState`'s initializer (first render), which is exactly
+  right here since the edit form remounts (`key={recipe.tag}`) whenever
+  which sensor is being edited changes.
+- **`SensorTooling.tsx`**: exported `ButtonBuilder` (previously a private,
+  file-local function) and `BASE_OP_IDS` (needed to replicate the
+  "click a source-sensor chip to mark it as Efficiency %'s starting value"
+  interaction, which lives in the chip list around `ButtonBuilder`, not
+  inside it).
+- **`SpecialSensorEditor.tsx`**: an operation-kind recipe now seeds
+  `useCalculationEngine` from its existing config and renders the real
+  `ButtonBuilder` — single-sensor and multi-sensor forms, all the
+  shortcuts, the operator chain, the wrap step, and the Efficiency %
+  base-sensor picker, all switching automatically as source sensors are
+  added/removed exactly like Create does. A formula-kind recipe is
+  unchanged — still edited as raw text, which is already strictly more
+  expressive than anything button-mode could represent (the same "Edit as
+  text instead" escape hatch Create itself offers).
+- One real gap found and fixed while wiring this up: `SensorTooling`'s own
+  "clear the picked operation when the sensor selection changes" reset
+  lives in a `useEffect` *inside that component*, not inside
+  `useCalculationEngine` — reusing the engine alone didn't get that
+  behavior for free. Without replicating it in `SpecialSensorEditor` too,
+  removing every source sensor left the seeded operation config still
+  "valid" and Save stayed enabled with nothing to compute from. Added the
+  same reset effect on this side of the seam.
+- Saving now genuinely mirrors Create's behaviour: picking a
+  formula-backed shortcut (or just leaving the default operator chain
+  active) upgrades the **saved recipe's own kind** from `operation` to
+  `formula` — previously impossible to reach at all while editing, since
+  the old dropdown only ever wrote back an operation config.
+
+Tests +14 across 3 files (`SpecialSensorEditor.test.tsx` rewritten for the
+new UI, `useCalculationEngine.test.ts` +5 for the seed, `AddSensorWindow.
+test.tsx` +2 end-to-end — including one that edits an operation recipe
+into a formula-backed shortcut and confirms the emitted `update-special-
+sensor` payload actually switches kind). 961/961, `tsc`/`eslint` clean.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

@@ -91,13 +91,37 @@ function applyWrap(expr: string, funcId: string | null, decimals: number): strin
 }
 
 /**
+ * Starting state for the engine, in place of the usual all-blank defaults --
+ * how the "Manage" tab's edit form seeds a fresh `useCalculationEngine`
+ * instance from an existing operation-kind recipe so editing opens showing
+ * what's actually there, not a reset form. Every field is optional and
+ * falls back to the normal blank default; only used on the engine's first
+ * render (it's a `useState` initializer), so a seed only makes sense on a
+ * freshly-mounted instance -- the caller remounting via `key` when the
+ * thing being edited changes (as the edit form already does) is what makes
+ * that safe.
+ */
+export interface CalculationEngineSeed {
+  operationId?: string | null;
+  value?: number;
+  baseSensor?: string;
+  chainOps?: string[];
+  wrapFunc?: string | null;
+  wrapValue?: number;
+}
+
+/**
  * Hook managing button-driven calculation state for the Add Special Sensor
- * window.
+ * window -- and, seeded, the "Manage" tab's edit form, so a special sensor
+ * created via a button/shortcut can be edited with the same buttons and
+ * shortcuts rather than a plain dropdown (see `SpecialSensorEditor.tsx`).
  *
  * Which operations are offered is derived from `selectedSensors.length`
  * (1 sensor -> single-sensor ops, 2+ -> combine ops) rather than a
  * user-facing mode toggle, so there's nothing to pick wrong before getting
- * to the actual operations.
+ * to the actual operations -- and it re-derives on every render, so a
+ * caller whose selection can shrink from 2 sensors to 1 (or grow back)
+ * switches UI automatically, same as fresh creation does.
  *
  * For multi-sensor calculations there are two mutually-exclusive ways to
  * build a result: a `chain` of operators between each selected sensor, or a
@@ -111,14 +135,15 @@ function applyWrap(expr: string, funcId: string | null, decimals: number): strin
  */
 export function useCalculationEngine(
   selectedSensors: string[],
+  seed?: CalculationEngineSeed,
 ): UseCalculationEngineReturn {
   const [mode, setMode] = useState<'buttons' | 'formula'>('buttons');
-  const [operationId, setOperationIdRaw] = useState<string | null>(null);
-  const [value, setValue] = useState<number>(0);
-  const [baseSensor, setBaseSensor] = useState<string>('');
-  const [chainOps, setChainOps] = useState<string[]>([]);
-  const [wrapFunc, setWrapFunc] = useState<string | null>(null);
-  const [wrapValue, setWrapValue] = useState<number>(2);
+  const [operationId, setOperationIdRaw] = useState<string | null>(seed?.operationId ?? null);
+  const [value, setValue] = useState<number>(seed?.value ?? 0);
+  const [baseSensor, setBaseSensor] = useState<string>(seed?.baseSensor ?? '');
+  const [chainOps, setChainOps] = useState<string[]>(seed?.chainOps ?? []);
+  const [wrapFunc, setWrapFunc] = useState<string | null>(seed?.wrapFunc ?? null);
+  const [wrapValue, setWrapValue] = useState<number>(seed?.wrapValue ?? 2);
   const [customName, setCustomName] = useState<string>('');
 
   const opGroup: 'single' | 'multi' = selectedSensors.length <= 1 ? 'single' : 'multi';
