@@ -91,6 +91,60 @@ Listed here so they are visible from this file too:
 - **"if 1 model in more than one failure group must be train model more than
   1 time"** — status "In progress" in Notion, but no code work has happened.
 
+### 🐛 First real tester pass (2026-09-07, ธนัชชา นกดารา) — 156/184 pass, 4 fail
+
+184-item run against installed 0.4.1 (or a same-day rebuild carrying the
+Manage/Edit special-sensor work — the tester's `ver` field just says "0.4.1"
+and no new tag was cut for that work, so which exact commit was in the
+installer isn't certain). Full result file: ask the project owner for
+`wizard-test-ธนัชชา-นกดารา-2026-09-07 (2).json`. Of the 4 fails:
+
+- **FIL-3 / FIL-1 / FIL-2 (test-plan bug, not app bug)** — reported "must
+  click Apply before it returns a value." Traced to `FilterPanel.tsx`: it
+  deliberately holds edits in local `draft` state and only commits via
+  `onFiltersChange` when **Apply Filter** is clicked (avoids firing a query
+  on every keystroke). The test steps just didn't say to click Apply.
+  **Fixed** — `MANUAL_TEST_PLAN.md`/`manual-test-plan.html` regenerated with
+  an explicit "must click Apply Filter" step on FIL-1/2/3 and a section-level
+  note.
+- **EDT-11 (test-plan wording, not app bug)** — reported "not have combine
+  function." The step asked to make sensor C reference both A and B; for a
+  *formula*-kind recipe that's just typing `${A} + ${B}` into the existing
+  formula textarea — there is no separate "combine" UI, and the step didn't
+  say so explicitly, which likely read as "the feature to do this is
+  missing." **Fixed** — step reworded to say "type directly into the Formula
+  field, no separate combine button."
+- **SPC-6 ⚠️ open — could not reproduce from code alone**: "no warning
+  message appeared; couldn't click Add, only Close." Traced the whole
+  name-required path (`AddSensorWindow.handleAdd`'s `nameMissing` check,
+  both the formula-mode and legacy-operation-mode branches, and
+  `SensorTooling`'s `customName` wiring) and every path correctly sets
+  `nameMissing` and renders the red warning text when the name field is
+  empty — the Add button itself is never `disabled`. Nothing found that
+  would produce "can't click Add, no message." Needs a re-test with the
+  exact steps recorded (formula vs. button/operation mode, how many sensors
+  were selected, whether the name field was visible at all before clicking
+  Add) before a code fix can be attempted.
+- **EDT-15 ⚠️ open — could not reproduce from code alone**: "editing a
+  special sensor's formula updates the Line chart but not the Scatter
+  chart." This is the `dataRevision` mechanism added the same day (see the
+  entry below) — traced `Dashboard.tsx`'s `update-special-sensor` listener,
+  `useScatterSample`'s revision-keyed cache (separately unit-tested and
+  passing), `scatterFeed`, and `ScatterChart.tsx`'s data-effect
+  (`[sc, data, scatterX, scatterY, headers, ...]`, which does rebuild points
+  and call `sc.set()`/`draw()` on every `data` change) end to end without
+  finding a broken link. One real possibility worth ruling out: **Scatter's
+  axes auto-fit to the data extent on every redraw**, so a pure
+  multiplicative formula edit (e.g. `* 2` → `* 5`, no offset) can leave the
+  point *shape* looking identical even though it redrew correctly — the
+  numeric axis tick labels (a separate SVG overlay) should still change,
+  though, so that alone may not fully explain "no change at all." Next
+  repro should (a) use an *additive* edit (e.g. `+ 100`) so a real redraw is
+  unmistakable even under auto-fit, and (b) check the devtools console for
+  the existing `debugLog('Dashboard received update-special-sensor', ...)`
+  line to confirm whether the event/revision bump even fired before
+  suspecting the chart itself.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by
