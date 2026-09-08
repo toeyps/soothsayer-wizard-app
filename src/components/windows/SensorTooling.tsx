@@ -67,6 +67,24 @@ export default function SensorTooling({
   // Reset the chosen operation whenever the sensor selection itself
   // changes, so an operation picked for a different set of sensors can't
   // silently carry over (e.g. a "starting value" that's no longer selected).
+  //
+  // Description/Unit/Component deliberately do NOT reset on every selection
+  // change (they used to, alongside the operation) -- those describe the
+  // NEW sensor being created, not the raw sensors feeding it, so nothing
+  // about adjusting the input selection mid-flow makes them wrong. The bug
+  // this fixes: fill in Component, then tweak the sensor selection
+  // (add/remove one while configuring the same calculation), and the field
+  // silently went back to blank with no visible sign it happened --
+  // clicking Add right after created the sensor with an EMPTY component,
+  // which the backend then defaults to "Uncategorized" (see
+  // `AddSensorWindow.computeCurrentRound`). It read as "I picked a
+  // component and it still landed in Uncategorized."
+  //
+  // They DO still reset when the selection drops to nothing -- that's
+  // "start over", the same moment `AddSensorWindow` itself empties
+  // `selectedSensors` right after a successful Add to clear the picker for
+  // the next round; without this, the next sensor's fields would open
+  // pre-filled with the PREVIOUS sensor's leftover text.
   const prevSelectionKey = useRef(selectedSensors.join("|"));
   useEffect(() => {
     const key = selectedSensors.join("|");
@@ -74,12 +92,14 @@ export default function SensorTooling({
       prevSelectionKey.current = key;
       engine.setOperationId(null);
       engine.setWrapFunc(null);
-      setDescription("");
-      setUnit("");
-      setComponent("");
-      onDescriptionChange?.("");
-      onUnitChange?.("");
-      onComponentChange?.("");
+      if (key === "") {
+        setDescription("");
+        setUnit("");
+        setComponent("");
+        onDescriptionChange?.("");
+        onUnitChange?.("");
+        onComponentChange?.("");
+      }
     }
   }, [selectedSensors, engine.setOperationId, engine.setWrapFunc, onDescriptionChange, onUnitChange, onComponentChange]);
 

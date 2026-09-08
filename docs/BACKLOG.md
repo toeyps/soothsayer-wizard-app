@@ -178,6 +178,32 @@ a stale dev-server/HMR artifact, not a defect in the app itself — no code
 change needed. Left here only so a repeat report isn't re-investigated from
 scratch.
 
+### 🐛 Fixed 2026-09-08 — a special sensor's Component field could silently get wiped before creation, landing it in "Uncategorized"
+
+User report: picked a Component for a new special sensor, created it, then
+found it filed under "Uncategorized" instead. Traced to
+`SensorTooling.tsx`'s selection-change effect: it reset `description`,
+`unit`, and `component` alongside the picked operation on **every** change
+to `selectedSensors` (adding/removing a raw input sensor while configuring
+the calculation). Only the operation reset was actually justified — a
+"starting value" or operator config computed for one set of input sensors
+genuinely doesn't carry over to a different set — but Description/Unit/
+Component describe the sensor being *created*, not which raw sensors feed
+it, so nothing about adjusting the input selection makes them wrong. A user
+who filled in Component, then tweaked which sensors were selected before
+clicking Add, had it silently blanked with no visible cue, and
+`AddSensorWindow.computeCurrentRound` defaults an empty component to
+`'Uncategorized'` server-side.
+
+Fix: split the effect so `engine.setOperationId(null)`/`setWrapFunc(null)`
+still reset on every selection change, but Description/Unit/Component only
+reset when the selection drops to **empty** — the same moment
+`AddSensorWindow` itself clears `selectedSensors` right after a successful
+Add to start the next round with a blank picker. Verified against a real
+regression: reverted the fix locally, watched the new test fail exactly as
+expected, restored it, watched it pass. Tests +2 in `SensorTooling.test.tsx`
+→ 947/947, `tsc`/`eslint` clean.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

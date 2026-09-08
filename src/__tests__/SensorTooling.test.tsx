@@ -219,7 +219,7 @@ describe('SensorTooling', () => {
     });
 
     describe('changing the selection resets the operation', () => {
-        it('clears the picked operation and master-data fields when selectedSensors changes', () => {
+        it('clears the picked operation when selectedSensors changes', () => {
             const onDescriptionChange = vi.fn();
             const { rerender } = render(
                 <SensorTooling {...makeProps({ selectedSensors: ['A'], onDescriptionChange })} />,
@@ -229,6 +229,62 @@ describe('SensorTooling', () => {
 
             rerender(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'], onDescriptionChange })} />);
             expect(screen.getByText('Sensor A + Sensor B')).toBeTruthy(); // back to default chain, not "Add"
+        });
+
+        // Regression: this same effect used to clear Description/Unit/Component
+        // alongside the operation on every selection change. Those describe the
+        // NEW sensor being created, not which raw sensors feed it, so tweaking
+        // the input selection mid-flow has no business wiping them. Reported
+        // symptom: fill in Component, adjust the selection, click Add -- the
+        // sensor is created with an EMPTY component (defaults to
+        // "Uncategorized" server-side), even though a component was clearly
+        // picked moments earlier.
+        it('does NOT clear Description/Unit/Component when the selection changes to a different non-empty set', () => {
+            const onComponentChange = vi.fn();
+            const props = makeProps({ selectedSensors: ['A'], onComponentChange });
+            const { rerender } = render(<SensorTooling {...props} />);
+
+            fireEvent.click(screen.getByText('Add'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Total boiler power draw'), { target: { value: 'My Desc' } });
+            fireEvent.change(screen.getByPlaceholderText('e.g. kW'), { target: { value: 'kW' } });
+            fireEvent.change(screen.getByPlaceholderText('Pick or type'), { target: { value: 'Boiler' } });
+            onComponentChange.mockClear();
+
+            // Adjust the input selection -- e.g. the user realizes they also
+            // want a second sensor in the calculation -- while nothing about
+            // the sensor they're naming has changed.
+            rerender(<SensorTooling {...makeProps({ ...props, selectedSensors: ['A', 'B'] })} />);
+
+            expect((screen.getByPlaceholderText('e.g. Total boiler power draw') as HTMLInputElement).value).toBe('My Desc');
+            expect((screen.getByPlaceholderText('e.g. kW') as HTMLInputElement).value).toBe('kW');
+            expect((screen.getByPlaceholderText('Pick or type') as HTMLInputElement).value).toBe('Boiler');
+            expect(onComponentChange).not.toHaveBeenCalledWith('');
+        });
+
+        it('DOES clear Description/Unit/Component once the selection drops to nothing -- matches "Add sensor" starting the next round with a blank picker', () => {
+            const onDescriptionChange = vi.fn();
+            const onUnitChange = vi.fn();
+            const onComponentChange = vi.fn();
+            const props = makeProps({ selectedSensors: ['A'], onDescriptionChange, onUnitChange, onComponentChange });
+            const { rerender } = render(<SensorTooling {...props} />);
+
+            fireEvent.click(screen.getByText('Add'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Total boiler power draw'), { target: { value: 'My Desc' } });
+            fireEvent.change(screen.getByPlaceholderText('e.g. kW'), { target: { value: 'kW' } });
+            fireEvent.change(screen.getByPlaceholderText('Pick or type'), { target: { value: 'Boiler' } });
+
+            rerender(<SensorTooling {...makeProps({ ...props, selectedSensors: [] })} />);
+
+            expect(screen.queryByPlaceholderText('e.g. Total boiler power draw')).toBeNull(); // fields hidden -- nothing selected
+            expect(onDescriptionChange).toHaveBeenLastCalledWith('');
+            expect(onUnitChange).toHaveBeenLastCalledWith('');
+            expect(onComponentChange).toHaveBeenLastCalledWith('');
+
+            // And the next round starts genuinely blank, not pre-filled with
+            // the previous sensor's leftovers.
+            rerender(<SensorTooling {...makeProps({ ...props, selectedSensors: ['C'] })} />);
+            fireEvent.click(screen.getByText('Add'));
+            expect((screen.getByPlaceholderText('e.g. Total boiler power draw') as HTMLInputElement).value).toBe('');
         });
     });
 
