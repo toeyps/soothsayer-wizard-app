@@ -1688,3 +1688,12 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึกไว้
   - ไฟล์ที่แก้: `src/components/windows/BuildModelWindow.tsx`, `src/__tests__/BuildModelWindow.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว (`af807ee`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
+
+- **🆕 2026-09-09 (ต่อในวันเดียวกัน) — 🎨 ย้ายปุ่ม "Build Model" ไปอยู่ต่อจาก "Save changes" + ปิดปุ่มจนกว่าจะกรอกครบ**: ผู้ใช้ส่งสกรีนช็อต 2 อัน ชี้ว่าปุ่ม Build Model (เดิมอยู่บนหัวแถว มองเห็นตลอดเวลา) ควรย้ายไปอยู่ต่อจาก Save changes ในฟอร์ม และกดไม่ได้จนกว่าจะกรอกข้อมูลก่อนหน้าครบ
+  - เอาปุ่มออกจากหัวแถว (row header) — ย้ายไปอยู่ใน `renderModelFormFooter` ต่อจาก Save changes เท่านั้น ปิดปุ่มด้วย `formValid` เงื่อนไขเดียวกับ Save changes (แปลว่าต้องเปิดแถวขึ้นมาดูก่อนถึงจะเห็น/กดปุ่มนี้ได้)
+  - กด Build Model ตอนนี้จะ **commit ฟอร์มปัจจุบันก่อนเสมอ** (เหมือนกด Save changes) แล้วค่อยพาไปหน้า train — ถ้าไม่ทำแบบนี้ กรณีแก้ field แล้วกด Build Model ทันทีโดยไม่กด Save ก่อน จะไป train ด้วยค่าเก่าที่ยังไม่ได้บันทึกแบบเงียบๆ (บั๊กที่ป้องกันไว้ล่วงหน้า)
+  - เทสต์: เขียนเทส "Build Model" เดิม 2 ตัวใหม่ให้เปิดแถวก่อน + เทสใหม่ 2 ตัว (ปุ่มปิดจนกว่าจะกรอกครบพร้อมข้อความเหตุผลใน title, และยืนยันว่า commit ฟอร์มก่อน navigate จริง)
+  - Verify: `npx tsc --noEmit` สะอาด, `npx eslint` 0 error, `npm test` **993/993**
+  - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึกไว้
+  - ไฟล์ที่แก้: `src/components/windows/BuildModelWindow.tsx`, `src/__tests__/BuildModelWindow.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว (`122368e`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน

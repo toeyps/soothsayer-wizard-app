@@ -402,6 +402,30 @@ Tests +2 (`BuildModelWindow.test.tsx`): section order stays fixed
 regardless of the models' creation order, and a kind with no models
 produces no section for it. `npm test` 991/991, `tsc`/`eslint` clean.
 
+### 🎨 UX fix 2026-09-09 — "Build Model" moved into the edit form's footer, disabled until valid
+
+User feedback (two screenshots): "Build Model" should sit right after
+"Save changes", and shouldn't be clickable until the preceding fields are
+filled in completely.
+
+Previously the button lived on the (always-visible) row header, reachable
+regardless of whether the model's required fields were even filled in —
+training an incomplete model made no sense. Removed it from there; it now
+renders only in `renderModelFormFooter`, right after Save changes, gated
+on the same `formValid` check Save changes already uses, and only
+reachable once the row is opened for review in the first place.
+
+Clicking it now also commits the current draft first (same as Save
+changes) before navigating — without that, editing a field and clicking
+Build Model straight away (no intervening Save click) would silently
+train on the OLD persisted values while the screen still showed the new
+ones.
+
+Tests: rewrote the two existing "Build Model" tests to open the row
+first, +2 new (disabled-until-valid with the reason shown in its
+`title`, and committing an unsaved edit before navigating). `npm test`
+993/993, `tsc`/`eslint` clean.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by
