@@ -9031,6 +9031,16 @@ body {
     color: #06111f;
 }
 
+.model-open-pm:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.model-open-pm:disabled:hover {
+    background: var(--accent-muted);
+    color: var(--accent-hi);
+}
+
 .model-component-readout {
     font-size: 0.8rem;
     color: var(--text-secondary);
