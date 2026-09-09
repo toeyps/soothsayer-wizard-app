@@ -383,6 +383,25 @@ both `SensorTooling.tsx` (Create) and `SpecialSensorEditor.tsx` (Manage
 tab edit), and dropped the now-stale "Leave blank for Uncategorized"
 hint under Component. `npm test` 989/989 unaffected (label text only).
 
+### ✨ Feature 2026-09-09 — "Group by Model Type" added to Build Model — Overview
+
+User request (screenshot, arrow at the existing "Group by Failure Group" /
+"Group by Component" toggle): a third grouping by model kind (Individual/
+Relationship/Clustering).
+
+Mirrors the Component grouping's shape exactly — one section per kind
+actually present in `allModels` (a kind with zero models gets no empty
+section at all), in a **fixed** Individual → Relationship → Clustering
+order rather than alphabetical (a small, closed taxonomy reads better in
+its natural order than sorted), each row showing its own FG chip via
+`overviewModelRow(m, true)` — the same convention Component view already
+uses, since the section header itself doesn't convey FG membership either
+way.
+
+Tests +2 (`BuildModelWindow.test.tsx`): section order stays fixed
+regardless of the models' creation order, and a kind with no models
+produces no section for it. `npm test` 991/991, `tsc`/`eslint` clean.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

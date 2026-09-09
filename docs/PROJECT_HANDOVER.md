@@ -1680,3 +1680,11 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **`docs/BACKLOG.md`**: เพิ่ม follow-up note ต่อท้าย entry เดิมของวันนี้
   - ไฟล์ที่แก้: `src/components/windows/SensorTooling.tsx`, `src/components/windows/SpecialSensorEditor.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว (`6e53d4b`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
+
+- **🆕 2026-09-09 (ต่อในวันเดียวกัน) — ✨ เพิ่มปุ่ม "Group by Model Type" ในหน้า Build Model — Overview**: ผู้ใช้ส่งสกรีนช็อตชี้ปุ่ม "Group by Failure Group" / "Group by Component" เดิม ขอเพิ่มตัวเลือกจัดกลุ่มตามประเภทโมเดล (I/R/C — Individual/Relationship/Clustering)
+  - ทำตามรูปแบบเดียวกับ "Group by Component" ทุกอย่าง — แสดงเฉพาะ section ของ kind ที่มีโมเดลจริง (kind ที่ไม่มีโมเดลจะไม่ขึ้น section ว่างๆ) เรียง**ลำดับตายตัว** Individual → Relationship → Clustering (ไม่ใช่เรียงตามตัวอักษร เพราะเป็น taxonomy ปิดแค่ 3 ค่า เรียงตามลำดับธรรมชาติอ่านง่ายกว่า) แต่ละแถวยังโชว์ FG chip ของตัวเอง (`overviewModelRow(m, true)`) เหมือน Component view เพราะหัว section เองไม่ได้บอกว่าอยู่ FG ไหน
+  - เทสต์ +2 (`BuildModelWindow.test.tsx`): ลำดับ section คงที่ไม่ว่าจะสร้างโมเดลลำดับไหนก่อน และ kind ที่ไม่มีโมเดลจะไม่มี section
+  - Verify: `npx tsc --noEmit` สะอาด, `npx eslint` 0 error, `npm test` **991/991**
+  - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึกไว้
+  - ไฟล์ที่แก้: `src/components/windows/BuildModelWindow.tsx`, `src/__tests__/BuildModelWindow.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว (`af807ee`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
