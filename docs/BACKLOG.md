@@ -375,6 +375,14 @@ fixed). `cargo test`: 164/164 (+1 ignored, pre-existing). `npm test`:
 989/989. `tsc --noEmit` clean, `eslint` 0 errors (pre-existing warning
 count unchanged — none introduced by this change).
 
+**Follow-up (same day, screenshot):** only "NAME THIS SENSOR *" carried
+the required-field asterisk, so the form read as if Description/Unit/
+Component were still optional even though the validation above already
+requires all four. Added the same "*" marker to those three labels in
+both `SensorTooling.tsx` (Create) and `SpecialSensorEditor.tsx` (Manage
+tab edit), and dropped the now-stale "Leave blank for Uncategorized"
+hint under Component. `npm test` 989/989 unaffected (label text only).
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

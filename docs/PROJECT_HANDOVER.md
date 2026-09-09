@@ -1672,3 +1672,11 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึกไว้ละเอียด
   - ไฟล์ที่แก้: `src-tauri/src/lib.rs`, `src/utils/specialSensorRename.ts` (ใหม่), `src/components/windows/SpecialSensorEditor.tsx`, `src/components/windows/AddSensorWindow.tsx`, `src/components/windows/ManageSpecialSensors.tsx`, `src/components/dashboard/Dashboard.tsx`, `src/__tests__/specialSensorRename.test.ts` (ใหม่), `src/__tests__/SpecialSensorEditor.test.tsx`, `src/__tests__/AddSensorWindow.test.tsx`, `src/__tests__/Dashboard.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
+
+- **🆕 2026-09-09 (ต่อในวันเดียวกัน) — 🎨 เพิ่มเครื่องหมาย required (*) ให้ Description/Unit/Component ด้วย**: ผู้ใช้ส่งสกรีนช็อตชี้ว่า "UI ไม่สอดคล้องกับ logic — ขึ้นเหมือนมีแค่ Name อันเดียวที่ required ที่เหลือดูเหมือน optional ทั้งที่จริงๆ required หมดแล้ว" (จาก entry ก่อนหน้าในวันเดียวกัน)
+  - เพิ่ม `<span style={{color:'var(--danger)'}}>*</span>` ต่อท้าย label ของ Description/Unit/Component ทั้งใน `SensorTooling.tsx` (หน้า Create) และ `SpecialSensorEditor.tsx` (หน้า Manage/edit) — เหมือนที่ Name มีอยู่แล้ว
+  - ลบ hint ข้อความเดิม "Leave blank for Uncategorized" ใต้ Component ออกด้วย เพราะไม่จริงแล้ว (ตอนนี้เว้นว่างไม่ได้)
+  - Verify: `npx tsc --noEmit` สะอาด, `npx eslint` 0 error, `npm test` **989/989** (แก้แค่ label text ไม่กระทบ logic)
+  - **`docs/BACKLOG.md`**: เพิ่ม follow-up note ต่อท้าย entry เดิมของวันนี้
+  - ไฟล์ที่แก้: `src/components/windows/SensorTooling.tsx`, `src/components/windows/SpecialSensorEditor.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว (`6e53d4b`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
