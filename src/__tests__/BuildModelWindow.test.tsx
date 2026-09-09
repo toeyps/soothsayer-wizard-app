@@ -159,6 +159,43 @@ describe('BuildModelWindow', () => {
         expect(screen.getByText('Uncategorized')).toBeTruthy();
     });
 
+    describe('grouping by Model Type (I/R/C)', () => {
+        it('shows a section per kind actually present, in fixed Individual/Relationship/Clustering order regardless of creation order, and only per row (not the section) shows the FG chip', async () => {
+            // Deliberately created out of order (C, then I, then R) to prove
+            // the section order is fixed, not insertion or alphabetical.
+            const clu = makeModel({ id: 'm1', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' });
+            const ind = makeModel({ id: 'm2', name: 'Ind Model', kind: 'individual', targetSensor: 'TAG1' });
+            const rel = makeModel({ id: 'm3', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu, ind, rel] } });
+            expect(screen.queryByText(/FG-1 · Group A/)).toBeNull();
+
+            fireEvent.click(screen.getByText('Group by Model Type'));
+
+            const headings = screen.getAllByText(/^(Individual|Relationship|Clustering)$/).map(el => el.textContent);
+            expect(headings).toEqual(['Individual', 'Relationship', 'Clustering']);
+            expect(screen.getByText('Ind Model')).toBeTruthy();
+            expect(screen.getByText('Rel Model')).toBeTruthy();
+            expect(screen.getByText('Clu Model')).toBeTruthy();
+            // One FG chip per model row, same convention Component view uses.
+            expect(screen.getAllByText(/FG-1 · Group A/).length).toBe(3);
+        });
+
+        it('only shows sections for kinds that actually have a model', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [makeModel({ id: 'm1', name: 'Ind Model', kind: 'individual' })],
+                },
+            });
+            fireEvent.click(screen.getByText('Group by Model Type'));
+            expect(screen.getByText('Individual')).toBeTruthy();
+            expect(screen.queryByText('Relationship')).toBeNull();
+            expect(screen.queryByText('Clustering')).toBeNull();
+        });
+    });
+
     it('stays in sync with a failure-group-state-changed broadcast from another window', async () => {
         render(<BuildModelWindow />);
         await deliverData();

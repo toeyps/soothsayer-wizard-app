@@ -65,7 +65,17 @@ function sensorSummary(model: FailureModel, label: (tag: string) => string): str
     return `X: ${model.xSensor ? label(model.xSensor) : '—'} · Y (target): ${model.ySensor ? label(model.ySensor) : '—'}${criteria}`;
 }
 
-type GroupBy = 'fg' | 'component';
+type GroupBy = 'fg' | 'component' | 'kind';
+
+// Fixed order (not alphabetical) -- I/R/C is a small, natural taxonomy, not
+// an open-ended list like components, so it reads better presented in the
+// same order the kind toggles/badges use everywhere else in the app.
+const KIND_ORDER: ModelKind[] = ['individual', 'relationship', 'clustering'];
+const KIND_LABEL: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relationship',
+    clustering: 'Clustering',
+};
 
 /**
  * The single Build Model window — a singleton (label `build-model`) opened
@@ -584,6 +594,16 @@ export default function BuildModelWindow() {
         }
         return Array.from(byComp.entries()).sort(([a], [b]) => a.localeCompare(b));
     })();
+    const kindSections = (() => {
+        const byKind = new Map<ModelKind, FailureModel[]>();
+        for (const m of allModels) {
+            if (!byKind.has(m.kind)) byKind.set(m.kind, []);
+            byKind.get(m.kind)!.push(m);
+        }
+        return KIND_ORDER
+            .filter(k => byKind.has(k))
+            .map((k): [ModelKind, FailureModel[]] => [k, byKind.get(k)!]);
+    })();
 
     // One row per model, with its own add/edit form directly beneath it
     // when active (accordion) — used by both the FG-grouped and
@@ -695,7 +715,7 @@ export default function BuildModelWindow() {
                     <b style={{ color: 'var(--text-primary)' }}>{componentSections.length}</b> components
                 </div>
                 <div style={{ display: 'inline-flex', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '8px', padding: '3px', gap: '2px' }}>
-                    {(['fg', 'component'] as GroupBy[]).map(mode => (
+                    {(['fg', 'component', 'kind'] as GroupBy[]).map(mode => (
                         <button
                             key={mode}
                             onClick={() => setGroupBy(mode)}
@@ -706,7 +726,7 @@ export default function BuildModelWindow() {
                                 fontWeight: groupBy === mode ? 600 : 500,
                             }}
                         >
-                            {mode === 'fg' ? 'Group by Failure Group' : 'Group by Component'}
+                            {mode === 'fg' ? 'Group by Failure Group' : mode === 'component' ? 'Group by Component' : 'Group by Model Type'}
                         </button>
                     ))}
                 </div>
@@ -788,6 +808,23 @@ export default function BuildModelWindow() {
                             </div>
                         );
                     })
+                )}
+
+                {groupBy === 'kind' && (
+                    kindSections.length === 0 ? (
+                        <div className="no-results">No models yet</div>
+                    ) : kindSections.map(([kind, models]) => (
+                        <div key={kind} style={{ border: '1px solid var(--border)', borderRadius: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
+                                <div className={`model-kind-icon model-kind-icon--${kind}`} style={{ width: '26px', height: '26px', fontSize: '0.68rem', flexShrink: 0 }}>
+                                    {KIND_ABBREV[kind]}
+                                </div>
+                                <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1 }}>{KIND_LABEL[kind]}</span>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{models.length} model{models.length === 1 ? '' : 's'}</span>
+                            </div>
+                            {models.map(m => overviewModelRow(m, true))}
+                        </div>
+                    ))
                 )}
             </div>
             </>
