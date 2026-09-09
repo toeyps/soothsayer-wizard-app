@@ -1697,3 +1697,11 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **`docs/BACKLOG.md`**: เพิ่มหัวข้อบันทึกไว้
   - ไฟล์ที่แก้: `src/components/windows/BuildModelWindow.tsx`, `src/__tests__/BuildModelWindow.test.tsx`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว (`122368e`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
+
+- **🆕 2026-09-09 (ต่อในวันเดียวกัน) — 🐛 แก้ปุ่ม "Build Model" ดูเหมือนกดได้ทั้งที่จริงๆถูกปิดอยู่**: ผู้ใช้ส่งสกรีนช็อต (โมเดล Relationship ที่ยังไม่ได้เลือก predictor เลย) ชี้ว่าปุ่ม Build Model ดูเหมือนกดได้ปกติ (ขอบสีฟ้าเข้ม ไม่จาง) อยู่ติดกับปุ่ม Save changes ที่จางลงชัดเจน ทั้งที่สองปุ่มใช้เงื่อนไข `formValid` เดียวกัน
+  - ตรวจแล้ว **logic ถูกต้องอยู่แล้ว** — `disabled={!formValid}` ถูก set จริง กดไปก็ไม่มีอะไรเกิดขึ้น (no-op) — ปัญหาเป็นแค่ CSS: `.model-open-pm` (class ของปุ่ม Build Model) ไม่มี rule `:disabled` เลย ต่างจาก `.fg-build-model-btn` (Save changes) ที่มี `opacity: 0.5; cursor: not-allowed;` อยู่แล้ว จึงดูเหมือนยังใช้งานได้ปกติทั้งที่ปิดอยู่จริง
+  - เพิ่ม `.model-open-pm:disabled` ให้เหมือน `.fg-build-model-btn:disabled` เป๊ะ พร้อม `:disabled:hover` กันไม่ให้ hover แล้ว sáng ขึ้นเหมือนปุ่ม active
+  - CSS ล้วนๆ ไม่มีเทสต์เพิ่ม (jsdom ไม่โหลด stylesheet) — ส่วน logic การปิดปุ่มมีเทสต์ครอบไว้แล้วจาก entry ก่อนหน้า
+  - **`docs/BACKLOG.md`**: เพิ่ม follow-up note ต่อท้าย entry เดิมของวันนี้
+  - ไฟล์ที่แก้: `src/App.css`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว (`a27963c`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน

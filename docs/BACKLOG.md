@@ -426,6 +426,19 @@ first, +2 new (disabled-until-valid with the reason shown in its
 `title`, and committing an unsaved edit before navigating). `npm test`
 993/993, `tsc`/`eslint` clean.
 
+**Follow-up (same day, screenshot):** the disable above was real (the
+`disabled` attribute was correctly set — clicking it was already a
+no-op) but looked wrong: `.model-open-pm` never had a `:disabled` CSS
+rule the way `.fg-build-model-btn` (Save changes) does, so a disabled
+Build Model button sat right next to a visibly greyed Save changes
+looking fully active — solid blue border, no dimming at all. Added
+`.model-open-pm:disabled` (opacity 0.5, `cursor: not-allowed`),
+mirroring `.fg-build-model-btn:disabled` exactly, plus a
+`:disabled:hover` override so hovering it doesn't still flash the
+active hover color. CSS-only — no test coverage possible (jsdom
+doesn't load stylesheets); the underlying disabled-state logic was
+already covered by the tests above.
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by
