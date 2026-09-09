@@ -146,7 +146,8 @@ export default function BuildModelWindow() {
     const [groupBy, setGroupBy] = useState<GroupBy>('fg');
 
     // ---- Predictive Model page — an in-window "next page" (not a spawned
-    //      OS window) reached from a model row's "Build Model" button. Only
+    //      OS window) reached from the model edit form's "Build Model"
+    //      button (see `renderModelFormFooter`). Only
     //      Dashboard + this singleton window are ever open at once; PM used
     //      to be its own window/label ('predictive-model') until the user
     //      asked for it to become a page inside this one instead, same
@@ -551,6 +552,17 @@ export default function BuildModelWindow() {
     // tab (a trash icon per model row there), per explicit user request
     // that Build Model do only detail-editing and training, nothing else.
     //
+    // 2026-09-09: "Build Model →" moved here from the (always-visible)
+    // row header, right after Save changes, per explicit user request
+    // (screenshot) — training an incomplete model didn't make sense, so
+    // it's disabled on the same `formValid` gate Save changes already
+    // uses, and only reachable once the row is open for review anyway.
+    // Clicking it commits the current draft first (same as Save changes)
+    // before navigating — without that, editing a field and clicking
+    // Build Model straight away (without an intervening Save click) would
+    // silently train on the OLD persisted values while the screen still
+    // showed the new ones.
+    //
     // `position: sticky, bottom: 0` — being structurally right after the
     // fields box (rather than, say, inside a page-level modal) turned out
     // not to be enough: a group deep in a long list, or a form long enough
@@ -562,10 +574,25 @@ export default function BuildModelWindow() {
     // it only lets go once the whole accordion block scrolls out of view.
     // Requires no `overflow: hidden` on any ancestor between this and the
     // page's own scroll container (see the group card wrappers above).
+    const buildModelFromForm = () => {
+        if (!formValid || !editingModelId) return;
+        const modelId = editingModelId;
+        commitForm();
+        trainModel(modelId);
+    };
+
     const renderModelFormFooter = () => (
         <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
             <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
                 Save changes
+            </button>
+            <button
+                className="model-open-pm"
+                disabled={!formValid}
+                title={formValid ? undefined : 'Fill in the required fields above first'}
+                onClick={buildModelFromForm}
+            >
+                Build Model →
             </button>
         </div>
     );
@@ -661,12 +688,6 @@ export default function BuildModelWindow() {
                             onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
                         >
                             {model.status ? 'Complete' : 'Incomplete'}
-                        </button>
-                        <button
-                            className="model-open-pm"
-                            onClick={e => { e.stopPropagation(); trainModel(model.id); }}
-                        >
-                            Build Model →
                         </button>
                     </div>
                     {isEditingThis && (

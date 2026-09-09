@@ -432,9 +432,14 @@ describe('BuildModelWindow', () => {
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
+        // 2026-09-09: "Build Model →" moved from the (always-visible) row
+        // header into the edit form's footer, right after Save changes, and
+        // is disabled until the form is valid — training an incomplete
+        // model didn't make sense. Only reachable by opening the row first.
         it('"Build Model" navigates to the in-window Predictive Model page instead of opening a new window', async () => {
             render(<BuildModelWindow />);
             await deliverData();
+            fireEvent.click(screen.getByText('Model One')); // open the row — makeModel() is already complete
             fireEvent.click(screen.getByText('Build Model →'));
             // No cross-window event — this is now local page-navigation state.
             expect(mockEmit).not.toHaveBeenCalledWith('launch-predictive-model', expect.anything());
@@ -447,14 +452,43 @@ describe('BuildModelWindow', () => {
             expect(lastProps.sensorHeaders).toEqual(['TAG1', 'TAG2', 'TAG3']);
         });
 
+        it('is disabled until the form is valid, and shows why', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '' })] } });
+            fireEvent.click(screen.getByText('Pump Pressure (TAG1)')); // falls back to the sensor label since name is blank -- still opens the row
+            const buildBtn = screen.getByText('Build Model →') as HTMLButtonElement;
+            expect(buildBtn.disabled).toBe(true);
+            expect(buildBtn.title).toMatch(/Fill in the required fields/);
+
+            fireEvent.click(buildBtn);
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // disabled click is a no-op
+
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Now named' } });
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(false);
+        });
+
+        it('saves any unsaved draft edits before navigating, so training never silently uses stale values', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed before building' } });
+
+            fireEvent.click(screen.getByText('Build Model →'));
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].name).toBe('Renamed before building');
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+        });
+
         it('the PM page\'s Back control returns to the model overview', async () => {
             render(<BuildModelWindow />);
             await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
             fireEvent.click(screen.getByText('Build Model →'));
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
             fireEvent.click(screen.getByText('Mock Back'));
             expect(screen.queryByTestId('pm-page-mock')).toBeNull();
-            expect(screen.getByText('Build Model →')).toBeTruthy();
+            expect(screen.queryByText('Build Model →')).toBeNull(); // the row's editor closed along with the old model reference
         });
 
         it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to "description (tag)"', async () => {
