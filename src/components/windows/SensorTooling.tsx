@@ -277,7 +277,7 @@ export default function SensorTooling({
             </div>
             <div>
               <label className="block text-xs font-bold uppercase text-[var(--text-secondary)] mb-1">
-                Description
+                Description <span style={{ color: "var(--danger)" }}>*</span>
               </label>
               <input
                 type="text"
@@ -293,7 +293,7 @@ export default function SensorTooling({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold uppercase text-[var(--text-secondary)] mb-1">
-                  Unit
+                  Unit <span style={{ color: "var(--danger)" }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -308,7 +308,7 @@ export default function SensorTooling({
               </div>
               <div>
                 <label className="block text-xs font-bold uppercase text-[var(--text-secondary)] mb-1">
-                  Component
+                  Component <span style={{ color: "var(--danger)" }}>*</span>
                 </label>
                 <ComboBox
                   value={component}
@@ -322,7 +322,7 @@ export default function SensorTooling({
               </div>
             </div>
             <p className="text-[10px] text-[var(--text-secondary)] -mt-1">
-              Component groups this sensor with related ones in the Sensor tab. Leave blank for Uncategorized.
+              Component groups this sensor with related ones in the Sensor tab.
             </p>
           </div>
         )}

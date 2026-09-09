@@ -226,7 +226,7 @@ export default function SpecialSensorEditor({
                 style={{ backgroundColor: 'var(--surface-hi)', border: '1px solid var(--border)' }}
             >
                 <div>
-                    <span style={labelStyle}>Name</span>
+                    <span style={labelStyle}>Name <span style={{ color: 'var(--danger)' }}>*</span></span>
                     <input
                         aria-label="Name"
                         value={tag}
@@ -334,15 +334,15 @@ export default function SpecialSensorEditor({
 
                 <div className="flex gap-2">
                     <div style={{ flex: 2 }}>
-                        <span style={labelStyle}>Description</span>
+                        <span style={labelStyle}>Description <span style={{ color: 'var(--danger)' }}>*</span></span>
                         <input aria-label="Description" value={description} onChange={e => setDescription(e.target.value)} style={fieldStyle} />
                     </div>
                     <div style={{ flex: 1 }}>
-                        <span style={labelStyle}>Unit</span>
+                        <span style={labelStyle}>Unit <span style={{ color: 'var(--danger)' }}>*</span></span>
                         <input aria-label="Unit" value={unit} onChange={e => setUnit(e.target.value)} style={fieldStyle} />
                     </div>
                     <div style={{ flex: 1 }}>
-                        <span style={labelStyle}>Component</span>
+                        <span style={labelStyle}>Component <span style={{ color: 'var(--danger)' }}>*</span></span>
                         <input aria-label="Component" value={component} onChange={e => setComponent(e.target.value)} style={fieldStyle} />
                     </div>
                 </div>
