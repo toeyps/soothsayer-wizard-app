@@ -1344,6 +1344,80 @@ describe('Dashboard', () => {
             expect(last(mockUseScatterSample.mock.calls)[3]).toBe(scatterRevisionBefore + 1);
         });
 
+        it('"rename-special-sensor" re-keys every dashboard state slice that names the old tag', async () => {
+            const renamed = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
+            const dependent = { kind: 'formula' as const, tag: 'CALC2', formula: '${CALC1} + 1' };
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['CALC1'],
+                    visibleSensors: ['CALC1'],
+                    specialSensorRecipes: [renamed, dependent],
+                    extraSensorMetadata: [{ tag: 'CALC1', description: 'Doubled', unit: '', component: '' }],
+                    sensorColors: { CALC1: '#ff0000' },
+                    sensorAxisRange: { CALC1: { min: 0, max: 100 } },
+                    alarmLinesEnabled: { CALC1: ['H'] },
+                    scatterAxes: { x: 'CALC1', y: 'TAG2' },
+                    scatterAxisPins: { x: { sensor: 'CALC1', min: 0, max: 10 } },
+                    valueHighlight: { sensor: 'CALC1', ranges: [] },
+                    failureGroupState: {
+                        groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG1' }],
+                        models: [{
+                            id: 'm1', groupNos: [1], name: 'Model1', kind: 'individual', category: null,
+                            notes: '', status: false, targetSensor: 'CALC1', predictorSensors: [], xSensor: '', ySensor: '',
+                            individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
+                            clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
+                            filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                        }],
+                    },
+                }),
+            });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+            const revisionBefore = last(mockUseChartData.mock.calls)[0]?.revision ?? 0;
+
+            await act(async () => {
+                for (const cb of listenCallbacks['rename-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        oldTag: 'CALC1',
+                        newTag: 'CALC1-renamed',
+                        recipe: { kind: 'formula', tag: 'CALC1-renamed', formula: '$TAG1 * 2' },
+                        metadata: { tag: 'CALC1-renamed', description: 'Doubled', unit: '', component: '' },
+                        updatedRecipes: [{ kind: 'formula', tag: 'CALC2', formula: '${CALC1-renamed} + 1' }],
+                    } });
+                }
+            });
+
+            // Chart/scatter must refetch — the tag they were querying by no
+            // longer resolves under the old name.
+            expect(last(sensorSelectionProps).selectedSensors).toEqual(['CALC1-renamed']);
+            expect(last(mockUseChartData.mock.calls)[0]?.revision).toBe(revisionBefore + 1);
+
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                // Renamed recipe re-keyed, AND its dependent's rewritten
+                // formula carried through, array order preserved.
+                expect(saved.specialSensorRecipes).toEqual([
+                    { kind: 'formula', tag: 'CALC1-renamed', formula: '$TAG1 * 2' },
+                    { kind: 'formula', tag: 'CALC2', formula: '${CALC1-renamed} + 1' },
+                ]);
+                expect(saved.extraSensorMetadata).toEqual([{ tag: 'CALC1-renamed', description: 'Doubled', unit: '', component: '' }]);
+                expect(saved.selectedSensors).toEqual(['CALC1-renamed']);
+                expect(saved.visibleSensors).toEqual(['CALC1-renamed']);
+                expect(saved.sensorColors).toEqual({ 'CALC1-renamed': '#ff0000' });
+                expect(saved.sensorAxisRange).toEqual({ 'CALC1-renamed': { min: 0, max: 100 } });
+                expect(saved.alarmLinesEnabled).toEqual({ 'CALC1-renamed': ['H'] });
+                expect(saved.scatterAxes).toEqual({ x: 'CALC1-renamed', y: 'TAG2' });
+                expect(saved.scatterAxisPins).toEqual({ x: { sensor: 'CALC1-renamed', min: 0, max: 10 } });
+                expect(saved.valueHighlight).toEqual({ sensor: 'CALC1-renamed', ranges: [] });
+            });
+
+            // Failure Group model — persisted separately via the same
+            // read-modify-write path every other model mutation uses, so a
+            // concurrently open Build Model window would see it too.
+            const patched = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(patched.failureGroupState.models[0].targetSensor).toBe('CALC1-renamed');
+        });
+
         it('"delete-special-sensors" matches tags case-insensitively, and ignores an empty list', async () => {
             const recipe = { kind: 'formula' as const, tag: 'Calc1', formula: '$TAG1 * 2' };
             renderDashboard({ initialState: makeInitialState({ specialSensorRecipes: [recipe] }) });

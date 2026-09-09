@@ -157,19 +157,38 @@ describe('AddSensorWindow', () => {
         expect(screen.getByText(/Added 1 sensor/)).toBeTruthy();
     });
 
-    it('blocks adding a named calculation with a blank name, without emitting', async () => {
+    it('disables Add sensor and lists every missing field for a named calculation with no name at all', async () => {
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1', 'TAG2']);
         fireEvent.click(screen.getByText('toggle-tag1'));
         fireEvent.click(screen.getByText('set-config-no-name'));
 
+        expect(screen.getByText('Fill in a name, a description, a unit, a component before adding.')).toBeTruthy();
+        expect((screen.getByText('Add sensor') as HTMLButtonElement).disabled).toBe(true);
+
         await act(async () => {
             fireEvent.click(screen.getByText('Add sensor'));
             await Promise.resolve();
         });
-        expect(screen.getByText('Give this sensor a name before adding it.')).toBeTruthy();
         expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
         expect(mockInvoke).not.toHaveBeenCalledWith('calculate_new_sensor', expect.anything());
+    });
+
+    it('enables Add sensor only once Description/Unit/Component are filled in too, not just Name', async () => {
+        render(<AddSensorWindow />);
+        await deliverSensorsData(['TAG1', 'TAG2']);
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config')); // has a name ('MyCalc') already
+
+        expect(screen.getByText('Fill in a description, a unit, a component before adding.')).toBeTruthy();
+        expect((screen.getByText('Add sensor') as HTMLButtonElement).disabled).toBe(true);
+
+        fireEvent.click(screen.getByText('set-description'));
+        expect(screen.getByText('Fill in a unit, a component before adding.')).toBeTruthy();
+        fireEvent.click(screen.getByText('set-unit'));
+        fireEvent.click(screen.getByText('set-component'));
+        expect(screen.queryByText(/Fill in/)).toBeNull();
+        expect((screen.getByText('Add sensor') as HTMLButtonElement).disabled).toBe(false);
     });
 
     it('adding a legacy-config calculation invokes calculate_new_sensor and merges the new sensor into state', async () => {
@@ -221,6 +240,9 @@ describe('AddSensorWindow', () => {
         fireEvent.click(screen.getByText('toggle-tag1'));
         fireEvent.click(screen.getByText('toggle-tag2'));
         fireEvent.click(screen.getByText('submit-formula'));
+        fireEvent.click(screen.getByText('set-description'));
+        fireEvent.click(screen.getByText('set-unit'));
+        fireEvent.click(screen.getByText('set-component'));
 
         await act(async () => {
             fireEvent.click(screen.getByText('Add sensor'));
@@ -274,6 +296,9 @@ describe('AddSensorWindow', () => {
         await deliverSensorsData(['TAG1', 'TAG2']);
         fireEvent.click(screen.getByText('toggle-tag1'));
         fireEvent.click(screen.getByText('set-config'));
+        fireEvent.click(screen.getByText('set-description'));
+        fireEvent.click(screen.getByText('set-unit'));
+        fireEvent.click(screen.getByText('set-component'));
 
         await act(async () => {
             fireEvent.click(screen.getByText('Add sensor'));
@@ -402,6 +427,9 @@ describe('AddSensorWindow', () => {
         await deliverSensorsData(['TAG1']);
         fireEvent.click(screen.getByText('toggle-tag1'));
         fireEvent.click(screen.getByText('set-config'));
+        fireEvent.click(screen.getByText('set-description'));
+        fireEvent.click(screen.getByText('set-unit'));
+        fireEvent.click(screen.getByText('set-component'));
         await act(async () => {
             fireEvent.click(screen.getByText('Add sensor'));
             await Promise.resolve();
@@ -441,12 +469,24 @@ describe('AddSensorWindow', () => {
         '${B} * 3': ['B'],
     };
 
+    // The real `SpecialSensorEditor` requires Description/Unit/Component
+    // filled in too (see its own test file); `openManage`'s default
+    // `sensorMetadata: []` leaves every recipe's editor opening blank, so
+    // these tests fill them in before saving unless they're deliberately
+    // exercising a DIFFERENT reason the save gets refused.
+    const fillEditorRequiredFields = () => {
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+    };
+
     it('editing a sensor recomputes it and everything built on top of it, in order', async () => {
         mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '$TAG1 * 5': ['TAG1'] }));
         await openManage({ specialSensorRecipes: [chainA, chainB, chainC] });
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -469,7 +509,9 @@ describe('AddSensorWindow', () => {
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
         fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'bar' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -489,6 +531,7 @@ describe('AddSensorWindow', () => {
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         // A reading C, which is two steps downstream of A, closes the loop.
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '${C} + 1' } });
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -505,6 +548,7 @@ describe('AddSensorWindow', () => {
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '42' } });
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -526,6 +570,7 @@ describe('AddSensorWindow', () => {
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$GONE * 2' } });
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -542,6 +587,7 @@ describe('AddSensorWindow', () => {
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -568,6 +614,7 @@ describe('AddSensorWindow', () => {
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit Total flow')); });
         fireEvent.click(screen.getByText('Average all'));
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -602,6 +649,7 @@ describe('AddSensorWindow', () => {
 
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit Total flow')); });
         fireEvent.click(screen.getByText('Absolute difference'));
+        fillEditorRequiredFields();
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
@@ -613,6 +661,101 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
             recipe: { kind: 'formula', tag: 'Total flow', formula: 'abs($TAG1 - $TAG2)' },
         }));
+    });
+
+    // ---- Manage tab: renaming --------------------------------------------
+    //
+    // The Name field in the editor used to be locked; it's now a real input
+    // (see `SpecialSensorEditor.test.tsx` for that component's own
+    // validation coverage). These exercise the cascade `handleSaveEdit` runs
+    // when a save also renames the sensor: every OTHER recipe that names the
+    // old tag gets rewritten via `rename_formula_refs` BEFORE anything
+    // replays, and the Dashboard is told via `rename-special-sensor` instead
+    // of `update-special-sensor`.
+
+    it('renaming a sensor with nothing built on top of it emits rename-special-sensor with no updatedRecipes', async () => {
+        mockInvoke.mockImplementation(refsByFormula(chainRefs));
+        await openManage({ specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'A2' } });
+        fillEditorRequiredFields();
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(mockInvoke).not.toHaveBeenCalledWith('rename_formula_refs', expect.anything());
+        expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', expect.objectContaining({ customName: 'A2', replace: true }));
+        expect(mockEmit).toHaveBeenCalledWith('rename-special-sensor', {
+            oldTag: 'A',
+            newTag: 'A2',
+            recipe: { kind: 'formula', tag: 'A2', formula: '$TAG1 * 2' },
+            metadata: expect.objectContaining({ tag: 'A2' }),
+            updatedRecipes: [],
+        });
+        expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
+        // The row now shows the new tag, not the old one.
+        expect(screen.queryByLabelText('Edit A')).toBeNull();
+        expect(screen.getByLabelText('Edit A2')).toBeTruthy();
+    });
+
+    it('renaming rewrites every downstream formula\'s reference before replaying it, in order', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'extract_formula_refs') {
+                return Promise.resolve((args.formulas as string[]).map((f: string) => (chainRefs as any)[f] ?? []));
+            }
+            if (cmd === 'rename_formula_refs') {
+                expect(args).toEqual({ formula: '${A} + 1', oldName: 'A', newName: 'A2' });
+                return Promise.resolve('${A2} + 1');
+            }
+            if (cmd === 'evaluate_formula') return Promise.resolve('ok');
+            return Promise.resolve([]);
+        });
+        await openManage({ specialSensorRecipes: [chainA, chainB] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'A2' } });
+        fillEditorRequiredFields();
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(mockInvoke).toHaveBeenCalledWith('rename_formula_refs', { formula: '${A} + 1', oldName: 'A', newName: 'A2' });
+
+        const recomputes = mockInvoke.mock.calls
+            .filter(([cmd]) => cmd === 'evaluate_formula')
+            .map(([, args]) => [args.customName, args.formula]);
+        // A2 recomputes first (it's what changed), THEN B -- reading the
+        // REWRITTEN formula, not the stale one still naming "A".
+        expect(recomputes).toEqual([
+            ['A2', '$TAG1 * 2'],
+            ['B', '${A2} + 1'],
+        ]);
+
+        expect(mockEmit).toHaveBeenCalledWith('rename-special-sensor', expect.objectContaining({
+            oldTag: 'A',
+            newTag: 'A2',
+            updatedRecipes: [{ kind: 'formula', tag: 'B', formula: '${A2} + 1' }],
+        }));
+    });
+
+    it('blocks renaming to a tag another sensor already uses', async () => {
+        mockInvoke.mockImplementation(refsByFormula(chainRefs));
+        await openManage({ sensors: ['TAG1', 'B'], specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'B' } });
+        expect(screen.getByText(/already in use by another sensor/)).toBeTruthy();
+        expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
+
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve();
+        });
+        expect(mockEmit).not.toHaveBeenCalledWith('rename-special-sensor', expect.anything());
+        expect(mockInvoke).not.toHaveBeenCalledWith('rename_formula_refs', expect.anything());
     });
 
     it('Close closes the window', async () => {

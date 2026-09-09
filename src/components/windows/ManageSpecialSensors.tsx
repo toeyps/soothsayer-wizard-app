@@ -30,7 +30,7 @@ interface Props {
      *  produces them. */
     editingTag: string | null;
     onEdit: (tag: string | null) => void;
-    onSaveEdit: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata }) => void;
+    onSaveEdit: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => void;
     savingEdit: boolean;
     editError: string | null;
 }

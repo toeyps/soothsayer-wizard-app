@@ -11,6 +11,7 @@ import ManageSpecialSensors from "./ManageSpecialSensors";
 import { debugLog } from "../../utils/debugLog";
 import { buildSpecialSensorUsage, cycleConflicts, dependentsToRecompute } from "../../utils/specialSensorDeps";
 import { recomputeSpecialSensors } from "../../utils/specialSensorRecompute";
+import { renameTagInArray, renameTagInRecipes } from "../../utils/specialSensorRename";
 
 /** How long a deleted special sensor can still be brought back. Nothing has
  *  left this window yet during that time — see `commitDelete`. */
@@ -46,7 +47,6 @@ export default function AddSensorWindow() {
     // each event rather than appending to it.
     const [pendingSensors, setPendingSensors] = useState<string[]>([]);
 
-    const [nameMissing, setNameMissing] = useState(false);
     const [toast, setToast] = useState<string | null>(null);
     const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -247,7 +247,8 @@ export default function AddSensorWindow() {
     }, [recipes, pendingDelete]);
 
     /**
-     * Save an edited special sensor.
+     * Save an edited special sensor -- including a rename (the Name field is
+     * no longer locked; `renamedFrom` is set when it changed).
      *
      * Editing is not a local change. The sensor's column was computed once and
      * lives in the Rust session; changing the recipe means recomputing it, and
@@ -255,20 +256,41 @@ export default function AddSensorWindow() {
      * stale the moment this lands. So the edit recomputes the sensor and then
      * replays every downstream recipe, in recipe order.
      *
-     * Two things get refused rather than repaired afterwards: a formula that
-     * references nothing (there would be no column to compute), and one that
-     * makes the sensor depend on itself — directly or through the chain.
-     * Nothing later in the app would catch a cycle: the recipes would just
-     * replay in order on the next workspace open, each reading whatever stale
-     * column happened to be there.
+     * A rename adds one more step before that replay: every OTHER recipe that
+     * still names the OLD tag -- a formula's `$oldName` reference, or an
+     * operation's `sourceSensors` entry -- has to be rewritten to the new one
+     * FIRST (`renameTagInRecipes`, via the Rust `rename_formula_refs`
+     * command), or replaying them next would ask the backend to resolve a
+     * name that no longer means anything (the renamed sensor's own recompute
+     * below creates its column under the NEW name only). The dependency graph
+     * itself (`usage`/`cycleConflicts`/`dependentsToRecompute`) is still keyed
+     * by the OLD tag at this point -- `manageRecipes` hasn't been touched yet
+     * -- so every lookup into it uses `identityTag`, not `next.recipe.tag`.
+     *
+     * Three things get refused rather than repaired afterwards: a formula that
+     * references nothing (there would be no column to compute), one that makes
+     * the sensor depend on itself — directly or through the chain — and (new)
+     * a rename that collides with another sensor's tag. Nothing later in the
+     * app would catch a cycle: the recipes would just replay in order on the
+     * next workspace open, each reading whatever stale column happened to be
+     * there.
      */
-    const handleSaveEdit = useCallback(async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata }) => {
+    const handleSaveEdit = useCallback(async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
         setSavingEdit(true);
         setEditError(null);
         try {
             // Any deletion still mid-undo is settled first, so the dependency
             // graph this reasons about matches what the dashboard holds.
             await flushPendingDelete();
+
+            const oldTag = next.renamedFrom;
+            const newTag = next.recipe.tag;
+
+            if (oldTag) {
+                if (!newTag.trim()) throw new Error('Name is required.');
+                const collides = sensors.some(s => sameTag(s, newTag) && !sameTag(s, oldTag));
+                if (collides) throw new Error(`"${newTag}" is already in use by another sensor.`);
+            }
 
             let nextInputs: string[];
             if (next.recipe.kind === 'formula') {
@@ -281,6 +303,11 @@ export default function AddSensorWindow() {
                 nextInputs = next.recipe.sourceSensors;
             }
 
+            // The identity this recipe is still known by across `manageRecipes`
+            // / `formulaRefs` / `models` -- the OLD tag when renaming, since
+            // none of those have caught up to the new one yet.
+            const identityTag = oldTag ?? next.recipe.tag;
+
             const usage = buildSpecialSensorUsage({
                 recipes: manageRecipes,
                 formulaRefs: formulaRefs ?? new Map(),
@@ -288,35 +315,67 @@ export default function AddSensorWindow() {
                 selectedSensors: plottedSensors,
             });
 
-            const conflicts = cycleConflicts(manageRecipes, usage, next.recipe.tag, nextInputs);
+            const conflicts = cycleConflicts(manageRecipes, usage, identityTag, nextInputs);
             if (conflicts.length > 0) {
                 throw new Error(
                     `"${next.recipe.tag}" can't be built from ${conflicts.join(', ')} — that would make it depend on itself.`,
                 );
             }
 
-            const downstream = dependentsToRecompute(manageRecipes, usage, next.recipe.tag);
-            await recomputeSpecialSensors([next.recipe, ...downstream], (cmd, args) => invoke(cmd, args));
+            const downstream = dependentsToRecompute(manageRecipes, usage, identityTag);
 
-            setRecipes(prev => prev.map(r => (sameTag(r.tag, next.recipe.tag) ? next.recipe : r)));
+            // Carry the rename into every downstream recipe's own stored
+            // formula/sourceSensors BEFORE any of them replay, so each one
+            // resolves against the sensor's new name from here on.
+            const renamedDownstream = oldTag
+                ? await renameTagInRecipes(downstream, oldTag, newTag, (cmd, args) => invoke(cmd, args))
+                : downstream;
+
+            await recomputeSpecialSensors([next.recipe, ...renamedDownstream], (cmd, args) => invoke(cmd, args));
+
+            setRecipes(prev => prev.map(r => {
+                if (sameTag(r.tag, identityTag)) return next.recipe;
+                const rewritten = renamedDownstream.find(d => sameTag(d.tag, r.tag));
+                return rewritten ?? r;
+            }));
             setSensorMetadata(prev => {
                 const existing = prev ?? [];
-                return existing.some(m => sameTag(m.tag, next.metadata.tag))
-                    ? existing.map(m => (sameTag(m.tag, next.metadata.tag) ? next.metadata : m))
-                    : [...existing, next.metadata];
+                const withoutOld = oldTag ? existing.filter(m => !sameTag(m.tag, oldTag)) : existing;
+                return withoutOld.some(m => sameTag(m.tag, next.metadata.tag))
+                    ? withoutOld.map(m => (sameTag(m.tag, next.metadata.tag) ? next.metadata : m))
+                    : [...withoutOld, next.metadata];
             });
 
-            await emit('update-special-sensor', {
-                recipe: next.recipe,
-                metadata: next.metadata,
-                recomputed: [next.recipe.tag, ...downstream.map(r => r.tag)],
-            });
+            if (oldTag) {
+                setSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                setSelectedSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                setPlottedSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                setPendingSensors(prev => renameTagInArray(prev, oldTag, newTag));
+            }
+
+            if (oldTag) {
+                await emit('rename-special-sensor', {
+                    oldTag,
+                    newTag,
+                    recipe: next.recipe,
+                    metadata: next.metadata,
+                    updatedRecipes: renamedDownstream,
+                });
+            } else {
+                await emit('update-special-sensor', {
+                    recipe: next.recipe,
+                    metadata: next.metadata,
+                    recomputed: [next.recipe.tag, ...downstream.map(r => r.tag)],
+                });
+            }
 
             setEditingTag(null);
             showToast(
-                downstream.length > 0
-                    ? `Updated ${next.recipe.tag} — recomputed ${downstream.length} sensor(s) built on it`
-                    : `Updated ${next.recipe.tag}`,
+                oldTag
+                    ? `Renamed "${oldTag}" to "${newTag}"${downstream.length > 0 ? ` — updated ${downstream.length} sensor(s) built on it` : ''}`
+                    : downstream.length > 0
+                        ? `Updated ${next.recipe.tag} — recomputed ${downstream.length} sensor(s) built on it`
+                        : `Updated ${next.recipe.tag}`,
             );
         } catch (err) {
             setEditError(err instanceof Error ? err.message : String(err));
@@ -325,8 +384,7 @@ export default function AddSensorWindow() {
         }
         // `showToast` is a stable-enough local helper defined above; it reads
         // only refs and setters.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [flushPendingDelete, manageRecipes, formulaRefs, models, plottedSensors]);
+    }, [flushPendingDelete, manageRecipes, formulaRefs, models, plottedSensors, sensors]);
 
     const handleClose = async () => {
         // A pending delete has not left this window yet; closing is the user
@@ -348,6 +406,23 @@ export default function AddSensorWindow() {
     // it reports up via onConfigChange/onFormulaSubmit.
     const isCreatingSomething = (formulaMode && formulaExpression.trim() !== '') || operationConfig !== null;
     const currentName = formulaMode ? formulaCustomName : (operationConfig?.customName ?? '');
+
+    // Name + Description + Unit + Component must all be filled in before a
+    // new sensor can be added -- previously only Name was checked (and only
+    // on click, via a flash message), so "Add sensor" stayed clickable with
+    // Unit/Component left blank; the sensor was then silently created with
+    // an empty unit and "Uncategorized" as its component. Blank when nothing
+    // is actually being created (adding raw sensor(s) through as-is has
+    // nothing to name).
+    const missingCreateFields = isCreatingSomething
+        ? [
+            !currentName.trim() && 'a name',
+            !description.trim() && 'a description',
+            !unit.trim() && 'a unit',
+            !component.trim() && 'a component',
+        ].filter((f): f is string => !!f)
+        : [];
+    const canAdd = missingCreateFields.length === 0;
 
     /**
      * Run whatever calculation is currently configured (formula, legacy
@@ -406,11 +481,9 @@ export default function AddSensorWindow() {
     // one, and keeps the window open -- there's no separate "finish" step;
     // "Close" just closes once the user is done adding sensors.
     const handleAdd = async () => {
-        if (isCreatingSomething && !currentName.trim()) {
-            setNameMissing(true);
-            return;
-        }
-        setNameMissing(false);
+        // Defensive -- the button itself is disabled in this state, so this
+        // only matters if it's ever reached some other way.
+        if (!canAdd) return;
         setLoading(true);
         try {
             const { sensorsForEmit, newMetadata, newRecipes } = await computeCurrentRound();
@@ -474,13 +547,11 @@ export default function AddSensorWindow() {
         setFormulaMode(true);
         setFormulaExpression(formula);
         setFormulaCustomName(customName || '');
-        setNameMissing(false);
     }, []);
 
     const handleConfigChange = useCallback((config: SensorOperationConfig | null) => {
         setFormulaMode(false);
         setOperationConfig(config);
-        setNameMissing(false);
     }, []);
 
     const filteredSensors = useMemo(() => {
@@ -600,15 +671,23 @@ export default function AddSensorWindow() {
 
             {/* Footer */}
             <div className="flex flex-col gap-2 px-4 py-3 border-t shrink-0" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
-                {nameMissing && activeTab === 'create' && (
+                {activeTab === 'create' && missingCreateFields.length > 0 && (
                     <p className="text-xs" style={{ color: 'var(--danger)' }}>
-                        Give this sensor a name before adding it.
+                        Fill in {missingCreateFields.join(', ')} before adding.
                     </p>
                 )}
                 <div className="flex justify-end gap-2">
                     <button onClick={handleClose} className="px-4 py-1.5 rounded text-sm" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>Close</button>
                     {activeTab === 'create' && (
-                        <button onClick={handleAdd} className="px-4 py-1.5 rounded text-white text-sm font-medium" style={{ backgroundColor: 'var(--accent-color)' }}>Add sensor</button>
+                        <button
+                            onClick={handleAdd}
+                            disabled={!canAdd}
+                            title={canAdd ? undefined : `Fill in ${missingCreateFields.join(', ')} first`}
+                            className="px-4 py-1.5 rounded text-white text-sm font-medium"
+                            style={{ backgroundColor: 'var(--accent-color)', opacity: canAdd ? 1 : 0.45, cursor: canAdd ? 'pointer' : 'not-allowed' }}
+                        >
+                            Add sensor
+                        </button>
                     )}
                 </div>
             </div>

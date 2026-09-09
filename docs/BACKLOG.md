@@ -282,6 +282,99 @@ test.tsx` +2 end-to-end — including one that edits an operation recipe
 into a formula-backed shortcut and confirms the emitted `update-special-
 sensor` payload actually switches kind). 961/961, `tsc`/`eslint` clean.
 
+### ✏️ Feature 2026-09-09 — Special sensors can now be renamed, and Create/Edit both require Name+Description+Unit+Component before saving
+
+User feedback (two screenshots): (1) the Manage tab's edit form showed the
+sensor's Name as a fixed, disabled field — "you have to be able to rename
+it, obviously". (2) the Create tab's "Add sensor" button stayed clickable
+with Unit and Component left blank — "you can click Add even though the
+fields aren't fully filled in; you should have to fill everything in
+first."
+
+**1. Renaming.** The name (`recipe.tag`) is what other formulas reference
+(`$name`), what Failure Group models store, and what the chart's selection/
+colours/axis ranges/alarm lines/highlights are keyed by — a rename has to
+carry through all of that at once, or something is left pointing at a tag
+that no longer exists.
+
+- **Rust**: new `rename_formula_refs` command + a `rewrite_sensor_ref`
+  helper that walks a formula with the *same tokenizer* `extract_sensor_refs`
+  already uses, rewriting only the tokens whose name matches (case-
+  insensitive) — not a blind string replace, which would corrupt a name
+  that's a prefix of a longer one (`$test` is a literal substring of
+  `$testA`). No backend command needed to move the live column itself: the
+  renamed sensor is simply recomputed under its new tag through the
+  existing recompute path (`evaluate_formula`/`calculate_new_sensor`,
+  `replace: true`), so its data is provably correct without a second,
+  narrower code path to keep in sync. The old-tag column is left behind,
+  unreferenced, in the Rust session's memory — harmless (rebuilt fresh on
+  every app restart anyway), and consistent with how an ordinary edit
+  already leaves no delete-column command in the first place.
+- **`src/utils/specialSensorRename.ts`** (new): the small, pure, reusable
+  pieces of the cascade — `renameTagInArray` (flat tag lists), `renameTagInRecord`
+  (tag-keyed maps: colours, axis ranges, alarm lines), `renameTagInModels`
+  (all seven of a `FailureModel`'s sensor-bearing fields, see
+  `specialSensorDeps.ts`'s read-only `MODEL_SENSOR_FIELDS` for the same
+  list), and `renameTagInRecipes` (async — calls `rename_formula_refs` for
+  formula-kind recipes, swaps `sourceSensors` entries directly for
+  operation-kind ones).
+- **`SpecialSensorEditor.tsx`**: Name is now a real input. Validates
+  non-empty and not colliding (case-insensitively) with any other sensor's
+  tag; reports the rename to the caller via a new `renamedFrom` field on
+  `onSave` rather than a string comparison, so "was this actually renamed"
+  is never inferred from trimming/whitespace differences.
+- **`AddSensorWindow.handleSaveEdit`**: when `renamedFrom` is set — checked
+  against `sensors` (defense-in-depth backstop behind the editor's own
+  check) — every downstream recipe that names the old tag has its formula/
+  `sourceSensors` rewritten via `renameTagInRecipes` **before** anything
+  replays (a downstream formula still reading `$oldName` would fail to
+  resolve the moment the renamed sensor's own column moves to the new
+  name), then everything recomputes as usual. Emits a new
+  **`rename-special-sensor`** event (`{oldTag, newTag, recipe, metadata,
+  updatedRecipes}`) instead of `update-special-sensor`, and re-keys this
+  window's own local mirrors (`sensors`, `selectedSensors`,
+  `plottedSensors`, `pendingSensors`).
+- **`Dashboard.tsx`**: new listener for `rename-special-sensor` — re-keys
+  `specialSensorRecipes` (the renamed entry + every rewritten downstream
+  one, by tag), `extraSensorMetadata`, `sensorHeaders`, `selectedSensors`,
+  `visibleSensors`, `sensorColors`, `sensorAxisRange`, `alarmLinesEnabled`,
+  `scatterAxes`, `scatterAxisPins`, `valueHighlight.sensor`, and every
+  Failure Group model's seven sensor fields (persisted via the same
+  read-modify-write `persistFailureGroupState` path a concurrently open
+  Build Model window also uses) — then bumps `dataRevision` so the chart/
+  scatter queries refetch. `stateRef` (already the "read fresh without
+  re-subscribing every render" pattern this file's listener effect uses)
+  gained `fgGroups` so the rename handler can read it without adding a
+  dependency that would tear down and re-register every Tauri listener on
+  every group edit.
+
+**2. Required fields.** Both Create (`AddSensorWindow`'s own
+`missingCreateFields`/`canAdd`) and the edit form
+(`SpecialSensorEditor`'s `missingFields`/`canSave`) now require Name +
+Description + Unit + Component all filled in before the button enables —
+previously only Name was checked, and only reactively (a flash message
+*after* a blocked click); Description/Unit/Component were silently
+optional, so "Add" stayed clickable with them blank and the sensor was
+created with an empty unit and `component: 'Uncategorized'` with no
+indication that had happened. The hint text lists exactly which fields are
+still missing and updates live as they're filled in. One consequence:
+clearing Component in the edit form no longer silently falls back to
+"Uncategorized" on save — it now blocks the save instead, same as any
+other missing field, since "Uncategorized" is meant to be typed
+explicitly.
+
+Tests: Rust +9 (`rewrite_sensor_ref_tests`), TS +15 (`specialSensorRename.
+test.ts`, new file) +5 (`SpecialSensorEditor.test.tsx`: renaming +
+required-fields describe blocks) +3 (`AddSensorWindow.test.tsx`:
+rename-with-no-dependents, rename-rewrites-downstream-in-order,
+rename-blocked-by-collision) +1 (`Dashboard.test.tsx`: the full re-key
+cascade) — plus every pre-existing test across both windows' test files
+that exercised a save/add without filling in Description/Unit/Component
+updated to do so (the old passing state relied on exactly the gap being
+fixed). `cargo test`: 164/164 (+1 ignored, pre-existing). `npm test`:
+989/989. `tsc --noEmit` clean, `eslint` 0 errors (pre-existing warning
+count unchanged — none introduced by this change).
+
 ### 🗂️ Everything else outstanding
 
 Items **11-19** below, added 2026-09-03. Items 9 and 10 remain deferred by

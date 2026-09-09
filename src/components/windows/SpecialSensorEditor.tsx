@@ -10,16 +10,20 @@ import { ButtonBuilder, BASE_OP_IDS } from "./SensorTooling";
 /**
  * Edit one special sensor in place.
  *
- * Everything about the recipe can change here except the sensor's NAME. The
- * name is what other formulas reference (`$name`), what Failure Group models
- * store, and what the chart, colours and axis ranges are keyed by — renaming
- * would have to rewrite all of that at once, and there is no rename-refactor
- * in the app. Create a new sensor and delete this one instead.
+ * The sensor's name (`tag`) can be changed here too — it is what other
+ * formulas reference (`$name`), what Failure Group models store, and what
+ * the chart, colours and axis ranges are keyed by, so a rename has to carry
+ * through all of that at once. This component only collects the new name and
+ * flags that a rename happened (`renamedFrom` on `onSave`); the actual
+ * cascade — rewriting every other recipe that names this sensor, every
+ * dashboard state slice keyed by the tag, every Failure Group model field —
+ * is the caller's job (`AddSensorWindow.handleSaveEdit`), same as every other
+ * "is this actually allowed" decision below.
  *
  * This component only collects values. Whether the edit is actually allowed —
- * does the formula parse, does it create a cycle — is decided by the caller,
- * which has the backend and the dependency graph; it reports back through
- * `error`.
+ * does the formula parse, does it create a cycle, does the new name collide
+ * with an existing one — is decided by the caller, which has the backend and
+ * the dependency graph; it reports back through `error`.
  *
  * An operation-kind recipe (`sum(...)`, `a + 10`, ...) is edited with the
  * SAME single-sensor-vs-combine button UI Create uses (`ButtonBuilder`),
@@ -44,7 +48,10 @@ interface Props {
     /** Every tag that can be used as an input to an operation recipe. */
     availableSensors: string[];
     onCancel: () => void;
-    onSave: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata }) => void;
+    /** `renamedFrom` is set (to the recipe's ORIGINAL tag) exactly when the
+     *  Name field was changed — the caller uses its presence, not a string
+     *  comparison, to decide whether the rename cascade needs to run. */
+    onSave: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => void;
     /** True while the caller is recomputing — the form stays visible but frozen. */
     saving: boolean;
     /** Why the last save attempt was refused, in the user's words. */
@@ -94,6 +101,18 @@ export default function SpecialSensorEditor({
     const [unit, setUnit] = useState(meta?.unit ?? '');
     const [component, setComponent] = useState(meta?.component ?? '');
 
+    // ---- Name (rename support) ---------------------------------------------
+    const [tag, setTag] = useState(recipe.tag);
+    const trimmedTag = tag.trim();
+    const tagChanged = trimmedTag !== recipe.tag;
+    const tagError = !trimmedTag
+        ? 'Name is required'
+        : tagChanged && availableSensors.some(
+            s => s.toLowerCase() !== recipe.tag.toLowerCase() && s.toLowerCase() === trimmedTag.toLowerCase(),
+        )
+            ? `"${trimmedTag}" is already in use by another sensor`
+            : null;
+
     const isFormula = recipe.kind === 'formula';
 
     // ---- Formula-kind editing: unchanged, raw text -------------------------
@@ -136,9 +155,10 @@ export default function SpecialSensorEditor({
     const addable = useMemo(
         () => availableSensors.filter(
             s => s.toLowerCase() !== recipe.tag.toLowerCase()
+                && s.toLowerCase() !== trimmedTag.toLowerCase()
                 && !sources.some(picked => picked.toLowerCase() === s.toLowerCase()),
         ),
-        [availableSensors, sources, recipe.tag],
+        [availableSensors, sources, recipe.tag, trimmedTag],
     );
 
     // Same fix as `SensorTooling`'s own `buildResult`: `engine.build` is a
@@ -147,12 +167,25 @@ export default function SpecialSensorEditor({
     // unrelated re-render would look like the calculation just changed.
     const buildResult = useMemo(() => engine.build(), [engine.build]);
 
-    const canSave = !saving && (isFormula ? formula.trim().length > 0 : buildResult.kind !== 'none');
+    // Name + Description + Unit + Component are all required before saving
+    // is allowed — mirrors the same rule Create enforces (see
+    // AddSensorWindow's `missingCreateFields`), so a sensor can't leave this
+    // form half-described either.
+    const missingFields = [
+        !trimmedTag && 'a name',
+        !description.trim() && 'a description',
+        !unit.trim() && 'a unit',
+        !component.trim() && 'a component',
+    ].filter((f): f is string => !!f);
+
+    const canSave =
+        !saving && !tagError && missingFields.length === 0
+        && (isFormula ? formula.trim().length > 0 : buildResult.kind !== 'none');
 
     const submit = () => {
         const nextMetadata: SensorMetadata = {
-            ...(meta ?? { tag: recipe.tag, description: '', unit: '', component: '' }),
-            tag: recipe.tag,
+            ...(meta ?? { tag: trimmedTag, description: '', unit: '', component: '' }),
+            tag: trimmedTag,
             description: description.trim(),
             unit: unit.trim(),
             component: component.trim() || 'Uncategorized',
@@ -160,26 +193,30 @@ export default function SpecialSensorEditor({
 
         let nextRecipe: SpecialSensorRecipe;
         if (isFormula) {
-            nextRecipe = { kind: 'formula', tag: recipe.tag, formula: formula.trim() };
+            nextRecipe = { kind: 'formula', tag: trimmedTag, formula: formula.trim() };
         } else if (buildResult.kind === 'legacy') {
             nextRecipe = {
                 kind: 'operation',
-                tag: recipe.tag,
+                tag: trimmedTag,
                 sourceSensors: sources,
                 // The name is forced back so a recomputation can never rename
                 // the column out from under everything pointing at it.
-                operationConfig: { ...buildResult.config, customName: recipe.tag },
+                operationConfig: { ...buildResult.config, customName: trimmedTag },
             };
         } else if (buildResult.kind === 'formula') {
             // Picking a formula-backed shortcut (or leaving the operator
             // chain active) resolves to a formula, not an operation config --
             // the saved recipe's kind follows that, exactly like creating a
             // new sensor this way would.
-            nextRecipe = { kind: 'formula', tag: recipe.tag, formula: buildResult.expression };
+            nextRecipe = { kind: 'formula', tag: trimmedTag, formula: buildResult.expression };
         } else {
             return; // canSave already guards this; nothing to submit.
         }
-        onSave({ recipe: nextRecipe, metadata: nextMetadata });
+        onSave({
+            recipe: nextRecipe,
+            metadata: nextMetadata,
+            renamedFrom: tagChanged ? recipe.tag : undefined,
+        });
     };
 
     return (
@@ -190,11 +227,19 @@ export default function SpecialSensorEditor({
             >
                 <div>
                     <span style={labelStyle}>Name</span>
-                    <div style={{ ...fieldStyle, opacity: 0.6, cursor: 'not-allowed' }}>{recipe.tag}</div>
-                    <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
-                        Renaming isn’t supported — other formulas and models point at this name.
-                        Create a new sensor and delete this one instead.
-                    </p>
+                    <input
+                        aria-label="Name"
+                        value={tag}
+                        onChange={e => setTag(e.target.value)}
+                        style={{ ...fieldStyle, borderColor: tagError ? 'var(--danger)' : undefined }}
+                    />
+                    {tagError ? (
+                        <p role="alert" style={{ fontSize: '11px', color: 'var(--danger)', marginTop: 3 }}>{tagError}</p>
+                    ) : (
+                        <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
+                            Renaming updates every formula, model, and chart setting that points at this sensor.
+                        </p>
+                    )}
                 </div>
 
                 {isFormula ? (
@@ -302,8 +347,12 @@ export default function SpecialSensorEditor({
                     </div>
                 </div>
 
-                {error && (
+                {error ? (
                     <p role="alert" style={{ fontSize: '11.5px', color: 'var(--danger)' }}>{error}</p>
+                ) : missingFields.length > 0 && (
+                    <p style={{ fontSize: '11.5px', color: 'var(--warn)' }}>
+                        Fill in {missingFields.join(', ')} before saving.
+                    </p>
                 )}
 
                 <div className="flex items-center justify-end gap-2">

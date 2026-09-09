@@ -25,6 +25,7 @@ import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSam
 import { reportError } from '../../errorReporter';
 import { useChartData } from '../../hooks/useChartData';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { renameTagInArray, renameTagInRecord, renameTagInModels } from '../../utils/specialSensorRename';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
@@ -44,6 +45,11 @@ const PANELS = {
 const FG_GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
 const getFgGroupColor = (no: number): string =>
     no === 0 ? 'slate' : FG_GROUP_PALETTE[(no - 1) % FG_GROUP_PALETTE.length];
+
+/** Tag comparison is case-insensitive everywhere else this file matches a
+ *  sensor tag (see the `byTag` maps in the `add-sensor-selection` listener
+ *  below) — used here too for the special-sensor rename cascade. */
+const sameTag = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 type PanelId = keyof typeof PANELS;
 
@@ -1057,16 +1063,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // depends on a special sensor before offering to delete it (see
     // `buildSpecialSensorUsage`). They travel on the same
     // request-sensors/sensors-data handshake rather than a second one.
-    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels });
+    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups });
     useEffect(() => {
-        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels };
-    }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels]);
+        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups };
+    }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups]);
 
     useEffect(() => {
         let unlistenRequest: UnlistenFn | undefined;
         let unlistenAdd: UnlistenFn | undefined;
         let unlistenDelete: UnlistenFn | undefined;
         let unlistenUpdate: UnlistenFn | undefined;
+        let unlistenRename: UnlistenFn | undefined;
 
         const setupListeners = async () => {
             debugLog("Setting up Dashboard listeners");
@@ -1181,9 +1188,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // records the new recipe and metadata (autosave persists them)
             // and bumps `dataRevision` so the charts refetch the new values.
             //
-            // The tag never changes: an edit cannot rename a sensor, because
-            // the name is what other formulas, models and chart entries point
-            // at. So nothing here has to be re-keyed.
+            // The tag is unchanged here — a rename fires `rename-special-
+            // sensor` instead (below), which is where every tag-keyed piece
+            // of this file's own state gets re-keyed. This listener only
+            // ever sees an edit that keeps the same tag.
             unlistenUpdate = await listen<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata }>('update-special-sensor', (event) => {
                 const { recipe, metadata } = event.payload ?? {};
                 if (!recipe) return;
@@ -1200,6 +1208,59 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 }
                 setDataRevision(n => n + 1);
             });
+
+            // A special sensor was RENAMED (in addition to whatever else the
+            // edit changed) in the "Manage" tab. Everything `update-special-
+            // sensor` already does for the recipe/metadata pair itself, PLUS
+            // re-keying every OTHER piece of this file's own state that names
+            // a sensor by tag — selection, per-sensor chart cosmetics, and
+            // every Failure Group model field. `updatedRecipes` carries any
+            // downstream recipe whose formula/sourceSensors were rewritten to
+            // point at the new name (their OWN tags are unchanged, so they're
+            // matched into `specialSensorRecipes` by tag, same as `recipe`
+            // itself is matched by `oldTag`).
+            unlistenRename = await listen<{
+                oldTag: string;
+                newTag: string;
+                recipe: SpecialSensorRecipe;
+                metadata: SensorMetadata;
+                updatedRecipes: SpecialSensorRecipe[];
+            }>('rename-special-sensor', (event) => {
+                const { oldTag, newTag, recipe, metadata, updatedRecipes } = event.payload ?? {};
+                if (!oldTag || !newTag || !recipe) return;
+                debugLog('Dashboard received rename-special-sensor', event.payload);
+                const isOld = (tag: string) => sameTag(tag, oldTag);
+
+                setSpecialSensorRecipes(prev => prev.map(r => {
+                    if (isOld(r.tag)) return recipe;
+                    const rewritten = (updatedRecipes ?? []).find(u => sameTag(u.tag, r.tag));
+                    return rewritten ?? r;
+                }));
+                setExtraSensorMetadata(prev => {
+                    const withoutOld = prev.filter(m => !isOld(m.tag));
+                    return withoutOld.some(m => sameTag(m.tag, newTag))
+                        ? withoutOld.map(m => (sameTag(m.tag, newTag) ? metadata : m))
+                        : [...withoutOld, metadata];
+                });
+                setSensorHeaders(prev => renameTagInArray(prev, oldTag, newTag));
+                setSelectedSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                setVisibleSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                setSensorColors(prev => renameTagInRecord(prev, oldTag, newTag));
+                setSensorAxisRange(prev => renameTagInRecord(prev, oldTag, newTag));
+                setAlarmLinesEnabled(prev => renameTagInRecord(prev, oldTag, newTag));
+                setScatterAxes(prev => (prev ? { x: isOld(prev.x) ? newTag : prev.x, y: isOld(prev.y) ? newTag : prev.y } : prev));
+                setScatterAxisPins(prev => ({
+                    x: prev.x && isOld(prev.x.sensor) ? { ...prev.x, sensor: newTag } : prev.x,
+                    y: prev.y && isOld(prev.y.sensor) ? { ...prev.y, sensor: newTag } : prev.y,
+                }));
+                setValueHighlight(prev => (isOld(prev.sensor) ? { ...prev, sensor: newTag } : prev));
+
+                const renamedModels = renameTagInModels(stateRef.current.fgModels, oldTag, newTag);
+                setFgModels(renamedModels);
+                persistFailureGroupState(stateRef.current.fgGroups, renamedModels);
+
+                setDataRevision(n => n + 1);
+            });
         };
 
         setupListeners();
@@ -1208,8 +1269,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             if (unlistenRequest) unlistenRequest();
             if (unlistenAdd) unlistenAdd();
             if (unlistenDelete) unlistenDelete();
+            if (unlistenRename) unlistenRename();
             if (unlistenUpdate) unlistenUpdate();
         };
+        // `persistFailureGroupState` is a `useCallback` keyed only on
+        // `initialState`, which never changes after this component mounts --
+        // capturing it once here (rather than re-subscribing every Tauri
+        // listener whenever its identity is recomputed) is the same
+        // register-once-use-`stateRef`-for-freshness pattern the rest of this
+        // effect already relies on.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const [filters, setFilters] = useState<FilterState>(initialState?.filters ?? { timestampStart: '', timestampEnd: '', sensorFilters: [] });

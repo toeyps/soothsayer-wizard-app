@@ -2248,6 +2248,102 @@ fn extract_formula_refs(formulas: Vec<String>) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Build the reference token for `name`, the same way the frontend's own
+/// `sensorRef()` (`useCalculationEngine.ts`) does -- braced whenever the name
+/// has a space or a dot, otherwise bare. The two are kept in sync by hand
+/// since one lives here and the other in TypeScript; there is no formula
+/// text built anywhere that doesn't go through one of the two.
+fn sensor_ref_token(name: &str) -> String {
+    if name.contains(' ') || name.contains('.') {
+        format!("${{{}}}", name)
+    } else {
+        format!("${}", name)
+    }
+}
+
+/// Rewrite every reference to `old_name` inside `formula` to point at
+/// `new_name` instead, leaving everything else byte-for-byte unchanged.
+///
+/// This is what makes renaming a special sensor safe for every OTHER
+/// formula that names it: walks the formula with the exact same tokenizer as
+/// `extract_sensor_refs` rather than doing a blind string replace, because a
+/// name can be a PREFIX of a longer one (`test` inside `test extend` via
+/// `${test extend}`, or `test` inside `testA` via `$testA`) -- naively
+/// replacing every literal occurrence of `$test` would also corrupt
+/// `$testA`. Matching is case-insensitive, same as every other tag
+/// comparison in the app. A formula that doesn't reference `old_name` at all
+/// comes back unchanged.
+fn rewrite_sensor_ref(formula: &str, old_name: &str, new_name: &str) -> String {
+    let old_lower = old_name.trim().to_lowercase();
+    let chars: Vec<char> = formula.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut out = String::with_capacity(formula.len());
+
+    while i < len {
+        if chars[i] == '$' {
+            if i + 1 < len && chars[i + 1] == '{' {
+                let name_start = i + 2;
+                let mut j = name_start;
+                while j < len && chars[j] != '}' {
+                    j += 1;
+                }
+                if j < len {
+                    let name: String = chars[name_start..j].iter().collect();
+                    if name.to_lowercase() == old_lower {
+                        out.push_str(&sensor_ref_token(new_name));
+                    } else {
+                        out.push('$');
+                        out.push('{');
+                        out.push_str(&name);
+                        out.push('}');
+                    }
+                    i = j + 1;
+                } else {
+                    // Unclosed brace -- same as `extract_sensor_refs`, don't
+                    // capture the rest of the formula as a name.
+                    out.push(chars[i]);
+                    i += 1;
+                }
+            } else if i + 1 < len && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
+                let name_start = i + 1;
+                let mut j = name_start;
+                while j < len && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == '.') {
+                    j += 1;
+                }
+                let name: String = chars[name_start..j].iter().collect();
+                if name.to_lowercase() == old_lower {
+                    out.push_str(&sensor_ref_token(new_name));
+                } else {
+                    out.push('$');
+                    out.push_str(&name);
+                }
+                i = j;
+            } else {
+                out.push(chars[i]);
+                i += 1;
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    out
+}
+
+/// Rewrite every reference to `old_name` in a formula to `new_name` --
+/// exposed to the frontend so the "Manage Special Sensors" rename flow can
+/// carry a rename into every OTHER formula-kind recipe that names the
+/// sensor. Reuses the same parser `extract_formula_refs` does rather than a
+/// second, string-replace-based rewrite on the TypeScript side, for the same
+/// reason that command exists: a name that's a prefix of a longer one would
+/// silently corrupt the longer one.
+#[tauri::command]
+fn rename_formula_refs(formula: String, old_name: String, new_name: String) -> String {
+    rewrite_sensor_ref(&formula, &old_name, &new_name)
+}
+
 /// Convert sensor references to fasteval-safe variable names.
 /// Returns (transformed_expression, map_of_safe_name -> original_sensor_name).
 ///
@@ -2406,6 +2502,66 @@ mod extract_formula_refs_tests {
     #[test]
     fn handles_an_empty_input_list() {
         assert!(extract_formula_refs(vec![]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rewrite_sensor_ref_tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_the_no_brace_form() {
+        assert_eq!(rewrite_sensor_ref("$A + 1", "A", "B"), "$B + 1");
+    }
+
+    #[test]
+    fn rewrites_the_braced_form() {
+        assert_eq!(
+            rewrite_sensor_ref("${Old Name} * 2", "Old Name", "New Name"),
+            "${New Name} * 2"
+        );
+    }
+
+    #[test]
+    fn braces_the_new_name_when_it_needs_it() {
+        assert_eq!(rewrite_sensor_ref("$A + 1", "A", "New Name"), "${New Name} + 1");
+    }
+
+    #[test]
+    fn unbraces_the_new_name_when_it_no_longer_needs_it() {
+        assert_eq!(rewrite_sensor_ref("${Old Name} + 1", "Old Name", "NewName"), "$NewName + 1");
+    }
+
+    #[test]
+    fn is_case_insensitive_on_the_old_name() {
+        assert_eq!(rewrite_sensor_ref("$test + 1", "TEST", "renamed"), "$renamed + 1");
+    }
+
+    /// The whole reason this walks the formula with the same tokenizer as
+    /// `extract_sensor_refs` instead of a naive string replace -- "$test" is
+    /// a literal substring of "$testA", so `.replace("$test", ...)` would
+    /// corrupt it too.
+    #[test]
+    fn does_not_touch_a_longer_name_that_starts_the_same_way() {
+        assert_eq!(rewrite_sensor_ref("$testA + $test", "test", "renamed"), "$testA + $renamed");
+    }
+
+    #[test]
+    fn leaves_a_formula_with_no_match_unchanged() {
+        assert_eq!(rewrite_sensor_ref("$A + $B", "C", "D"), "$A + $B");
+    }
+
+    #[test]
+    fn rewrites_every_occurrence() {
+        assert_eq!(rewrite_sensor_ref("$A + $A * 2", "A", "B"), "$B + $B * 2");
+    }
+
+    #[test]
+    fn ignores_an_unclosed_brace_rather_than_capturing_the_rest() {
+        assert_eq!(
+            rewrite_sensor_ref("${never closed + 1", "never closed", "x"),
+            "${never closed + 1"
+        );
     }
 }
 
@@ -3186,6 +3342,7 @@ pub fn run() {
             evaluate_formula,
             validate_formula,
             extract_formula_refs,
+            rename_formula_refs,
             train_individual_model,
             compute_clustering_preview,
             train_clustering_model,

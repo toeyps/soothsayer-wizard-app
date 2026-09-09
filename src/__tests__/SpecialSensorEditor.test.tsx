@@ -41,6 +41,15 @@ const save = () => screen.getByText('Save changes') as HTMLButtonElement;
 // `SensorTooling.test.tsx` itself has to work around -- so grab the input
 // via its label's sibling rather than `getByLabelText`.
 const valueInput = () => screen.getByText('Value').closest('div')!.querySelector('input') as HTMLInputElement;
+// Description/Unit/Component are required before Save enables -- tests that
+// exercise the operation-building UI itself (not this validation) render
+// with `sensorMetadata: []` (so these three start blank) and need this
+// called first, same as a real user filling in the master-data fields.
+const fillRequiredFields = () => {
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+    fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+};
 
 describe('SpecialSensorEditor', () => {
     describe('formula-kind recipes — edited as raw text', () => {
@@ -51,12 +60,9 @@ describe('SpecialSensorEditor', () => {
             expect((screen.getByLabelText('Unit') as HTMLInputElement).value).toBe('bar');
         });
 
-        it('shows the name as fixed and says why', () => {
+        it('opens the Name field editable, seeded with the current tag', () => {
             renderEditor();
-            expect(screen.getByText('special A')).toBeTruthy();
-            expect(screen.getByText(/Renaming isn’t supported/)).toBeTruthy();
-            // No editable name field to type a new tag into.
-            expect(screen.queryByLabelText('Name')).toBeNull();
+            expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('special A');
         });
 
         it('saves the edited formula and metadata under the original tag', () => {
@@ -76,11 +82,13 @@ describe('SpecialSensorEditor', () => {
             expect(save().disabled).toBe(true);
         });
 
-        it('falls back to Uncategorized when the component is cleared', () => {
+        it('requires a component -- clearing it disables Save instead of silently falling back', () => {
             const { props } = renderEditor();
             fireEvent.change(screen.getByLabelText('Component'), { target: { value: '' } });
+            expect(save().disabled).toBe(true);
+            expect(screen.getByText(/Fill in a component/)).toBeTruthy();
             fireEvent.click(save());
-            expect((props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].metadata.component).toBe('Uncategorized');
+            expect(props.onSave).not.toHaveBeenCalled();
         });
 
         it('cancel leaves without saving', () => {
@@ -148,6 +156,7 @@ describe('SpecialSensorEditor', () => {
         it('editing a legacy multi-op (Sum all) and saving keeps it an operation recipe', () => {
             const { props } = renderEditor({ recipe: operationRecipe, sensorMetadata: [] });
             fireEvent.click(screen.getByText('Average all'));
+            fillRequiredFields();
             fireEvent.click(save());
             const saved = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe;
             expect(saved).toEqual({
@@ -162,6 +171,7 @@ describe('SpecialSensorEditor', () => {
             const { props } = renderEditor({ recipe: singleRecipe, sensorMetadata: [] });
             fireEvent.click(screen.getByText('Multiply'));
             fireEvent.change(valueInput(), { target: { value: '3' } });
+            fillRequiredFields();
             fireEvent.click(save());
             const saved = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe;
             expect(saved.operationConfig.singleOp).toEqual({ type: 'multiply', value: 3 });
@@ -182,6 +192,7 @@ describe('SpecialSensorEditor', () => {
         it('picking a formula-backed shortcut (Absolute difference) saves as a formula recipe, not an operation', () => {
             const { props } = renderEditor({ recipe: operationRecipe, sensorMetadata: [] });
             fireEvent.click(screen.getByText('Absolute difference'));
+            fillRequiredFields();
             fireEvent.click(save());
             const saved = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe;
             expect(saved).toEqual({ kind: 'formula', tag: 'Total flow', formula: 'abs($TAG1 - $TAG2)' });
@@ -193,6 +204,7 @@ describe('SpecialSensorEditor', () => {
         it('leaving the operator chain active (no shortcut picked) saves as a formula recipe built from the chain', () => {
             const { props } = renderEditor({ recipe: operationRecipe, sensorMetadata: [] });
             fireEvent.click(screen.getByText('Sum all')); // toggle the seeded shortcut back off
+            fillRequiredFields();
             fireEvent.click(save());
             const saved = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe;
             expect(saved).toEqual({ kind: 'formula', tag: 'Total flow', formula: '$TAG1 + $TAG2' });
@@ -228,7 +240,7 @@ describe('SpecialSensorEditor', () => {
                 kind: 'operation', tag: 'Eff', sourceSensors: ['TAG1', 'TAG2'],
                 operationConfig: { mode: 'multi', multiOp: { type: 'sum' }, customName: 'Eff' },
             };
-            renderEditor({ recipe: threeSource, sensorMetadata: [] });
+            const { props } = renderEditor({ recipe: threeSource, sensorMetadata: [] });
             fireEvent.click(screen.getByText(/Efficiency %/));
             expect(screen.getByText('Click a sensor above to mark it as the input.')).toBeTruthy();
 
@@ -238,8 +250,10 @@ describe('SpecialSensorEditor', () => {
             // Source Sensors section renders first in the DOM.
             const tag2Chip = screen.getAllByText('TAG2')[0].closest('span')!;
             fireEvent.click(tag2Chip);
+            fillRequiredFields();
             fireEvent.click(save());
             expect(screen.queryByRole('alert')).toBeNull(); // sanity: no error path taken
+            expect(props.onSave).toHaveBeenCalled();
         });
 
         it('freezes the form and says so while the caller is recomputing', () => {
@@ -252,5 +266,86 @@ describe('SpecialSensorEditor', () => {
     it('shows why the caller refused the last attempt', () => {
         renderEditor({ error: '"special A" can’t be built from special B — that would make it depend on itself.' });
         expect(screen.getByRole('alert').textContent).toContain('depend on itself');
+    });
+
+    // The Name field used to be a fixed, disabled display -- it's now a real
+    // input. This component only collects the new name and flags that a
+    // rename happened (`renamedFrom`); the actual cascade across every other
+    // recipe / dashboard state slice / model is `AddSensorWindow`'s job (see
+    // `AddSensorWindow.test.tsx`).
+    describe('renaming', () => {
+        it('leaves renamedFrom unset when the name is untouched', () => {
+            const { props } = renderEditor();
+            fireEvent.click(save());
+            expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({ renamedFrom: undefined }));
+        });
+
+        it('typing a new, unused name and saving reports the rename', () => {
+            const { props } = renderEditor();
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'special A2' } });
+            fireEvent.click(save());
+            expect(props.onSave).toHaveBeenCalledWith({
+                recipe: { kind: 'formula', tag: 'special A2', formula: '$TAG1 * 2' },
+                metadata: { tag: 'special A2', description: 'Doubled', unit: 'bar', component: 'Pump' },
+                renamedFrom: 'special A',
+            });
+        });
+
+        it('does not flag a rename just because the surrounding text was trimmed', () => {
+            const { props } = renderEditor();
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: '  special A  ' } });
+            fireEvent.click(save());
+            expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({ renamedFrom: undefined }));
+        });
+
+        it('blocks an empty name', () => {
+            renderEditor();
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } });
+            expect(screen.getByText('Name is required')).toBeTruthy();
+            expect(save().disabled).toBe(true);
+        });
+
+        it('blocks renaming to a tag already in use by another sensor', () => {
+            const { props } = renderEditor({ availableSensors: ['TAG1', 'TAG2', 'Total flow'] });
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Total flow' } });
+            expect(screen.getByText(/already in use by another sensor/)).toBeTruthy();
+            expect(save().disabled).toBe(true);
+            fireEvent.click(save());
+            expect(props.onSave).not.toHaveBeenCalled();
+        });
+
+        it('the collision check is case-insensitive, same as every other tag match in the app', () => {
+            renderEditor({ availableSensors: ['TAG1', 'total flow'] });
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'TOTAL FLOW' } });
+            expect(screen.getByText(/already in use by another sensor/)).toBeTruthy();
+        });
+
+        it('does not treat the sensor’s own unchanged name as a collision, even when it is in availableSensors', () => {
+            renderEditor({ availableSensors: ['TAG1', 'special A'] });
+            // Name field starts equal to `recipe.tag` and is never touched.
+            expect(screen.queryByText(/already in use by another sensor/)).toBeNull();
+            expect(save().disabled).toBe(false);
+        });
+    });
+
+    // Name + Description + Unit + Component are all required before Save
+    // enables -- mirrors the same rule Create enforces (see
+    // `AddSensorWindow.test.tsx`), so a sensor can't leave this form
+    // half-described either. The Component-specific case (clearing it) is
+    // covered inline above; this covers the rest.
+    describe('required fields', () => {
+        it('lists every currently-missing field in the hint, and updates as they are filled', () => {
+            renderEditor({ recipe: operationRecipe, sensorMetadata: [] });
+            expect(screen.getByText('Fill in a description, a unit, a component before saving.')).toBeTruthy();
+            expect(save().disabled).toBe(true);
+
+            fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Combined flow' } });
+            expect(screen.getByText('Fill in a unit, a component before saving.')).toBeTruthy();
+
+            fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'm3/h' } });
+            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+            expect(screen.queryByText(/Fill in/)).toBeNull();
+            expect(save().disabled).toBe(false);
+        });
     });
 });
