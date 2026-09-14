@@ -1768,3 +1768,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - ทดสอบจริงผ่าน local server ใน Browser pane: กดปุ่มแทรก template ครั้งแรกสำเร็จ + auto-grow ทำงาน, กดซ้ำตอนมีข้อความอยู่แล้วขึ้น toast เตือนไม่ทับ, ข้อมูลที่แทรกไป persist ใน localStorage ถูกต้อง (ตรวจ `\n` จริงไม่ใช่ string literal)
   - ไฟล์ที่แก้: `docs/manual-test-plan.html`, `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้) — generator (`testplan-standalone.mjs`) อยู่ใน scratchpad เหมือนเดิม ไม่ได้ commit เข้า repo
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-14 (ต่ออีก) — 🔁 แก้ปุ่ม "ใช้ template" ให้กดซ้ำเพื่อลบออกได้ (toggle) + ตัดหัวข้อ "เจอในเวอร์ชัน / ชุดข้อมูล" ออกจาก template**: ผู้ใช้ทดสอบปุ่มที่เพิ่งเพิ่มแล้วพบว่ากดครั้งที่สองไม่มีอะไรเกิดขึ้น (ได้แค่ toast เตือนว่ามีข้อความอยู่แล้ว) อยากให้กดซ้ำเพื่อ "เปิด/ปิด" template ได้ ไม่ใช่กดได้ครั้งเดียว
+  - **Toggle logic**: ช่องว่าง → กดแทรก template ปกติ; ช่องมี template เดิมอยู่ไม่ถูกแก้เลย → กดแล้วลบกลับเป็นช่องว่าง (ใช้เป็น undo ได้ถ้ากดพลาด); ช่องมีข้อความอื่นที่ไม่ตรงกับ template เป๊ะ (แปลว่าเริ่มพิมพ์โน้ตจริงแล้ว) → ยังคงขึ้น toast เตือนเหมือนเดิม ไม่แตะข้อมูล กันเผลอลบโน้ตที่เขียนไว้
+  - ตัดบรรทัด "เจอในเวอร์ชัน / ชุดข้อมูล:" ออกจาก `NOTE_TEMPLATE` ตามที่ผู้ใช้ขอ พร้อมแก้ template สำเนาในหัวข้อ 3 ของ `docs/INTERN_BA_SA_GUIDE.md` ให้ตรงกัน
+  - ทดสอบจริงผ่าน local server ใน Browser pane ครบ 3 เคส: กดครั้งแรกแทรกสำเร็จ, กดครั้งที่สองลบกลับเป็นค่างเปล่า, พิมพ์โน้ตจริงแล้วกดปุ่ม → toast เตือนไม่ลบให้
+  - ไฟล์ที่แก้: `docs/manual-test-plan.html`, `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว ยังไม่ push**

@@ -229,8 +229,7 @@ const noteOf = id => (state.results[id] && state.results[id].n) || '';
 const NOTE_TEMPLATE = 'สถานะ: ทำซ้ำได้ / ทำซ้ำไม่ได้ / เป็น feature request ไม่ใช่บั๊ก\n' +
   'ขั้นตอนทำซ้ำ:\n1. \n2. \n\n' +
   'พฤติกรรมที่เจอ: \n' +
-  'พฤติกรรมที่ควรจะเป็น: \n' +
-  'เจอในเวอร์ชัน / ชุดข้อมูล: \n\n' +
+  'พฤติกรรมที่ควรจะเป็น: \n\n' +
   'ผลกระทบ: ใครเจอ / บ่อยแค่ไหน / รุนแรงแค่ไหน (บล็อกงาน / น่ารำคาญ / เล็กน้อย)';
 
 function autoGrow(ta) {
@@ -339,11 +338,18 @@ document.addEventListener('click', e => {
     const id = tpl.dataset.id;
     const ta = document.querySelector('.note[data-id="' + id + '"]');
     if (!ta) return;
-    if (ta.value.trim()) {
+    // Toggle: empty -> insert template, untouched template -> clear back to
+    // empty (so the button doubles as an undo for an accidental click).
+    // Anything else means the tester has actually started writing into it,
+    // so refuse to touch it rather than risk eating real notes.
+    if (!ta.value.trim()) {
+      ta.value = NOTE_TEMPLATE;
+    } else if (ta.value === NOTE_TEMPLATE) {
+      ta.value = '';
+    } else {
       toast('มีข้อความอยู่แล้ว — ลบก่อนถ้าต้องการแทรก template ใหม่', true);
       return;
     }
-    ta.value = NOTE_TEMPLATE;
     state.results[id] = Object.assign({}, state.results[id], { n: ta.value });
     save();
     autoGrow(ta);
