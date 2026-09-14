@@ -250,11 +250,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const [pmSensorFilters, setPmSensorFilters] = useState<WorkspaceSensorFilter[]>([]);
 
     // ── Filter payload passed through to every Rust data-reading command ──
-    // Translates `pmSensorFilters` (this page's own per-sensor value
-    // filters) into the snake_case shape Rust expects (`PreviewFilter`) and
-    // forwards it on every invoke so target chart, σ markers, clustering
-    // preview, and all `train_*` commands operate on the same filtered
-    // slice.
+    // Translates this page's own filters — `filterTimeStart`/`filterTimeEnd`
+    // (the "Time start"/"Time end" fields) and `pmSensorFilters` (per-sensor
+    // value filters) — into the snake_case shape Rust expects
+    // (`PreviewFilter`) and forwards it on every invoke so target chart, σ
+    // markers, clustering preview, and all `train_*` commands operate on the
+    // same filtered slice.
     //
     // 2026-09-01: this used to also merge in a `dashboardSnapshot` carried
     // over from Dashboard's own filter panel via a "Save & Continue" flow —
@@ -262,7 +263,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // `dashboardSnapshot` since, so it always read as empty here; removed
     // as dead code (no behavior change — the merge was already a no-op).
     // Dashboard's filters currently do NOT carry into PM training/preview
-    // at all; only this page's own filters do.
+    // at all; only this page's own filters do. This is intentional: Dashboard
+    // filtering is for viewing charts, while this page's own fields are for
+    // choosing the training period, and the two must stay independent.
     //
     // Returns `null` when no filter is active — Rust then falls back to "use
     // every row" (legacy behavior, plus identical request shape for tests).
@@ -281,13 +284,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
             }));
 
-        if (valueFilters.length === 0) return null;
+        if (valueFilters.length === 0 && !filterTimeStart && !filterTimeEnd) return null;
         return {
-            timestamp_start: null,
-            timestamp_end: null,
+            timestamp_start: filterTimeStart || null,
+            timestamp_end: filterTimeEnd || null,
             value_filters: valueFilters,
         };
-    }, [pmSensorFilters]);
+    }, [pmSensorFilters, filterTimeStart, filterTimeEnd]);
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -1726,13 +1729,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // Aggregated filter footnote shown in the confirm dialog so users
     // know the filtered slice will carry into training (catches the
     // "why is my model trained on only 200 rows?" surprise). Only this
-    // page's own filters (`pmSensorFilters`) count — see
-    // `dashboardFilterPayload` above for why Dashboard's own filters never
-    // factor in here.
+    // page's own filters (`filterTimeStart`/`filterTimeEnd` and
+    // `pmSensorFilters`) count — see `dashboardFilterPayload` above for why
+    // Dashboard's own filters never factor in here.
     const activeFilterCount = useMemo(() => {
         const pm = pmSensorFilters.filter(f => f.value1 !== '').length;
-        return { pm };
-    }, [pmSensorFilters]);
+        const time = (filterTimeStart || filterTimeEnd) ? 1 : 0;
+        return { pm, time };
+    }, [pmSensorFilters, filterTimeStart, filterTimeEnd]);
 
     const canConfirmSave = useMemo(() => {
         if (!targetSensor) return false;
@@ -3343,9 +3347,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         lineHeight: 1.45,
                                     }}>
                                         <strong style={{ color: 'var(--text-primary)' }}>Filters on training data:</strong>{" "}
-                                        {activeFilterCount.pm === 0
+                                        {activeFilterCount.pm === 0 && activeFilterCount.time === 0
                                             ? 'none — using the full dataset.'
-                                            : <>{activeFilterCount.pm} PM-page sensor filter{activeFilterCount.pm !== 1 ? 's' : ''}.</>
+                                            : <>
+                                                {activeFilterCount.time > 0 && <>a time range</>}
+                                                {activeFilterCount.time > 0 && activeFilterCount.pm > 0 && <> and </>}
+                                                {activeFilterCount.pm > 0 && <>{activeFilterCount.pm} PM-page sensor filter{activeFilterCount.pm !== 1 ? 's' : ''}</>}
+                                                .
+                                            </>
                                         }
                                     </div>
 

@@ -1728,3 +1728,13 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - ไฟล์ที่แก้: `src/hooks/useSubWindowMenu.ts`, `src/__tests__/useSubWindowMenu.test.ts`, `docs/MANUAL_TEST_PLAN.md`, `docs/manual-test-plan.html`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push**
   - **หมายเหตุตรง ๆ**: นี่คือการไล่อ่านทุกไฟล์หลักของแอปอย่างน้อย 1 รอบและ cross-check กับ test plan แล้ว แต่ "100%" แบบสมบูรณ์เป๊ะบนโค้ดขนาดนี้เป็นไปไม่ได้จริง — สิ่งที่ยืนยันได้คือ: ครบทุกหน้าจอ/ทุก interaction หลักที่มี UI ให้กดแล้ว ไม่ครบคือการไล่ทุกบรรทัดของ src-tauri/src/lib.rs (ตรวจแค่ cross-check รายชื่อ command) และ App.css (9,048 บรรทัด, ตรวจเฉพาะจุดที่เกี่ยวกับบั๊กที่เจอ)
+
+- **🆕 2026-09-14 (ต่อ) — 🐛 แก้บั๊กจริงที่เจอตอนไล่อ่านทั้งแอป: ช่อง "Time start"/"Time end" ในหน้า Build Model (Configure) ไม่มีผลกับการเทรนจริง**: ยืนยันกับผู้ใช้ก่อนแก้เพราะเป็นการเปลี่ยนพฤติกรรมจริง — ผู้ใช้คอนเฟิร์มว่าหน้า Build Model นี้ตั้งใจให้เป็นที่เลือก training period ของโมเดลเอง (แยกขาดจาก Dashboard filter ที่ใช้แค่ดูกราฟ ไม่เชื่อมกัน ซึ่งจุดนี้ถูกต้องอยู่แล้วไม่ต้องแก้)
+  - **root cause**: `dashboardFilterPayload` (useMemo ใน `PredictiveModelBuild.tsx`) hardcode `timestamp_start`/`timestamp_end` เป็น `null` เสมอ และ dependency array ไม่มี `filterTimeStart`/`filterTimeEnd` เลย ทำให้ค่าที่ user พิมพ์ในช่องไม่เคยถูกอ่านไปใช้จริง — ตัวแปร state, การ persist ลงไฟล์ workspace, และ UI ทำงานปกติหมด มีแค่จุดเดียวที่ไม่ส่งค่าต่อ
+  - **แก้**: ให้ `dashboardFilterPayload` อ่าน `filterTimeStart`/`filterTimeEnd` จริง (รูปแบบ string เดียวกับที่ Dashboard.tsx ใช้ส่งให้ Rust) และเพิ่มเข้า dependency array — ผลคือกราฟ Individual time-series, σ markers, preview ทุกโหมด (Individual/Relationship/Clustering) และทุก `train_*_model` command จะกรองตามช่วงเวลาที่ตั้งจริงแล้ว
+  - อัปเดต footnote "Filters on training data:" ใน modal "Confirm Save" ให้บอกด้วยว่ามี time range กำลังใช้งานอยู่ (ไม่ใช่นับแค่ per-sensor value filter เหมือนเดิม) กันสับสนว่า "ทำไม train ได้แค่บางแถว"
+  - เขียนเทสต์ใหม่ 3 ตัวคุมบั๊กนี้โดยเฉพาะ (ยืนยันด้วย revert-then-restore: revert แค่ไฟล์ component แล้วรันเทสต์ใหม่ทั้ง 3 ตัว fail จริงก่อน ค่อย restore แล้วเทสต์ผ่านทั้งหมด)
+  - แก้ manual test plan ข้อ PM-8 จาก "สงสัยว่าเป็นบั๊ก (watch)" เป็นยืนยันแก้แล้วพร้อมขั้นตอนทดสอบจริง, ปรับ PM-10b ให้กล่าวถึง time range ใน footnote ด้วย
+  - Verify: `npx tsc --noEmit` สะอาด, `npx eslint` 0 error (เหลือแต่ warning เดิมที่มีอยู่ก่อนแล้ว 9 ตัว ไม่เกี่ยวกับจุดที่แก้), `npm test` **998/998**
+  - ไฟล์ที่แก้: `src/components/windows/PredictiveModelBuild.tsx`, `src/__tests__/PredictiveModelBuild.test.tsx`, `docs/MANUAL_TEST_PLAN.md`, `docs/manual-test-plan.html`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ยืนยันทดสอบแอปจริงก่อนตามกฎเดิม)

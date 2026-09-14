@@ -364,6 +364,80 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
+    describe('Time start/end filter actually affects training data (regression — used to be a hardcoded no-op)', () => {
+        it('a saved Time start/end carries into the target chart query', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: {
+                    groups: [], models: [makeStoredModel({
+                        filterTimeStart: '2026-01-01T00:00',
+                        filterTimeEnd: '2026-02-01T00:00',
+                    })],
+                },
+            });
+            await renderHydrated();
+
+            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
+            expect(lastQuery.filter.timestamp_start).toBe('2026-01-01T00:00');
+            expect(lastQuery.filter.timestamp_end).toBe('2026-02-01T00:00');
+        });
+
+        it('Confirm & Save sends the Time start/end into train_individual_model', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: {
+                    groups: [], models: [makeStoredModel({
+                        filterTimeStart: '2026-01-01T00:00',
+                        filterTimeEnd: '2026-02-01T00:00',
+                    })],
+                },
+            });
+            mockOpenDialog.mockResolvedValue('C:/save/here');
+            await renderHydrated();
+
+            fireEvent.click(screen.getByText('Save Model'));
+            // Footnote must acknowledge the active time filter instead of
+            // claiming "none — using the full dataset."
+            expect(screen.getByText(/a time range/)).toBeTruthy();
+            expect(screen.queryByText(/none — using the full dataset\./)).toBeNull();
+
+            await act(async () => {
+                fireEvent.click(screen.getByText('Confirm & Save'));
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mockInvoke).toHaveBeenCalledWith('train_individual_model', expect.objectContaining({
+                filter: expect.objectContaining({
+                    timestamp_start: '2026-01-01T00:00',
+                    timestamp_end: '2026-02-01T00:00',
+                }),
+            }));
+        });
+
+        it('typing into the Time start field persists it and updates the query filter', async () => {
+            const onDiskModel = makeStoredModel();
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
+            vi.useFakeTimers();
+            await renderHydrated();
+
+            // datetime-local inputs aren't `role=textbox`; locate by preceding label text instead.
+            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
+            fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
+
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').filterTimeStart).toBe('2026-03-01T00:00');
+
+            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
+            expect(lastQuery.filter.timestamp_start).toBe('2026-03-01T00:00');
+            vi.useRealTimers();
+        });
+    });
+
     describe('back navigation', () => {
         it('the Back button calls onBack instead of closing any window', async () => {
             const { onBack } = await renderHydrated();
