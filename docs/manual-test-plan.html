@@ -55,6 +55,7 @@
   .act:hover{color:var(--tx);border-color:var(--tx-3)}
   .act.primary{background:var(--acc);border-color:var(--acc);color:#04101f;font-weight:650}
   .act.primary:hover{filter:brightness(1.08);color:#04101f}
+  .act.danger:hover{color:var(--bad);border-color:var(--bad)}
 
   main{padding:26px 28px 140px;max-width:920px}
   .intro{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:16px 18px;margin-bottom:16px}
@@ -189,6 +190,7 @@
 
 <div class="footbar">
   <span class="hint" id="hint">งานถูกจำไว้ในเบราว์เซอร์นี้อัตโนมัติ</span>
+  <button class="act danger" id="clear">ล้างผลทั้งหมด</button>
   <button class="act" id="load">เปิดไฟล์ผลเดิม</button>
   <button class="act" id="report">ดาวน์โหลดรายงาน (.md)</button>
   <button class="act primary" id="save">บันทึกผลเป็นไฟล์</button>
@@ -410,6 +412,15 @@ document.getElementById('report').addEventListener('click', () => {
   const d = (state.meta.date || new Date().toISOString().slice(0, 10));
   download('wizard-test-' + slug(state.meta.name) + '-' + d + '.md', L.join('\n'), 'text/markdown');
   toast('ดาวน์โหลดรายงานแล้ว');
+});
+
+document.getElementById('clear').addEventListener('click', () => {
+  const c = counts();
+  if (c.p + c.f + c.sk === 0) { toast('ยังไม่มีผลอะไรให้ล้าง'); return; }
+  if (!confirm('ล้างผลติ๊ก (ผ่าน/ไม่ผ่าน/ข้าม) และบันทึกที่จดไว้ทั้งหมด ' + DATA.total + ' ข้อ?\nข้อมูลผู้ทดสอบด้านบนจะไม่ถูกล้าง — กดยืนยันแล้วกู้คืนไม่ได้ (เว้นแต่เคยบันทึกไฟล์ไว้ก่อนหน้า)')) return;
+  state.results = {};
+  save(); paint();
+  toast('ล้างผลทั้งหมดแล้ว');
 });
 
 document.getElementById('load').addEventListener('click', () => document.getElementById('file').click());

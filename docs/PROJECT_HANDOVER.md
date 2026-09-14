@@ -1738,3 +1738,9 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - Verify: `npx tsc --noEmit` สะอาด, `npx eslint` 0 error (เหลือแต่ warning เดิมที่มีอยู่ก่อนแล้ว 9 ตัว ไม่เกี่ยวกับจุดที่แก้), `npm test` **998/998**
   - ไฟล์ที่แก้: `src/components/windows/PredictiveModelBuild.tsx`, `src/__tests__/PredictiveModelBuild.test.tsx`, `docs/MANUAL_TEST_PLAN.md`, `docs/manual-test-plan.html`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ยืนยันทดสอบแอปจริงก่อนตามกฎเดิม)
+
+- **🆕 2026-09-14 (ต่อ) — 🧹 เพิ่มปุ่ม "ล้างผลทั้งหมด" ใน manual test plan (`docs/manual-test-plan.html`)**: ผู้ใช้ขอปุ่มล้างผลลัพธ์ เพราะก่อนหน้านี้มีแต่ปุ่ม "เปิดไฟล์ผลเดิม"/"บันทึกผลเป็นไฟล์" ไม่มีทางล้างผลที่ติ๊กไว้ในเบราว์เซอร์ (localStorage) ให้เริ่มใหม่ได้เลยนอกจากเคลียร์ site data เอง
+  - เพิ่มปุ่มในแถบล่าง (footbar) — กดแล้วมี `confirm()` เตือนก่อนเสมอ (กันกดพลาดทำผลที่ติ๊กมาหายทั้งหมด, กู้คืนไม่ได้ถ้าไม่เคยบันทึกไฟล์ไว้ก่อน) ล้างเฉพาะผลติ๊ก+โน้ตที่จดไว้ (`state.results`) **ไม่ล้างข้อมูลผู้ทดสอบ** (ชื่อ/วันที่/เวอร์ชัน/เครื่อง/ชุดข้อมูล) ด้านบน — ถ้ายังไม่มีผลอะไรเลยกดแล้วจะขึ้น toast บอกเฉย ๆ ไม่เด้ง confirm ให้กวนใจ
+  - ไฟล์นี้ไม่มี unit test (เป็น static HTML/JS สร้างจาก generator scratchpad ไม่ได้ผ่าน build pipeline ของแอป) — ตรวจด้วยการรันจริงผ่าน local server ใน Browser pane แทน: ติ๊ก pass 1 ข้อ → กด "ล้างผลทั้งหมด" → กด Cancel ยืนยันว่าข้อมูลยังอยู่ (`localStorage` ไม่เปลี่ยน) → กด OK ยืนยันว่า `state.results` กลายเป็น `{}` แต่ `state.meta.date` ยังอยู่ → tally บนจอกลับเป็น 0/201
+  - ไฟล์ที่แก้: `docs/manual-test-plan.html` (regenerate จาก `testplan-standalone.mjs` ใน scratchpad ของ session นี้ — ตัว generator ไม่ได้ commit เข้า repo เหมือนเดิม), `docs/PROJECT_HANDOVER.md` (entry นี้) — `docs/MANUAL_TEST_PLAN.md` ไม่เปลี่ยน (คนละไฟล์ output จาก data เดียวกัน แต่จุดนี้เป็น JS/UI เฉพาะฝั่ง HTML เท่านั้น)
+  - **commit local แล้ว ยังไม่ push**
