@@ -1705,3 +1705,14 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **`docs/BACKLOG.md`**: เพิ่ม follow-up note ต่อท้าย entry เดิมของวันนี้
   - ไฟล์ที่แก้: `src/App.css`, `docs/BACKLOG.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว (`a27963c`) ยังไม่ push** — รอผู้ใช้ทดสอบจริงก่อน
+
+- **🆕 2026-09-14 — 📋 อัปเดต Manual Test Plan ให้ตรงกับโค้ดที่แก้ไปเมื่อ 2026-09-09**: ผู้ใช้ขอให้ไล่โค้ดที่เพิ่งแก้ (rename special sensor, บังคับกรอกครบ 4 ช่อง, Build Model — Overview) แล้วเขียน manual test เพิ่มในรูปแบบ HTML เดิม
+  - ใช้ generator เดิมที่เขียนไว้ (`testplan-data.mjs` เป็น single source of truth → `testplan-build.mjs` สร้าง `docs/MANUAL_TEST_PLAN.md`, `testplan-standalone.mjs` สร้าง `docs/manual-test-plan.html`) แก้แค่ data แล้วรัน generator ใหม่ทั้งสองตัว ไม่ต้องเขียน HTML เองใหม่
+  - **SPC-6, SPC-7 (Create tab)**: เขียนใหม่ให้ตรงกับ behavior ปัจจุบัน — เดิมเช็คแค่ Name (error หลังกด) ตอนนี้เช็คครบ 4 ช่อง (Name/Description/Unit/Component) แบบ disable ปุ่มไว้ก่อน
+  - **EDT-2 (Manage — แก้ไข)**: เขียนใหม่ทั้งข้อ — เดิมบอกว่า "ชื่อแก้ไม่ได้" ซึ่งไม่จริงแล้วหลังทำ rename feature
+  - **EDT-4b, EDT-19 ถึง EDT-26 (ใหม่ 9 ข้อ)**: ครอบคลุม rename แบบละเอียด — เคสพื้นฐาน, สายโซ่ (downstream formula/operation ต้องอัปเดตตาม), ชื่อซ้ำ/ว่างต้องบล็อก, cascade ไปยัง Dashboard state ทั้งหมด (สี/แกน/alarm/scatter/highlight), cascade ไปยัง Failure Group model, persist ข้ามการปิดเปิดโปรแกรม, และบังคับกรอกครบ 4 ช่องในฟอร์มแก้ไข (Component เลิก fallback เป็น Uncategorized เงียบ ๆ)
+  - **BMW-6, BMW-7, BMW-8 (ใหม่ 3 ข้อ)**: Group by Model Type (ลำดับ I/R/C ตายตัว), ปุ่ม Build Model ย้ายไปอยู่ในฟอร์มต่อจาก Save changes + ต้องจางลงกดไม่ได้จริง (ไม่ใช่แค่ logic แต่เช็ค CSS ด้วยเพราะเคยเป็นบั๊กมาก่อน), และกด Build Model ต้อง commit ฟอร์มให้อัตโนมัติก่อน navigate
+  - ลบรายการเก่าใน `KNOWN` ที่บอกว่า "เปลี่ยนชื่อ special sensor ไม่ได้ — ตั้งใจ" ออก เพราะไม่จริงแล้ว
+  - รวม 196 ข้อ (จากเดิม 184 ข้อ, +12)
+  - ไฟล์ที่แก้: `docs/MANUAL_TEST_PLAN.md`, `docs/manual-test-plan.html`, `docs/PROJECT_HANDOVER.md` (entry นี้) — generator scripts อยู่ใน scratchpad ของ session นี้ ไม่ได้ commit เข้า repo (เหมือนที่ผ่านมา)
+  - **commit local แล้ว ยังไม่ push**
