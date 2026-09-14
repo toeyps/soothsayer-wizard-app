@@ -1,6 +1,6 @@
 # Wizard — Manual Test Plan
 
-> 196 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 เพิ่มการ rename special sensor, บังคับกรอกครบ 4 ช่อง (Name/Description/Unit/Component) ทั้ง Create และ Manage, และการเปลี่ยนหน้า Build Model — Overview (Group by Model Type, ย้ายปุ่ม Build Model)
+> 198 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 เพิ่มการ rename special sensor, บังคับกรอกครบ 4 ช่อง (Name/Description/Unit/Component) ทั้ง Create และ Manage, และการเปลี่ยนหน้า Build Model — Overview (Group by Model Type, ย้ายปุ่ม Build Model)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
@@ -20,7 +20,7 @@
 - [LINE — Line chart](#line) (8 ข้อ)
 - [SCAT — Scatter plot](#scat) (8 ข้อ)
 - [PAIR — Pair Plot](#pair) (10 ข้อ)
-- [SPC — Add Special Sensor — แท็บ Create](#spc) (12 ข้อ)
+- [SPC — Add Special Sensor — แท็บ Create](#spc) (14 ข้อ)
 - [MNG — Manage — ลบ special sensor](#mng) (15 ข้อ)
 - [EDT — Manage — แก้ไข special sensor](#edt) (27 ข้อ)
 - [FG — แท็บ Failure Groups](#fg) (7 ข้อ)
@@ -635,6 +635,20 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
 - [ ] **SPC-12 — ตั้งชื่อ special sensor ซ้ำกับคอลัมน์ดิบ**
   - ตั้งชื่อให้ตรงกับ tag ที่มีอยู่ใน CSV
   - **คาดหวัง:** ดูว่าเกิดอะไรขึ้น — คอลัมน์ดิบต้องไม่ถูกทับ (การสร้างตั้งใจให้ append ไม่ replace) จดพฤติกรรมจริงไว้
+
+- [ ] **SPC-13 — ปุ่มเครื่องหมาย (+/−/×/÷) ต้องปิดจริงตอนเลือก shortcut ไว้** 🆕
+  - เลือก sensor ตั้งแต่ 2 ตัวขึ้นไป
+  - เลือก shortcut เช่น "Sum all" หรือ "Compare one against the rest"
+  - ดูแถบ "Combine with operators" (เครื่องหมาย +/−/×/÷ ระหว่างแต่ละคู่ sensor)
+  - ลองกดเครื่องหมายตัวใดตัวหนึ่ง
+  - เลิกเลือก shortcut (กดซ้ำ) แล้วลองกดเครื่องหมายอีกที
+  - **คาดหวัง:** ตอนเลือก shortcut ไว้ แถบเครื่องหมายต้องจางลง กดแล้ว**ไม่มีอะไรเกิดขึ้นเลย** (ไม่เปิด popover เลือกเครื่องหมายใหม่ ไม่เผลอไปยกเลิก shortcut) มีข้อความอธิบายว่า "A shortcut below is selected..." — พอเลิกเลือก shortcut แถบต้องสว่างขึ้นและกดได้ปกติทันที (ก่อนหน้านี้กดได้ตลอดแม้เลือก shortcut ไว้ ซึ่งเผลอไปยกเลิก shortcut แบบไม่มีอะไรโชว์ให้เห็น)
+
+- [ ] **SPC-14 — แก้ไขตัวเลือก sensor ระหว่างตั้งค่า ไม่ทำให้ Description/Unit/Component หาย** 🆕
+  - เลือก sensor ไว้ 1 ตัว
+  - กรอก Description, Unit, Component ไว้ (ยังไม่กด Add sensor)
+  - เพิ่มหรือลด sensor อีกตัวหนึ่งในการเลือก (เช่น ติ๊กเพิ่มอีกตัว หรือเอาตัวหนึ่งออกแต่ไม่ให้เหลือ 0 ตัว)
+  - **คาดหวัง:** **ค่าที่กรอกไว้ทั้ง 3 ช่องต้องยังอยู่ครบ ไม่หายไปเงียบ ๆ** — ช่องพวกนี้อธิบาย sensor ใหม่ที่กำลังจะสร้าง ไม่ใช่ตัวที่เลือกไว้เป็น input จึงไม่ควรถูกล้างตามการปรับตัวเลือก (ช่องจะถูกล้างเฉพาะตอนเอา sensor ออกจนเหลือ 0 ตัวเท่านั้น — นั่นคือ "เริ่มใหม่")
 
 ---
 
