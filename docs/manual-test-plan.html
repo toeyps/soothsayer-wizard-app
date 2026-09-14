@@ -106,10 +106,14 @@
   .st[aria-pressed="true"][data-v="fail"]{background:var(--bad);border-color:var(--bad);color:#1a0505;font-weight:650}
   .st[aria-pressed="true"][data-v="skip"]{background:var(--tx-3);border-color:var(--tx-3);color:#0a0a0b;font-weight:650}
   .note{flex:1;min-width:220px;background:var(--hi);border:1px solid var(--line);border-radius:6px;
-        padding:6px 9px;font-size:12px;color:var(--tx);resize:vertical;min-height:32px;line-height:1.5}
+        padding:6px 9px;font-size:12px;color:var(--tx);resize:vertical;min-height:32px;line-height:1.5;
+        white-space:pre-wrap}
   .note::placeholder{color:var(--tx-3)}
   .note:focus{outline:none;border-color:var(--acc)}
   .card[data-s="fail"] .note{border-color:rgba(255,107,94,.45)}
+  .tpl-btn{font-size:11px;padding:4px 10px;border-radius:6px;border:1px dashed var(--line-2);
+           color:var(--tx-3);flex:none;white-space:nowrap}
+  .tpl-btn:hover{color:var(--acc);border-color:var(--acc);border-style:solid}
 
   .known{border:1px solid var(--warn);background:var(--warn-dim);border-radius:10px;padding:15px 18px}
   .known h2{font-size:14px;margin:0 0 8px;color:var(--warn)}
@@ -218,6 +222,22 @@ const LABEL = { pass: 'ผ่าน', fail: 'ไม่ผ่าน', skip: 'ข�
 const stOf = id => (state.results[id] && state.results[id].s) || '';
 const noteOf = id => (state.results[id] && state.results[id].n) || '';
 
+// Fuller structured template for the note field — same shape used across
+// this project's bug/UX reports, minus anything that assumes code
+// knowledge (no "relevant code" or "questions for the dev" fields — the
+// testers filling this in are BA/SA, not developers).
+const NOTE_TEMPLATE = 'สถานะ: ทำซ้ำได้ / ทำซ้ำไม่ได้ / เป็น feature request ไม่ใช่บั๊ก\n' +
+  'ขั้นตอนทำซ้ำ:\n1. \n2. \n\n' +
+  'พฤติกรรมที่เจอ: \n' +
+  'พฤติกรรมที่ควรจะเป็น: \n' +
+  'เจอในเวอร์ชัน / ชุดข้อมูล: \n\n' +
+  'ผลกระทบ: ใครเจอ / บ่อยแค่ไหน / รุนแรงแค่ไหน (บล็อกงาน / น่ารำคาญ / เล็กน้อย)';
+
+function autoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.max(32, ta.scrollHeight) + 'px';
+}
+
 document.getElementById('body').innerHTML = DATA.sections.map(sec => `
   <section id="s-${sec.key}">
     <div class="shead"><span class="key">${sec.key}</span><h2>${esc(sec.title)}</h2></div>
@@ -236,7 +256,8 @@ document.getElementById('body').innerHTML = DATA.sections.map(sec => `
           <button class="st" data-id="${t.id}" data-v="pass" aria-pressed="false">ผ่าน</button>
           <button class="st" data-id="${t.id}" data-v="fail" aria-pressed="false">ไม่ผ่าน</button>
           <button class="st" data-id="${t.id}" data-v="skip" aria-pressed="false">ข้าม</button>
-          <textarea class="note" rows="1" data-id="${t.id}" placeholder="สิ่งที่เจอ / ทำยังไงถึงเจอ / เห็นอะไรแทน"></textarea>
+          <textarea class="note" rows="1" data-id="${t.id}" placeholder="สิ่งที่เจอ / ทำยังไงถึงเจอ / เห็นอะไรแทน — หรือกด &quot;ใช้ template&quot; ด้านขวา"></textarea>
+          <button type="button" class="tpl-btn" data-id="${t.id}" title="แทรกแบบฟอร์มจดบันทึกที่มีหัวข้อให้กรอกทีละช่อง">📋 ใช้ template</button>
         </div>
       </article>`).join('')}
   </section>`).join('') + `
@@ -265,7 +286,7 @@ function paint() {
       card.dataset.s = v;
       card.querySelectorAll('.st').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
       const note = card.querySelector('.note');
-      if (document.activeElement !== note) note.value = noteOf(t.id);
+      if (document.activeElement !== note) { note.value = noteOf(t.id); autoGrow(note); }
       if (v) done++;
       if (v === 'pass') p++; else if (v === 'fail') { f++; fails++; } else if (v === 'skip') sk++;
     }
@@ -312,14 +333,30 @@ document.addEventListener('click', e => {
     applyFilter(); return;
   }
   const go = e.target.closest('[data-go]');
-  if (go) document.getElementById(go.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (go) { document.getElementById(go.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  const tpl = e.target.closest('.tpl-btn');
+  if (tpl) {
+    const id = tpl.dataset.id;
+    const ta = document.querySelector('.note[data-id="' + id + '"]');
+    if (!ta) return;
+    if (ta.value.trim()) {
+      toast('มีข้อความอยู่แล้ว — ลบก่อนถ้าต้องการแทรก template ใหม่', true);
+      return;
+    }
+    ta.value = NOTE_TEMPLATE;
+    state.results[id] = Object.assign({}, state.results[id], { n: ta.value });
+    save();
+    autoGrow(ta);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
 });
 
 document.addEventListener('input', e => {
   const n = e.target.closest('.note');
   if (n) {
     state.results[n.dataset.id] = Object.assign({}, state.results[n.dataset.id], { n: n.value });
-    save(); return;
+    save(); autoGrow(n); return;
   }
   const m = e.target.closest('[data-m]');
   if (m) { state.meta[m.dataset.m] = m.value; save(); }

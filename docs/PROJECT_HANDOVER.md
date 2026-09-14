@@ -1760,3 +1760,11 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - เอกสารล้วน ๆ ไม่มีโค้ด ไม่มีเทสต์ที่เกี่ยวข้อง
   - ไฟล์ที่แก้: `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-14 (ต่ออีก) — 📋 เพิ่มปุ่ม "ใช้ template" ในช่องจดบันทึกของ `docs/manual-test-plan.html` + ขยายรายละเอียดงานที่ 2/4 ใน `docs/INTERN_BA_SA_GUIDE.md`**: ผู้ใช้ส่งภาพหน้าจอ template เดิม (ที่มีหัวข้อ "จุดที่เกี่ยวข้องในโค้ด" กับ "คำถามที่ยังตอบไม่ได้ (ต้องถามผู้ใช้/dev)" ถูกวงกลมสีแดงไว้) ขอให้เอา 2 หัวข้อนั้นออกเพราะ technical เกินไปสำหรับ BA/SA แล้วเอา template ที่เหลือไปฝังในช่องจดบันทึกของไฟล์ manual test
+  - **ปุ่ม "📋 ใช้ template"**: อยู่ข้างช่องจดบันทึกของทุกข้อ (201 ข้อ) กดแล้วแทรกโครง `สถานะ / ขั้นตอนทำซ้ำ / พฤติกรรมที่เจอ / พฤติกรรมที่ควรจะเป็น / เจอในเวอร์ชัน-ชุดข้อมูล / ผลกระทบ` ให้ทันที — ถ้าช่องมีข้อความอยู่แล้วจะไม่ทับ ขึ้น toast เตือนให้ลบก่อนแทน (กันเผลอลบโน้ตที่เขียนไว้)
+  - เพิ่ม `autoGrow()` ให้ช่องจดบันทึกขยายสูงขึ้นเองตามเนื้อหา (เดิม `rows="1"` ต้องลากขยายเองอย่างเดียว) — เรียกทั้งตอน paint() และตอนพิมพ์สด
+  - **`docs/INTERN_BA_SA_GUIDE.md`**: ขยายงานที่ 2 (Glossary) ให้มีขั้นตอนทำงาน 4 ข้อ + รายชื่อศัพท์ที่ต้องมีอย่างน้อย (Workspace, Special Sensor, Failure Group, Model kind ฯลฯ), ขยายงานที่ 4 (UX audit) ให้มีขั้นตอน 4 ข้อ + 3 สิ่งที่ต้องสังเกตโดยเฉพาะ (คำศัพท์ไม่สอดคล้อง/flow สับสน/ข้อความไม่ช่วยอะไร) + ตัวอย่าง finding สมมติ, ปรับ template ของงานที่ 0/1 ในหัวข้อ 3 ให้ใช้โครงเดียวกับปุ่ม "ใช้ template" (อ้างอิงถึงกันแทนเขียนซ้ำ)
+  - ทดสอบจริงผ่าน local server ใน Browser pane: กดปุ่มแทรก template ครั้งแรกสำเร็จ + auto-grow ทำงาน, กดซ้ำตอนมีข้อความอยู่แล้วขึ้น toast เตือนไม่ทับ, ข้อมูลที่แทรกไป persist ใน localStorage ถูกต้อง (ตรวจ `\n` จริงไม่ใช่ string literal)
+  - ไฟล์ที่แก้: `docs/manual-test-plan.html`, `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้) — generator (`testplan-standalone.mjs`) อยู่ใน scratchpad เหมือนเดิม ไม่ได้ commit เข้า repo
+  - **commit local แล้ว ยังไม่ push**
