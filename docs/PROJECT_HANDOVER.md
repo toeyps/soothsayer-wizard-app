@@ -1751,3 +1751,12 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - เป็นการแก้เอกสารล้วน ๆ ไม่มีโค้ด ไม่มีเทสต์ที่เกี่ยวข้อง
   - ไฟล์ที่แก้: `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-14 (ต่ออีก) — 🔁 ทบทวนงานที่เหมาะกับ BA/SA อีกรอบใน `docs/INTERN_BA_SA_GUIDE.md`**: ผู้ใช้มองว่างานที่เหลือ (Backlog grooming แปลงเป็น user story, Requirement gathering) ยัง technical เกินไปสำหรับตำแหน่ง BA/SA — ถามกลับไปว่ามี external user ของแอปนี้ไหม ผู้ใช้ตอบว่า**ใช้ภายในเท่านั้น ยังไม่มี external user** ซึ่งหมายความว่า Requirement gathering ไม่มีเนื้อจริงให้ทำ (ไม่มี stakeholder อื่นให้ไปเก็บ requirement จาก) เช่นเดียวกับ Backlog grooming ที่ตัวอย่างจริงที่ยกมาแสดงให้เห็นว่าต้องอ่านโค้ดเชิงลึกเกินตำแหน่ง
+  - **ตัดออก**: งานที่ 3 เดิม (Backlog grooming) และงานที่ 4 เดิม (Requirement gathering) ทั้งคู่
+  - **เพิ่มใหม่แทน 2 งาน** ที่เป็น BA/SA แท้ ๆ ไม่ต้องอ่านโค้ด: งานที่ 2 — Glossary + สรุป business process (นิยามศัพท์เฉพาะแอปเป็นภาษาธุรกิจ + สรุป flow การทำงาน เป็นวัตถุดิบให้งานเขียน User Manual), งานที่ 4 — UX/Usability audit (ไล่ใช้แอปในมุมคนใหม่ หาจุดสับสน/คำศัพท์ไม่สอดคล้อง ไม่ใช่หาบั๊ก)
+  - **Renumber**: เขียน User Manual ขยับจากงานที่ 2 → 3 (อยู่ต่อจาก Glossary เพราะใช้เป็นฐาน) งานที่ 0/1 (regression test / manual test plan) ไม่เปลี่ยน
+  - ปรับหัวข้อ 3 "Template" ให้มี 3 ชุดแยกตามงาน (รายงานปัญหา 0/1, Glossary entry งานที่ 2, UX finding งานที่ 4) แทน template เดิมที่ผูกกับ spec เชิงเทคนิคของงานที่ถูกตัดออก
+  - เอกสารล้วน ๆ ไม่มีโค้ด ไม่มีเทสต์ที่เกี่ยวข้อง
+  - ไฟล์ที่แก้: `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว ยังไม่ push**
