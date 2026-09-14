@@ -1775,3 +1775,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - ทดสอบจริงผ่าน local server ใน Browser pane ครบ 3 เคส: กดครั้งแรกแทรกสำเร็จ, กดครั้งที่สองลบกลับเป็นค่างเปล่า, พิมพ์โน้ตจริงแล้วกดปุ่ม → toast เตือนไม่ลบให้
   - ไฟล์ที่แก้: `docs/manual-test-plan.html`, `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-14 (ต่ออีก) — 📄 สร้าง `docs/INTERN_BA_SA_EXAMPLES.md`**: ผู้ใช้ขอตัวอย่างงานที่ 2 (Glossary + สรุป business process) และงานที่ 4 (UX audit) ที่คุยกันในแชทให้เขียนใส่ไฟล์ .md แยกไว้ให้น้องฝึกงานอ่านประกอบ
+  - ไฟล์ใหม่รวมตัวอย่างที่ยกในแชท: 3 Glossary entry (Failure Group, Special Sensor, Model kind) + 1 ตัวอย่างสรุป business process (งานที่ 2), และ 2 UX finding แบบเต็ม (Time filter ดูเหมือนเชื่อมกับ Dashboard, ปุ่มไอคอนล้วนไม่มี label) (งานที่ 4) — มีคำเตือนกำกับชัดว่าเป็นตัวอย่างสมมติ ห้ามก็อปไปส่งตรง ๆ
+  - เชื่อมลิงก์จาก `INTERN_BA_SA_GUIDE.md` ทั้งงานที่ 2 และ 4 ให้ชี้มาที่ไฟล์นี้
+  - เอกสารล้วน ๆ ไม่มีโค้ด ไม่มีเทสต์ที่เกี่ยวข้อง
+  - ไฟล์ที่แก้/เพิ่ม: `docs/INTERN_BA_SA_EXAMPLES.md` (ใหม่), `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว ยังไม่ push**
