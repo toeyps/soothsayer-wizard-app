@@ -1744,3 +1744,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - ไฟล์นี้ไม่มี unit test (เป็น static HTML/JS สร้างจาก generator scratchpad ไม่ได้ผ่าน build pipeline ของแอป) — ตรวจด้วยการรันจริงผ่าน local server ใน Browser pane แทน: ติ๊ก pass 1 ข้อ → กด "ล้างผลทั้งหมด" → กด Cancel ยืนยันว่าข้อมูลยังอยู่ (`localStorage` ไม่เปลี่ยน) → กด OK ยืนยันว่า `state.results` กลายเป็น `{}` แต่ `state.meta.date` ยังอยู่ → tally บนจอกลับเป็น 0/201
   - ไฟล์ที่แก้: `docs/manual-test-plan.html` (regenerate จาก `testplan-standalone.mjs` ใน scratchpad ของ session นี้ — ตัว generator ไม่ได้ commit เข้า repo เหมือนเดิม), `docs/PROJECT_HANDOVER.md` (entry นี้) — `docs/MANUAL_TEST_PLAN.md` ไม่เปลี่ยน (คนละไฟล์ output จาก data เดียวกัน แต่จุดนี้เป็น JS/UI เฉพาะฝั่ง HTML เท่านั้น)
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-14 (ต่ออีก) — ✂️ ตัด "งานที่ 2 — วิเคราะห์รายงานที่ค้างใน Notion 5 ข้อ" ออกจาก `docs/INTERN_BA_SA_GUIDE.md`**: ผู้ใช้บอกว่าตัวเองเป็นคนวิเคราะห์รายงาน Notion เองอยู่แล้ว ไม่ต้องมอบหมายให้น้องฝึกงาน BA/SA
+  - ลบทั้งหัวข้อ 3 เดิม (การวิเคราะห์ตัวอย่าง 5 รายงานแบบละเอียด ①-⑤) และ list item "งานที่ 2" ออก — เหลืองาน 0, 1, แล้ว renumber งานที่ 3/4/5 เดิม (User Manual / Backlog grooming / Requirement gathering) เป็นงานที่ 2/3/4 แทน พร้อมเติมหมายเหตุสั้น ๆ อธิบายว่าทำไมข้อนี้ถึงหายไป
+  - ปรับหัวข้อ "Template สำหรับเขียน spec" (เดิมหัวข้อ 4 ผูกกับ 5 รายงานโดยเฉพาะ) ให้เป็น template ทั่วไปใช้ได้กับงานที่ 3/4 แทน พร้อมแก้เลขอ้างอิง "หัวข้อ 4" ที่ค้างอยู่ในงานที่ 0 ให้เป็น "หัวข้อ 3" ให้ตรงกับโครงสร้างใหม่
+  - เป็นการแก้เอกสารล้วน ๆ ไม่มีโค้ด ไม่มีเทสต์ที่เกี่ยวข้อง
+  - ไฟล์ที่แก้: `docs/INTERN_BA_SA_GUIDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - **commit local แล้ว ยังไม่ push**
