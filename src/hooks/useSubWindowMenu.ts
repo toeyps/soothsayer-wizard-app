@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Menu, Submenu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { listen, emit } from '@tauri-apps/api/event';
 import { message } from '@tauri-apps/plugin-dialog';
@@ -176,8 +177,14 @@ export function useSubWindowMenu(handlers: SubWindowMenuHandlers) {
                 const helpItems = [
                     await MenuItem.new({
                         id: 'sub-about', text: 'About Wizard',
+                        // Same runtime-read version as the main window's own
+                        // About (App.tsx) — this used to hardcode "v0.1.0",
+                        // which drifted from the real shipped version the
+                        // moment the app was ever bumped past that.
                         action: async () => {
-                            try { await message('Wizard v0.1.0', { title: 'About', kind: 'info' }); }
+                            let version = '';
+                            try { version = await getVersion(); } catch { /* non-Tauri context — omit the number */ }
+                            try { await message(`Wizard${version ? `\nVersion ${version}` : ''}`, { title: 'About', kind: 'info' }); }
                             catch { /* ignore */ }
                         },
                     }),

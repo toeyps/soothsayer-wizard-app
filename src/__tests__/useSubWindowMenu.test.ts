@@ -22,6 +22,7 @@ const mockMessage = vi.fn().mockResolvedValue(undefined);
 const mockLoadWorkspaceData = vi.fn();
 const mockSaveWorkspaceData = vi.fn().mockResolvedValue(undefined);
 const mockRenameWorkspaceFile = vi.fn().mockResolvedValue(undefined);
+const mockGetVersion = vi.fn().mockResolvedValue('0.4.1');
 
 vi.mock('@tauri-apps/api/menu', () => ({
     Menu: { new: (opts: any) => mockMenuNew(opts) },
@@ -32,6 +33,10 @@ vi.mock('@tauri-apps/api/menu', () => ({
 
 vi.mock('@tauri-apps/api/window', () => ({
     getCurrentWindow: () => mockGetCurrentWindow(),
+}));
+
+vi.mock('@tauri-apps/api/app', () => ({
+    getVersion: (...args: unknown[]) => mockGetVersion(...args),
 }));
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
@@ -89,6 +94,7 @@ beforeEach(() => {
     mockMessage.mockResolvedValue(undefined);
     mockSaveWorkspaceData.mockResolvedValue(undefined);
     mockRenameWorkspaceFile.mockResolvedValue(undefined);
+    mockGetVersion.mockResolvedValue('0.4.1');
 });
 
 describe('useSubWindowMenu', () => {
@@ -164,6 +170,38 @@ describe('useSubWindowMenu', () => {
 
         expect(mockLoadWorkspaceData).not.toHaveBeenCalled();
         expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+    });
+
+    it('"About Wizard" reads the real runtime version instead of a hardcoded one', async () => {
+        renderHook(() => useSubWindowMenu(makeHandlers()));
+        await waitFor(() => expect(mockMenuNew).toHaveBeenCalledTimes(1));
+
+        const built = mockMenuNew.mock.calls[0][0];
+        const aboutItem = findItem(findSubmenu(built, 'Help'), 'sub-about');
+        await aboutItem.action();
+
+        expect(mockGetVersion).toHaveBeenCalledTimes(1);
+        expect(mockMessage).toHaveBeenCalledWith(
+            expect.stringContaining('0.4.1'),
+            expect.objectContaining({ title: 'About' }),
+        );
+        // The whole point of the fix -- this hardcoded string must never
+        // reappear regardless of what getVersion() resolves to.
+        expect(mockMessage).not.toHaveBeenCalledWith(
+            expect.stringContaining('v0.1.0'),
+            expect.anything(),
+        );
+    });
+
+    it('"About Wizard" still shows something sensible when getVersion() is unavailable (plain browser context)', async () => {
+        mockGetVersion.mockRejectedValue(new Error('not in a Tauri context'));
+        renderHook(() => useSubWindowMenu(makeHandlers()));
+        await waitFor(() => expect(mockMenuNew).toHaveBeenCalledTimes(1));
+
+        const built = mockMenuNew.mock.calls[0][0];
+        const aboutItem = findItem(findSubmenu(built, 'Help'), 'sub-about');
+        await expect(aboutItem.action()).resolves.not.toThrow();
+        expect(mockMessage).toHaveBeenCalledWith('Wizard', expect.objectContaining({ title: 'About' }));
     });
 
     it('"Close Window" closes the current window', async () => {
