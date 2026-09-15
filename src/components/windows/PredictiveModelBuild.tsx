@@ -48,7 +48,11 @@ interface SensorStats {
 }
 
 // ── Reusable Sensor Autocomplete ─────────────────────────────────────
-interface SensorAutocompleteProps {
+// Exported so BuildModelWindow.tsx's "Running Condition Filter" panel (the
+// one place a filter's sensor is picked now — see that file) can reuse the
+// exact same search UI instead of a second implementation drifting from
+// this one.
+export interface SensorAutocompleteProps {
     sensors: string[];
     getDesc: (tag: string) => string;
     value: string;
@@ -61,7 +65,7 @@ interface SensorAutocompleteProps {
     style?: React.CSSProperties;
 }
 
-function SensorAutocomplete({
+export function SensorAutocomplete({
     sensors, getDesc, value, onSelect, placeholder, excluded = [],
     clearOnSelect = false, allowNone = false, disabled = false, style,
 }: SensorAutocompleteProps) {
@@ -163,6 +167,14 @@ interface PredictiveModelBuildProps {
     kind: ModelKind;
     sensorHeaders: string[];
     sensorMetadata: SensorMetadata[] | null;
+    /** Workspace-wide "machine running" filter, owned and edited entirely on
+     *  BuildModelWindow's Overview page (see its "Running Condition Filter"
+     *  panel) — this page only displays it read-only and AND-combines it
+     *  into every training/preview query. Kept fresh by the parent's own
+     *  `failure-group-state-changed` listener; this page's own debounced
+     *  save preserves whatever value is on disk at write time rather than
+     *  round-tripping this prop back into the write. */
+    runningConditionFilters: WorkspaceSensorFilter[];
     /** Returns to BuildModelWindow's overview page. This page is a child of
      *  that window (not a spawned OS window of its own — see BuildModelWindow's
      *  own doc comment for why), so "closing" it just means switching the
@@ -189,7 +201,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, onBack }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, onBack }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -239,23 +251,20 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         ],
     );
 
-    // Data Filter
+    // Data Filter — Time start/end stays per-model (the training *period*
+    // legitimately differs per model); the value-filter half moved to the
+    // workspace-wide `runningConditionFilters` prop (2026-09-15 — see
+    // BuildModelWindow's "Running Condition Filter" panel and this prop's
+    // own doc comment on `PredictiveModelBuildProps`).
     const [filterTimeStart, setFilterTimeStart] = useState("");
     const [filterTimeEnd, setFilterTimeEnd] = useState("");
-    // PM-page-local per-sensor value filters. AND-combined with the dashboard
-    // filter slice when building `dashboardFilterPayload` below, so users can
-    // narrow the explored slice further per-sensor before training/preview
-    // without going back to Dashboard. Sensor pool comes from `pmFilterSensorPool`
-    // (target + predictors), enforced by the UI's select.
-    const [pmSensorFilters, setPmSensorFilters] = useState<WorkspaceSensorFilter[]>([]);
 
     // ── Filter payload passed through to every Rust data-reading command ──
-    // Translates this page's own filters — `filterTimeStart`/`filterTimeEnd`
-    // (the "Time start"/"Time end" fields) and `pmSensorFilters` (per-sensor
-    // value filters) — into the snake_case shape Rust expects
-    // (`PreviewFilter`) and forwards it on every invoke so target chart, σ
-    // markers, clustering preview, and all `train_*` commands operate on the
-    // same filtered slice.
+    // Translates this page's own Time start/end plus the inherited
+    // workspace-wide `runningConditionFilters` into the snake_case shape
+    // Rust expects (`PreviewFilter`) and forwards it on every invoke so
+    // target chart, σ markers, clustering preview, and all `train_*`
+    // commands operate on the same filtered slice.
     //
     // 2026-09-01: this used to also merge in a `dashboardSnapshot` carried
     // over from Dashboard's own filter panel via a "Save & Continue" flow —
@@ -275,7 +284,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // after the filter inputs avoids a temporal-dead-zone reference during
     // render.
     const dashboardFilterPayload = useMemo(() => {
-        const valueFilters = pmSensorFilters
+        const valueFilters = runningConditionFilters
             .filter(sf => sf.value1 !== '')
             .map(sf => ({
                 sensor: sf.sensor,
@@ -290,7 +299,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             timestamp_end: filterTimeEnd || null,
             value_filters: valueFilters,
         };
-    }, [pmSensorFilters, filterTimeStart, filterTimeEnd]);
+    }, [runningConditionFilters, filterTimeStart, filterTimeEnd]);
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -298,42 +307,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         () => JSON.stringify(dashboardFilterPayload),
         [dashboardFilterPayload],
     );
-
-    // ── PM-page per-sensor filter helpers ──────────────────────────────
-    // Pool of sensors the user can pick from when adding a filter row.
-    // 2026-09-15: this used to be just [target, ...predictors] — far too
-    // narrow for the actual use case. The sensor you filter training data
-    // by is usually neither the target nor a predictor: it's an unrelated
-    // "is the machine actually running" indicator (e.g. generator speed or
-    // kW), used to exclude idle/offline periods from training. Individual
-    // models don't even have predictors, so the old pool was just the
-    // target alone. Broadened to every sensor in the dataset — same pool
-    // Dashboard's own filter panel and this page's predictor/criteria
-    // pickers already draw from (`allSensors`, which already includes
-    // special/calculated sensors, not just raw CSV columns).
-    const pmFilterSensorPool = allSensors;
-
-    const addPmSensorFilter = useCallback(() => {
-        if (pmFilterSensorPool.length === 0) return;
-        setPmSensorFilters(prev => [...prev, {
-            id: `pmf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            sensor: targetSensor || pmFilterSensorPool[0],
-            operation: 'greater_than',
-            value1: '',
-            value2: '',
-        }]);
-    }, [pmFilterSensorPool, targetSensor]);
-
-    const updatePmSensorFilter = useCallback(
-        (id: string, patch: Partial<WorkspaceSensorFilter>) => {
-            setPmSensorFilters(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
-        },
-        [],
-    );
-
-    const removePmSensorFilter = useCallback((id: string) => {
-        setPmSensorFilters(prev => prev.filter(f => f.id !== id));
-    }, []);
 
     // Model Stats — computed on Rust side over ALL rows of the target sensor.
     const [targetStats, setTargetStats] = useState<SensorStats | null>(null);
@@ -623,11 +596,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 }
                 setFilterTimeStart(slice.filterTimeStart);
                 setFilterTimeEnd(slice.filterTimeEnd);
-                // Backward-compat: older workspaces persisted a single free-text
-                // `filterSensorValue` (e.g. "> 50") that was never wired to the
-                // payload. Drop it on load; new per-sensor filters live in
-                // `pmSensorFilters` and now actually affect the model.
-                setPmSensorFilters(Array.isArray(slice.pmSensorFilters) ? slice.pmSensorFilters : []);
                 // NOTE: Fit results (relPreview / subModels / clusteringPreview)
                 // are deliberately NOT persisted. With many target sensors or
                 // large datasets the predictor_raw matrices balloon the workspace
@@ -683,7 +651,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 clusterRanges,
                 filterTimeStart,
                 filterTimeEnd,
-                pmSensorFilters,
             };
             (async () => {
                 const next = await updateWorkspaceData(workspaceId, (prev) => ({
@@ -691,6 +658,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     failureGroupState: {
                         groups: prev.failureGroupState?.groups ?? [],
                         models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
+                        // This page never edits the workspace-wide running-condition
+                        // filter (that's BuildModelWindow's job) — preserve whatever
+                        // is on disk right now rather than dropping it, since this
+                        // write only intends to touch this one model's own fields.
+                        runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
                     },
                 }));
                 if (next?.failureGroupState) {
@@ -702,7 +674,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     }, [
         workspaceId, pmModelId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
-        clusterRanges, filterTimeStart, filterTimeEnd, pmSensorFilters,
+        clusterRanges, filterTimeStart, filterTimeEnd,
     ]);
 
     // Auto-divide cluster ranges across the criteria sensor's [min, max]
@@ -1726,14 +1698,15 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // Aggregated filter footnote shown in the confirm dialog so users
     // know the filtered slice will carry into training (catches the
     // "why is my model trained on only 200 rows?" surprise). Only this
-    // page's own filters (`filterTimeStart`/`filterTimeEnd` and
-    // `pmSensorFilters`) count — see `dashboardFilterPayload` above for why
-    // Dashboard's own filters never factor in here.
+    // page's own `filterTimeStart`/`filterTimeEnd` plus the inherited
+    // workspace-wide `runningConditionFilters` count — see
+    // `dashboardFilterPayload` above for why Dashboard's own filters never
+    // factor in here.
     const activeFilterCount = useMemo(() => {
-        const pm = pmSensorFilters.filter(f => f.value1 !== '').length;
+        const runningCondition = runningConditionFilters.filter(f => f.value1 !== '').length;
         const time = (filterTimeStart || filterTimeEnd) ? 1 : 0;
-        return { pm, time };
-    }, [pmSensorFilters, filterTimeStart, filterTimeEnd]);
+        return { runningCondition, time };
+    }, [runningConditionFilters, filterTimeStart, filterTimeEnd]);
 
     const canConfirmSave = useMemo(() => {
         if (!targetSensor) return false;
@@ -2064,11 +2037,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 />
                             </div>
                         </div>
-                        {/* Per-sensor value filters — pool is every sensor in the dataset
-                            (see pmFilterSensorPool above), so an unrelated "machine running"
-                            indicator like speed/kW can be used to exclude idle periods from
-                            training. AND-combined with dashboard filters via dashboardFilterPayload. */}
-                        <div className="filter-row">
+                        {/* Running condition — workspace-wide, read-only here. Owned
+                            and edited entirely from BuildModelWindow's Overview page
+                            ("Running Condition Filter" panel) so every model (any
+                            kind, any count) shares one definition instead of each
+                            needing its own "machine running" filter set separately
+                            (2026-09-15 — see runningConditionFilters prop doc). */}
+                        <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
                             <div style={{
                                 display: 'flex',
                                 alignItems: 'center',
@@ -2076,18 +2051,15 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 gap: '0.4rem',
                             }}>
                                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                    Sensor value
-                                    {pmSensorFilters.length > 0 && (
-                                        <span className="pm-count-pill">{pmSensorFilters.length}</span>
+                                    Running condition
+                                    {runningConditionFilters.length > 0 && (
+                                        <span className="pm-count-pill">{runningConditionFilters.length}</span>
                                     )}
                                 </label>
                                 <button
                                     type="button"
-                                    onClick={addPmSensorFilter}
-                                    disabled={pmFilterSensorPool.length === 0}
-                                    title={pmFilterSensorPool.length === 0
-                                        ? 'No sensors available'
-                                        : 'Add a sensor value filter'}
+                                    onClick={onBack}
+                                    title="Edit the workspace-wide running-condition filter on the Overview page"
                                     style={{
                                         display: 'flex',
                                         alignItems: 'center',
@@ -2099,15 +2071,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         color: 'var(--accent-color)',
                                         fontSize: '0.65rem',
                                         fontWeight: 600,
-                                        cursor: pmFilterSensorPool.length === 0 ? 'not-allowed' : 'pointer',
-                                        opacity: pmFilterSensorPool.length === 0 ? 0.5 : 1,
+                                        cursor: 'pointer',
                                     }}
                                 >
-                                    <Plus size={10} /> Add
+                                    Edit on Overview →
                                 </button>
                             </div>
 
-                            {pmSensorFilters.length === 0 ? (
+                            {runningConditionFilters.length === 0 ? (
                                 <div style={{
                                     fontSize: '0.7rem',
                                     color: 'var(--text-secondary)',
@@ -2115,117 +2086,26 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     padding: '0.3rem 0 0',
                                     fontStyle: 'italic',
                                 }}>
-                                    {pmFilterSensorPool.length === 0
-                                        ? 'No sensors available to filter on.'
-                                        : 'No filters. Click Add to create one.'}
+                                    No running-condition filter set — training on the full dataset, including idle periods.
                                 </div>
                             ) : (
                                 <div style={{
                                     display: 'flex',
-                                    flexDirection: 'column',
+                                    flexWrap: 'wrap',
                                     gap: '0.3rem',
                                     marginTop: '0.3rem',
                                 }}>
-                                    {pmSensorFilters.map(f => {
-                                        // The pool is now every sensor in the dataset (see
-                                        // pmFilterSensorPool above), so a filter's sensor going
-                                        // stale is no longer a realistic failure mode the way it
-                                        // was when the pool was just target+predictors — dropped
-                                        // the disabled-stub/invalid-border handling that guarded
-                                        // against it.
-                                        return (
-                                            <div key={f.id} style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.25rem',
-                                                padding: '0.35rem',
-                                                background: 'var(--chip-bg)',
-                                                border: '1px solid var(--border)',
-                                                borderRadius: '6px',
-                                            }}>
-                                                <SensorAutocomplete
-                                                    sensors={pmFilterSensorPool}
-                                                    getDesc={getDesc}
-                                                    value={f.sensor}
-                                                    onSelect={sensor => updatePmSensorFilter(f.id, { sensor })}
-                                                    placeholder="Search sensor..."
-                                                    style={{ flex: 1, minWidth: 0 }}
-                                                />
-                                                <select
-                                                    value={f.operation}
-                                                    onChange={e => updatePmSensorFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
-                                                    style={{
-                                                        padding: '0.2rem 0.3rem',
-                                                        background: 'rgba(59,130,246,0.1)',
-                                                        border: '1px solid rgba(59,130,246,0.25)',
-                                                        borderRadius: '4px',
-                                                        color: 'var(--accent-color)',
-                                                        fontSize: '0.65rem',
-                                                        fontWeight: 600,
-                                                        outline: 'none',
-                                                        flexShrink: 0,
-                                                    }}
-                                                >
-                                                    <option value="greater_than">&gt;</option>
-                                                    <option value="less_than">&lt;</option>
-                                                    <option value="between">between</option>
-                                                    <option value="equals">=</option>
-                                                </select>
-                                                <input
-                                                    type="number"
-                                                    value={f.value1}
-                                                    onChange={e => updatePmSensorFilter(f.id, { value1: e.target.value })}
-                                                    placeholder="val"
-                                                    style={{
-                                                        width: '60px',
-                                                        padding: '0.2rem 0.3rem',
-                                                        background: 'var(--input-bg)',
-                                                        border: '1px solid var(--border)',
-                                                        borderRadius: '4px',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: '0.7rem',
-                                                        outline: 'none',
-                                                        flexShrink: 0,
-                                                    }}
-                                                />
-                                                {f.operation === 'between' && (
-                                                    <input
-                                                        type="number"
-                                                        value={f.value2}
-                                                        onChange={e => updatePmSensorFilter(f.id, { value2: e.target.value })}
-                                                        placeholder="max"
-                                                        style={{
-                                                            width: '60px',
-                                                            padding: '0.2rem 0.3rem',
-                                                            background: 'var(--input-bg)',
-                                                            border: '1px solid var(--border)',
-                                                            borderRadius: '4px',
-                                                            color: 'var(--text-primary)',
-                                                            fontSize: '0.7rem',
-                                                            outline: 'none',
-                                                            flexShrink: 0,
-                                                        }}
-                                                    />
-                                                )}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removePmSensorFilter(f.id)}
-                                                    title="Remove filter"
-                                                    style={{
-                                                        background: 'transparent',
-                                                        border: 'none',
-                                                        color: 'var(--text-secondary)',
-                                                        cursor: 'pointer',
-                                                        padding: '0.15rem',
-                                                        display: 'flex',
-                                                        flexShrink: 0,
-                                                    }}
-                                                >
-                                                    <X size={12} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
+                                    {runningConditionFilters.map(f => (
+                                        <span key={f.id} className="pm-count-pill" style={{
+                                            padding: '0.25rem 0.5rem',
+                                            fontSize: '0.68rem',
+                                            fontWeight: 500,
+                                        }}>
+                                            {getDesc(f.sensor) || f.sensor}{' '}
+                                            {f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='}{' '}
+                                            {f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}
+                                        </span>
+                                    ))}
                                 </div>
                             )}
                         </div>
@@ -3375,12 +3255,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         lineHeight: 1.45,
                                     }}>
                                         <strong style={{ color: 'var(--text-primary)' }}>Filters on training data:</strong>{" "}
-                                        {activeFilterCount.pm === 0 && activeFilterCount.time === 0
+                                        {activeFilterCount.runningCondition === 0 && activeFilterCount.time === 0
                                             ? 'none — using the full dataset.'
                                             : <>
                                                 {activeFilterCount.time > 0 && <>a time range</>}
-                                                {activeFilterCount.time > 0 && activeFilterCount.pm > 0 && <> and </>}
-                                                {activeFilterCount.pm > 0 && <>{activeFilterCount.pm} PM-page sensor filter{activeFilterCount.pm !== 1 ? 's' : ''}</>}
+                                                {activeFilterCount.time > 0 && activeFilterCount.runningCondition > 0 && <> and </>}
+                                                {activeFilterCount.runningCondition > 0 && <>the running-condition filter ({activeFilterCount.runningCondition} condition{activeFilterCount.runningCondition !== 1 ? 's' : ''})</>}
                                                 .
                                             </>
                                         }

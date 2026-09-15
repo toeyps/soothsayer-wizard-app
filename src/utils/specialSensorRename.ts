@@ -55,8 +55,33 @@ export function renameTagInModels(models: FailureModel[], oldTag: string, newTag
         ySensor: swap(m.ySensor),
         criteriaSensor: swap(m.criteriaSensor),
         scatterXSensor: swap(m.scatterXSensor),
-        pmSensorFilters: (m.pmSensorFilters ?? []).map(f => (key(f.sensor) === target ? { ...f, sensor: newTag } : f)),
     }));
+}
+
+/**
+ * Rename every occurrence of `oldTag` inside the workspace-wide running-
+ * condition filter (`FailureGroupStateSlice.runningConditionFilters`,
+ * 2026-09-15 — replaced the old per-model `pmSensorFilters` this file used
+ * to also rename above). Same shape as `renameTagInModels`'s per-field
+ * swap, just against one flat array instead of scattered across every
+ * model's own fields.
+ *
+ * NOT YET WIRED UP to the actual rename flow (`AddSensorWindow.handleSaveEdit`)
+ * — that requires threading `runningConditionFilters` through the
+ * `sensors-data` event AddSensorWindow listens on, which is a separate,
+ * scoped follow-up (flagged to the user rather than silently left out).
+ * Until then, renaming a special sensor that the running-condition filter
+ * references will NOT update the filter, same gap `specialSensorDeps.ts`'s
+ * delete-protection also has for now.
+ */
+export function renameTagInRunningConditionFilters<T extends { sensor: string }>(
+    filters: T[],
+    oldTag: string,
+    newTag: string,
+): T[] {
+    const target = key(oldTag);
+    if (!filters.some(f => key(f.sensor) === target)) return filters;
+    return filters.map(f => (key(f.sensor) === target ? { ...f, sensor: newTag } : f));
 }
 
 /**

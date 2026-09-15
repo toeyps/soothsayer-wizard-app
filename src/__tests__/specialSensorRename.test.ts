@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { FailureModel, SpecialSensorRecipe } from '../types';
+import type { FailureModel, SpecialSensorRecipe, WorkspaceSensorFilter } from '../types';
 import {
     renameTagInArray,
     renameTagInRecord,
     renameTagInModels,
+    renameTagInRunningConditionFilters,
     renameTagInRecipes,
 } from '../utils/specialSensorRename';
 
@@ -31,7 +32,6 @@ function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
         clusterRanges: [],
         filterTimeStart: '',
         filterTimeEnd: '',
-        pmSensorFilters: [],
         ...overrides,
     };
 }
@@ -67,7 +67,11 @@ describe('renameTagInRecord', () => {
 });
 
 describe('renameTagInModels', () => {
-    it('renames every one of the seven sensor-bearing fields', () => {
+    it('renames every one of the six sensor-bearing fields', () => {
+        // 2026-09-15: was seven, including `pmSensorFilters` -- that field
+        // moved off FailureModel entirely to the workspace-wide
+        // `runningConditionFilters` (see the describe block below for its
+        // own rename helper).
         const model = makeModel({
             targetSensor: 'OLD',
             predictorSensors: ['OLD', 'OTHER'],
@@ -75,10 +79,6 @@ describe('renameTagInModels', () => {
             ySensor: 'OLD',
             criteriaSensor: 'OLD',
             scatterXSensor: 'OLD',
-            pmSensorFilters: [
-                { id: 'f1', sensor: 'OLD', operation: 'greater_than', value1: '1', value2: '' },
-                { id: 'f2', sensor: 'OTHER', operation: 'less_than', value1: '2', value2: '' },
-            ],
         });
         const [renamed] = renameTagInModels([model], 'OLD', 'NEW');
         expect(renamed.targetSensor).toBe('NEW');
@@ -87,7 +87,6 @@ describe('renameTagInModels', () => {
         expect(renamed.ySensor).toBe('NEW');
         expect(renamed.criteriaSensor).toBe('NEW');
         expect(renamed.scatterXSensor).toBe('NEW');
-        expect(renamed.pmSensorFilters.map(f => f.sensor)).toEqual(['NEW', 'OTHER']);
     });
 
     it('leaves a model that never names the sensor untouched', () => {
@@ -108,6 +107,22 @@ describe('renameTagInModels', () => {
         const model = makeModel({ targetSensor: 'old' });
         const [renamed] = renameTagInModels([model], 'OLD', 'NEW');
         expect(renamed.targetSensor).toBe('NEW');
+    });
+});
+
+describe('renameTagInRunningConditionFilters', () => {
+    const filters: WorkspaceSensorFilter[] = [
+        { id: 'f1', sensor: 'OLD', operation: 'greater_than', value1: '1', value2: '' },
+        { id: 'f2', sensor: 'OTHER', operation: 'less_than', value1: '2', value2: '' },
+    ];
+
+    it('renames a matching condition\'s sensor, case-insensitively', () => {
+        const renamed = renameTagInRunningConditionFilters(filters, 'old', 'NEW');
+        expect(renamed.map(f => f.sensor)).toEqual(['NEW', 'OTHER']);
+    });
+
+    it('returns the SAME array reference when no condition names the tag', () => {
+        expect(renameTagInRunningConditionFilters(filters, 'UNRELATED', 'NEW')).toBe(filters);
     });
 });
 

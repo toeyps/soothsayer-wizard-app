@@ -14,7 +14,7 @@ function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
         targetSensor: '', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '',
         ...overrides,
     };
 }
@@ -93,7 +93,12 @@ describe('buildSpecialSensorUsage', () => {
         expect(usageFor(usage, 'special A')!.deletable).toBe(true);
     });
 
-    it('blocks a sensor named in any of the seven model sensor fields', () => {
+    it('blocks a sensor named in any of the six model sensor fields', () => {
+        // 2026-09-15: was seven, including `pmSensorFilters` -- that field
+        // moved off FailureModel to the workspace-wide
+        // `runningConditionFilters`, which this delete-check does NOT yet
+        // cover (a known, scoped gap -- see specialSensorDeps.ts's own
+        // comment on MODEL_SENSOR_FIELDS).
         const fields: Array<[string, Partial<FailureModel>, string]> = [
             ['targetSensor', { targetSensor: 'S' }, 'target sensor'],
             ['predictorSensors', { predictorSensors: ['S'] }, 'predictor'],
@@ -101,7 +106,6 @@ describe('buildSpecialSensorUsage', () => {
             ['ySensor', { ySensor: 'S' }, 'Y sensor'],
             ['criteriaSensor', { criteriaSensor: 'S' }, 'criteria sensor'],
             ['scatterXSensor', { scatterXSensor: 'S' }, 'scatter X sensor'],
-            ['pmSensorFilters', { pmSensorFilters: [{ id: 'f1', sensor: 'S', operation: 'greater_than', value1: '0', value2: '' }] }, 'PM filter'],
         ];
         for (const [name, patch, label] of fields) {
             const usage = build({ recipes: [formula('S', '$RAW.PV')], models: [makeModel(patch)] });

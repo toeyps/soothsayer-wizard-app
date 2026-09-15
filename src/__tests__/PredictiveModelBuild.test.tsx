@@ -70,7 +70,7 @@ function makeStoredModel(overrides: Record<string, any> = {}) {
         targetSensor: 'TARGET1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '',
         ...overrides,
     };
 }
@@ -82,6 +82,7 @@ function pmProps(overrides: Partial<PMProps> = {}): PMProps {
         kind: 'individual',
         sensorHeaders: ['TARGET1', 'PRED1', 'PRED2'],
         sensorMetadata,
+        runningConditionFilters: [],
         onBack: vi.fn(),
         ...overrides,
     };
@@ -417,31 +418,39 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
-    describe('data filters (pmSensorFilters)', () => {
-        it('is enabled once the dataset has any sensors, and adds/removes a row', async () => {
-            await renderHydrated();
-            const addBtn = screen.getByTitle('Add a sensor value filter') as HTMLButtonElement;
-            expect(addBtn.disabled).toBe(false);
-
-            fireEvent.click(addBtn);
-            const removeBtn = screen.getByTitle(/Remove/) as HTMLButtonElement;
-            fireEvent.click(removeBtn);
-            expect(screen.queryByTitle(/Remove/)).toBeNull();
+    // 2026-09-15: the editable per-model "Sensor value" filter was removed
+    // entirely -- with 100 models sharing a workspace, setting the same
+    // "is the machine running" condition on each one separately was the
+    // actual problem. It's now a single workspace-wide
+    // `runningConditionFilters`, owned and edited only on BuildModelWindow's
+    // Overview page; this page just displays it read-only (see the
+    // `runningConditionFilters` prop's own doc comment).
+    describe('running condition (read-only, inherited from Overview)', () => {
+        it('shows "not set" with no editable controls when the workspace has no filter', async () => {
+            await renderHydrated({ runningConditionFilters: [] });
+            expect(screen.getByText(/No running-condition filter set/)).toBeTruthy();
+            expect(screen.queryByTitle('Add a sensor value filter')).toBeNull();
+            expect(screen.queryByPlaceholderText('Search sensor...')).toBeNull();
         });
 
-        // 2026-09-15 regression: the sensor pool used to be just
-        // [target, ...predictors] -- for an Individual model (no predictors
-        // at all) that meant the only choice was the target itself. The real
-        // use case is filtering training data by an unrelated "machine
-        // running" indicator (e.g. generator speed/kW) to exclude idle
-        // periods, which is neither the target nor a predictor.
-        it('lets the filter sensor be picked from the whole dataset, not just target/predictors', async () => {
-            await renderHydrated(); // default: target TARGET1, no predictors
-            fireEvent.click(screen.getByTitle('Add a sensor value filter'));
-            const sensorInput = screen.getByPlaceholderText('Search sensor...');
-            fireEvent.change(sensorInput, { target: { value: 'PRED2' } });
-            fireEvent.click(screen.getByText('Predictor Two'));
-            expect((sensorInput as HTMLInputElement).value).toBe('PRED2');
+        it('displays each inherited condition read-only', async () => {
+            await renderHydrated({
+                runningConditionFilters: [
+                    { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
+                ],
+            });
+            expect(screen.getByText(/Predictor One/)).toBeTruthy();
+            expect(screen.getByText(/1200/)).toBeTruthy();
+            // Read-only: no input to type a new value into, no select to
+            // change the operator, no remove button.
+            expect(screen.queryByPlaceholderText('Search sensor...')).toBeNull();
+            expect(screen.queryByTitle(/Remove filter/)).toBeNull();
+        });
+
+        it('"Edit on Overview" returns to the Overview page via onBack', async () => {
+            const { onBack } = await renderHydrated({ runningConditionFilters: [] });
+            fireEvent.click(screen.getByText('Edit on Overview →'));
+            expect(onBack).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -587,6 +596,17 @@ describe('PredictiveModelBuild', () => {
             expect(screen.getByText(/none — using the full dataset\./)).toBeTruthy();
             expect(screen.queryByText(/Dashboard sensor filter/)).toBeNull();
         });
+
+        it('counts the inherited workspace-wide running-condition filter (2026-09-15)', async () => {
+            await renderHydrated({
+                runningConditionFilters: [
+                    { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
+                ],
+            });
+            fireEvent.click(screen.getByText('Save Model'));
+            expect(screen.getByText(/the running-condition filter \(1 condition\)/)).toBeTruthy();
+            expect(screen.queryByText(/none — using the full dataset\./)).toBeNull();
+        });
     });
 
     describe('persistence', () => {
@@ -600,14 +620,17 @@ describe('PredictiveModelBuild', () => {
             mockUpdateWorkspaceData.mockClear();
             mockEmit.mockClear();
 
-            // Plot mode is locked now (not user-toggleable), so add a sensor
-            // filter instead to produce a real config change to debounce.
-            fireEvent.click(screen.getByTitle('Add a sensor value filter'));
+            // Plot mode is locked now (not user-toggleable), and the old
+            // per-model sensor-value filter is gone (2026-09-15 -- see the
+            // "running condition" describe block above), so type into Time
+            // start instead to produce a real config change to debounce.
+            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
+            fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').pmSensorFilters).toHaveLength(1);
+            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').filterTimeStart).toBe('2026-03-01T00:00');
             // Broadcast so Dashboard/BuildModelWindow (separate OS windows) refresh too.
             await act(async () => { await Promise.resolve(); });
             expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', state.failureGroupState);
@@ -625,7 +648,8 @@ describe('PredictiveModelBuild', () => {
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [makeStoredModel(), sibling] } }));
 
-            fireEvent.click(screen.getByTitle('Add a sensor value filter'));
+            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
+            fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;

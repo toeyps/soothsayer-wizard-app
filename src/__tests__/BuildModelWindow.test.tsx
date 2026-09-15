@@ -41,6 +41,16 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
             </div>
         );
     },
+    // Minimal stand-in for the real searchable picker (own tests live in
+    // PredictiveModelBuild.test.tsx) — just enough to let the Running
+    // Condition Filter panel's tests exercise everything around it.
+    SensorAutocomplete: (props: any) => (
+        <input
+            placeholder={props.placeholder}
+            value={props.value}
+            onChange={e => props.onSelect(e.target.value)}
+        />
+    ),
 }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
@@ -630,6 +640,105 @@ describe('BuildModelWindow', () => {
                 expect(screen.getAllByText('Pump').length).toBeGreaterThan(0);
                 expect(screen.queryByText('Uncategorized')).toBeNull();
             });
+        });
+    });
+
+    // 2026-09-15: workspace-wide, set once here instead of per model — see
+    // this file's own PredictiveModelBuild mock (`predictiveModelBuildProps`)
+    // for confirming the value actually reaches that page too.
+    describe('Running Condition Filter panel', () => {
+        it('shows "not set" and applies-to-none until a condition is added', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(screen.getByText('Running Condition Filter')).toBeTruthy();
+            expect(screen.getByText(/Not set — every model trains on the full dataset/)).toBeTruthy();
+            expect(screen.queryByText(/applies to/)).toBeNull();
+        });
+
+        it('expands on click and adds a condition, which persists and broadcasts', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            fireEvent.click(screen.getByText('Add condition (AND)'));
+
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
+            await act(async () => { await Promise.resolve(); });
+            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
+                runningConditionFilters: expect.arrayContaining([expect.objectContaining({ sensor: 'TAG1', operation: 'greater_than' })]),
+            }));
+        });
+
+        it('editing a condition\'s value persists the new value', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            fireEvent.click(screen.getByText('Add condition (AND)'));
+            await act(async () => { await Promise.resolve(); });
+            mockUpdateWorkspaceData.mockClear();
+
+            fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '1200' } });
+            await act(async () => { await Promise.resolve(); });
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.runningConditionFilters[0].value1).toBe('1200');
+        });
+
+        it('removing the only condition goes back to "not set"', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            fireEvent.click(screen.getByText('Add condition (AND)'));
+            await act(async () => { await Promise.resolve(); });
+
+            fireEvent.click(screen.getByTitle('Remove condition'));
+            await act(async () => { await Promise.resolve(); });
+            expect(screen.getByText(/Not set — every model trains on the full dataset/)).toBeTruthy();
+        });
+
+        it('passes the current filter down to the PM page as runningConditionFilters', async () => {
+            const modelWithGroup = makeModel();
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [modelWithGroup],
+                    runningConditionFilters: [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }],
+                },
+            });
+            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getByText('Build Model →'));
+            const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
+            expect(lastProps.runningConditionFilters).toEqual([
+                { id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' },
+            ]);
+        });
+
+        it('stays untouched when an unrelated model edit is saved (regression: the generic persist() used to drop it)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [makeModel()],
+                    runningConditionFilters: [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }],
+                },
+            });
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
+                id,
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [makeModel()],
+                    runningConditionFilters: [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }],
+                },
+            }));
+
+            fireEvent.click(screen.getByText('Model One'));
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
+            fireEvent.click(form.getByText('Save changes'));
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.runningConditionFilters).toEqual([
+                { id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' },
+            ]);
         });
     });
 });

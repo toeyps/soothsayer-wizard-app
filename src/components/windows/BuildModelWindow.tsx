@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, emit } from "@tauri-apps/api/event";
-import { X } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata } from "../../types";
+import { X, Plus, ChevronDown, Gauge } from "lucide-react";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
-import PredictiveModelBuild from "./PredictiveModelBuild";
+import PredictiveModelBuild, { SensorAutocomplete } from "./PredictiveModelBuild";
 
 interface BuildModelData {
     workspaceId: string;
@@ -140,6 +140,15 @@ export default function BuildModelWindow() {
     const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
     const [allGroups, setAllGroups] = useState<FailureGroup[]>([]);
     const [allModels, setAllModels] = useState<FailureModel[]>([]);
+    // Workspace-wide "machine running" filter (2026-09-15) — the whole point
+    // of this panel living on the Overview page rather than per-model: set
+    // once here, every model of every kind picks it up automatically at
+    // train time (see PredictiveModelBuild.tsx's `dashboardFilterPayload`).
+    // Replaced the old per-model `pmSensorFilters` — with 100 models in one
+    // workspace, setting the same "is the machine running" condition 100
+    // times separately was the actual problem being solved.
+    const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
+    const [rcFilterOpen, setRcFilterOpen] = useState(false);
     const [loading, setLoading] = useState(true);
     const hydratedRef = useRef(false);
 
@@ -177,6 +186,10 @@ export default function BuildModelWindow() {
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
+    // Raw description only (not the "description (tag)" combo `sensorLabel`
+    // below builds) — matches `SensorAutocomplete`'s own `getDesc` contract,
+    // which appends the tag itself separately.
+    const getDesc = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description ?? '', [sensorMetaMap]);
     // "description (tag)" everywhere a sensor is shown to the user (picker
     // options, predictor chips, the summary line) — the raw tag alone
     // (e.g. "11TE1210.PV") isn't enough to recognize a sensor by; falls
@@ -226,6 +239,7 @@ export default function BuildModelWindow() {
                     const ws = await loadWorkspaceData(d.workspaceId);
                     setAllGroups(ws?.failureGroupState?.groups ?? []);
                     setAllModels(ws?.failureGroupState?.models ?? []);
+                    setRunningConditionFilters(ws?.failureGroupState?.runningConditionFilters ?? []);
                 } catch (e) {
                     console.warn('Failed to hydrate failure-group state:', e);
                 }
@@ -236,9 +250,10 @@ export default function BuildModelWindow() {
             // Any other window (Dashboard, PredictiveModelBuild) that
             // persists failureGroupState broadcasts this so our copy never
             // goes stale.
-            unlistenChanged = await listen<{ groups: FailureGroup[]; models: FailureModel[] }>('failure-group-state-changed', (event) => {
+            unlistenChanged = await listen<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[] }>('failure-group-state-changed', (event) => {
                 setAllGroups(event.payload.groups);
                 setAllModels(event.payload.models);
+                setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
             });
 
             await emit('request-build-model-data');
@@ -260,14 +275,71 @@ export default function BuildModelWindow() {
             const groups = prev.failureGroupState?.groups ?? [];
             const models = prev.failureGroupState?.models ?? [];
             const result = updater(models, groups);
-            return { ...prev, failureGroupState: { groups: result.groups, models: result.models } };
+            return {
+                ...prev,
+                failureGroupState: {
+                    groups: result.groups,
+                    models: result.models,
+                    // This path never touches the running-condition filter —
+                    // preserve whatever is on disk right now (see
+                    // persistRunningConditionFilters below for the one path
+                    // that does change it).
+                    runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
+                },
+            };
         });
         if (next?.failureGroupState) {
             setAllGroups(next.failureGroupState.groups);
             setAllModels(next.failureGroupState.models);
+            setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
             await emit('failure-group-state-changed', next.failureGroupState);
         }
     }, [workspaceId]);
+
+    // The one path that actually changes the running-condition filter —
+    // edited entirely from this window's own "Running Condition Filter"
+    // panel (see the JSX below), never per-model.
+    const persistRunningConditionFilters = useCallback(async (filters: WorkspaceSensorFilter[]) => {
+        if (!workspaceId) return;
+        const next = await updateWorkspaceData(workspaceId, prev => ({
+            ...prev,
+            failureGroupState: {
+                groups: prev.failureGroupState?.groups ?? [],
+                models: prev.failureGroupState?.models ?? [],
+                runningConditionFilters: filters,
+            },
+        }));
+        if (next?.failureGroupState) {
+            setAllGroups(next.failureGroupState.groups);
+            setAllModels(next.failureGroupState.models);
+            setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
+            await emit('failure-group-state-changed', next.failureGroupState);
+        }
+    }, [workspaceId]);
+
+    const addRunningConditionFilter = useCallback(() => {
+        const next = [...runningConditionFilters, {
+            id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            sensor: allSensors[0] ?? '',
+            operation: 'greater_than' as const,
+            value1: '',
+            value2: '',
+        }];
+        setRunningConditionFilters(next);
+        persistRunningConditionFilters(next);
+    }, [runningConditionFilters, allSensors, persistRunningConditionFilters]);
+
+    const updateRunningConditionFilter = useCallback((id: string, patch: Partial<WorkspaceSensorFilter>) => {
+        const next = runningConditionFilters.map(f => f.id === id ? { ...f, ...patch } : f);
+        setRunningConditionFilters(next);
+        persistRunningConditionFilters(next);
+    }, [runningConditionFilters, persistRunningConditionFilters]);
+
+    const removeRunningConditionFilter = useCallback((id: string) => {
+        const next = runningConditionFilters.filter(f => f.id !== id);
+        setRunningConditionFilters(next);
+        persistRunningConditionFilters(next);
+    }, [runningConditionFilters, persistRunningConditionFilters]);
 
     // ---- Model edit accordion — 2026-08-31: "add" removed entirely per
     //      explicit user request; toggling a sensor into a group (Sensor
@@ -725,10 +797,112 @@ export default function BuildModelWindow() {
                     kind={pmPageModel.kind}
                     sensorHeaders={allSensors}
                     sensorMetadata={sensorMetadata}
+                    runningConditionFilters={runningConditionFilters}
                     onBack={() => setActivePage('overview')}
                 />
             ) : (
             <>
+            {/* Running Condition Filter — workspace-wide, set once here so
+                every model of every kind picks it up automatically at train
+                time instead of each needing its own "is the machine
+                running" filter (2026-09-15 — replaces the old per-model
+                Sensor value filter on PredictiveModelBuild.tsx). */}
+            <div style={{ margin: '12px 20px 0', border: `1px solid ${runningConditionFilters.length > 0 ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
+                <div
+                    onClick={() => setRcFilterOpen(o => !o)}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 14px', cursor: 'pointer', userSelect: 'none' }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 7, background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Gauge size={15} color="var(--accent-color)" />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>Running Condition Filter</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {runningConditionFilters.length === 0
+                                    ? 'Not set — every model trains on the full dataset, including idle periods.'
+                                    : runningConditionFilters.map(f => `${getDesc(f.sensor) || f.sensor} ${f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`).join(' AND ')}
+                            </div>
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                        {runningConditionFilters.length > 0 && (
+                            <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'rgba(16,185,129,0.14)', color: '#10b981' }}>
+                                ✓ applies to {totalModels} model{totalModels !== 1 ? 's' : ''}
+                            </span>
+                        )}
+                        <ChevronDown size={14} color="var(--text-faint)" style={{ transform: rcFilterOpen ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
+                    </div>
+                </div>
+
+                {rcFilterOpen && (
+                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
+                        <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
+                            Applied before training <strong style={{ color: 'var(--text-primary)' }}>every model</strong> in this workspace, AND-combined with each model's own Time start/end. No model has its own separate value filter any more — this is the only place to set one.
+                        </p>
+                        {runningConditionFilters.map(f => (
+                            <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', marginBottom: '6px', background: 'var(--chip-bg)', border: '1px solid var(--border)', borderRadius: '6px' }}>
+                                <SensorAutocomplete
+                                    sensors={allSensors}
+                                    getDesc={getDesc}
+                                    value={f.sensor}
+                                    onSelect={sensor => updateRunningConditionFilter(f.id, { sensor })}
+                                    placeholder="Search sensor..."
+                                    style={{ flex: 1, minWidth: 0 }}
+                                />
+                                <select
+                                    value={f.operation}
+                                    onChange={e => updateRunningConditionFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
+                                    style={{ padding: '4px 6px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '4px', color: 'var(--accent-color)', fontSize: '0.7rem', fontWeight: 600, outline: 'none', flexShrink: 0 }}
+                                >
+                                    <option value="greater_than">&gt;</option>
+                                    <option value="less_than">&lt;</option>
+                                    <option value="between">between</option>
+                                    <option value="equals">=</option>
+                                </select>
+                                <input
+                                    type="number"
+                                    value={f.value1}
+                                    onChange={e => updateRunningConditionFilter(f.id, { value1: e.target.value })}
+                                    placeholder="val"
+                                    style={{ width: '68px', padding: '4px 6px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.72rem', outline: 'none', flexShrink: 0 }}
+                                />
+                                {f.operation === 'between' && (
+                                    <input
+                                        type="number"
+                                        value={f.value2}
+                                        onChange={e => updateRunningConditionFilter(f.id, { value2: e.target.value })}
+                                        placeholder="max"
+                                        style={{ width: '68px', padding: '4px 6px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.72rem', outline: 'none', flexShrink: 0 }}
+                                    />
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => removeRunningConditionFilter(f.id)}
+                                    title="Remove condition"
+                                    style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '3px', display: 'flex', flexShrink: 0 }}
+                                >
+                                    <X size={12} />
+                                </button>
+                            </div>
+                        ))}
+                        <button
+                            type="button"
+                            onClick={addRunningConditionFilter}
+                            disabled={allSensors.length === 0}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 9px',
+                                background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '4px',
+                                color: 'var(--accent-color)', fontSize: '0.68rem', fontWeight: 600,
+                                cursor: allSensors.length === 0 ? 'not-allowed' : 'pointer', opacity: allSensors.length === 0 ? 0.5 : 1,
+                            }}
+                        >
+                            <Plus size={11} /> Add condition (AND)
+                        </button>
+                    </div>
+                )}
+            </div>
+
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-faint)', display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <b style={{ color: 'var(--text-primary)' }}>{totalModels}</b> models ·

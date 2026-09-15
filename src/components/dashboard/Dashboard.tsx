@@ -7,6 +7,7 @@ import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
     FailureGroup, FailureModel, ModelKind, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
+    WorkspaceSensorFilter,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -304,6 +305,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [fgModels, setFgModels] = useState<FailureModel[]>(
         initialState?.failureGroupState?.models ?? []
     );
+    // Workspace-wide "machine running" filter (2026-09-15) — owned/edited
+    // entirely on BuildModelWindow's Overview page, but Dashboard's own
+    // full-overwrite autosave (`buildWorkspaceState` below) rebuilds
+    // `failureGroupState` from local state on every tick, same as
+    // fgGroups/fgModels — without tracking this too, the very next Dashboard
+    // autosave after BuildModelWindow sets it would silently erase it.
+    const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>(
+        initialState?.failureGroupState?.runningConditionFilters ?? []
+    );
 
     // Serialized WorkspaceState that is already known to be on disk. The
     // debounced autosave below compares against this and skips a write whose
@@ -319,7 +329,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (!initialState) return;
         updateWorkspaceData(initialState.id, prev => ({
             ...prev,
-            failureGroupState: { groups, models },
+            failureGroupState: {
+                groups,
+                models,
+                // Dashboard never edits this itself — preserve whatever is
+                // actually on disk right now rather than the (possibly
+                // stale-by-a-tick) local copy, since `prev` here is a fresh
+                // read, not the closure's `runningConditionFilters`.
+                runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
+            },
         }))
             .then(() => {
                 // 2026-09-03: this write already made the new failure-group
@@ -329,11 +347,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // plus two full-state writes.
                 const build = buildWorkspaceStateRef.current;
                 if (build) {
-                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: { groups, models } }));
+                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: { groups, models, runningConditionFilters } }));
                 }
             })
             .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
-    }, [initialState]);
+    }, [initialState, runningConditionFilters]);
 
     // BuildModelWindow and PredictiveModelBuild persist failureGroupState
     // independently (their own updateWorkspaceData read-modify-write calls)
@@ -343,13 +361,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // saves `{groups: fgGroups, models: fgModels}` alongside everything
     // else it owns) would then clobber their fresher on-disk data on its
     // next tick. Both windows broadcast this event after every persist so
-    // this copy never drifts.
+    // this copy never drifts. Also carries `runningConditionFilters` now,
+    // for the same reason.
     useEffect(() => {
         let unlisten: (() => void) | undefined;
         (async () => {
-            unlisten = await listen<{ groups: FailureGroup[]; models: FailureModel[] }>('failure-group-state-changed', (event) => {
+            unlisten = await listen<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[] }>('failure-group-state-changed', (event) => {
                 setFgGroups(event.payload.groups);
                 setFgModels(event.payload.models);
+                setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
             });
         })();
         return () => { if (unlisten) unlisten(); };
@@ -397,7 +417,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         ],
         filterTimeStart: '',
         filterTimeEnd: '',
-        pmSensorFilters: [],
     }), [getSensorMeta]);
 
     const isDuplicateGroupName = useCallback((name: string, excludeNo?: number) =>
@@ -1533,7 +1552,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // not the stale failureGroupState captured in `initialState` at
         // mount — otherwise this full-overwrite autosave would silently
         // erase what was just written via read-modify-write elsewhere.
-        failureGroupState: { groups: fgGroups, models: fgModels },
+        failureGroupState: { groups: fgGroups, models: fgModels, runningConditionFilters },
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
         extraSensorMetadata,
@@ -1550,7 +1569,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
-        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, alarmLinesEnabled, scatterAxes,
+        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, runningConditionFilters, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, specialSensorRecipes, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
         valueHighlight, relativeAmount, relativeUnit,
     ]);

@@ -18,7 +18,15 @@ import { FailureModel, SpecialSensorRecipe } from '../types';
  * chart along with the delete.
  */
 
-/** One place a `FailureModel` can name a sensor, and what to call it in the UI. */
+/** One place a `FailureModel` can name a sensor, and what to call it in the UI.
+ *
+ *  2026-09-15: the old "PM filter" field (`pmSensorFilters`, per-model) was
+ *  removed here — that concept moved to a single workspace-wide
+ *  `runningConditionFilters` list (see `FailureGroupStateSlice`), which
+ *  isn't per-model and so doesn't fit this array's shape. Deleting a special
+ *  sensor the running-condition filter references is NOT currently blocked
+ *  by this check — a known, scoped gap (flagged to the user), not an
+ *  oversight. */
 const MODEL_SENSOR_FIELDS = [
     { label: 'target sensor', read: (m: FailureModel) => [m.targetSensor] },
     { label: 'predictor', read: (m: FailureModel) => m.predictorSensors ?? [] },
@@ -26,7 +34,6 @@ const MODEL_SENSOR_FIELDS = [
     { label: 'Y sensor', read: (m: FailureModel) => [m.ySensor] },
     { label: 'criteria sensor', read: (m: FailureModel) => [m.criteriaSensor] },
     { label: 'scatter X sensor', read: (m: FailureModel) => [m.scatterXSensor] },
-    { label: 'PM filter', read: (m: FailureModel) => (m.pmSensorFilters ?? []).map(f => f.sensor) },
 ] as const;
 
 /** A Failure Group model that names the sensor, and the field it names it in. */

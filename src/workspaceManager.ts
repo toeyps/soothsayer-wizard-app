@@ -1,7 +1,7 @@
 import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
-import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, ModelKind } from './types';
+import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, ModelKind, WorkspaceSensorFilter } from './types';
 import { debugLog } from './utils/debugLog';
 
 const STORE_FILE = 'settings.json';
@@ -171,7 +171,6 @@ const DEFAULT_PM_SLICE = {
     ],
     filterTimeStart: '',
     filterTimeEnd: '',
-    pmSensorFilters: [],
 };
 
 /** Best-effort detection of the new `ModelKind` from the old free-text
@@ -216,7 +215,7 @@ function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
  * every model already has `groupNos`).
  */
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
-    const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[] } | undefined;
+    const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[] } | undefined;
     if (!fg) return state;
 
     if (Array.isArray(fg.models)) {
@@ -227,6 +226,7 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
             failureGroupState: {
                 groups: (fg.groups as FailureGroup[] | undefined) ?? [],
                 models: normalizeModelGroups(fg.models),
+                runningConditionFilters: fg.runningConditionFilters ?? [],
             },
         };
     }
@@ -271,7 +271,6 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
                         clusterRanges: pm!.clusterRanges,
                         filterTimeStart: pm!.filterTimeStart,
                         filterTimeEnd: pm!.filterTimeEnd,
-                        pmSensorFilters: pm!.pmSensorFilters,
                     }
                     : DEFAULT_PM_SLICE),
             };
@@ -282,6 +281,7 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
         failureGroupState: {
             groups: (fg.groups as FailureGroup[] | undefined) ?? [],
             models,
+            runningConditionFilters: fg.runningConditionFilters ?? [],
         },
     };
 }

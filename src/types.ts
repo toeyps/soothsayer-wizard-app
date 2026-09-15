@@ -136,17 +136,6 @@ export interface PredictiveModelStateSlice {
     clusterRanges: PredictiveClusterRange[];
     filterTimeStart: string;
     filterTimeEnd: string;
-    /**
-     * Per-sensor value filters set on the PM page itself. Sensor pool is
-     * restricted to the page's target + predictors at the time the row is
-     * added (UI enforces this). Combined AND-style with whatever filters
-     * the user already applied on the Dashboard before navigating here —
-     * the dashboard slice is the base, PM filters narrow further.
-     *
-     * Shape matches `WorkspaceSensorFilter` so the same Rust-side
-     * `value_filters` payload format is reused (no new commands needed).
-     */
-    pmSensorFilters: WorkspaceSensorFilter[];
 }
 
 /**
@@ -202,6 +191,21 @@ export interface FailureModel extends PredictiveModelStateSlice {
 interface FailureGroupStateSlice {
     groups: FailureGroup[];
     models: FailureModel[];
+    /**
+     * Workspace-wide "is the machine actually running" filter (e.g.
+     * `GEN_SPEED > 1200`) — set once here rather than per model, since
+     * every model (any kind, any count) needs training data restricted to
+     * the same operating condition. Replaced the old per-model
+     * `PredictiveModelStateSlice.pmSensorFilters` (2026-09-15): with 100
+     * models sharing one workspace, setting this 100 times separately was
+     * the actual problem being solved. AND-combined with each model's own
+     * Time start/end (which stays per-model — the training *period*
+     * legitimately differs per model, only the running-condition gate
+     * doesn't) client-side in `PredictiveModelBuild.tsx` before every
+     * `train_*`/preview invoke; optional so older workspaces without it
+     * just read as "no filter" (`?? []`).
+     */
+    runningConditionFilters?: WorkspaceSensorFilter[];
 }
 
 type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';

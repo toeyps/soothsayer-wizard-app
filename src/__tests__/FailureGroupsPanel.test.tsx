@@ -10,7 +10,7 @@ function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
         targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '',
         ...overrides,
     };
 }
