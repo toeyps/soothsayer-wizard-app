@@ -741,7 +741,13 @@ function LineChart({
                     position: index % 2 === 0 ? 'left' : 'right',
                     offset: Math.floor(index / 2) * 60,
                     axisLine: { show: true, lineStyle: { color: color } },
-                    axisLabel: { color: color },
+                    // Explicit min/max (autoMin/autoMax above) are raw floats
+                    // padded off the data range, not "nice" round numbers —
+                    // ECharts labels them at full precision by default (e.g.
+                    // 7.687984495640254) unless told otherwise. Round to at
+                    // most 3 decimals and drop trailing zeros so a boundary
+                    // that happens to be round (e.g. 6) still shows as "6".
+                    axisLabel: { color: color, formatter: (val: number) => `${Number(val.toFixed(3))}` },
                     splitLine: { show: !hideYSplitLine && index === 0, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } }
                 };
             }),

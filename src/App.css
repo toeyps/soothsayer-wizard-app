@@ -6773,6 +6773,10 @@ body {
     min-height: 0;
     overflow: hidden;
 }
+/* Individual models have no right-column config (see PredictiveModelBuild.tsx) */
+.pm-grid.pm-grid--no-right {
+    grid-template-columns: 300px 1fr;
+}
 
 .pm-col-left,
 .pm-col-right {
@@ -8004,9 +8008,11 @@ body {
 /* Responsive */
 @media (max-width: 1280px) {
     .pm-grid { grid-template-columns: 280px 1fr 320px; }
+    .pm-grid.pm-grid--no-right { grid-template-columns: 280px 1fr; }
 }
 @media (max-width: 1024px) {
     .pm-grid { grid-template-columns: 260px 1fr 300px; }
+    .pm-grid.pm-grid--no-right { grid-template-columns: 260px 1fr; }
     .pm-chart-legend { display: none; }
     .pm-breadcrumb .pm-crumb-muted { display: none; }
 }

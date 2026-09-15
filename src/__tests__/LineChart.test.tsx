@@ -231,6 +231,19 @@ describe('LineChart option building', () => {
         expect(yA.max).toBeCloseTo(53.2, 5);
     });
 
+    it('yAxis label formatter rounds to at most 3 decimals and drops trailing zeros', () => {
+        // Explicit min/max (widened by a markLine, as above) are raw floats,
+        // not "nice" round numbers -- ECharts would otherwise label them at
+        // full precision (e.g. 7.687984495640254).
+        const columnar: ColumnarSeries = { timestamps: ['t0'], series: [[10]] };
+        render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+        const [yA] = capturedOptions[capturedOptions.length - 1].yAxis;
+        expect(yA.axisLabel.formatter(7.687984495640254)).toBe('7.688');
+        expect(yA.axisLabel.formatter(-0.5694803330103893)).toBe('-0.569');
+        expect(yA.axisLabel.formatter(6)).toBe('6'); // round values don't grow trailing zeros
+        expect(yA.axisLabel.formatter(0)).toBe('0');
+    });
+
     it('does not override an explicit sensorAxisRange even when a markLine would otherwise widen it', () => {
         const columnar: ColumnarSeries = {
             timestamps: ['t0', 't1', 't2'],

@@ -1844,6 +1844,31 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         );
     }
 
+    // Shared between the right column (Relationship/Clustering) and the left
+    // column (Individual, which has no right column at all — see pm-col-right
+    // below) so save feedback isn't lost for either layout.
+    const saveStatusBlock = saveStatus.kind !== 'idle' && (
+        <div className="pm-section">
+            <div className="pm-section-header">
+                <span className="pm-eyebrow">Save</span>
+                <span className="pm-section-title">Status</span>
+            </div>
+            <div
+                className="pm-fields"
+                style={{
+                    fontSize: 12,
+                    color: saveStatus.kind === 'error' ? '#f43f5e'
+                        : saveStatus.kind === 'success' ? '#10b981'
+                        : 'var(--text-secondary)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                }}
+            >
+                {saveStatus.kind === 'saving' ? 'Saving…' : (saveStatus.message ?? '')}
+            </div>
+        </div>
+    );
+
     return (
         <div className="predictive-container" ref={containerRef}>
             {/* Command bar — no window chrome (minimize/maximize/close) here
@@ -1927,7 +1952,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             </div>
 
             {/* Main Content */}
-            <div className="predictive-body pm-grid">
+            <div className={`predictive-body pm-grid ${kind === 'individual' ? 'pm-grid--no-right' : ''}`}>
                 {/* LEFT PANEL - Target + Predictors + Filter */}
                 <div className="pm-col-left">
                     {/* Target */}
@@ -1948,51 +1973,56 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         </div>
                     </div>
 
-                    {/* Predictors */}
-                    <div className="pm-section">
-                        <div className="pm-section-header">
-                            <span className="pm-eyebrow">Inputs</span>
-                            <span className="pm-section-title">Predictor sensors</span>
-                            <span className="pm-count-pill">{predictorSensors.length}</span>
-                        </div>
-                        <div className="pm-section-hint">Select sensors whose history informs the target. Multi-select.</div>
-                        <SensorAutocomplete
-                            sensors={allSensors}
-                            getDesc={getDesc}
-                            value=""
-                            onSelect={(tag) => { if (tag) handlePredictorToggle(tag); }}
-                            placeholder="Search sensor tag or description..."
-                            excluded={predictorSensors}
-                            clearOnSelect
-                        />
-                        {/* Selected predictor chips — uses the richer pm-selected
-                            styling (color dot per slot, tag + description, remove)
-                            inherited from the old right-column panel. Single
-                            source of truth so the right column doesn't duplicate. */}
-                        <div style={{ marginTop: '0.6rem' }}>
-                            {predictorSensors.length === 0 ? (
-                                <div className="pm-empty-dashed">No predictors selected</div>
-                            ) : (
-                                <div className="pm-selected-list">
-                                    {predictorSensors.map((sensor, idx) => {
-                                        const d = getDesc(sensor);
-                                        return (
-                                            <div key={sensor} className="pm-selected-chip" title={d}>
-                                                <span className={`pm-selected-dot pm-selected-dot-${(idx % 4) + 1}`} />
-                                                <div className="pm-selected-text">
-                                                    <div className="pm-selected-tag">{sensor}</div>
-                                                    {d && <div className="pm-selected-desc">{d}</div>}
+                    {/* Predictors — only Relationship (regressors) and
+                        Clustering (X sensor) use predictor sensors; Individual
+                        trains on the target sensor alone, so this section has
+                        no effect for it and is hidden entirely. */}
+                    {kind !== 'individual' && (
+                        <div className="pm-section">
+                            <div className="pm-section-header">
+                                <span className="pm-eyebrow">Inputs</span>
+                                <span className="pm-section-title">Predictor sensors</span>
+                                <span className="pm-count-pill">{predictorSensors.length}</span>
+                            </div>
+                            <div className="pm-section-hint">Select sensors whose history informs the target. Multi-select.</div>
+                            <SensorAutocomplete
+                                sensors={allSensors}
+                                getDesc={getDesc}
+                                value=""
+                                onSelect={(tag) => { if (tag) handlePredictorToggle(tag); }}
+                                placeholder="Search sensor tag or description..."
+                                excluded={predictorSensors}
+                                clearOnSelect
+                            />
+                            {/* Selected predictor chips — uses the richer pm-selected
+                                styling (color dot per slot, tag + description, remove)
+                                inherited from the old right-column panel. Single
+                                source of truth so the right column doesn't duplicate. */}
+                            <div style={{ marginTop: '0.6rem' }}>
+                                {predictorSensors.length === 0 ? (
+                                    <div className="pm-empty-dashed">No predictors selected</div>
+                                ) : (
+                                    <div className="pm-selected-list">
+                                        {predictorSensors.map((sensor, idx) => {
+                                            const d = getDesc(sensor);
+                                            return (
+                                                <div key={sensor} className="pm-selected-chip" title={d}>
+                                                    <span className={`pm-selected-dot pm-selected-dot-${(idx % 4) + 1}`} />
+                                                    <div className="pm-selected-text">
+                                                        <div className="pm-selected-tag">{sensor}</div>
+                                                        {d && <div className="pm-selected-desc">{d}</div>}
+                                                    </div>
+                                                    <button className="pm-selected-remove" onClick={() => handlePredictorToggle(sensor)}>
+                                                        <X size={12} />
+                                                    </button>
                                                 </div>
-                                                <button className="pm-selected-remove" onClick={() => handlePredictorToggle(sensor)}>
-                                                    <X size={12} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                    </div>
+                    )}
 
 
                     {/* Data filter */}
@@ -2207,6 +2237,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                             )}
                         </div>
                     </div>
+
+                    {/* Individual has no right column (see pm-col-right below),
+                        so its save feedback lives here instead. */}
+                    {kind === 'individual' && saveStatusBlock}
                 </div>
 
                 {/* CENTER */}
@@ -2499,7 +2533,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 </div>
 
                 {/* RIGHT - Context config (predictors chips moved into LEFT
-                    "Predictor sensors" section to remove duplicate UI). */}
+                    "Predictor sensors" section to remove duplicate UI). Only
+                    Relationship/Clustering models have config here at all —
+                    for Individual there is nothing to configure on this page
+                    (see the left column's own copy of saveStatusBlock), so
+                    the whole column is dropped rather than shown dimmed. */}
+                {kind !== 'individual' && (
                 <div className="pm-col-right">
                     {/* Relationship Model Config */}
                     <div className={`pm-section pm-config-block ${rcMode === 'relationship' ? '' : 'pm-config-dim'}`}>
@@ -2872,28 +2911,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     </div>
 
                     {/* Save status */}
-                    {saveStatus.kind !== 'idle' && (
-                        <div className="pm-section">
-                            <div className="pm-section-header">
-                                <span className="pm-eyebrow">Save</span>
-                                <span className="pm-section-title">Status</span>
-                            </div>
-                            <div
-                                className="pm-fields"
-                                style={{
-                                    fontSize: 12,
-                                    color: saveStatus.kind === 'error' ? '#f43f5e'
-                                        : saveStatus.kind === 'success' ? '#10b981'
-                                        : 'var(--text-secondary)',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-all',
-                                }}
-                            >
-                                {saveStatus.kind === 'saving' ? 'Saving…' : (saveStatus.message ?? '')}
-                            </div>
-                        </div>
-                    )}
+                    {saveStatusBlock}
                 </div>
+                )}
             </div>
 
             {/* Expanded chart modal — re-renders the active chart at full screen */}

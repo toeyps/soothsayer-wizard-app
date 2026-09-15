@@ -151,9 +151,11 @@ describe('PredictiveModelBuild', () => {
     it('hydrates target sensor and workspace name from the model record', async () => {
         mockLoadWorkspaceData.mockResolvedValue({
             name: 'My Workspace',
-            failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+            // Predictor sensors only matter (and only render at all) for
+            // Relationship/Clustering — Individual never shows that section.
+            failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship', predictorSensors: ['PRED1'] })] },
         });
-        await renderHydrated();
+        await renderHydrated({ kind: 'relationship' });
         expect(screen.getByText('My Workspace')).toBeTruthy();
         expect(screen.getAllByText('TARGET1').length).toBeGreaterThan(0);
         expect(screen.getByText('Predictor One')).toBeTruthy(); // hydrated predictor chip
@@ -232,9 +234,22 @@ describe('PredictiveModelBuild', () => {
         expect(markLines.map((m: any) => m.label)).toEqual(['Mean', '+1σ', '−1σ', '+3σ', '−3σ']);
     });
 
+    // Predictor sensors only apply to Relationship (regressors) and
+    // Clustering (X sensor) — the section doesn't render at all for
+    // Individual, so these render with kind: 'relationship'.
     describe('predictor selection', () => {
+        it('is not shown at all for an Individual-kind model', async () => {
+            await renderHydrated(); // default kind: 'individual'
+            expect(screen.queryByText('Predictor sensors')).toBeNull();
+            expect(screen.queryByPlaceholderText('Search sensor tag or description...')).toBeNull();
+        });
+
         it('picking a sensor from the autocomplete adds it as a predictor chip', async () => {
-            await renderHydrated();
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
             fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED1' } });
             fireEvent.click(screen.getByText('Predictor One'));
             expect(screen.getByText('1')).toBeTruthy(); // predictor count pill
@@ -243,12 +258,30 @@ describe('PredictiveModelBuild', () => {
         it('removing a predictor chip drops it from the selection', async () => {
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship', predictorSensors: ['PRED1'] })] },
             });
-            await renderHydrated();
+            await renderHydrated({ kind: 'relationship' });
             expect(screen.getByText('Predictor One')).toBeTruthy();
             fireEvent.click(screen.getByText('Predictor One').closest('.pm-selected-chip')!.querySelector('.pm-selected-remove')!);
             expect(screen.queryByText('Predictor One')).toBeNull();
+        });
+    });
+
+    describe('right column (Relationship/Clustering config)', () => {
+        it('is not rendered at all for an Individual-kind model', async () => {
+            await renderHydrated(); // default kind: 'individual'
+            expect(screen.queryByText('Relationship Model')).toBeNull();
+            expect(screen.queryByText('Clustering Model')).toBeNull();
+        });
+
+        it('still renders (dimmed to the inactive one) for a Relationship-kind model', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+            expect(screen.getByText('Relationship Model')).toBeTruthy();
+            expect(screen.getByText('Clustering Model')).toBeTruthy();
         });
     });
 
