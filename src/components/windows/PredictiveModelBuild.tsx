@@ -301,31 +301,28 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
 
     // ── PM-page per-sensor filter helpers ──────────────────────────────
     // Pool of sensors the user can pick from when adding a filter row.
-    // Target appears first (it IS a sensor on this page, so the user can
-    // filter on it too), then predictors. Deduped because `targetSensor`
-    // could also live in `predictorSensors` after some user flows.
-    // Falls back to empty when nothing's chosen, in which case the Add
-    // button is disabled with a tooltip hint.
-    const pmFilterSensorPool = useMemo(() => {
-        const seen = new Set<string>();
-        const out: string[] = [];
-        if (targetSensor) { seen.add(targetSensor); out.push(targetSensor); }
-        for (const p of predictorSensors) {
-            if (!seen.has(p)) { seen.add(p); out.push(p); }
-        }
-        return out;
-    }, [targetSensor, predictorSensors]);
+    // 2026-09-15: this used to be just [target, ...predictors] — far too
+    // narrow for the actual use case. The sensor you filter training data
+    // by is usually neither the target nor a predictor: it's an unrelated
+    // "is the machine actually running" indicator (e.g. generator speed or
+    // kW), used to exclude idle/offline periods from training. Individual
+    // models don't even have predictors, so the old pool was just the
+    // target alone. Broadened to every sensor in the dataset — same pool
+    // Dashboard's own filter panel and this page's predictor/criteria
+    // pickers already draw from (`allSensors`, which already includes
+    // special/calculated sensors, not just raw CSV columns).
+    const pmFilterSensorPool = allSensors;
 
     const addPmSensorFilter = useCallback(() => {
         if (pmFilterSensorPool.length === 0) return;
         setPmSensorFilters(prev => [...prev, {
             id: `pmf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            sensor: pmFilterSensorPool[0],
+            sensor: targetSensor || pmFilterSensorPool[0],
             operation: 'greater_than',
             value1: '',
             value2: '',
         }]);
-    }, [pmFilterSensorPool]);
+    }, [pmFilterSensorPool, targetSensor]);
 
     const updatePmSensorFilter = useCallback(
         (id: string, patch: Partial<WorkspaceSensorFilter>) => {
@@ -2067,8 +2064,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 />
                             </div>
                         </div>
-                        {/* Per-sensor value filters — pool is target + predictors.
-                            AND-combined with dashboard filters via dashboardFilterPayload. */}
+                        {/* Per-sensor value filters — pool is every sensor in the dataset
+                            (see pmFilterSensorPool above), so an unrelated "machine running"
+                            indicator like speed/kW can be used to exclude idle periods from
+                            training. AND-combined with dashboard filters via dashboardFilterPayload. */}
                         <div className="filter-row">
                             <div style={{
                                 display: 'flex',
@@ -2087,7 +2086,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     onClick={addPmSensorFilter}
                                     disabled={pmFilterSensorPool.length === 0}
                                     title={pmFilterSensorPool.length === 0
-                                        ? 'Pick a target or add a predictor first'
+                                        ? 'No sensors available'
                                         : 'Add a sensor value filter'}
                                     style={{
                                         display: 'flex',
@@ -2117,7 +2116,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     fontStyle: 'italic',
                                 }}>
                                     {pmFilterSensorPool.length === 0
-                                        ? 'Select a target or predictor to enable per-sensor filtering.'
+                                        ? 'No sensors available to filter on.'
                                         : 'No filters. Click Add to create one.'}
                                 </div>
                             ) : (
@@ -2128,11 +2127,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     marginTop: '0.3rem',
                                 }}>
                                     {pmSensorFilters.map(f => {
-                                        // Sensor was selected at row creation but might no longer
-                                        // be in the pool (predictor removed since). Show it as a
-                                        // disabled stub option so the user can see what's broken
-                                        // and either reassign or remove it.
-                                        const sensorStillValid = pmFilterSensorPool.includes(f.sensor);
+                                        // The pool is now every sensor in the dataset (see
+                                        // pmFilterSensorPool above), so a filter's sensor going
+                                        // stale is no longer a realistic failure mode the way it
+                                        // was when the pool was just target+predictors — dropped
+                                        // the disabled-stub/invalid-border handling that guarded
+                                        // against it.
                                         return (
                                             <div key={f.id} style={{
                                                 display: 'flex',
@@ -2140,34 +2140,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                                 gap: '0.25rem',
                                                 padding: '0.35rem',
                                                 background: 'var(--chip-bg)',
-                                                border: `1px solid ${sensorStillValid ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`,
+                                                border: '1px solid var(--border)',
                                                 borderRadius: '6px',
                                             }}>
-                                                <select
+                                                <SensorAutocomplete
+                                                    sensors={pmFilterSensorPool}
+                                                    getDesc={getDesc}
                                                     value={f.sensor}
-                                                    onChange={e => updatePmSensorFilter(f.id, { sensor: e.target.value })}
-                                                    title={sensorStillValid ? f.sensor : `${f.sensor} is no longer a target/predictor on this page`}
-                                                    style={{
-                                                        flex: 1,
-                                                        minWidth: 0,
-                                                        padding: '0.2rem 0.3rem',
-                                                        background: 'var(--input-bg)',
-                                                        border: '1px solid var(--border)',
-                                                        borderRadius: '4px',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: '0.7rem',
-                                                        outline: 'none',
-                                                    }}
-                                                >
-                                                    {!sensorStillValid && (
-                                                        <option value={f.sensor} disabled>
-                                                            {f.sensor || '—'} (removed)
-                                                        </option>
-                                                    )}
-                                                    {pmFilterSensorPool.map(s => (
-                                                        <option key={s} value={s}>{s}</option>
-                                                    ))}
-                                                </select>
+                                                    onSelect={sensor => updatePmSensorFilter(f.id, { sensor })}
+                                                    placeholder="Search sensor..."
+                                                    style={{ flex: 1, minWidth: 0 }}
+                                                />
                                                 <select
                                                     value={f.operation}
                                                     onChange={e => updatePmSensorFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}

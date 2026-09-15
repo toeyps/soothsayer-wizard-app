@@ -418,19 +418,30 @@ describe('PredictiveModelBuild', () => {
     });
 
     describe('data filters (pmSensorFilters)', () => {
-        it('is disabled with no target/predictor pool, enabled once one exists, and adds/removes a row', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ predictorSensors: ['PRED1'] })] },
-            });
+        it('is enabled once the dataset has any sensors, and adds/removes a row', async () => {
             await renderHydrated();
             const addBtn = screen.getByTitle('Add a sensor value filter') as HTMLButtonElement;
-            expect(addBtn.disabled).toBe(false); // target + PRED1 form a non-empty pool
+            expect(addBtn.disabled).toBe(false);
 
             fireEvent.click(addBtn);
             const removeBtn = screen.getByTitle(/Remove/) as HTMLButtonElement;
             fireEvent.click(removeBtn);
             expect(screen.queryByTitle(/Remove/)).toBeNull();
+        });
+
+        // 2026-09-15 regression: the sensor pool used to be just
+        // [target, ...predictors] -- for an Individual model (no predictors
+        // at all) that meant the only choice was the target itself. The real
+        // use case is filtering training data by an unrelated "machine
+        // running" indicator (e.g. generator speed/kW) to exclude idle
+        // periods, which is neither the target nor a predictor.
+        it('lets the filter sensor be picked from the whole dataset, not just target/predictors', async () => {
+            await renderHydrated(); // default: target TARGET1, no predictors
+            fireEvent.click(screen.getByTitle('Add a sensor value filter'));
+            const sensorInput = screen.getByPlaceholderText('Search sensor...');
+            fireEvent.change(sensorInput, { target: { value: 'PRED2' } });
+            fireEvent.click(screen.getByText('Predictor Two'));
+            expect((sensorInput as HTMLInputElement).value).toBe('PRED2');
         });
     });
 
