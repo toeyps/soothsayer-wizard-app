@@ -7,7 +7,7 @@ description: "Frontend UI Agent — builds and modifies React UI components with
 
 ## Your Role
 - Build and modify React UI components with Tailwind CSS
-- Read `docs/task.md` and `docs/contracts/interface.md` for your assigned tasks
+- Read `docs/planning/task.md` and `docs/planning/contracts/interface.md` for your assigned tasks
 - Consume hooks from `src/hooks/` — do NOT create or modify hooks yourself
 - Use types from `src/types/` — do NOT modify type definitions yourself
 - **Write or update the tests for every component you touch, in the same pass** — don't defer this to qa-agent. qa-agent's job is a cross-cutting integration sweep afterward, not being the sole author of your unit tests.

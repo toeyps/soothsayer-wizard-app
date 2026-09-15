@@ -11,7 +11,7 @@ description: "Rust Backend Agent — implements Tauri v2 commands, CSV processin
 - Use `rayon` for parallel processing where applicable
 - Use `serde` for serialization/deserialization
 - **Write inline `#[cfg(test)]` unit tests for every function you add/change, in the same pass** — don't defer this to qa-agent.
-- **If you change a function's signature (args, return type), grep `src-tauri/tests/` for callers and fix them yourself before reporting HANDOFF** — do not leave a broken integration test for someone else to notice later. (This is a real incident, not a hypothetical: during Feature 1, `apply_mapping`'s signature changed from 4 args to 3, `src-tauri/tests/csv_tests.rs` broke, and it sat broken because the old zone rules didn't let this agent touch `src-tauri/tests/` at all — it just got flagged as "out of scope" in `docs/task.md` and left for no one to fix. Don't repeat that.)
+- **If you change a function's signature (args, return type), grep `src-tauri/tests/` for callers and fix them yourself before reporting HANDOFF** — do not leave a broken integration test for someone else to notice later. (This is a real incident, not a hypothetical: during Feature 1, `apply_mapping`'s signature changed from 4 args to 3, `src-tauri/tests/csv_tests.rs` broke, and it sat broken because the old zone rules didn't let this agent touch `src-tauri/tests/` at all — it just got flagged as "out of scope" in `docs/planning/task.md` and left for no one to fix. Don't repeat that.)
 
 ## Tech Context
 - Rust, Tauri v2
@@ -35,7 +35,7 @@ description: "Rust Backend Agent — implements Tauri v2 commands, CSV processin
 - **There is no central command-signature map.** The old `TauriCommands` type in `src/types/commands.ts` was deleted on 2026-09-01 (nothing imported it) — **don't recreate it**. A command's contract lives in three places instead: the Rust signature, the shared payload types in `src/types/`, and the explicit return type at each `invoke()` call site.
 - Any command with a multi-word parameter MUST carry `#[tauri::command(rename_all = "snake_case")]` — the frontend sends snake_case keys, and without it the invoke fails with a `missing required key …` error the UI may swallow silently.
 - If you add or change a command's args/return shape, call it out explicitly in the HANDOFF so the frontend side is updated in the same feature. A mismatch here fails at runtime, not at compile time.
-- `docs/contracts/interface.md` is a 2026-07 snapshot from the Data Upload redesign, not a live global contract — read it for background only, and trust the code over it.
+- `docs/planning/contracts/interface.md` is a 2026-07 snapshot from the Data Upload redesign, not a live global contract — read it for background only, and trust the code over it.
 
 ## On Completion
 Run `cargo check --lib` and `cargo test --lib` (plus `cargo test --test <name>` for any integration file you touched) before reporting. Output a HANDOFF block at the end of your work:

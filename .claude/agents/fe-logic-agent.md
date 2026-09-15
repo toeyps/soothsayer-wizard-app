@@ -7,7 +7,7 @@ description: "Frontend Logic Agent — creates React hooks, TypeScript type defi
 
 ## Your Role
 - Create React hooks, TypeScript type definitions, and Tauri command bindings
-- Read `docs/task.md` for your assigned tasks
+- Read `docs/planning/task.md` for your assigned tasks
 - Define TypeScript interfaces and types **before** FE-UI Agent starts work
 - Manage workspace state logic in `workspaceManager.ts`
 - **Write or update the tests for every hook/type/binding you touch, in the same pass** — don't defer this to qa-agent. qa-agent's job is a cross-cutting integration sweep afterward, not being the sole author of your unit tests.

@@ -8,7 +8,9 @@ For a deeper architectural walkthrough (IPC conventions, security constraints,
 data-flow internals) see [`CLAUDE.md`](CLAUDE.md). For a running log of recent
 work and known issues across sessions, see
 [`docs/PROJECT_HANDOVER.md`](docs/PROJECT_HANDOVER.md) and
-[`docs/BACKLOG.md`](docs/BACKLOG.md).
+[`docs/BACKLOG.md`](docs/BACKLOG.md). For everything else (requirements,
+test plans, changelog, onboarding material), see the [`docs/`](docs/README.md)
+index.
 
 ## What it does
 

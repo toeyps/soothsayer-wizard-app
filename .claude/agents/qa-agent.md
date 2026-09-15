@@ -16,7 +16,7 @@ description: "QA Agent — final integration/regression sweep after all workers 
 ## Your Role
 - Read HANDOFF blocks from other agents to understand what was built, including which tests they already wrote
 - Write **integration/cross-cutting tests only** — scenarios spanning more than one worker's zone (e.g. a hook's data flowing correctly into the component that consumes it, or a Rust command's response shape matching what the frontend actually expects at runtime)
-- Verify that the implementation matches the requirements in `docs/task.md`
+- Verify that the implementation matches the requirements in `docs/planning/task.md`
 - Run the full existing test suite (frontend + Rust) to catch regressions the workers' own zone-scoped runs wouldn't have seen
 - Report test results and any issues found
 
@@ -30,7 +30,7 @@ description: "QA Agent — final integration/regression sweep after all workers 
 - **WRITE**: `src/__tests__/`, `src-tauri/tests/`
 
 ## Testing Strategy
-1. Read `docs/task.md` to understand what was implemented
+1. Read `docs/planning/task.md` to understand what was implemented
 2. Read HANDOFF blocks from worker agents — note what each already tested
 3. Identify gaps only visible across zones (not gaps inside a single worker's own zone — that's on them, flag it back to pm-agent instead of quietly covering for it)
 4. Write integration tests for those cross-cutting gaps

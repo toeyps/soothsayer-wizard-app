@@ -5,7 +5,7 @@
 > orchestrator spawning `claude` processes) that doesn't exist in the harness
 > this project is actually developed in. The pipeline itself was real and was
 > used successfully twice (Feature 1: Data Upload Page redesign, Feature 3:
-> Predictive Model Rust port — see `docs/task.md`), but then sat completely
+> Predictive Model Rust port — see `docs/planning/task.md`), but then sat completely
 > unused for 3+ months because nothing ever prompted anyone to reach for it —
 > almost all real work here is small, iterative, cross-cutting fixes done
 > directly in the main session, which this pipeline is a poor fit for. This
@@ -42,7 +42,7 @@ Rule of thumb: ถ้าลังเลว่าจะ spawn PM-agent ดีไ�
 
 ตอนทำ Feature 1 จริง `fe-logic-agent` เปลี่ยน signature ของ `apply_mapping`
 (Rust) กลางทาง — ทำให้ `csv_tests.rs` (เทสต์ที่เขียนไว้ก่อนหน้าโดยรอบอื่น)
-คอมไพล์ไม่ผ่าน ผลคือถูก flag ไว้ท้าย `docs/task.md` ว่า "out of scope for
+คอมไพล์ไม่ผ่าน ผลคือถูก flag ไว้ท้าย `docs/planning/task.md` ว่า "out of scope for
 Feature 3" แล้วปล่อยพังค้างไว้ — ไม่มี agent ตัวไหนอยู่ในตำแหน่งที่เห็นทั้ง
 โค้ดที่เปลี่ยนและเทสต์ที่พังพร้อมกัน เพราะ zone ownership เดิมตัดขาด
 `src/__tests__/`/`src-tauri/tests/` ออกจาก worker ทุกตัว ยกให้ qa-agent เป็น
@@ -60,8 +60,8 @@ Feature 3" แล้วปล่อยพังค้างไว้ — ไม�
 
 ```mermaid
 graph TD
-    USER["👤 User"] -->|"เขียน requirement ใน docs/requirements.md (หรือบอก PM ตรงๆ ในพรอมต์)"| PM["🎯 PM Agent<br/>(spawned via the Agent tool, subagent_type: pm-agent)"]
-    PM -->|"สร้าง/อัปเดต task breakdown"| TASK["📝 docs/task.md"]
+    USER["👤 User"] -->|"เขียน requirement ใน docs/planning/requirements.md (หรือบอก PM ตรงๆ ในพรอมต์)"| PM["🎯 PM Agent<br/>(spawned via the Agent tool, subagent_type: pm-agent)"]
+    PM -->|"สร้าง/อัปเดต task breakdown"| TASK["📝 docs/planning/task.md"]
     PM -->|"spawn via Agent tool"| FE_UI["🎨 FE-UI Agent"]
     PM -->|"spawn via Agent tool"| FE_LOGIC["⚙️ FE-Logic Agent"]
     PM -->|"spawn via Agent tool"| RUST["🦀 Rust Agent"]
@@ -89,10 +89,11 @@ Soothsayer-wizard-app/
 │       ├── rust-agent.md
 │       └── qa-agent.md
 ├── docs/
-│   ├── requirements.md              # User เขียน requirement ที่นี่ (ไม่บังคับ — ดูด้านล่าง)
-│   ├── task.md                      # PM สร้าง/อัปเดต task breakdown ที่นี่
-│   └── contracts/
-│       └── interface.md             # Contract ระหว่าง FE ↔ BE
+│   └── planning/
+│       ├── requirements.md          # User เขียน requirement ที่นี่ (ไม่บังคับ — ดูด้านล่าง)
+│       ├── task.md                  # PM สร้าง/อัปเดต task breakdown ที่นี่
+│       └── contracts/
+│           └── interface.md         # Contract ระหว่าง FE ↔ BE
 └── multi_agent_orchestration_design.md  # เอกสารนี้
 ```
 
@@ -106,7 +107,7 @@ tool ของ Claude Code ตรงๆ ไม่ใช่ shell script เร�
 > Agent คุยกันผ่าน **ไฟล์** ไม่ใช่ memory — ยังเป็น design หลักเหมือนเดิม
 > เพราะแต่ละ subagent เป็น context แยกกัน ไม่มี shared memory จริง
 
-### 1.1 `docs/requirements.md` — User เขียน requirement (ไม่บังคับต้องมีไฟล์ก่อนเริ่ม)
+### 1.1 `docs/planning/requirements.md` — User เขียน requirement (ไม่บังคับต้องมีไฟล์ก่อนเริ่ม)
 
 ถ้าผู้ใช้ให้ requirement มาเป็นข้อความสั้นๆ ในพรอมต์แทนที่จะเขียนไฟล์นี้ไว้
 ก่อน ให้ pm-agent เขียนไฟล์นี้เองจากสิ่งที่ผู้ใช้บอกในขั้นแรกของ workflow
@@ -127,7 +128,7 @@ As a [role], I want [capability] so that [benefit].
 ## Scope: frontend | backend | fullstack
 ```
 
-### 1.2 `docs/task.md` — PM สร้าง task breakdown
+### 1.2 `docs/planning/task.md` — PM สร้าง task breakdown
 
 ```markdown
 # Task Breakdown: [Feature Name]
@@ -144,7 +145,7 @@ As a [role], I want [capability] so that [benefit].
 - [ ] [qa-agent] Cross-cutting/regression tests, full suite re-run
 ```
 
-### 1.3 `docs/contracts/interface.md` — Interface contract (ไม่เปลี่ยนจากเดิม)
+### 1.3 `docs/planning/contracts/interface.md` — Interface contract (ไม่เปลี่ยนจากเดิม)
 
 ```markdown
 # Interface Contract: [Feature Name]
@@ -184,11 +185,11 @@ spawn สรุปย่อ (ดูรายละเอียดในไฟล
 1. ผู้ใช้ (หรือเซสชันหลักที่กำลังคุยกับผู้ใช้อยู่) ตัดสินใจว่างานเข้าเกณฑ์
    "ควรใช้ pipeline" ด้านบน
 2. เซสชันหลักเรียก **Agent tool** ด้วย `subagent_type: "pm-agent"` พร้อม
-   brief ของ feature (ไม่ต้องมี `docs/requirements.md` มาก่อนก็ได้ — ส่ง
+   brief ของ feature (ไม่ต้องมี `docs/planning/requirements.md` มาก่อนก็ได้ — ส่ง
    requirement เป็นข้อความในพรอมต์ตรงๆ ได้เลย)
 3. pm-agent (มีสิทธิ์ใช้ทุก tool รวมถึง Agent tool เอง) จะ:
-   - เขียน/อัปเดต `docs/requirements.md` ถ้ายังไม่มี
-   - สร้าง `docs/task.md` + `docs/contracts/interface.md` (ถ้าเป็น fullstack)
+   - เขียน/อัปเดต `docs/planning/requirements.md` ถ้ายังไม่มี
+   - สร้าง `docs/planning/task.md` + `docs/planning/contracts/interface.md` (ถ้าเป็น fullstack)
    - เรียก Agent tool ซ้อนเพื่อ spawn `fe-logic-agent` + `rust-agent`
      **ในข้อความเดียวกัน** (parallel — ดู Agent tool's own guidance เรื่อง
      "independent calls in the same response")

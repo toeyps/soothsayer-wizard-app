@@ -13,11 +13,11 @@
 3. จัดกลุ่ม Failure Group
 4. เทรน Predictive Model (Individual / Relationship / Clustering)
 
-รายละเอียดเชิงลึกอ่านที่ [`docs/PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md) — ไม่ต้องอ่านทั้งหมด แต่ให้รู้ว่ามีไฟล์นี้อยู่ เผลอ ๆ คำตอบของคำถามที่สงสัยอยู่ในนั้นแล้ว
+รายละเอียดเชิงลึกอ่านที่ [`docs/PROJECT_HANDOVER.md`](../PROJECT_HANDOVER.md) — ไม่ต้องอ่านทั้งหมด แต่ให้รู้ว่ามีไฟล์นี้อยู่ เผลอ ๆ คำตอบของคำถามที่สงสัยอยู่ในนั้นแล้ว
 
 เอกสารอื่นที่ควรรู้จักไว้:
-- [`docs/BACKLOG.md`](BACKLOG.md) — ของค้างที่รู้อยู่แล้วทั้งหมด (อย่าไปรายงานซ้ำ)
-- [`docs/MANUAL_TEST_PLAN.md`](MANUAL_TEST_PLAN.md) / [`docs/manual-test-plan.html`](manual-test-plan.html) — checklist ทดสอบทั้งแอป 184 ข้อ
+- [`docs/BACKLOG.md`](../BACKLOG.md) — ของค้างที่รู้อยู่แล้วทั้งหมด (อย่าไปรายงานซ้ำ)
+- [`docs/testing/MANUAL_TEST_PLAN.md`](../testing/MANUAL_TEST_PLAN.md) / [`docs/testing/manual-test-plan.html`](../testing/manual-test-plan.html) — checklist ทดสอบทั้งแอป 184 ข้อ
 - Notion data source `39e959a6-c718-8039-b30b-000bbea5ca96` — ที่เก็บ task/บั๊กที่ผู้ใช้รายงานเข้ามา
 
 ---
@@ -47,12 +47,12 @@
 
 **ถ้าพบปัญหาข้อไหน:** จดขั้นตอนทำซ้ำให้ละเอียด (ทำอะไร เห็นอะไร ควรเห็นอะไรแทน) แล้วส่งกลับมาทันที — ก่อนจะไปทำงานที่ 1 ต่อ
 
-**สืบเนื่อง:** [`docs/MANUAL_TEST_PLAN.md`](MANUAL_TEST_PLAN.md) / [`docs/manual-test-plan.html`](manual-test-plan.html) เขียนไว้ก่อนงานวันนี้ ยังไม่ได้ปรับให้ตรงกับ UI ใหม่ (ช่อง Name แก้ไขได้แล้ว, มีเครื่องหมาย * ที่ทุกช่อง, ปุ่ม Build Model ย้ายตำแหน่ง, มีตัวเลือก Group by Model Type) — ถ้าทดสอบแล้วผ่านหมด งานถัดไปที่ทำได้เลยคือช่วยชี้ให้ dev รู้ว่าข้อไหนใน test plan เดิมพูดถึง UI ที่เปลี่ยนไปแล้วบ้าง
+**สืบเนื่อง:** [`docs/testing/MANUAL_TEST_PLAN.md`](../testing/MANUAL_TEST_PLAN.md) / [`docs/testing/manual-test-plan.html`](../testing/manual-test-plan.html) เขียนไว้ก่อนงานวันนี้ ยังไม่ได้ปรับให้ตรงกับ UI ใหม่ (ช่อง Name แก้ไขได้แล้ว, มีเครื่องหมาย * ที่ทุกช่อง, ปุ่ม Build Model ย้ายตำแหน่ง, มีตัวเลือก Group by Model Type) — ถ้าทดสอบแล้วผ่านหมด งานถัดไปที่ทำได้เลยคือช่วยชี้ให้ dev รู้ว่าข้อไหนใน test plan เดิมพูดถึง UI ที่เปลี่ยนไปแล้วบ้าง
 
 ---
 
 ### งานที่ 1 — ทดสอบแอปทั้งระบบตาม Manual Test Plan
-เปิด [`docs/manual-test-plan.html`](manual-test-plan.html) ด้วยเบราว์เซอร์ (ดับเบิลคลิกเปิดได้เลย ไม่ต้องติดตั้งอะไร) ไล่ทำทีละข้อ ติ๊กผ่าน/ไม่ผ่าน จดรายละเอียดที่เจอ แล้วกด "บันทึกผลเป็นไฟล์" ส่งกลับมา
+เปิด [`docs/testing/manual-test-plan.html`](../testing/manual-test-plan.html) ด้วยเบราว์เซอร์ (ดับเบิลคลิกเปิดได้เลย ไม่ต้องติดตั้งอะไร) ไล่ทำทีละข้อ ติ๊กผ่าน/ไม่ผ่าน จดรายละเอียดที่เจอ แล้วกด "บันทึกผลเป็นไฟล์" ส่งกลับมา
 
 **ทำไมต้องทำก่อน:** เป็นวิธีที่เร็วที่สุดที่จะทำให้รู้จักแอปทั้งตัว เห็นทุกหน้าจอ ทุก flow — ความรู้ตรงนี้จะใช้ต่อในงานถัดไปทั้งหมด
 
@@ -105,7 +105,7 @@
 ## 3. Template
 
 ### สำหรับงานที่ 0/1 — รายงานปัญหาที่พบ
-โครงเดียวกับที่ปุ่ม **"📋 ใช้ template"** ในช่องจดบันทึกของ [`manual-test-plan.html`](manual-test-plan.html) แทรกให้อัตโนมัติ (กดปุ่มนั้นแทนพิมพ์เองก็ได้):
+โครงเดียวกับที่ปุ่ม **"📋 ใช้ template"** ในช่องจดบันทึกของ [`manual-test-plan.html`](../testing/manual-test-plan.html) แทรกให้อัตโนมัติ (กดปุ่มนั้นแทนพิมพ์เองก็ได้):
 ```markdown
 สถานะ: ทำซ้ำได้ / ทำซ้ำไม่ได้ / เป็น feature request ไม่ใช่บั๊ก
 ขั้นตอนทำซ้ำ:
