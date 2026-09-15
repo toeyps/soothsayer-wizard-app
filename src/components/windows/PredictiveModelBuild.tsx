@@ -1984,7 +1984,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 <span className="pm-section-title">Predictor sensors</span>
                                 <span className="pm-count-pill">{predictorSensors.length}</span>
                             </div>
-                            <div className="pm-section-hint">Select sensors whose history informs the target. Multi-select.</div>
+                            <div className="pm-section-hint">
+                                {kind === 'clustering'
+                                    // Clustering only ever uses ONE of these
+                                    // (whichever becomes the X sensor below) —
+                                    // "informs the target" is Relationship
+                                    // phrasing and doesn't fit a single-axis
+                                    // pick, so this stays honest about why
+                                    // more than one might be added.
+                                    ? 'Add candidate sensors, then pick one as the X sensor below.'
+                                    : 'Select sensors whose history informs the target. Multi-select.'}
+                            </div>
                             <SensorAutocomplete
                                 sensors={allSensors}
                                 getDesc={getDesc}
@@ -2361,7 +2371,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         <div className="pm-chart-subtitle">
                                             {rcMode === 'relationship'
                                                 ? `Raw (blue) vs. Relation model output (red) — pick a predictor for the X-axis${dashboardFilterPayload ? ' · using Dashboard filter' : ''}`
-                                                : 'K-means clustering'}
+                                                // Actual algorithm is GMM ellipse fits (nalgebra) —
+                                                // see CLAUDE.md — not k-means. This label was just
+                                                // wrong, not a confidential-naming case like
+                                                // Relationship's LinearGAM.
+                                                : 'GMM clustering'}
                                         </div>
                                     </div>
                                     {rcMode && predictorSensors.length > 0 && (
@@ -2540,7 +2554,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     the whole column is dropped rather than shown dimmed. */}
                 {kind !== 'individual' && (
                 <div className="pm-col-right">
-                    {/* Relationship Model Config */}
+                    {/* Relationship Model Config — kind is locked per model
+                        (never changes after creation), so a Clustering-kind
+                        model can never use this block; showing it dimmed
+                        was clutter with no upside, same bug class as the
+                        Individual-page fix above. Only rendered at all when
+                        it's actually this model's kind. */}
+                    {kind === 'relationship' && (
                     <div className={`pm-section pm-config-block ${rcMode === 'relationship' ? '' : 'pm-config-dim'}`}>
                         <div className="pm-section-header">
                             <span className="pm-eyebrow">Configure</span>
@@ -2611,8 +2631,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                             )}
                         </div>
                     </div>
+                    )}
 
-                    {/* Clustering Model Config */}
+                    {/* Clustering Model Config — same reasoning as
+                        Relationship above: only rendered when it's actually
+                        this model's kind. */}
+                    {kind === 'clustering' && (
                     <div className={`pm-section pm-config-block ${rcMode === 'clustering' ? '' : 'pm-config-dim'}`}>
                         <div className="pm-section-header">
                             <span className="pm-eyebrow">Configure</span>
@@ -2909,6 +2933,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                             )}
                         </div>
                     </div>
+                    )}
 
                     {/* Save status */}
                     {saveStatusBlock}
@@ -2945,7 +2970,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         <div className="pm-chart-subtitle">
                                             {rcMode === 'relationship'
                                                 ? 'Raw (blue) vs. Relation model output (red)'
-                                                : 'K-means clustering with confidence ellipses'}
+                                                : 'GMM clustering with confidence ellipses'}
                                         </div>
                                     </>
                                 )}

@@ -267,21 +267,58 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
-    describe('right column (Relationship/Clustering config)', () => {
-        it('is not rendered at all for an Individual-kind model', async () => {
+    // `kind` is locked per model (never changes after creation — see the
+    // overview page), so a model can only ever need ONE of the two config
+    // blocks. Both used to render unconditionally (the inactive one just
+    // dimmed via pm-config-dim), which meant e.g. a Relationship-kind model
+    // permanently showed a "Clustering Model" panel it could never use.
+    describe('right column (Relationship/Clustering config) — only the block matching this model\'s own kind ever renders', () => {
+        it('renders neither block for an Individual-kind model', async () => {
             await renderHydrated(); // default kind: 'individual'
             expect(screen.queryByText('Relationship Model')).toBeNull();
             expect(screen.queryByText('Clustering Model')).toBeNull();
         });
 
-        it('still renders (dimmed to the inactive one) for a Relationship-kind model', async () => {
+        it('renders only Relationship Model for a Relationship-kind model', async () => {
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',
                 failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
             });
             await renderHydrated({ kind: 'relationship' });
             expect(screen.getByText('Relationship Model')).toBeTruthy();
+            expect(screen.queryByText('Clustering Model')).toBeNull();
+        });
+
+        it('renders only Clustering Model for a Clustering-kind model', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering' })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
             expect(screen.getByText('Clustering Model')).toBeTruthy();
+            expect(screen.queryByText('Relationship Model')).toBeNull();
+        });
+    });
+
+    describe('clustering-kind copy — the actual algorithm is GMM (nalgebra ellipse fits), not k-means', () => {
+        it('the chart subtitle says GMM, never k-means', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering' })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+            expect(screen.getByText(/GMM clustering/)).toBeTruthy();
+            expect(screen.queryByText(/k-means/i)).toBeNull();
+        });
+
+        it("the predictor-sensors hint doesn't use Relationship's regression phrasing", async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering' })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+            expect(screen.getByText(/pick one as the X sensor below/)).toBeTruthy();
+            expect(screen.queryByText(/informs the target/)).toBeNull();
         });
     });
 
