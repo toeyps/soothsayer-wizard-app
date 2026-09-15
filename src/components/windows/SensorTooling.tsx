@@ -310,14 +310,14 @@ export default function SensorTooling({
                 <label className="block text-xs font-bold uppercase text-[var(--text-secondary)] mb-1">
                   Component <span style={{ color: "var(--danger)" }}>*</span>
                 </label>
-                <ComboBox
+                <ComponentSelect
                   value={component}
                   onChange={(v) => {
                     setComponent(v);
                     onComponentChange?.(v);
                   }}
                   options={existingComponents}
-                  placeholder="Pick or type"
+                  className="w-full bg-[var(--card-bg)] border border-[var(--border)] text-[var(--text-primary)] rounded p-2 text-sm focus:outline-none focus:border-[var(--accent-color)]"
                 />
               </div>
             </div>
@@ -611,83 +611,45 @@ function ValueInput({ label, engine }: { label: string; engine: UseCalculationEn
 }
 
 /**
- * Free-typing text input with an optional suggestions dropdown -- NOT a
- * native `<input list>` + `<datalist>`. WebView2 renders that combo as a
- * locked-in select rather than an editable combobox (you can pick a
- * suggestion but can't then retype over it), so this reimplements the same
- * idea with a plain controlled input and a custom popup that never disables
- * typing.
+ * Native select limited to components that already exist on some sensor --
+ * deliberately NOT free-typing. A typo in a free-text field doesn't error,
+ * it just silently forks a new component ("Pump" vs "pump" vs "Pump "), so
+ * the Sensor tab's component grouping slowly fills with near-duplicates.
+ * "Uncategorized" is always offered even before any sensor has used it, so
+ * a brand-new workspace with no components yet still has a valid choice.
+ * Exported so `SpecialSensorEditor.tsx` (Manage tab) renders the exact same
+ * list Create does, instead of drifting back to a free-text field.
  */
-function ComboBox({
+export function ComponentSelect({
   value,
   onChange,
   options,
-  placeholder,
+  className,
+  style,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: string[];
-  placeholder?: string;
+  className?: string;
+  style?: React.CSSProperties;
 }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [open]);
-
-  // Once the field already holds a complete, exact option (i.e. the user
-  // picked one last time), filtering by that same text would only ever
-  // match itself -- show the full list instead so switching to a different
-  // option doesn't require clearing the field first.
-  const filtered = options.includes(value)
-    ? options
-    : options.filter((o) => o.toLowerCase().includes(value.toLowerCase()));
+  const allOptions = Array.from(
+    new Set([...options, "Uncategorized", ...(value ? [value] : [])]),
+  ).sort();
 
   return (
-    <div ref={containerRef} className="relative">
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={(e) => {
-          setOpen(true);
-          e.target.select();
-        }}
-        placeholder={placeholder}
-        className="w-full bg-[var(--card-bg)] border border-[var(--border)] text-[var(--text-primary)] rounded p-2 text-sm focus:outline-none focus:border-[var(--accent-color)]"
-      />
-      {open && filtered.length > 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded border shadow-lg overflow-hidden max-h-40 overflow-y-auto"
-          style={{ backgroundColor: "var(--card-bg)", borderColor: "var(--border)" }}
-        >
-          {filtered.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => {
-                onChange(opt);
-                setOpen(false);
-              }}
-              className="block w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--hover-bg)] text-[var(--text-primary)]"
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <select
+      aria-label="Component"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+      style={style}
+    >
+      <option value="" disabled>Select a component…</option>
+      {allOptions.map((opt) => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
   );
 }
 

@@ -5,7 +5,7 @@ import {
     SpecialSensorRecipe,
 } from "../../types";
 import { useCalculationEngine, CalculationEngineSeed } from "../../hooks/useCalculationEngine";
-import { ButtonBuilder, BASE_OP_IDS } from "./SensorTooling";
+import { ButtonBuilder, BASE_OP_IDS, ComponentSelect } from "./SensorTooling";
 
 /**
  * Edit one special sensor in place.
@@ -100,6 +100,9 @@ export default function SpecialSensorEditor({
     const [description, setDescription] = useState(meta?.description ?? '');
     const [unit, setUnit] = useState(meta?.unit ?? '');
     const [component, setComponent] = useState(meta?.component ?? '');
+    const existingComponents = Array.from(
+        new Set((sensorMetadata ?? []).map(m => m.component).filter((c): c is string => !!c)),
+    ).sort();
 
     // ---- Name (rename support) ---------------------------------------------
     const [tag, setTag] = useState(recipe.tag);
@@ -343,7 +346,7 @@ export default function SpecialSensorEditor({
                     </div>
                     <div style={{ flex: 1 }}>
                         <span style={labelStyle}>Component <span style={{ color: 'var(--danger)' }}>*</span></span>
-                        <input aria-label="Component" value={component} onChange={e => setComponent(e.target.value)} style={fieldStyle} />
+                        <ComponentSelect value={component} onChange={setComponent} options={existingComponents} style={fieldStyle} />
                     </div>
                 </div>
 

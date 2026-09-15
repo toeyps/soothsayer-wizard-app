@@ -48,7 +48,10 @@ const valueInput = () => screen.getByText('Value').closest('div')!.querySelector
 const fillRequiredFields = () => {
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
     fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
-    fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+    // Component is a select restricted to existing components (see
+    // `ComponentSelect`) -- "Uncategorized" is the one option guaranteed to
+    // exist even when this test renders with `sensorMetadata: []`.
+    fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
 };
 
 describe('SpecialSensorEditor', () => {
@@ -343,7 +346,7 @@ describe('SpecialSensorEditor', () => {
             expect(screen.getByText('Fill in a unit, a component before saving.')).toBeTruthy();
 
             fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'm3/h' } });
-            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
             expect(screen.queryByText(/Fill in/)).toBeNull();
             expect(save().disabled).toBe(false);
         });

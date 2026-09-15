@@ -477,7 +477,9 @@ describe('AddSensorWindow', () => {
     const fillEditorRequiredFields = () => {
         fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
         fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
-        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+        // Component is a select restricted to existing components --
+        // "Uncategorized" is the one guaranteed to exist with `sensorMetadata: []`.
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
     };
 
     it('editing a sensor recomputes it and everything built on top of it, in order', async () => {
@@ -511,7 +513,7 @@ describe('AddSensorWindow', () => {
         fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
         fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
         fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'bar' } });
-        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Boiler' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
         await act(async () => {
             fireEvent.click(screen.getByText('Save changes'));
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();

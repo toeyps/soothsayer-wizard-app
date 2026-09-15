@@ -280,7 +280,7 @@ describe('SensorTooling', () => {
             fireEvent.click(screen.getByText('Add'));
             fireEvent.change(screen.getByPlaceholderText('e.g. Total boiler power draw'), { target: { value: 'My Desc' } });
             fireEvent.change(screen.getByPlaceholderText('e.g. kW'), { target: { value: 'kW' } });
-            fireEvent.change(screen.getByPlaceholderText('Pick or type'), { target: { value: 'Boiler' } });
+            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Pump' } });
             onComponentChange.mockClear();
 
             // Adjust the input selection -- e.g. the user realizes they also
@@ -290,7 +290,7 @@ describe('SensorTooling', () => {
 
             expect((screen.getByPlaceholderText('e.g. Total boiler power draw') as HTMLInputElement).value).toBe('My Desc');
             expect((screen.getByPlaceholderText('e.g. kW') as HTMLInputElement).value).toBe('kW');
-            expect((screen.getByPlaceholderText('Pick or type') as HTMLInputElement).value).toBe('Boiler');
+            expect((screen.getByLabelText('Component') as HTMLSelectElement).value).toBe('Pump');
             expect(onComponentChange).not.toHaveBeenCalledWith('');
         });
 
@@ -304,7 +304,7 @@ describe('SensorTooling', () => {
             fireEvent.click(screen.getByText('Add'));
             fireEvent.change(screen.getByPlaceholderText('e.g. Total boiler power draw'), { target: { value: 'My Desc' } });
             fireEvent.change(screen.getByPlaceholderText('e.g. kW'), { target: { value: 'kW' } });
-            fireEvent.change(screen.getByPlaceholderText('Pick or type'), { target: { value: 'Boiler' } });
+            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Pump' } });
 
             rerender(<SensorTooling {...makeProps({ ...props, selectedSensors: [] })} />);
 
@@ -345,18 +345,22 @@ describe('SensorTooling', () => {
             fireEvent.change(screen.getByPlaceholderText('e.g. kW'), { target: { value: 'kW' } });
             expect(onUnitChange).toHaveBeenLastCalledWith('kW');
 
-            fireEvent.change(screen.getByPlaceholderText('Pick or type'), { target: { value: 'Boiler' } });
-            expect(onComponentChange).toHaveBeenLastCalledWith('Boiler');
+            fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Pump' } });
+            expect(onComponentChange).toHaveBeenLastCalledWith('Pump');
         });
 
-        it('the Component combobox suggests existing components and fills on click', () => {
+        it('the Component select is restricted to components that already exist on some sensor', () => {
             render(<SensorTooling {...makeProps({ selectedSensors: ['A'] })} />);
             fireEvent.click(screen.getByText('Add'));
-            const combo = screen.getByPlaceholderText('Pick or type');
-            fireEvent.focus(combo);
-            expect(screen.getByText('Pump')).toBeTruthy();
-            fireEvent.click(screen.getByText('Motor'));
-            expect((combo as HTMLInputElement).value).toBe('Motor');
+            const select = screen.getByLabelText('Component') as HTMLSelectElement;
+            const optionValues = Array.from(select.querySelectorAll('option')).map(o => o.value);
+            // "Uncategorized" is always offered (a safety net for a brand-new
+            // workspace with no components yet); free typing is not possible
+            // -- there is no way to add an option that isn't in this list.
+            expect(optionValues).toEqual(['', 'Motor', 'Pump', 'Uncategorized']);
+
+            fireEvent.change(select, { target: { value: 'Motor' } });
+            expect(select.value).toBe('Motor');
         });
     });
 
