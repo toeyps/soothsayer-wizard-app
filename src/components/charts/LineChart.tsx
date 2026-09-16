@@ -201,18 +201,22 @@ function LineChart({
             if (xd.length === 0) return;
             const pixel = [event.offsetX, event.offsetY];
             if (!chartInstance.containPixel({ gridIndex: 0 }, pixel)) return;
-            // `{ seriesIndex: 0 }` was the CATEGORY-axis workaround (see the
-            // git history for that comment) — `{ xAxisIndex: 0 }` used to
-            // return NaN for a category axis, always. Now that the axis is
-            // 'time', `{ xAxisIndex: 0 }` is the documented, direct way to
-            // resolve a pixel back to its axis value, and it returns that
-            // value on its own (a raw ms timestamp), not wrapped in an
-            // array the way the category-axis finder was. This has not
-            // been verified against a live echarts instance (this app
-            // can't be opened in a browser preview) — confirm by actually
-            // clicking the chart in `npm run tauri dev` before trusting it.
-            const rawMs = chartInstance.convertFromPixel({ xAxisIndex: 0 }, pixel);
-            const targetMs = Array.isArray(rawMs) ? rawMs[0] : rawMs;
+            // `{ seriesIndex: 0 }` — NOT `{ xAxisIndex: 0 }`, which returns
+            // NaN on this chart regardless of axis type (confirmed against
+            // the real installed echarts package when the axis was still
+            // 'category'; switching to a 'time' axis and trying
+            // `{ xAxisIndex: 0 }` again broke Tag Point clicks entirely —
+            // confirmed by the user clicking the real app, since this app
+            // can't be opened in a browser preview to check live).
+            // `convertFromPixel({ seriesIndex: 0 }, pixel)` resolves through
+            // the series' own coordinate system instead and reliably
+            // returns `[xValue, yValue]` in the axis's native units —
+            // a category INDEX under the old category axis, and now the
+            // actual ms TIMESTAMP under the time axis. Only the
+            // interpretation of that first element changed; the finder
+            // itself did not need to.
+            const converted = chartInstance.convertFromPixel({ seriesIndex: 0 }, pixel);
+            const targetMs = Array.isArray(converted) ? converted[0] : converted;
             if (targetMs == null || !isFinite(targetMs)) return;
             const idx = nearestXIndex(xd, targetMs);
             const timestamp = xd[idx];

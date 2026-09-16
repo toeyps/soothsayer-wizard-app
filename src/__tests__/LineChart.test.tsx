@@ -10,13 +10,14 @@ const capturedOptions: any[] = [];
  *  it directly, the same way a real zrender canvas click would. */
 let zrClickHandler: ((event: any) => void) | null = null;
 const mockContainPixel = vi.fn(() => true);
-// For a time/value axis, `convertFromPixel({ xAxisIndex: 0 }, pixel)` is
-// documented to return the axis value directly (a plain ms number here),
-// not wrapped in an array the way the old category-axis `{ seriesIndex: 0 }`
-// finder was -- LineChart.tsx's click handler defensively unwraps an array
-// too (`Array.isArray(rawMs) ? rawMs[0] : rawMs`), so mocking a plain number
-// exercises the expected real-world shape.
-const mockConvertFromPixel = vi.fn(() => 0);
+// `convertFromPixel({ seriesIndex: 0 }, pixel)` resolves through the
+// series' own coordinate system and returns `[xValue, yValue]` in the
+// axis's native units (confirmed against the real installed echarts
+// package -- see LineChart.tsx's comment on the click handler) -- a
+// category INDEX before the axis was switched to 'time', a raw ms
+// TIMESTAMP now. Mocked as an array here so these tests actually exercise
+// that return shape.
+const mockConvertFromPixel = vi.fn(() => [0, 0]);
 const mockZr = {
     on: vi.fn((evt: string, cb: (event: any) => void) => { if (evt === 'click') zrClickHandler = cb; }),
     off: vi.fn(),
@@ -73,7 +74,7 @@ beforeEach(() => {
     capturedOptions.length = 0;
     zrClickHandler = null;
     mockContainPixel.mockClear().mockReturnValue(true);
-    mockConvertFromPixel.mockClear().mockReturnValue(0);
+    mockConvertFromPixel.mockClear().mockReturnValue([0, 0]);
     mockZr.on.mockClear();
     mockZr.off.mockClear();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
@@ -596,14 +597,14 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
     });
 
-    it('resolves the clicked pixel via convertFromPixel({ xAxisIndex: 0 }, ...), reading the returned value as a raw ms timestamp then snapping it to the nearest plotted point (regression: { seriesIndex: 0 } was the old category-axis workaround, returning [categoryIndex, value] instead)', () => {
+    it('resolves the clicked pixel via convertFromPixel({ seriesIndex: 0 }, ...), reading result[0] as a raw ms timestamp then snapping it to the nearest plotted point (regression: { xAxisIndex: 0 } returns NaN on real echarts regardless of axis type -- switching to it when the axis became "time" broke every Tag Point click in the real app; confirmed by the user, since this app can\'t be opened in a browser preview to catch it before shipping)', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[3]));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[3]), 0]);
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); });
-        expect(mockConvertFromPixel).toHaveBeenCalledWith({ xAxisIndex: 0 }, expect.any(Array));
-        expect(mockConvertFromPixel).not.toHaveBeenCalledWith({ seriesIndex: 0 }, expect.anything());
+        expect(mockConvertFromPixel).toHaveBeenCalledWith({ seriesIndex: 0 }, expect.any(Array));
+        expect(mockConvertFromPixel).not.toHaveBeenCalledWith({ xAxisIndex: 0 }, expect.anything());
         expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].coord[0]).toBe(msOf(columnar.timestamps[3]));
     });
 
@@ -612,7 +613,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]); // enable tag mode
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[2])); // → index 2 (00:02)
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]); // → index 2 (00:02)
         act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
         expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ timestamp: '2026-01-01T00:02:00' })]);
         const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
@@ -637,7 +638,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[1]));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[1]), 0]);
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // tag
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // untag
         expect(onChange).toHaveBeenLastCalledWith([]);
@@ -648,9 +649,9 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[0]));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[0]), 0]);
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[3]));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[3]), 0]);
         act(() => { zrClickHandler!({ offsetX: 2, offsetY: 2 }); });
         const data = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(data).toHaveLength(2);
@@ -665,7 +666,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[0]));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[0]), 0]);
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(entry.label.align).toBe('left');
@@ -676,7 +677,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[9])); // rightmost index, series[0]'s max value (9)
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[9]), 0]); // rightmost index, series[0]'s max value (9)
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(entry.label.align).toBe('right');
@@ -687,7 +688,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[5])); // middle index
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[5]), 0]); // middle index
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(entry.label.align).toBe('center');
@@ -699,7 +700,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
         for (let i = 0; i < 9; i++) {
-            mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[i]));
+            mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[i]), 0]);
             act(() => { zrClickHandler!({ offsetX: i, offsetY: i }); });
         }
         expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data).toHaveLength(8);
