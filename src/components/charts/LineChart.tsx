@@ -7,13 +7,22 @@ import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaM
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
 
-/** Index into `xData` (a category axis of timestamp strings) whose parsed
- *  time is closest to `targetMs` — ECharts' category axis needs an actual
- *  axis value (or index) for markArea boundaries, not an arbitrary
- *  timestamp, so a highlight's start/end snap to the nearest plotted point.
- *  Linear scan is fine here: xData is capped at a few thousand points
- *  (LINE_MAX_POINTS backend-side) and this only runs per highlight, not per
- *  render frame. */
+/** Parses one `xData` entry to epoch ms, or `null` for a missing/unparseable
+ *  timestamp — a time-axis series point needs an explicit x value per point
+ *  (unlike a category axis, which takes its x position from a shared
+ *  `xAxis.data` array), so every series-building site needs this. */
+function toMs(raw: string | null): number | null {
+    if (raw == null) return null;
+    const t = new Date(raw).getTime();
+    return isNaN(t) ? null : t;
+}
+
+/** Index into `xData` whose parsed time is closest to `targetMs` — used to
+ *  snap an arbitrary timestamp (a highlight boundary, a click resolved to a
+ *  raw axis value) to an actual plotted data point, e.g. for markArea
+ *  boundaries or Tag Point placement. Linear scan is fine here: xData is
+ *  capped at a few thousand points (LINE_MAX_POINTS backend-side) and this
+ *  only runs per highlight/click, not per render frame. */
 function nearestXIndex(xData: (string | null)[], targetMs: number): number {
     let best = 0;
     let bestDiff = Infinity;
@@ -192,18 +201,20 @@ function LineChart({
             if (xd.length === 0) return;
             const pixel = [event.offsetX, event.offsetY];
             if (!chartInstance.containPixel({ gridIndex: 0 }, pixel)) return;
-            // `convertFromPixel({ xAxisIndex: 0 }, pixel)` looked like the
-            // obvious API for this and is what most write-ups show, but for
-            // a CATEGORY axis it returns NaN, always — confirmed empirically
-            // against the real echarts 6.0.0 package (a standalone
-            // echarts.init() + click harness outside React/Tauri, since this
-            // app can't be opened in a browser preview to debug live). The
-            // finder that actually works for a category axis is
-            // `{ seriesIndex: 0 }`, which returns `[categoryIndex, value]`.
-            const converted = chartInstance.convertFromPixel({ seriesIndex: 0 }, pixel);
-            const rawIdx = Array.isArray(converted) ? converted[0] : converted;
-            if (rawIdx == null || !isFinite(rawIdx)) return;
-            const idx = Math.max(0, Math.min(xd.length - 1, Math.round(rawIdx)));
+            // `{ seriesIndex: 0 }` was the CATEGORY-axis workaround (see the
+            // git history for that comment) — `{ xAxisIndex: 0 }` used to
+            // return NaN for a category axis, always. Now that the axis is
+            // 'time', `{ xAxisIndex: 0 }` is the documented, direct way to
+            // resolve a pixel back to its axis value, and it returns that
+            // value on its own (a raw ms timestamp), not wrapped in an
+            // array the way the category-axis finder was. This has not
+            // been verified against a live echarts instance (this app
+            // can't be opened in a browser preview) — confirm by actually
+            // clicking the chart in `npm run tauri dev` before trusting it.
+            const rawMs = chartInstance.convertFromPixel({ xAxisIndex: 0 }, pixel);
+            const targetMs = Array.isArray(rawMs) ? rawMs[0] : rawMs;
+            if (targetMs == null || !isFinite(targetMs)) return;
+            const idx = nearestXIndex(xd, targetMs);
             const timestamp = xd[idx];
             if (timestamp == null) return;
             setTaggedPoints(prev => {
@@ -273,10 +284,11 @@ function LineChart({
 
         // Time highlights ("Highlights" tab's "By time" group) — snapped to
         // the nearest plotted index once, shared by both display modes
-        // below. Category axis needs an actual axis value/index for a
-        // markArea boundary (or an overlay-series data slice), not an
-        // arbitrary timestamp, so each highlight's start/end snap to the
-        // nearest plotted point. Kept in the user's own creation order — the
+        // below. `buildLineColorPieces`'s overlay-series slicing needs an
+        // actual data-array index range (not a raw timestamp), so each
+        // highlight's start/end snap to the nearest plotted point — the
+        // 'band' markArea below then resolves that same index back to its
+        // point's own timestamp. Kept in the user's own creation order — the
         // "first enabled highlight wins" convention (see
         // `buildLineColorPieces`) needs that order preserved.
         const highlightIndexRanges = dataCount > 0
@@ -302,10 +314,14 @@ function LineChart({
         // markArea renders across the shared grid regardless of which
         // series owns it, so adding it to every series would just draw the
         // same bands N times over.
+        // Time axis: `markArea.data[*].xAxis` now takes an actual axis
+        // value (ms), not a category index — `r.startIdx`/`r.endIdx` (still
+        // snapped to the nearest plotted point, same as before) are
+        // resolved back to that point's own timestamp via `xData`.
         const highlightAreas = highlightDisplay !== 'line'
             ? highlightIndexRanges.map(r => [
                 {
-                    xAxis: r.startIdx,
+                    xAxis: toMs(xData[r.startIdx]),
                     itemStyle: { color: hexToRgbaCss(r.color, 0.16) },
                     label: {
                         show: true,
@@ -317,7 +333,7 @@ function LineChart({
                         fontFamily: 'JetBrains Mono, monospace',
                     },
                 },
-                { xAxis: r.endIdx },
+                { xAxis: toMs(xData[r.endIdx]) },
             ])
             : [];
 
@@ -421,19 +437,27 @@ function LineChart({
                     // to, so it doesn't render partly off-canvas (ECharts
                     // hard-clips labels at the canvas boundary, it doesn't
                     // reflow them the way a DOM tooltip would). Horizontal:
-                    // based on the tag's position along the x-axis.
-                    // Vertical: based on where its value falls within the
-                    // anchor sensor's own data range — an approximation
-                    // (the actual y-axis includes a small auto-fit pad) but
-                    // close enough to matter only right at the edges.
-                    const rightFrac = xData.length > 1 ? idx / (xData.length - 1) : 0.5;
+                    // based on the tag's position along the x-axis — a
+                    // TIME fraction, not an index fraction: with a time
+                    // axis the gaps between points aren't equal, so a point
+                    // halfway through the array is no longer necessarily
+                    // halfway across the drawn axis. Vertical: based on
+                    // where its value falls within the anchor sensor's own
+                    // data range — an approximation (the actual y-axis
+                    // includes a small auto-fit pad) but close enough to
+                    // matter only right at the edges.
+                    const firstMs = toMs(xData[0]);
+                    const lastMs = toMs(xData[xData.length - 1]);
+                    const rightFrac = firstMs != null && lastMs != null && lastMs > firstMs
+                        ? (tagMs - firstMs) / (lastMs - firstMs)
+                        : 0.5;
                     const align: 'left' | 'right' | 'center' = rightFrac > 0.65 ? 'right' : rightFrac < 0.1 ? 'left' : 'center';
                     const range = seriesMinMax(sensors[0]);
                     const nearTop = range ? (anchorValue - range.min) / ((range.max - range.min) || 1) > 0.75 : false;
                     const position: 'top' | 'bottom' = nearTop ? 'bottom' : 'top';
 
                     return {
-                        coord: [idx, anchorValue],
+                        coord: [toMs(xData[idx]), anchorValue],
                         itemStyle: { color: tag.color, borderColor: markLabelBg, borderWidth: 2 },
                         label: { formatter: lines.join('\n'), position, align },
                     };
@@ -481,11 +505,15 @@ function LineChart({
             const rawValues = columnar
                 ? (columnar.series[sensorIdx] ?? [])
                 : data.map(d => d.values[sensorIdx] ?? null);
+            // Time axis: each point carries its own x value now — a bare
+            // value array (the old category-axis shape, positioned via the
+            // shared `xAxis.data`) no longer has anywhere to place itself.
+            const pairedData = rawValues.map((v, i) => [toMs(xData[i]), v]);
             return {
                 name: sensor,
                 type: 'line',
                 yAxisIndex: index,
-                data: rawValues,
+                data: pairedData,
                 smooth: !isLargeData,
                 showSymbol: false,
                 itemStyle: { color: color },
@@ -567,7 +595,7 @@ function LineChart({
                     name: sensor,
                     type: 'line',
                     yAxisIndex: index,
-                    data: rawValues.map((v, i) => (i >= piece.min && i <= piece.max ? v : null)),
+                    data: rawValues.map((v, i) => [toMs(xData[i]), i >= piece.min && i <= piece.max ? v : null]),
                     smooth: !isLargeData,
                     showSymbol: false,
                     silent: true,
@@ -639,7 +667,12 @@ function LineChart({
                         seenNames.add(p.seriesName);
                         return true;
                     });
-                    const dateStr = formatDateTime(new Date(pList[0].axisValueLabel));
+                    // `axisValue` (the raw underlying value, ms for a time
+                    // axis) rather than `axisValueLabel` — the label is
+                    // ECharts' own smart-time-formatted display string for a
+                    // time axis (e.g. "10:32"), not something `new Date()`
+                    // can parse back.
+                    const dateStr = formatDateTime(new Date(pList[0].axisValue));
                     let content = `<div style="font-weight:bold; margin-bottom:5px;">${dateStr}</div>`;
                     const maxItems = 10;
                     pList.slice(0, maxItems).forEach((p: any) => {
@@ -690,10 +723,17 @@ function LineChart({
                 }
             ],
             xAxis: {
-                type: 'category',
-                boundaryGap: false,
-                data: xData,
-                axisLabel: { formatter: (val: string) => formatDate(new Date(val)), color: txtSecondary },
+                // 'time' — not 'category'. A category axis spaces every
+                // plotted point EQUALLY regardless of the real gap between
+                // their timestamps, so a 10-minute gap and a 10-hour gap
+                // (e.g. a sparse region after a filter) rendered at the
+                // exact same pixel width — the reported bug. A time axis
+                // positions each point proportionally to its real elapsed
+                // time instead. `axisLabel`'s `val` is now a numeric ms
+                // timestamp rather than the raw string that used to come
+                // from `xAxis.data` — `new Date(val)` still parses either.
+                type: 'time',
+                axisLabel: { formatter: (val: number) => formatDate(new Date(val)), color: txtSecondary },
                 axisLine: { lineStyle: { color: gridLine } }
             },
             yAxis: sensors.map((sensor, index) => {

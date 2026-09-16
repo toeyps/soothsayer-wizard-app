@@ -10,12 +10,13 @@ const capturedOptions: any[] = [];
  *  it directly, the same way a real zrender canvas click would. */
 let zrClickHandler: ((event: any) => void) | null = null;
 const mockContainPixel = vi.fn(() => true);
-// Real echarts (confirmed against the actual installed package -- see
-// LineChart.tsx's comment on the click handler) returns `[categoryIndex,
-// value]` for a category-axis `{ seriesIndex: 0 }` finder, NOT a plain
-// number -- mocked as an array here so these tests actually exercise that
-// return shape instead of accidentally only covering the number fallback.
-const mockConvertFromPixel = vi.fn(() => [0, 0]);
+// For a time/value axis, `convertFromPixel({ xAxisIndex: 0 }, pixel)` is
+// documented to return the axis value directly (a plain ms number here),
+// not wrapped in an array the way the old category-axis `{ seriesIndex: 0 }`
+// finder was -- LineChart.tsx's click handler defensively unwraps an array
+// too (`Array.isArray(rawMs) ? rawMs[0] : rawMs`), so mocking a plain number
+// exercises the expected real-world shape.
+const mockConvertFromPixel = vi.fn(() => 0);
 const mockZr = {
     on: vi.fn((evt: string, cb: (event: any) => void) => { if (evt === 'click') zrClickHandler = cb; }),
     off: vi.fn(),
@@ -53,11 +54,26 @@ function columnarOf(headers: string[], length: number): ColumnarSeries {
     return { timestamps, series };
 }
 
+/** Epoch ms of an ISO timestamp string -- matches how LineChart.tsx itself
+ *  converts `xData` entries (`toMs`) for a time-axis series/markArea/coord,
+ *  so tests assert against the same value production code computes rather
+ *  than a hardcoded epoch number. */
+function msOf(ts: string): number {
+    return new Date(ts).getTime();
+}
+
+/** Pairs a plain value array with `columnar`'s own timestamps, the shape a
+ *  time-axis series now needs (`[x_ms, y]` per point) instead of the old
+ *  category-axis bare-value array. */
+function pairs(columnar: ColumnarSeries, values: (number | null)[]): (number | null)[][] {
+    return values.map((v, i) => [msOf(columnar.timestamps[i]), v]);
+}
+
 beforeEach(() => {
     capturedOptions.length = 0;
     zrClickHandler = null;
     mockContainPixel.mockClear().mockReturnValue(true);
-    mockConvertFromPixel.mockClear().mockReturnValue([0, 0]);
+    mockConvertFromPixel.mockClear().mockReturnValue(0);
     mockZr.on.mockClear();
     mockZr.off.mockClear();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
@@ -294,8 +310,8 @@ describe('LineChart option building', () => {
             render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} />);
             const [seriesA, seriesB] = capturedOptions[capturedOptions.length - 1].series;
             expect(seriesA.markArea.data).toEqual([[
-                expect.objectContaining({ xAxis: 1 }), // 00:01 → index 1
-                expect.objectContaining({ xAxis: 3 }), // 00:03 → index 3
+                expect.objectContaining({ xAxis: msOf(columnar.timestamps[1]) }), // 00:01 → index 1
+                expect.objectContaining({ xAxis: msOf(columnar.timestamps[3]) }), // 00:03 → index 3
             ]]);
             expect(seriesB.markArea).toBeUndefined(); // not duplicated onto every series
         });
@@ -346,7 +362,7 @@ describe('LineChart option building', () => {
             const option = capturedOptions[capturedOptions.length - 1];
             expect(option.series).toHaveLength(3); // one per sensor, no overlays
             expect(option.series[0].markArea).toBeDefined();
-            expect(typeof option.series[0].data[0]).toBe('number');
+            expect(option.series[0].data[0]).toEqual([msOf(columnar.timestamps[0]), 0]); // [x_ms, y] pair, untouched
         });
 
         it('with highlightDisplay="line" and an enabled highlight: no markArea, base series are untouched (own colour/width, full data), plus one overlay series per sensor', () => {
@@ -362,7 +378,7 @@ describe('LineChart option building', () => {
                 expect(s.markArea).toBeUndefined();
                 expect(s.itemStyle.color).toBe(defaultSensorColor(headers[i]));
                 expect(s.lineStyle.width).toBe(2); // unchanged, small-data profile
-                expect(s.data).toEqual([i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4]); // full, untouched
+                expect(s.data).toEqual(pairs(columnar, [i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4])); // full, untouched
             });
 
             overlaySeries.forEach((s: any, i: number) => {
@@ -373,7 +389,7 @@ describe('LineChart option building', () => {
                 expect(s.tooltip).toEqual({ show: false }); // excluded, so hover doesn't double up on the sensor
                 expect(s.silent).toBe(true);
                 // null outside the highlighted [1,3] index range (00:01..00:03), the sensor's real value inside it.
-                expect(s.data).toEqual([null, i * 100 + 1, i * 100 + 2, i * 100 + 3, null]);
+                expect(s.data).toEqual(pairs(columnar, [null, i * 100 + 1, i * 100 + 2, i * 100 + 3, null]));
             });
         });
 
@@ -399,9 +415,9 @@ describe('LineChart option building', () => {
             expect(option.series).toHaveLength(3); // 1 base + 2 overlays (one per highlight)
             const [, overlay1, overlay2] = option.series;
             expect(overlay1.lineStyle.color).toBe('#00ff00'); // earlier index (0) sorts first
-            expect(overlay1.data).toEqual([0, null, null, null, null]);
+            expect(overlay1.data).toEqual(pairs(columnar, [0, null, null, null, null]));
             expect(overlay2.lineStyle.color).toBe('#ff0000');
-            expect(overlay2.data).toEqual([null, 1, 2, 3, null]);
+            expect(overlay2.data).toEqual(pairs(columnar, [null, 1, 2, 3, null]));
         });
 
         it('with highlightDisplay="line" but no enabled highlights: no overlay series, no markArea, same as \'band\' with nothing to draw', () => {
@@ -410,7 +426,7 @@ describe('LineChart option building', () => {
             const option = capturedOptions[capturedOptions.length - 1];
             expect(option.series).toHaveLength(3); // no overlays added
             expect(option.series[0].markArea).toBeUndefined();
-            expect(typeof option.series[0].data[0]).toBe('number');
+            expect(option.series[0].data[0]).toEqual([msOf(columnar.timestamps[0]), 0]);
         });
     });
 
@@ -458,7 +474,7 @@ describe('LineChart option building', () => {
             );
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
             const html = formatter([
-                { axisValueLabel: '2026-01-01T00:00:00', seriesName: 'A', value: 12.34567, color: '#fff' },
+                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 12.34567, color: '#fff' },
             ]);
             expect(html).toContain('12.346 bar');
             expect(html).toContain('2026/01/01');
@@ -469,7 +485,7 @@ describe('LineChart option building', () => {
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
             const html = formatter([
-                { axisValueLabel: '2026-01-01T00:00:00', seriesName: 'A', value: 5, color: '#fff' },
+                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 5, color: '#fff' },
             ]);
             expect(html).toContain('A: 5');
             expect(html).not.toContain('undefined');
@@ -480,8 +496,8 @@ describe('LineChart option building', () => {
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
             const html = formatter([
-                { axisValueLabel: '2026-01-01T00:00:00', seriesName: 'A', value: 5, color: '#3b82f6' }, // base series
-                { axisValueLabel: '2026-01-01T00:00:00', seriesName: 'A', value: 5, color: '#ff0000' }, // highlight overlay, same sensor
+                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 5, color: '#3b82f6' }, // base series
+                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 5, color: '#ff0000' }, // highlight overlay, same sensor
             ]);
             expect((html.match(/A:/g) ?? [])).toHaveLength(1);
             expect(html).toContain('#3b82f6'); // the FIRST (base series) entry wins, not the overlay
@@ -492,7 +508,7 @@ describe('LineChart option building', () => {
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
             const params = Array.from({ length: 15 }, (_, i) => ({
-                axisValueLabel: '2026-01-01T00:00:00', seriesName: `S${i}`, value: i, color: '#fff',
+                axisValue: msOf('2026-01-01T00:00:00'), seriesName: `S${i}`, value: i, color: '#fff',
             }));
             const html = formatter(params);
             expect((html.match(/S\d+:/g) ?? [])).toHaveLength(10);
@@ -503,7 +519,17 @@ describe('LineChart option building', () => {
         const columnar = columnarOf(['A'], 3);
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
         const { formatter } = capturedOptions[capturedOptions.length - 1].xAxis.axisLabel;
-        expect(formatter('2026-03-09T00:00:00')).toBe('2026/03/09');
+        // A time axis hands its formatter a numeric ms value, not the raw
+        // date string a category axis' shared `xAxis.data` used to carry.
+        expect(formatter(msOf('2026-03-09T00:00:00'))).toBe('2026/03/09');
+    });
+
+    it("xAxis is a time axis, not a category axis (regression: a category axis spaces every point equally by index regardless of real elapsed time, so a 10-minute gap and a 10-hour gap between points rendered at the same pixel width)", () => {
+        const columnar = columnarOf(['A'], 3);
+        render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+        const { xAxis } = capturedOptions[capturedOptions.length - 1];
+        expect(xAxis.type).toBe('time');
+        expect(xAxis.data).toBeUndefined(); // no shared category array anymore
     });
 
     it('respects hideYSplitLine by hiding the first axis split line', () => {
@@ -523,13 +549,16 @@ describe('LineChart option building', () => {
 
     it('falls back to row-based `data`/`headers` indexing when no columnar feed is supplied', () => {
         const data = [
-            { timestamp: 't0', values: [1, 2] },
-            { timestamp: 't1', values: [3, 4] },
+            { timestamp: '2026-01-01T00:00:00', values: [1, 2] },
+            { timestamp: '2026-01-01T00:01:00', values: [3, 4] },
         ] as any;
         render(<LineChart data={data} sensors={['B']} headers={['A', 'B']} />);
         const option = capturedOptions[capturedOptions.length - 1];
-        expect(option.xAxis.data).toEqual(['t0', 't1']);
-        expect(option.series[0].data).toEqual([2, 4]);
+        expect(option.xAxis.data).toBeUndefined();
+        expect(option.series[0].data).toEqual([
+            [msOf('2026-01-01T00:00:00'), 2],
+            [msOf('2026-01-01T00:01:00'), 4],
+        ]);
     });
 });
 
@@ -562,15 +591,15 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
     });
 
-    it('resolves the clicked pixel via convertFromPixel({ seriesIndex: 0 }, ...), reading result[0] as the index (regression: { xAxisIndex: 0 } returns NaN for a category axis on real echarts -- confirmed against the actual installed package outside this test\'s mock -- and silently broke every click)', () => {
+    it('resolves the clicked pixel via convertFromPixel({ xAxisIndex: 0 }, ...), reading the returned value as a raw ms timestamp then snapping it to the nearest plotted point (regression: { seriesIndex: 0 } was the old category-axis workaround, returning [categoryIndex, value] instead)', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue([3, 0]);
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[3]));
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); });
-        expect(mockConvertFromPixel).toHaveBeenCalledWith({ seriesIndex: 0 }, expect.any(Array));
-        expect(mockConvertFromPixel).not.toHaveBeenCalledWith({ xAxisIndex: 0 }, expect.anything());
-        expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].coord[0]).toBe(3);
+        expect(mockConvertFromPixel).toHaveBeenCalledWith({ xAxisIndex: 0 }, expect.any(Array));
+        expect(mockConvertFromPixel).not.toHaveBeenCalledWith({ seriesIndex: 0 }, expect.anything());
+        expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].coord[0]).toBe(msOf(columnar.timestamps[3]));
     });
 
     it('tags the nearest point on click while tag mode is on, reporting it via onLineTaggedPointsChange', () => {
@@ -578,12 +607,12 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]); // enable tag mode
-        mockConvertFromPixel.mockReturnValue([2, 0]); // → index 2 (00:02)
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[2])); // → index 2 (00:02)
         act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
         expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ timestamp: '2026-01-01T00:02:00' })]);
         const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
         expect(markPoint.data).toHaveLength(1);
-        expect(markPoint.data[0].coord[0]).toBe(2);
+        expect(markPoint.data[0].coord[0]).toBe(msOf(columnar.timestamps[2]));
         expect(markPoint.data[0].label.formatter).toContain('①');
     });
 
@@ -603,7 +632,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue([1, 0]);
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[1]));
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // tag
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // untag
         expect(onChange).toHaveBeenLastCalledWith([]);
@@ -614,9 +643,9 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue([0, 0]);
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[0]));
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
-        mockConvertFromPixel.mockReturnValue([3, 0]);
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[3]));
         act(() => { zrClickHandler!({ offsetX: 2, offsetY: 2 }); });
         const data = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(data).toHaveLength(2);
@@ -631,7 +660,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue([0, 0]);
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[0]));
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(entry.label.align).toBe('left');
@@ -642,7 +671,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue([9, 0]); // rightmost index, series[0]'s max value (9)
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[9])); // rightmost index, series[0]'s max value (9)
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(entry.label.align).toBe('right');
@@ -653,7 +682,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        mockConvertFromPixel.mockReturnValue([5, 0]); // middle index
+        mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[5])); // middle index
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
         expect(entry.label.align).toBe('center');
@@ -665,7 +694,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
         fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
         for (let i = 0; i < 9; i++) {
-            mockConvertFromPixel.mockReturnValue([i, 0]);
+            mockConvertFromPixel.mockReturnValue(msOf(columnar.timestamps[i]));
             act(() => { zrClickHandler!({ offsetX: i, offsetY: i }); });
         }
         expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data).toHaveLength(8);
