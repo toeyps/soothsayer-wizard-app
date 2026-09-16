@@ -4,11 +4,16 @@ import { render, fireEvent, act } from '@testing-library/react';
 
 const capturedOptions: any[] = [];
 /** Fake echarts instance handed to `onChartReady`, exposing just enough of
- *  the real API (getZr/containPixel/convertFromPixel) for the Tag Point
- *  click-handling tests below. `zrClickHandler` captures the listener
- *  LineChart registers via `getZr().on('click', ...)` so tests can invoke
- *  it directly, the same way a real zrender canvas click would. */
+ *  the real API (getZr/containPixel/convertFromPixel/dispatchAction) for
+ *  the Tag Point and Horizontal Zoom click/drag-handling tests below.
+ *  `zrClickHandler`/`zrMouseDownHandler`/`zrMouseMoveHandler`/
+ *  `zrMouseUpHandler` capture the listeners LineChart registers via
+ *  `getZr().on(...)` so tests can invoke them directly, the same way real
+ *  zrender canvas events would. */
 let zrClickHandler: ((event: any) => void) | null = null;
+let zrMouseDownHandler: ((event: any) => void) | null = null;
+let zrMouseMoveHandler: ((event: any) => void) | null = null;
+let zrMouseUpHandler: ((event: any) => void) | null = null;
 const mockContainPixel = vi.fn(() => true);
 // `convertFromPixel({ seriesIndex: 0 }, pixel)` resolves through the
 // series' own coordinate system and returns `[xValue, yValue]` in the
@@ -18,14 +23,21 @@ const mockContainPixel = vi.fn(() => true);
 // TIMESTAMP now. Mocked as an array here so these tests actually exercise
 // that return shape.
 const mockConvertFromPixel = vi.fn(() => [0, 0]);
+const mockDispatchAction = vi.fn();
 const mockZr = {
-    on: vi.fn((evt: string, cb: (event: any) => void) => { if (evt === 'click') zrClickHandler = cb; }),
+    on: vi.fn((evt: string, cb: (event: any) => void) => {
+        if (evt === 'click') zrClickHandler = cb;
+        if (evt === 'mousedown') zrMouseDownHandler = cb;
+        if (evt === 'mousemove') zrMouseMoveHandler = cb;
+        if (evt === 'mouseup') zrMouseUpHandler = cb;
+    }),
     off: vi.fn(),
 };
 const mockChartInstance = {
     getZr: () => mockZr,
     containPixel: mockContainPixel,
     convertFromPixel: mockConvertFromPixel,
+    dispatchAction: mockDispatchAction,
 };
 
 vi.mock('../components/charts/ResponsiveECharts', () => ({
@@ -70,11 +82,23 @@ function pairs(columnar: ColumnarSeries, values: (number | null)[]): (number | n
     return values.map((v, i) => [msOf(columnar.timestamps[i]), v]);
 }
 
+/** The Tag Point toggle button specifically — found by its stable `title`
+ *  prefix rather than array position, since the toolbox also renders a Zoom
+ *  button before it (and a Clear-all button after, once tags exist), so
+ *  `.line-chart-tool` order alone isn't a reliable way to find it. */
+function tagToggle(container: HTMLElement): HTMLElement {
+    return container.querySelector('[title^="Tag point"]') as HTMLElement;
+}
+
 beforeEach(() => {
     capturedOptions.length = 0;
     zrClickHandler = null;
+    zrMouseDownHandler = null;
+    zrMouseMoveHandler = null;
+    zrMouseUpHandler = null;
     mockContainPixel.mockClear().mockReturnValue(true);
     mockConvertFromPixel.mockClear().mockReturnValue([0, 0]);
+    mockDispatchAction.mockClear();
     mockZr.on.mockClear();
     mockZr.off.mockClear();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
@@ -192,8 +216,11 @@ describe('LineChart option building', () => {
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={headers} />);
         const { grid, dataZoom } = capturedOptions[capturedOptions.length - 1];
         expect(grid.top).toBe(30);
-        expect(grid.bottom).toBe(58); // 20 (slider) + 8 + 24 + 6
-        expect(dataZoom[1].height).toBe(20);
+        // No slider reservation anymore (the dataZoom 'slider' component was
+        // removed in favour of the toolbox's Horizontal Zoom tool) — just
+        // the x-axis label height + its gap.
+        expect(grid.bottom).toBe(30); // 24 + 6
+        expect(dataZoom).toHaveLength(1); // just 'inside', no 'slider'
     });
 
     it('uses sensorColors overrides when provided, falling back to the hash-based default otherwise', () => {
@@ -466,10 +493,9 @@ describe('LineChart option building', () => {
             rerender(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} hideYSplitLine />);
             const { dataZoom } = capturedOptions[capturedOptions.length - 1];
             expect(dataZoom[0].start).toBeUndefined();
-            expect(dataZoom[1].start).toBeUndefined();
         });
 
-        it('a rerender with a WIDER time range (different first/last timestamp) forces both dataZoom components back to start:0, end:100', () => {
+        it('a rerender with a WIDER time range (different first/last timestamp) forces dataZoom back to start:0, end:100', () => {
             const narrow = columnarOf(['A'], 5); // 2026-01-01T00:00 .. 00:04
             const { rerender } = render(<LineChart data={[]} columnar={narrow} sensors={['A']} headers={['A']} />);
 
@@ -481,8 +507,6 @@ describe('LineChart option building', () => {
             const { dataZoom } = capturedOptions[capturedOptions.length - 1];
             expect(dataZoom[0].start).toBe(0);
             expect(dataZoom[0].end).toBe(100);
-            expect(dataZoom[1].start).toBe(0);
-            expect(dataZoom[1].end).toBe(100);
         });
 
         it('does not keep forcing start/end on every subsequent render after the range-change render itself', () => {
@@ -498,7 +522,6 @@ describe('LineChart option building', () => {
             rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} hideYSplitLine />);
             const { dataZoom } = capturedOptions[capturedOptions.length - 1];
             expect(dataZoom[0].start).toBeUndefined();
-            expect(dataZoom[1].start).toBeUndefined();
         });
     });
 
@@ -617,19 +640,19 @@ describe('LineChart option building', () => {
 describe('Tag Point (click a point on the chart to compare it with others)', () => {
     const headers = ['A', 'B'];
 
-    it('renders the toolbox with a Tag toggle, off by default', () => {
+    it('renders the toolbox with a Zoom button and a Tag toggle (off by default)', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        const tools = container.querySelectorAll('.line-chart-tool');
-        expect(tools.length).toBe(1); // just the toggle — Clear all only appears once tags exist
-        expect(tools[0].className).not.toContain('active');
+        // Zoom + Tag toggle — Clear all only appears once tags exist.
+        expect(container.querySelectorAll('.line-chart-tool').length).toBe(2);
+        expect(tagToggle(container).className).not.toContain('active');
     });
 
     it('activates the toggle on click', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
-        expect(container.querySelectorAll('.line-chart-tool')[0].className).toContain('active');
+        fireEvent.click(tagToggle(container));
+        expect(tagToggle(container).className).toContain('active');
     });
 
     it('does nothing on a chart click while tag mode is off', () => {
@@ -646,7 +669,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
     it('resolves the clicked pixel via convertFromPixel({ seriesIndex: 0 }, ...), reading result[0] as a raw ms timestamp then snapping it to the nearest plotted point (regression: { xAxisIndex: 0 } returns NaN on real echarts regardless of axis type -- switching to it when the axis became "time" broke every Tag Point click in the real app; confirmed by the user, since this app can\'t be opened in a browser preview to catch it before shipping)', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[3]), 0]);
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); });
         expect(mockConvertFromPixel).toHaveBeenCalledWith({ seriesIndex: 0 }, expect.any(Array));
@@ -658,7 +681,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 5);
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]); // enable tag mode
+        fireEvent.click(tagToggle(container)); // enable tag mode
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]); // → index 2 (00:02)
         act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
         expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ timestamp: '2026-01-01T00:02:00' })]);
@@ -672,7 +695,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 5);
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockContainPixel.mockReturnValue(false);
         onChange.mockClear();
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); });
@@ -683,7 +706,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const columnar = columnarOf(headers, 5);
         const onChange = vi.fn();
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[1]), 0]);
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // tag
         act(() => { zrClickHandler!({ offsetX: 10, offsetY: 10 }); }); // untag
@@ -694,7 +717,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
     it('does not show a delta comparison line for a second tag (removed per user feedback -- not used)', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[0]), 0]);
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[3]), 0]);
@@ -711,7 +734,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         // leftmost x-position AND the series minimum.
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[0]), 0]);
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
@@ -722,7 +745,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
     it('flips the callout right-aligned and below the point for a tag at the right edge whose value is also this series\' maximum', () => {
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[9]), 0]); // rightmost index, series[0]'s max value (9)
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
@@ -733,7 +756,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
     it('centres the callout (default top/center) for a tag away from every edge', () => {
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[5]), 0]); // middle index
         act(() => { zrClickHandler!({ offsetX: 1, offsetY: 1 }); });
         const [entry] = capturedOptions[capturedOptions.length - 1].series[0].markPoint.data;
@@ -744,7 +767,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
     it('caps at 8 tagged points (one per RANGE_PALETTE colour)', () => {
         const columnar = columnarOf(headers, 10);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
-        fireEvent.click(container.querySelectorAll('.line-chart-tool')[0]);
+        fireEvent.click(tagToggle(container));
         for (let i = 0; i < 9; i++) {
             mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[i]), 0]);
             act(() => { zrClickHandler!({ offsetX: i, offsetY: i }); });
@@ -768,10 +791,171 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         const { container } = render(
             <LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} lineTaggedPoints={seeded} onLineTaggedPointsChange={onChange} />,
         );
-        const tools = container.querySelectorAll('.line-chart-tool');
-        expect(tools.length).toBe(2); // toggle + Clear all
-        fireEvent.click(tools[1]);
+        // Zoom + Tag toggle + Clear all.
+        expect(container.querySelectorAll('.line-chart-tool').length).toBe(3);
+        const clearAll = container.querySelector('[title="Clear all tags"]') as HTMLElement;
+        fireEvent.click(clearAll);
         expect(onChange).toHaveBeenLastCalledWith([]);
-        expect(container.querySelectorAll('.line-chart-tool').length).toBe(1); // Clear all disappears
+        expect(container.querySelectorAll('.line-chart-tool').length).toBe(2); // Clear all disappears, Zoom + Tag toggle remain
+    });
+});
+
+describe('Horizontal Zoom (drag across the chart to zoom into a range — replaces the old always-visible dataZoom slider)', () => {
+    const headers = ['A', 'B'];
+
+    /** The Zoom tool button specifically — found by its stable `title`,
+     *  same reasoning as `tagToggle`. */
+    function zoomButton(container: HTMLElement): HTMLElement {
+        return container.querySelector('[title="Zoom"]') as HTMLElement;
+    }
+
+    it('renders the menu closed by default; opens on click, with a Horizontal zoom and a Zoom out item', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        expect(container.querySelector('.line-chart-zoom-menu')).toBeNull();
+        fireEvent.click(zoomButton(container));
+        const menu = container.querySelector('.line-chart-zoom-menu');
+        expect(menu).not.toBeNull();
+        expect(menu!.textContent).toContain('Horizontal zoom');
+        expect(menu!.textContent).toContain('Zoom out');
+    });
+
+    it('clicking "Horizontal zoom" arms zoom-select mode (Zoom button goes active), closes the menu, and turns off an active Tag mode', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(tagToggle(container)); // tag mode on first
+        expect(tagToggle(container).className).toContain('active');
+
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement); // "Horizontal zoom" is first
+        expect(zoomButton(container).className).toContain('active');
+        expect(container.querySelector('.line-chart-zoom-menu')).toBeNull(); // menu closed
+        expect(tagToggle(container).className).not.toContain('active'); // mutually exclusive with Tag mode
+    });
+
+    it('clicking "Zoom out" dispatches a dataZoom reset action and closes the menu', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        const items = container.querySelectorAll('.line-chart-zoom-menu-item');
+        fireEvent.click(items[1]); // "Zoom out" is second
+        expect(mockDispatchAction).toHaveBeenCalledWith({ type: 'dataZoom', start: 0, end: 100 });
+        expect(container.querySelector('.line-chart-zoom-menu')).toBeNull();
+    });
+
+    it('clicking outside the menu closes it without arming zoom-select mode', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        expect(container.querySelector('.line-chart-zoom-menu')).not.toBeNull();
+        fireEvent.mouseDown(document.body);
+        expect(container.querySelector('.line-chart-zoom-menu')).toBeNull();
+        expect(zoomButton(container).className).not.toContain('active');
+    });
+
+    it('dragging across the chart while armed resolves both endpoints via convertFromPixel({ seriesIndex: 0 }, ...) and dispatches a dataZoom action with startValue/endValue, then disarms (one-shot)', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement); // arm Horizontal zoom
+        expect(zoomButton(container).className).toContain('active');
+
+        mockConvertFromPixel
+            .mockReturnValueOnce([msOf(columnar.timestamps[1]), 0]) // drag start
+            .mockReturnValueOnce([msOf(columnar.timestamps[3]), 0]); // drag end
+        act(() => { zrMouseDownHandler!({ offsetX: 20, offsetY: 20 }); });
+        act(() => { zrMouseMoveHandler!({ offsetX: 60, offsetY: 20 }); });
+        act(() => { zrMouseUpHandler!({ offsetX: 100, offsetY: 20 }); });
+
+        expect(mockConvertFromPixel).toHaveBeenCalledWith({ seriesIndex: 0 }, [20, 20]);
+        expect(mockConvertFromPixel).toHaveBeenCalledWith({ seriesIndex: 0 }, [100, 20]);
+        expect(mockDispatchAction).toHaveBeenCalledWith({
+            type: 'dataZoom',
+            startValue: msOf(columnar.timestamps[1]),
+            endValue: msOf(columnar.timestamps[3]),
+        });
+        // One-shot: back to the normal pointer after a single drag.
+        expect(zoomButton(container).className).not.toContain('active');
+    });
+
+    it('orders startValue/endValue correctly regardless of drag direction (right-to-left drag)', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement);
+
+        mockConvertFromPixel
+            .mockReturnValueOnce([msOf(columnar.timestamps[3]), 0]) // drag start (right side)
+            .mockReturnValueOnce([msOf(columnar.timestamps[1]), 0]); // drag end (left side)
+        act(() => { zrMouseDownHandler!({ offsetX: 100, offsetY: 20 }); });
+        act(() => { zrMouseUpHandler!({ offsetX: 20, offsetY: 20 }); });
+
+        expect(mockDispatchAction).toHaveBeenCalledWith({
+            type: 'dataZoom',
+            startValue: msOf(columnar.timestamps[1]), // still the smaller value
+            endValue: msOf(columnar.timestamps[3]),
+        });
+    });
+
+    it('ignores a drag under ~4px (an accidental click, not an intentional range) -- no dataZoom action dispatched, and it stays armed for a real attempt', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement);
+
+        act(() => { zrMouseDownHandler!({ offsetX: 50, offsetY: 20 }); });
+        act(() => { zrMouseUpHandler!({ offsetX: 52, offsetY: 20 }); }); // 2px -- below the threshold
+
+        expect(mockDispatchAction).not.toHaveBeenCalled();
+    });
+
+    it('ignores a mousedown outside the plot grid (containPixel false) -- no drag starts', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement);
+        mockContainPixel.mockReturnValue(false);
+
+        act(() => { zrMouseDownHandler!({ offsetX: 50, offsetY: 20 }); });
+        act(() => { zrMouseUpHandler!({ offsetX: 100, offsetY: 20 }); });
+
+        expect(mockDispatchAction).not.toHaveBeenCalled();
+    });
+
+    it('does nothing on a drag while zoom-select mode is off (mousedown/up wired but not armed)', () => {
+        const columnar = columnarOf(headers, 5);
+        render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        expect(zrMouseDownHandler).not.toBeNull(); // listener attached regardless
+        act(() => { zrMouseDownHandler!({ offsetX: 20, offsetY: 20 }); });
+        act(() => { zrMouseUpHandler!({ offsetX: 100, offsetY: 20 }); });
+        expect(mockDispatchAction).not.toHaveBeenCalled();
+    });
+
+    it('turning on Tag mode disarms an active Horizontal Zoom', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement);
+        expect(zoomButton(container).className).toContain('active');
+
+        fireEvent.click(tagToggle(container));
+        expect(tagToggle(container).className).toContain('active');
+        expect(zoomButton(container).className).not.toContain('active');
+    });
+
+    it('shows a drag-hint caption while zoom-select mode is armed', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        expect(container.textContent).not.toContain('Drag across the chart to zoom into that range');
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement);
+        expect(container.textContent).toContain('Drag across the chart to zoom into that range');
+    });
+
+    it('the 2000-point "large" rendering profile does not disable the Zoom tool (it works the same regardless of dataset size)', () => {
+        const columnar = columnarOf(['A'], 2001);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+        expect(zoomButton(container)).not.toBeNull();
+        expect((zoomButton(container) as HTMLButtonElement).disabled).toBeFalsy();
     });
 });

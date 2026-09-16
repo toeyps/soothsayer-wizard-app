@@ -8302,6 +8302,43 @@ body {
     color: var(--accent-color);
 }
 
+/* Horizontal Zoom — dropdown menu opened from the Zoom tool button,
+   replacing the old always-visible dataZoom slider bar. */
+.line-chart-zoom-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    min-width: 150px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.line-chart-zoom-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+.line-chart-zoom-menu-item:hover {
+    background: var(--accent-muted);
+    color: var(--accent-color);
+}
+
 /* Tag Point — Scatter chart's ring/badge/callout overlay (DOM, not
    WebGL — regl-scatterplot only draws points, so tagged-point chrome is
    an absolutely-positioned layer on top, following the same technique

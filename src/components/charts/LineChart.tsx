@@ -1,5 +1,5 @@
 import { useMemo, memo, useRef, useState, useEffect, useCallback } from 'react';
-import { Tag, Trash2 } from 'lucide-react';
+import { Tag, Trash2, Search, ZoomIn, ZoomOut } from 'lucide-react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 import { formatDate, formatDateTime } from '../../utils/dateFormat';
@@ -156,6 +156,48 @@ function LineChart({
     const [chartInstance, setChartInstance] = useState<any>(null);
     const handleChartReady = useCallback((instance: any) => setChartInstance(instance), []);
 
+    // Horizontal Zoom — replaces the always-visible slider (dataZoom
+    // 'slider' type, removed below) with an explicit tool: pick "Horizontal
+    // zoom" from the menu, then drag across the chart to zoom into that
+    // x-range; "Zoom out" resets back to the full view. `zoomMenuOpen` is
+    // just the dropdown's own visibility; `zoomSelectMode` is the actual
+    // "next drag zooms" tool state, off again the instant one drag
+    // completes (one-shot, not a persistent mode) so it doesn't linger and
+    // surprise a later plain click/hover.
+    const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+    const [zoomSelectMode, setZoomSelectMode] = useState(false);
+    // Drag-in-progress visual feedback (pixel-space, relative to the
+    // wrapper) — `null` outside of an active drag.
+    const [dragPixels, setDragPixels] = useState<[number, number] | null>(null);
+    const zoomMenuRef = useRef<HTMLDivElement>(null);
+
+    // Horizontal zoom and Tag Point both interpret a plain click/drag on the
+    // canvas, so only one may be active at a time — entering one turns the
+    // other off rather than leaving both listening and fighting over the
+    // same gesture.
+    const enterZoomSelectMode = useCallback(() => {
+        setTagMode(false);
+        setZoomSelectMode(true);
+        setZoomMenuOpen(false);
+    }, []);
+    const toggleTagMode = useCallback(() => {
+        setZoomSelectMode(false);
+        setTagMode(m => !m);
+    }, []);
+
+    // Closes the zoom dropdown on an outside click — standard menu
+    // behaviour; without it the menu only closes by picking an item.
+    useEffect(() => {
+        if (!zoomMenuOpen) return;
+        const onDocClick = (e: MouseEvent) => {
+            if (zoomMenuRef.current && !zoomMenuRef.current.contains(e.target as Node)) {
+                setZoomMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+    }, [zoomMenuOpen]);
+
     useEffect(() => {
         onLineTaggedPointsChange?.(taggedPoints);
     }, [taggedPoints, onLineTaggedPointsChange]);
@@ -197,6 +239,8 @@ function LineChart({
     useEffect(() => { tagModeRef.current = tagMode; }, [tagMode]);
     const xDataRef = useRef(xData);
     useEffect(() => { xDataRef.current = xData; }, [xData]);
+    const zoomSelectModeRef = useRef(zoomSelectMode);
+    useEffect(() => { zoomSelectModeRef.current = zoomSelectMode; }, [zoomSelectMode]);
 
     // Click-to-tag: attached at the zrender (canvas) level, not via
     // ResponsiveECharts' onEvents, because the large-data rendering profile
@@ -259,6 +303,76 @@ function LineChart({
         };
         zr.on('click', handleZrClick);
         return () => { zr.off('click', handleZrClick); };
+    }, [chartInstance]);
+
+    // Horizontal Zoom — drag left/right on the canvas to select an x-range,
+    // release to zoom into it. Same zrender-level (not ECharts series-level)
+    // approach as the Tag Point click handler above, for the same reason:
+    // `silent: isLargeData` skips ECharts' own hit-testing on big datasets,
+    // and a drag needs to work regardless of series count/size anyway.
+    // `dataZoom[0]` ('inside') is set `disabled` while this mode is active
+    // (see the option below) so its own native drag-to-pan doesn't fight
+    // this handler for the same mousedown/mousemove stream.
+    useEffect(() => {
+        if (!chartInstance) return;
+        const zr = chartInstance.getZr?.();
+        if (!zr) return;
+        let dragStartPixel: number | null = null;
+
+        const handleMouseDown = (event: any) => {
+            if (!zoomSelectModeRef.current) return;
+            const pixel = [event.offsetX, event.offsetY];
+            if (!chartInstance.containPixel({ gridIndex: 0 }, pixel)) return;
+            dragStartPixel = event.offsetX;
+            setDragPixels([event.offsetX, event.offsetX]);
+        };
+        const handleMouseMove = (event: any) => {
+            if (dragStartPixel == null) return;
+            setDragPixels([dragStartPixel, event.offsetX]);
+        };
+        const handleMouseUp = (event: any) => {
+            if (dragStartPixel == null) return;
+            const startPixel = dragStartPixel;
+            const endPixel = event.offsetX;
+            dragStartPixel = null;
+            setDragPixels(null);
+            // A drag under ~4px reads as an accidental click, not an
+            // intentional range — ignore it rather than zoom to a
+            // near-zero-width window.
+            if (Math.abs(endPixel - startPixel) < 4) return;
+            // Same `{ seriesIndex: 0 }` finder as the Tag Point handler
+            // above, for the same reason (`{ xAxisIndex: 0 }` returns NaN
+            // on this chart regardless of axis type) — resolves through the
+            // series' own coordinate system to get each pixel's real ms
+            // value.
+            const p1 = chartInstance.convertFromPixel({ seriesIndex: 0 }, [startPixel, event.offsetY]);
+            const p2 = chartInstance.convertFromPixel({ seriesIndex: 0 }, [endPixel, event.offsetY]);
+            const v1 = Array.isArray(p1) ? p1[0] : p1;
+            const v2 = Array.isArray(p2) ? p2[0] : p2;
+            if (v1 == null || v2 == null || !isFinite(v1) || !isFinite(v2)) return;
+            chartInstance.dispatchAction({
+                type: 'dataZoom',
+                startValue: Math.min(v1, v2),
+                endValue: Math.max(v1, v2),
+            });
+            // One-shot: back to the normal pointer after a single drag,
+            // rather than staying in "next drag zooms" mode indefinitely.
+            setZoomSelectMode(false);
+        };
+
+        zr.on('mousedown', handleMouseDown);
+        zr.on('mousemove', handleMouseMove);
+        zr.on('mouseup', handleMouseUp);
+        return () => {
+            zr.off('mousedown', handleMouseDown);
+            zr.off('mousemove', handleMouseMove);
+            zr.off('mouseup', handleMouseUp);
+        };
+    }, [chartInstance]);
+
+    const zoomOut = useCallback(() => {
+        chartInstance?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+        setZoomMenuOpen(false);
     }, [chartInstance]);
 
     useEffect(() => {
@@ -381,12 +495,14 @@ function LineChart({
         const gridRight = AXIS_BASE_PAD + Math.max(0, rightCount - 1) * AXIS_OFFSET;
 
         // ── Dynamic vertical layout (pixel values, clamped to container) ──
-        // Ideal full-size reservations:
-        const SLIDER_H = 20;
+        // Ideal full-size reservations. No slider reservation anymore — the
+        // dataZoom 'slider' component (the always-visible bottom bar) was
+        // removed in favour of the toolbox's explicit Horizontal Zoom tool
+        // (see the toolbox JSX and its own dataZoom/mouse-drag handling
+        // above), per explicit user request ("เอา side scrollbar zoom ออก").
         const X_AXIS_LABEL_H = 24;
-        const GAP_ABOVE_SLIDER = 8;
         const GAP_ABOVE_XAXIS = 6;
-        const idealBottom = SLIDER_H + GAP_ABOVE_SLIDER + X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
+        const idealBottom = X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
 
         // Clamp bottom reservation to at most 45% of the container so the
         // plotting area is never squeezed to zero (or negative) when the
@@ -395,13 +511,10 @@ function LineChart({
         const maxBottom = Math.max(60, Math.floor(h * 0.45));
         const scale = Math.min(1, maxBottom / idealBottom);
 
-        const sliderH = Math.max(12, Math.round(SLIDER_H * scale));
-        const gapSlider = Math.round(GAP_ABOVE_SLIDER * scale);
         const gapXAxis = Math.round(GAP_ABOVE_XAXIS * scale);
         const xAxisLabelH = Math.round(X_AXIS_LABEL_H * scale);
 
-        const sliderBottom = 0;
-        const gridBottom = sliderBottom + sliderH + gapSlider + xAxisLabelH + gapXAxis;
+        const gridBottom = xAxisLabelH + gapXAxis;
         const gridTop = Math.max(20, Math.round(30 * scale));
 
         // `scale: true` only auto-fits the Y axis to each series' own data
@@ -740,9 +853,18 @@ function LineChart({
             animation: !isLargeData,
             animationDuration: 250,
             animationDurationUpdate: 150,
+            // Just the invisible 'inside' component now — no 'slider' (the
+            // always-visible bottom bar), removed per explicit user request
+            // in favour of the toolbox's Horizontal Zoom tool below. 'inside'
+            // still gives scroll-wheel zoom and drag-to-pan on the chart
+            // itself for free; only the visible bar is gone.
             dataZoom: [
                 {
                     type: 'inside', xAxisIndex: [0], filterMode: 'filter',
+                    // Off while Horizontal Zoom's own drag handler (above)
+                    // is armed, so its native drag-to-pan doesn't fight that
+                    // handler for the same mousedown/mousemove stream.
+                    disabled: zoomSelectMode,
                     // Force back to the full view exactly when `rangeId`
                     // (above) shows the underlying data actually changed —
                     // omitted on every other re-render so ECharts keeps
@@ -750,19 +872,6 @@ function LineChart({
                     // to, same as before this fix.
                     ...(rangeChanged ? { start: 0, end: 100 } : {}),
                 },
-                {
-                    type: 'slider', xAxisIndex: [0], filterMode: 'filter',
-                    ...(rangeChanged ? { start: 0, end: 100 } : {}),
-                    bottom: sliderBottom, height: sliderH,
-                    // Heavy-data mode: the slider's mini preview (data shadow)
-                    // re-renders every series into the track on each data
-                    // change, and realtime dragging re-filters + re-lays-out
-                    // all series and axes on every mousemove of the handle.
-                    // Drop both above the threshold — the window then applies
-                    // on release, which keeps the drag itself at 60 fps.
-                    showDataShadow: !isLargeData,
-                    realtime: !isLargeData,
-                }
             ],
             xAxis: {
                 // 'time' — not 'category'. A category axis spaces every
@@ -835,7 +944,7 @@ function LineChart({
             }),
             series: [...baseSeries, ...highlightOverlaySeries],
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints, rangeChanged]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints, rangeChanged, zoomSelectMode]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
@@ -844,9 +953,29 @@ function LineChart({
                 its own full notMerge re-init). */}
             <ResponsiveECharts option={option} lazyUpdate style={{ minHeight: '200px' }} onChartReady={handleChartReady} />
             <div className="line-chart-toolbox">
+                <div ref={zoomMenuRef} style={{ position: 'relative' }}>
+                    <button
+                        type="button"
+                        onClick={() => setZoomMenuOpen(o => !o)}
+                        className={`line-chart-tool${zoomSelectMode ? ' active' : ''}`}
+                        title="Zoom"
+                    >
+                        <Search size={13} />
+                    </button>
+                    {zoomMenuOpen && (
+                        <div className="line-chart-zoom-menu">
+                            <button type="button" className="line-chart-zoom-menu-item" onClick={enterZoomSelectMode}>
+                                <ZoomIn size={13} /> Horizontal zoom
+                            </button>
+                            <button type="button" className="line-chart-zoom-menu-item" onClick={zoomOut}>
+                                <ZoomOut size={13} /> Zoom out
+                            </button>
+                        </div>
+                    )}
+                </div>
                 <button
                     type="button"
-                    onClick={() => setTagMode(m => !m)}
+                    onClick={toggleTagMode}
                     className={`line-chart-tool${tagMode ? ' active' : ''}`}
                     title={tagMode
                         ? 'Tag point — click the chart to pin a point, click a pinned point again to remove it'
@@ -865,6 +994,14 @@ function LineChart({
                     </button>
                 )}
             </div>
+            {zoomSelectMode && (
+                <div style={{
+                    position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
+                    fontSize: 10, fontStyle: 'italic', color: txtSecondary,
+                }}>
+                    Drag across the chart to zoom into that range
+                </div>
+            )}
             {tagMode && (
                 <div style={{
                     position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
@@ -872,6 +1009,21 @@ function LineChart({
                 }}>
                     Click the chart to tag a point — click a tag again to remove it
                 </div>
+            )}
+            {/* Live feedback for an in-progress Horizontal Zoom drag — a
+                plain overlay div, not an ECharts markArea: markArea lives in
+                `option`, so redrawing it on every mousemove would rebuild
+                the whole chart option mid-drag instead of just repainting a
+                lightweight DOM rectangle. */}
+            {dragPixels && (
+                <div style={{
+                    position: 'absolute', top: 0, bottom: 0,
+                    left: Math.min(dragPixels[0], dragPixels[1]),
+                    width: Math.abs(dragPixels[1] - dragPixels[0]),
+                    background: 'rgba(59,130,246,0.15)',
+                    border: '1px solid rgba(59,130,246,0.5)',
+                    pointerEvents: 'none',
+                }} />
             )}
         </div>
     );
