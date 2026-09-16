@@ -8307,7 +8307,14 @@ body {
 .line-chart-zoom-menu {
     position: absolute;
     top: calc(100% + 4px);
-    left: 0;
+    /* Right-anchored (hangs down-and-left from the button), not left-
+       anchored — the Zoom button sits at the toolbox's right edge, which
+       itself hugs the chart panel's own right edge (`right: 12px`). A
+       menu extending rightward from there overflows past the panel
+       boundary and gets clipped by its `overflow: hidden` (the resizable
+       split-pane layout) instead of showing in full. Opening it leftward
+       stays inside the much wider chart area instead. */
+    right: 0;
     z-index: 12;
     display: flex;
     flex-direction: column;
