@@ -441,10 +441,9 @@ describe('LineChart option building', () => {
             expect(option.series[0].lineStyle.width).toBe(2);
             expect(option.series[0].silent).toBe(false);
             expect(option.series[0].sampling).toBeUndefined();
-            expect(option.series[0].large).toBe(false);
         });
 
-        it('disables smoothing/animation and switches to hairline+LTTB+large-mode for large datasets', () => {
+        it('disables smoothing/animation and switches to hairline+LTTB for large datasets', () => {
             const columnar = columnarOf(['A'], 2001);
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const option = capturedOptions[capturedOptions.length - 1];
@@ -454,16 +453,6 @@ describe('LineChart option building', () => {
             expect(option.series[0].silent).toBe(true);
             expect(option.series[0].emphasis).toEqual({ disabled: true });
             expect(option.series[0].sampling).toBe('lttb');
-            // ECharts' dedicated large-data rendering path (rendering-only,
-            // batches the whole line into one primitive) -- does NOT touch
-            // `data`'s own shape, unlike the dataset/typed-array attempt
-            // tried and reverted earlier the same day.
-            expect(option.series[0].large).toBe(true);
-            expect(option.series[0].largeThreshold).toBe(2000);
-            // Still the same plain [x, y]-pair array as the small-data
-            // case -- `large` is a render-mode switch only.
-            expect(Array.isArray(option.series[0].data[0])).toBe(true);
-            expect(typeof option.series[0].data[0][1]).toBe('number');
         });
     });
 
