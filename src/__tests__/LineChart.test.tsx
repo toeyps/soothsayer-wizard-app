@@ -931,6 +931,15 @@ describe('Horizontal Zoom (drag across the chart to zoom into a range — replac
         expect(mockDispatchAction).not.toHaveBeenCalled();
     });
 
+    it('never disables the "inside" dataZoom component while zoom-select mode is armed (regression: `disabled: zoomSelectMode` looked right but made the drag a no-op -- ECharts ignores a dataZoom dispatchAction targeting a component that is disabled in the chart\'s currently-active option, and the option stays disabled for the whole drag since React never re-renders mid-gesture)', () => {
+        const columnar = columnarOf(headers, 5);
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
+        fireEvent.click(zoomButton(container));
+        fireEvent.click(container.querySelector('.line-chart-zoom-menu-item') as HTMLElement); // arm Horizontal zoom
+        const option = capturedOptions[capturedOptions.length - 1];
+        expect(option.dataZoom[0].disabled).not.toBe(true);
+    });
+
     it('turning on Tag mode disarms an active Horizontal Zoom', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);

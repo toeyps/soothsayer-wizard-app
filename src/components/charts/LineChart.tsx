@@ -861,10 +861,21 @@ function LineChart({
             dataZoom: [
                 {
                     type: 'inside', xAxisIndex: [0], filterMode: 'filter',
-                    // Off while Horizontal Zoom's own drag handler (above)
-                    // is armed, so its native drag-to-pan doesn't fight that
-                    // handler for the same mousedown/mousemove stream.
-                    disabled: zoomSelectMode,
+                    // Deliberately NOT `disabled: zoomSelectMode` (tried,
+                    // reverted — regression 2026-09-16): the drag overlay
+                    // rectangle showed correctly during a drag (pure React/
+                    // DOM state, unaffected either way), but the actual zoom
+                    // never applied on release. `disabled` takes effect the
+                    // instant it's set on the chart's *currently active*
+                    // option — i.e. for the whole drag, since React doesn't
+                    // re-render mid-gesture — and a `dispatchAction({type:
+                    // 'dataZoom', ...})` fired at mouseup while its target
+                    // component is still disabled is silently a no-op. Left
+                    // enabled throughout instead; 'inside''s own native
+                    // drag-to-pan can run alongside the custom drag handler
+                    // during the gesture, but the mouseup handler's own
+                    // explicit startValue/endValue dispatch always sets the
+                    // final, definitive view afterward regardless.
                     // Force back to the full view exactly when `rangeId`
                     // (above) shows the underlying data actually changed —
                     // omitted on every other re-render so ECharts keeps
@@ -944,7 +955,7 @@ function LineChart({
             }),
             series: [...baseSeries, ...highlightOverlaySeries],
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints, rangeChanged, zoomSelectMode]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints, rangeChanged]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
