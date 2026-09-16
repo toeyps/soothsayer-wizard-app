@@ -464,7 +464,7 @@ describe('LineChart option building', () => {
             expect(formatter([])).toBe('');
         });
 
-        it('renders a date header and rounds values to 3 decimals, appending the sensor unit', () => {
+        it('renders a date header and rounds values to 3 decimals, appending the sensor unit (regression: for a time axis, ECharts\' `p.value` is the whole [x_ms, y] point -- matching this component\'s own series.data shape -- not just y; an earlier version of this fix printed the raw pair as e.g. "1756872000000,6425.3" in the tooltip)', () => {
             const columnar = columnarOf(['A'], 3);
             render(
                 <LineChart
@@ -473,10 +473,12 @@ describe('LineChart option building', () => {
                 />,
             );
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf('2026-01-01T00:00:00');
             const html = formatter([
-                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 12.34567, color: '#fff' },
+                { axisValue: ms, seriesName: 'A', value: [ms, 12.34567], color: '#fff' },
             ]);
             expect(html).toContain('12.346 bar');
+            expect(html).not.toContain(String(ms)); // the raw ms must never leak into the displayed value
             expect(html).toContain('2026/01/01');
         });
 
@@ -484,8 +486,9 @@ describe('LineChart option building', () => {
             const columnar = columnarOf(['A'], 3);
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf('2026-01-01T00:00:00');
             const html = formatter([
-                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 5, color: '#fff' },
+                { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#fff' },
             ]);
             expect(html).toContain('A: 5');
             expect(html).not.toContain('undefined');
@@ -495,9 +498,10 @@ describe('LineChart option building', () => {
             const columnar = columnarOf(['A'], 3);
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf('2026-01-01T00:00:00');
             const html = formatter([
-                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 5, color: '#3b82f6' }, // base series
-                { axisValue: msOf('2026-01-01T00:00:00'), seriesName: 'A', value: 5, color: '#ff0000' }, // highlight overlay, same sensor
+                { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#3b82f6' }, // base series
+                { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#ff0000' }, // highlight overlay, same sensor
             ]);
             expect((html.match(/A:/g) ?? [])).toHaveLength(1);
             expect(html).toContain('#3b82f6'); // the FIRST (base series) entry wins, not the overlay
@@ -507,8 +511,9 @@ describe('LineChart option building', () => {
             const columnar = columnarOf(['A'], 3);
             render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
             const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf('2026-01-01T00:00:00');
             const params = Array.from({ length: 15 }, (_, i) => ({
-                axisValue: msOf('2026-01-01T00:00:00'), seriesName: `S${i}`, value: i, color: '#fff',
+                axisValue: ms, seriesName: `S${i}`, value: [ms, i], color: '#fff',
             }));
             const html = formatter(params);
             expect((html.match(/S\d+:/g) ?? [])).toHaveLength(10);

@@ -676,11 +676,18 @@ function LineChart({
                     let content = `<div style="font-weight:bold; margin-bottom:5px;">${dateStr}</div>`;
                     const maxItems = 10;
                     pList.slice(0, maxItems).forEach((p: any) => {
+                        // Time axis: `p.value` is the whole data point
+                        // (`[x_ms, y]`, matching the `series.data` shape
+                        // built above), not just `y` the way a category
+                        // axis's bare-value array made it — unwrap before
+                        // display, or the raw pair prints as
+                        // "1756872000000,6425.3" instead of the value.
+                        const rawValue = Array.isArray(p.value) ? p.value[1] : p.value;
                         // Aggregated values (Avg etc.) are raw floating-point
                         // divisions with no rounding applied upstream — fix
                         // the tooltip display to 3 decimals regardless of
                         // sensor or aggregation method.
-                        const displayValue = typeof p.value === 'number' ? p.value.toFixed(3) : p.value;
+                        const displayValue = typeof rawValue === 'number' ? rawValue.toFixed(3) : rawValue;
                         // Unit from master data — covers both mapping-CSV
                         // sensors and runtime "special" (calculated) ones,
                         // since Dashboard.tsx merges both before this prop
