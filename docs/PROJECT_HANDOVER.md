@@ -9,6 +9,8 @@
 > ✅ **2026-08-24: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน commit `cac7a53` ถูก push ไปที่ `personal` (toeyps/soothsayer-wizard-app) สำเร็จ เป็น fast-forward สะอาด (`b89741f` → `cac7a53`) รวมงานสะสมทั้งหมดตั้งแต่ 2026-08-21 (Not in Group ครบ 3 จุด, ยุบ Predictive Model เป็น in-window page ของ Build Model, ล็อก plot mode ตาม model kind, สี Model kind picker, ปิด Build Model window อัตโนมัติตอนสลับ workspace, เอา "Highlight by value" กลับมาในแท็บ Highlights) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `cac7a53`**
 >
 > ✅ **2026-09-15: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน (Component select fix) commit `26fef29` ถูก push ไปที่ `personal` สำเร็จ เป็น fast-forward สะอาด (`3ee86bd` → `26fef29`, 23 commits) รวมงานสะสมทั้งหมดตั้งแต่ครั้งก่อน (ชุด intern guide/manual test plan วันที่ 2026-09-08 ถึง 2026-09-14 ทั้งหมด บวก Component select fix วันนี้) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `26fef29`**
+>
+> ✅ **2026-09-16: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน (Line chart time-axis fix ครบทุกจุด: ระยะห่างแกน, tooltip, Tag Point, highlight band) commit `78b7021` ถูก push ไปที่ `personal` สำเร็จ เป็น fast-forward สะอาด (`772dad1` → `78b7021`, 8 commits) รวมงานสะสมทั้งหมดตั้งแต่ครั้งก่อน (Running Condition Filter งานใหญ่, Sensor-value filter pool fix, intern guide expand, Line chart category→time axis fix + tooltip fix + Tag Point fix) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `78b7021`**
 
 ---
 
@@ -1889,3 +1891,9 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **ยังไม่ได้ทดสอบแอปจริงซ้ำหลังแก้รอบนี้** — รอผู้ใช้เปิด `npm run tauri dev` ทดสอบ Tag Point อีกครั้งเป็นจุดสุดท้ายที่เหลือ ก่อนจะ push ได้
   - ไฟล์ที่แก้: `src/components/charts/LineChart.tsx`, `src/__tests__/LineChart.test.tsx`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push**
+
+- **🆕 2026-09-16 (ปิดงาน) — ✅ ผู้ใช้ทดสอบแอปจริงยืนยันผ่านทั้งหมด — push แล้ว, ปิด Notion item**: ผู้ใช้ทดสอบ Tag Point (จุดเสี่ยงสุดท้าย) แล้วยืนยัน "ทดสอบ Tag Point แล้ว ใช้ได้ปกติ" — รวมกับที่เคยยืนยันไปก่อนหน้าว่า "นอกเหนือจากนั้นผมลองหมดแล้วใช้ได้ปกติ" (ระยะห่างแกนเวลา, tooltip, highlight band) เท่ากับ Line chart category→time axis fix ทั้งชุด (3 commit: axis fix, tooltip fix, Tag Point fix) ผ่านการทดสอบแอปจริงครบทุกจุดแล้ว
+  - push งานสะสมทั้งหมด (8 commit ตั้งแต่ 2026-09-15) ไปที่ `personal` สำเร็จ เป็น fast-forward สะอาด `772dad1` → `78b7021` — รวม Running Condition Filter (งานใหญ่ที่ค้างรอทดสอบมาตั้งแต่ก่อนหน้านี้), Sensor-value filter pool fix, intern guide expand, และชุด Line chart fix ทั้งหมด
+  - อัปเดต Notion database "wizard application plan improvement" — item "distance of lineplot 10 min and 10 hr distance is same" (ค้างมาตั้งแต่ 2026-08-04) เปลี่ยนสถานะเป็น **Done**
+  - ไฟล์ที่แก้: `docs/PROJECT_HANDOVER.md` (entry นี้ + banner ด้านบน)
+  - **push แล้ว** ที่ `personal` (commit ล่าสุด `78b7021`)
