@@ -65,9 +65,22 @@ function msOf(ts: string): number {
 
 /** Pairs a plain value array with `columnar`'s own timestamps, the shape a
  *  time-axis series now needs (`[x_ms, y]` per point) instead of the old
- *  category-axis bare-value array. */
+ *  category-axis bare-value array. Matches the shape `datasetPairs` (below)
+ *  reads back out of a base series' own dataset. */
 function pairs(columnar: ColumnarSeries, values: (number | null)[]): (number | null)[][] {
     return values.map((v, i) => [msOf(columnar.timestamps[i]), v]);
+}
+
+/** Reads base series `seriesIdx`'s own dataset back out as `[x_ms, y]`
+ *  pairs, converting its typed-array columns to a plain array (and NaN back
+ *  to `null`) for a simple `toEqual` comparison -- base series no longer
+ *  carry an inline `data` array (see LineChart.tsx's comment on why: one
+ *  private 2-column dataset per sensor instead, `option.dataset[i].source
+ *  = [timeArr, valueArr]`). Only for base series -- the highlight overlay
+ *  series still use a plain inline `data` array, unchanged. */
+function datasetPairs(option: any, seriesIdx: number): (number | null)[][] {
+    const [times, values] = option.dataset[seriesIdx].source as [Float64Array, Float64Array];
+    return Array.from(times).map((t, i) => [t, Number.isNaN(values[i]) ? null : values[i]]);
 }
 
 beforeEach(() => {
@@ -363,7 +376,7 @@ describe('LineChart option building', () => {
             const option = capturedOptions[capturedOptions.length - 1];
             expect(option.series).toHaveLength(3); // one per sensor, no overlays
             expect(option.series[0].markArea).toBeDefined();
-            expect(option.series[0].data[0]).toEqual([msOf(columnar.timestamps[0]), 0]); // [x_ms, y] pair, untouched
+            expect(datasetPairs(option, 0)[0]).toEqual([msOf(columnar.timestamps[0]), 0]); // [x_ms, y] pair, untouched
         });
 
         it('with highlightDisplay="line" and an enabled highlight: no markArea, base series are untouched (own colour/width, full data), plus one overlay series per sensor', () => {
@@ -379,7 +392,7 @@ describe('LineChart option building', () => {
                 expect(s.markArea).toBeUndefined();
                 expect(s.itemStyle.color).toBe(defaultSensorColor(headers[i]));
                 expect(s.lineStyle.width).toBe(2); // unchanged, small-data profile
-                expect(s.data).toEqual(pairs(columnar, [i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4])); // full, untouched
+                expect(datasetPairs(option, i)).toEqual(pairs(columnar, [i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4])); // full, untouched
             });
 
             overlaySeries.forEach((s: any, i: number) => {
@@ -427,7 +440,7 @@ describe('LineChart option building', () => {
             const option = capturedOptions[capturedOptions.length - 1];
             expect(option.series).toHaveLength(3); // no overlays added
             expect(option.series[0].markArea).toBeUndefined();
-            expect(option.series[0].data[0]).toEqual([msOf(columnar.timestamps[0]), 0]);
+            expect(datasetPairs(option, 0)[0]).toEqual([msOf(columnar.timestamps[0]), 0]);
         });
     });
 
@@ -561,10 +574,36 @@ describe('LineChart option building', () => {
         render(<LineChart data={data} sensors={['B']} headers={['A', 'B']} />);
         const option = capturedOptions[capturedOptions.length - 1];
         expect(option.xAxis.data).toBeUndefined();
-        expect(option.series[0].data).toEqual([
+        expect(datasetPairs(option, 0)).toEqual([
             [msOf('2026-01-01T00:00:00'), 2],
             [msOf('2026-01-01T00:01:00'), 4],
         ]);
+    });
+
+    describe('dataset performance path (regression: a Float64Array silently turns `null` into `0`, not a gap)', () => {
+        it('a missing (null) reading becomes NaN in the dataset, not 0 -- Float64Array coerces `null` to 0 on assignment, which would otherwise draw a false zero-value point instead of a gap in the line', () => {
+            const columnar: ColumnarSeries = {
+                timestamps: ['2026-01-01T00:00:00', '2026-01-01T00:01:00', '2026-01-01T00:02:00'],
+                series: [[10, null, 30]],
+            };
+            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+            const option = capturedOptions[capturedOptions.length - 1];
+            const [, values] = option.dataset[0].source as [Float64Array, Float64Array];
+            expect(values[1]).toBeNaN(); // not 0
+            expect(Array.from(values)).toEqual([10, NaN, 30]);
+        });
+
+        it('every base series reads through its own private dataset with a uniform encode (regression: a single dataset shared across sensors would need a different y-index per series and would leak every other sensor\'s column into the tooltip\'s params.value)', () => {
+            const columnar = columnarOf(['A', 'B'], 3);
+            render(<LineChart data={[]} columnar={columnar} sensors={['A', 'B']} headers={['A', 'B']} />);
+            const option = capturedOptions[capturedOptions.length - 1];
+            expect(option.dataset).toHaveLength(2); // one per sensor
+            option.series.forEach((s: any, i: number) => {
+                expect(s.datasetIndex).toBe(i);
+                expect(s.seriesLayoutBy).toBe('column');
+                expect(s.encode).toEqual({ x: 0, y: 1 }); // same for every series regardless of sensor
+            });
+        });
     });
 });
 

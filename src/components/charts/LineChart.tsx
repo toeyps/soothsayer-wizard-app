@@ -17,6 +17,22 @@ function toMs(raw: string | null): number | null {
     return isNaN(t) ? null : t;
 }
 
+/** Converts a value column to a `Float64Array` for ECharts' typed-array
+ *  `dataset` format — the performance path recommended by ECharts for large
+ *  series (avoids one small JS array/object allocation per data point,
+ *  which a plain `[x, y]`-pair `series.data` array costs per point; a
+ *  typed array is stored as one contiguous buffer instead).
+ *
+ *  `null` (this codebase's "missing reading" sentinel) is deliberately
+ *  mapped to `NaN`, not left to coerce automatically: assigning `null` into
+ *  a `Float64Array` silently becomes `0` (`Number(null) === 0`), which
+ *  would render a false zero reading instead of a gap in the line. `NaN` is
+ *  ECharts' own documented stand-in for "no data" in this typed-array
+ *  format, same role `null` plays in a plain array. */
+function toTypedSeries(values: (number | null)[]): Float64Array {
+    return Float64Array.from(values, v => (v == null ? NaN : v));
+}
+
 /** Index into `xData` whose parsed time is closest to `targetMs` — used to
  *  snap an arbitrary timestamp (a highlight boundary, a click resolved to a
  *  raw axis value) to an actual plotted data point, e.g. for markArea
@@ -469,8 +485,28 @@ function LineChart({
                 .filter((v): v is NonNullable<typeof v> => v !== null)
             : [];
 
-        const baseSeries = sensors.map((sensor, index) => {
+        // Shared x column for every sensor's own private dataset below — one
+        // Float64Array, reused by reference (not cloned) across all of
+        // them, since dataset.source only reads it.
+        const timeArr = toTypedSeries(xData.map(toMs));
+
+        // One dataset PER sensor (not one wide multi-column dataset shared
+        // across all series) so every series can use the same uniform
+        // `encode: { x: 0, y: 1 }` — that keeps a tooltip-trigger `p.value`
+        // exactly the `[x, y]` pair shape the formatter below already
+        // expects, regardless of which sensor/column it came from. A
+        // shared wide dataset would need a different `y` encode index per
+        // series and would leak the OTHER sensors' columns into `p.value`
+        // as well, which the formatter has no reason to know how to skip.
+        const datasets = sensors.map(sensor => {
             const sensorIdx = headers.indexOf(sensor);
+            const rawValues = columnar
+                ? (columnar.series[sensorIdx] ?? [])
+                : data.map(d => d.values[sensorIdx] ?? null);
+            return { source: [timeArr, toTypedSeries(rawValues)] };
+        });
+
+        const baseSeries = sensors.map((sensor, index) => {
             const color = sensorColors?.[sensor] ?? defaultSensorColor(sensor);
             const sensorMarks = (markLines ?? []).filter(m => m.sensor === sensor);
             const markLine = sensorMarks.length > 0
@@ -506,18 +542,17 @@ function LineChart({
                     })),
                 }
                 : undefined;
-            const rawValues = columnar
-                ? (columnar.series[sensorIdx] ?? [])
-                : data.map(d => d.values[sensorIdx] ?? null);
-            // Time axis: each point carries its own x value now — a bare
-            // value array (the old category-axis shape, positioned via the
-            // shared `xAxis.data`) no longer has anywhere to place itself.
-            const pairedData = rawValues.map((v, i) => [toMs(xData[i]), v]);
             return {
                 name: sensor,
                 type: 'line',
                 yAxisIndex: index,
-                data: pairedData,
+                // Reads this sensor's own dataset (built above) instead of
+                // an inline `data` array — `seriesLayoutBy: 'column'` tells
+                // ECharts each dataset.source entry is one whole dimension
+                // column (time, then value), not one data-point row.
+                datasetIndex: index,
+                seriesLayoutBy: 'column' as const,
+                encode: { x: 0, y: 1 },
                 smooth: !isLargeData,
                 showSymbol: false,
                 itemStyle: { color: color },
@@ -631,6 +666,7 @@ function LineChart({
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+            dataset: datasets,
             tooltip: {
                 trigger: 'axis',
                 backgroundColor: tooltipBg,
