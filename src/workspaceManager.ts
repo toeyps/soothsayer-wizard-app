@@ -74,36 +74,60 @@ export async function saveRecentWorkspaces(workspaces: WorkspaceMetadata[]) {
     }
 }
 
-// Simple mutex to prevent concurrent saves
-let isSaving = false;
-let saveQueue: WorkspaceState | null = null;
+// Serializes every disk-touching operation below (within THIS window's own
+// module instance — each Tauri webview loads its own copy of this module,
+// so this queue does NOT coordinate across windows; see updateWorkspaceData's
+// own doc comment for that residual gap) into strict FIFO order. A later
+// operation's `await` on this chain never resolves until every earlier one
+// has fully finished writing.
+//
+// Replaces an earlier "mutex + single-slot queue" design that coalesced
+// concurrent `saveWorkspaceData` calls down to just the LAST one — safe for
+// a plain overwrite (nothing lost by skipping a superseded snapshot of the
+// SAME data), but not safe once `updateWorkspaceData` started sharing it:
+// its read-modify-write reads the CURRENT file (step 1) before applying an
+// unrelated patch (step 2, e.g. "add this specific model") and writing
+// (step 3) — only step 3 went through the mutex, so a second call's step 1
+// could read the disk WHILE the first call's step 3 was still in flight,
+// compute its patch against that stale snapshot, and then win the
+// single-slot queue, overwriting the first call's already-written change
+// with a version that never saw it. Confirmed as the cause of a real
+// data-loss report (2026-09-16): rapid Failure Group / model edits in
+// Dashboard, each its own immediate `updateWorkspaceData` call, raced each
+// other exactly this way. Serializing the READ too (not just the write)
+// closes it — every call now sees the fully-committed result of every
+// earlier one, so no patch is ever computed against data that's about to
+// be replaced.
+let queue: Promise<unknown> = Promise.resolve();
 
-export async function saveWorkspaceData(state: WorkspaceState) {
-    if (isSaving) {
-        saveQueue = state;
-        return;
-    }
+/** Runs `op` after every previously enqueued operation has settled
+ *  (resolved OR rejected — a failed operation must not wedge every later
+ *  one forever), and only after. */
+function enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const result = queue.then(op, op);
+    queue = result.then(() => undefined, () => undefined);
+    return result;
+}
 
-    isSaving = true;
+async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     debugLog("Saving Workspace Data for:", state.id);
-    
     try {
         const workspacesDir = 'workspaces';
-        
+
         // Ensure directory exists
         const dirExists = await exists(workspacesDir, { baseDir: BaseDirectory.AppData });
         if (!dirExists) {
             debugLog("Creating workspaces directory in AppData...");
             await mkdir(workspacesDir, { recursive: true, baseDir: BaseDirectory.AppData });
         }
-        
+
         const filePath = `${workspacesDir}/${state.id}.json`;
         debugLog("Writing workspace JSON to:", filePath);
-        
+
         // Serialize state
         const json = JSON.stringify(state);
         await writeTextFile(filePath, json, { baseDir: BaseDirectory.AppData });
-        
+
         // Update recent workspaces list
         let recent = await getRecentWorkspaces();
         const meta: WorkspaceMetadata = {
@@ -113,43 +137,51 @@ export async function saveWorkspaceData(state: WorkspaceState) {
             lastModified: Date.now(),
             filePath
         };
-        
+
         const existingIdx = recent.findIndex(w => w.id === state.id);
         if (existingIdx >= 0) {
             recent[existingIdx] = meta;
         } else {
             recent.unshift(meta);
         }
-        
+
         // Keep top 10, sort by most recent
         recent = recent.sort((a, b) => b.lastModified - a.lastModified).slice(0, 10);
-        
+
         await saveRecentWorkspaces(recent);
 
         debugLog("Workspace save successful.");
     } catch (e) {
         console.error("CRITICAL: Failed to save workspace:", e);
-    } finally {
-        isSaving = false;
-        if (saveQueue) {
-            const nextState = saveQueue;
-            saveQueue = null;
-            saveWorkspaceData(nextState);
-        }
     }
 }
 
-// Read-modify-write: load workspace, apply a patch function, save. Use this from step 2/3 windows
-// to avoid clobbering fields owned by other windows.
+export async function saveWorkspaceData(state: WorkspaceState): Promise<void> {
+    await enqueue(() => writeWorkspaceFile(state));
+}
+
+// Read-modify-write: load workspace, apply a patch function, save. Use this
+// from step 2/3 windows to avoid clobbering fields owned by other windows.
+//
+// The read and write both run inside `enqueue`, so this call's `loadWorkspaceData`
+// cannot start until every earlier `updateWorkspaceData`/`saveWorkspaceData`
+// call FROM THIS SAME WINDOW has finished writing — see the queue's own
+// comment above for why that matters. This does NOT protect against a
+// DIFFERENT window (e.g. Dashboard vs. the Build Model window) writing to
+// the same workspace file at the same time — each window's webview loads
+// its own independent copy of this module, so `queue` is not shared across
+// them. That cross-window race is a real, separate, still-open gap.
 export async function updateWorkspaceData(
     id: string,
     patch: (state: WorkspaceState) => WorkspaceState
 ): Promise<WorkspaceState | null> {
-    const current = await loadWorkspaceData(id);
-    if (!current) return null;
-    const next = patch(current);
-    await saveWorkspaceData(next);
-    return next;
+    return enqueue(async () => {
+        const current = await loadWorkspaceData(id);
+        if (!current) return null;
+        const next = patch(current);
+        await writeWorkspaceFile(next);
+        return next;
+    });
 }
 
 // Default PM build config for a model that never had one — mirrors

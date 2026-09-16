@@ -191,7 +191,7 @@ describe('saveWorkspaceData', () => {
         await expect(saveWorkspaceData(state)).resolves.toBeUndefined();
     });
 
-    it('serializes concurrent saves: a save requested mid-flight is queued and run after, using only the latest state', async () => {
+    it('serializes concurrent saves in strict FIFO order -- none dropped (regression: an earlier "single-slot queue" design coalesced concurrent saves down to just the last one, which was safe for saveWorkspaceData alone but caused real data loss once updateWorkspaceData started sharing the same queue for its read-modify-write -- see workspaceManager.ts\'s comment on `enqueue`)', async () => {
         mockStoreGet.mockResolvedValue([]);
         const write = deferred();
         mockWriteTextFile.mockReturnValueOnce(write.promise);
@@ -214,12 +214,17 @@ describe('saveWorkspaceData', () => {
         await first;
         await secondCall;
         await thirdCall;
-        // ws2 was overwritten in the queue by ws3 before the mutex freed up.
-        await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(2));
-        expect(mockWriteTextFile).toHaveBeenLastCalledWith(
-            'workspaces/ws3.json',
-            JSON.stringify({ ...state, id: 'ws3' }),
-            { baseDir: 'AppData' },
+        // All three actually write now -- ws2 is NOT dropped in favour of
+        // ws3, unlike the old single-slot queue.
+        await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(3));
+        expect(mockWriteTextFile).toHaveBeenNthCalledWith(1,
+            'workspaces/ws1.json', JSON.stringify({ ...state, id: 'ws1' }), { baseDir: 'AppData' },
+        );
+        expect(mockWriteTextFile).toHaveBeenNthCalledWith(2,
+            'workspaces/ws2.json', JSON.stringify({ ...state, id: 'ws2' }), { baseDir: 'AppData' },
+        );
+        expect(mockWriteTextFile).toHaveBeenNthCalledWith(3,
+            'workspaces/ws3.json', JSON.stringify({ ...state, id: 'ws3' }), { baseDir: 'AppData' },
         );
     });
 });
@@ -444,6 +449,75 @@ describe('updateWorkspaceData', () => {
             JSON.stringify({ id: 'ws1', name: 'Patched' }),
             { baseDir: 'AppData' },
         );
+    });
+
+    it('a second call\'s read never sees a stale pre-write snapshot while a first call\'s write is still in flight (regression: this exact race lost real Failure Group / model data on 2026-09-16 -- a rapid second edit read the disk before the first edit\'s write landed, computed its patch against that stale copy, and then overwrote the first edit\'s already-saved change)', async () => {
+        mockStoreGet.mockResolvedValue([
+            { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
+        ]);
+        mockExists.mockResolvedValue(true);
+
+        // A minimal fake disk: readTextFile always returns whatever the
+        // most recent writeTextFile call actually wrote (not a fixed canned
+        // value) -- otherwise this test can't distinguish a correctly
+        // sequenced read from a racy stale one.
+        let diskContent = JSON.stringify({
+            id: 'ws1', name: 'A',
+            failureGroupState: { groups: [], models: [] },
+        });
+        mockReadTextFile.mockImplementation(async () => diskContent);
+        const firstWrite = deferred();
+        let writeCount = 0;
+        mockWriteTextFile.mockImplementation(async (_path: string, json: string) => {
+            writeCount++;
+            if (writeCount === 1) await firstWrite.promise; // hold the first write open
+            diskContent = json;
+        });
+
+        const { updateWorkspaceData } = await freshModule();
+
+        // Call 1: add a Failure Group. Its write is held pending above.
+        const first = updateWorkspaceData('ws1', (s: any) => ({
+            ...s,
+            failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: s.failureGroupState.models },
+        }));
+        await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(1));
+
+        // Call 2 fires while call 1's write is still in flight -- an
+        // unrelated edit (adding a model), not a repeat of call 1's own
+        // change.
+        mockReadTextFile.mockClear();
+        const second = updateWorkspaceData('ws1', (s: any) => ({
+            ...s,
+            failureGroupState: {
+                groups: s.failureGroupState.groups,
+                models: [...s.failureGroupState.models, { id: 'm1', name: 'Model X' }],
+            },
+        }));
+
+        // The actual property under test: call 2 must not even START its
+        // own read while call 1's write is still pending. Flush several
+        // microtask turns WITHOUT resolving `firstWrite` -- with the old
+        // mutex-on-write-only design, `updateWorkspaceData`'s
+        // `loadWorkspaceData` was never gated at all, so call 2's
+        // `readTextFile` would already have fired by now (and read the
+        // pre-Group-A snapshot). A final-state-only assertion can pass "by
+        // accident" here since microtask scheduling can coincidentally
+        // still land the read after the write resolves; asserting the call
+        // hasn't happened yet is what actually pins down the guarantee.
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(mockReadTextFile).not.toHaveBeenCalled();
+
+        firstWrite.resolve();
+        await first;
+        const result = await second;
+
+        // Both survive: call 2's read only happened after call 1's write
+        // fully landed, so its patch is applied on top of Group A instead
+        // of silently erasing it.
+        expect(result?.failureGroupState?.groups).toEqual([{ no: 1, name: 'Group A' }]);
+        expect(result?.failureGroupState?.models).toEqual([{ id: 'm1', name: 'Model X' }]);
+        expect(writeCount).toBe(2); // neither write was dropped
     });
 });
 
