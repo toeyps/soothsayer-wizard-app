@@ -1386,3 +1386,93 @@ and `sidebarImage` (164×314 BMP) alone would already remove most of the
 - **39 `any` and `noUncheckedIndexedAccess`** — turning the flag on was
   measured on 2026-09-03: **247 type errors**. Worth doing eventually, its
   own dedicated pass, definitely not a side quest.
+
+---
+
+## 21. Line chart time-axis is noticeably slower than the old category axis — two fix attempts tried, both reverted
+
+**Status: confirmed real, root cause understood, two mitigations tried and
+both rolled back 2026-09-16. Not scheduled — user said to come back to it
+later.**
+
+**Found:** 2026-09-16, right after the category→time axis fix (item that
+closed the Notion "distance of lineplot 10 min and 10 hr distance is same"
+bug — see `PROJECT_HANDOVER.md` same date for that fix's own history).
+User: "ผมว่า optimize ส่วนนี้เลย มันช้ากว่าเดิมพอสมควร" (noticeably slower
+than before).
+
+**Root cause (reasoned, not profiled — same "can't open a browser preview
+for this Tauri app" limitation as every other perf item in this file):**
+switching `xAxis.type` from `'category'` to `'time'` required `series.data`
+to go from a flat number array (`[v1, v2, v3, ...]`, positioned via the
+shared `xAxis.data`) to an array of `[x_ms, y]` pair arrays — one small JS
+array allocation per data point instead of reusing one contiguous numeric
+buffer. That's real, unavoidable overhead from the axis-type fix itself,
+not a separate bug.
+
+**Attempt 1 — ECharts `dataset` + `encode` + typed arrays (the documented
+ECharts "huge data" performance pattern): tried, broke the app, reverted
+same session.**
+- One private 2-column `dataset` per sensor (`{ source: [Float64Array of
+  ms, Float64Array of values] }`), series referencing it via
+  `datasetIndex` + `seriesLayoutBy: 'column'` + `encode: { x: 0, y: 1 }`.
+  Passed `tsc`/`vitest` (1019/1019) — the tests were written against the
+  same (wrong) assumptions as the implementation, so they couldn't catch
+  what was actually broken.
+- **Broke immediately on real-app testing**: x-axis showed 1979–2024
+  instead of the actual ~4-month filter range, y-axis labels overlapped
+  garbled, and the tooltip printed raw concatenated timestamps next to the
+  unit (`...1783440000000,1783443600000 KW`) instead of the sensor value.
+  Something about how `dataset.source`/`seriesLayoutBy: 'column'` was
+  structured was wrong — exact mechanism never root-caused, because the
+  decision was to revert immediately rather than keep guessing at an
+  ECharts API this codebase had never used before, with no way to verify
+  live.
+- Reverted via `git revert` the same session (commits `0b1625d` →
+  `de75f6c`), confirmed back to 1017/1017 and re-verified against the
+  previously-confirmed-working real app.
+
+**Attempt 2 — `series.large: true` + `largeThreshold: 2000`: tried, didn't
+break anything, but didn't feel faster either — reverted by user request.**
+- Pure rendering-mode switch, no data-shape change at all — same
+  `[x_ms, y]`-pair `data` array as always, just rendered through ECharts'
+  batched "large" internal path above the threshold. Aligned with this
+  file's own existing `isLargeData` (>2000 points) branch, which already
+  disables animation/hover/emphasis at that size — `large` trades away the
+  same per-point interactivity that threshold had already given up, so it
+  cost nothing new in principle. Reasoned to be safe for Tag Point too,
+  since that click handler resolves at the zrender canvas level
+  (`convertFromPixel`), not through per-series hit-testing — the exact
+  reason `silent: isLargeData` was already safe to set before this change.
+- Didn't break on real-app testing, but the user reported no noticeable
+  speedup: "ไม่ได้รู้สึกเร็วขึ้นเท่าไหร่ เพราะฉะนั้นวิธีเดิม น่าจะเป็น
+  อะไรที่ปลอดภัยกว่า" (didn't feel faster, so the original is probably
+  safer) — reverted via `git revert` (commits `55b6113` → `4473b88`) at
+  the user's explicit request rather than keep an unproven change.
+
+**Current state:** plain array-of-pair `series.data`, no `dataset`, no
+`series.large` — the exact code from commit `78b7021`, the version already
+confirmed working end-to-end (axis spacing, tooltip, Tag Point, highlight
+bands) via real-app testing. The perf complaint itself is NOT fixed.
+
+**If picked up again:**
+- **Verify any ECharts option in isolation before touching this app.** The
+  `dataset` attempt's failure mode (wrong on the first real-app test, after
+  passing every automated check) is exactly the class of bug this
+  codebase's `tsc`/`vitest`-only feedback loop cannot catch for an ECharts
+  feature it has never exercised before — a standalone HTML file loading
+  ECharts from a CDN, run in an actual browser, would have caught the
+  `dataset`/`seriesLayoutBy` mistake in minutes instead of shipping it to
+  the user to find.
+- **Measure, don't just feel.** `series.large`'s revert was based on
+  subjective impression, not a number — if revisited, get an actual
+  before/after timing (e.g. WebView2 DevTools Performance tab against an
+  installed build, same caveat item 4 in this file already describes for
+  why dev mode alone won't show it) rather than relying on "does it feel
+  faster."
+- Other untried levers, roughly in rising order of invasiveness: lowering
+  the backend's `max_points` ceiling specifically when the axis is time
+  (fewer points = less of everything); `progressive`/`progressiveThreshold`
+  rendering (ECharts renders in chunks across frames instead of one
+  blocking paint); revisiting `dataset` again but built and verified
+  standalone first, per the point above.
