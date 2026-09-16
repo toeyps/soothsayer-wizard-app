@@ -539,6 +539,23 @@ function LineChart({
                 // ECharts LTTB-downsample instead of rasterizing every
                 // vertex.
                 ...(isLargeData ? { sampling: 'lttb' as const } : {}),
+                // ECharts' dedicated large-data rendering path: draws the
+                // whole line as one batched primitive instead of per-point
+                // graphic elements, and skips the per-point bookkeeping
+                // (dirty-rect tracking, individual hover state) that mode
+                // needs. Unlike the earlier `dataset`/typed-array attempt
+                // (tried and reverted the same day — see
+                // docs/PROJECT_HANDOVER.md), this changes nothing about the
+                // *shape* of `data` or how it's read: same `[x, y]`-pair
+                // array as always, just rendered through a cheaper internal
+                // path above `largeThreshold` points. Same threshold this
+                // file already uses for every other "big chart" tradeoff
+                // above (hairline stroke, no animation, silent/no-hover) —
+                // those already accepted losing per-point hover/click
+                // fidelity at this size, which is exactly what `large`
+                // trades away too, so it costs nothing new here.
+                large: isLargeData,
+                largeThreshold: 2000,
                 ...(markLine ? { markLine } : {}),
                 // Only the first series carries markArea — see
                 // highlightAreas' own comment above for why attaching it
