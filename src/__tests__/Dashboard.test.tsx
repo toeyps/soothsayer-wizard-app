@@ -1537,6 +1537,32 @@ describe('Dashboard', () => {
         });
     });
 
+    describe('TIME RANGE Calendar icon (opens the native datetime-local picker on click)', () => {
+        it('clicking the Calendar icon next to Start/End Date opens the native picker (regression: the browser-drawn picker-indicator icon was hard to see -- the Calendar icon is a reliable, always-visible way to open it instead, matching the same fix on the Build Model page\'s Time start/end)', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+
+            const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
+            const startIcon = startInput.closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
+            const showPickerStart = vi.fn();
+            (startInput as any).showPicker = showPickerStart;
+            fireEvent.click(startIcon);
+            expect(showPickerStart).toHaveBeenCalledTimes(1);
+
+            const endInput = screen.getByPlaceholderText('End Date') as HTMLInputElement;
+            const endIcon = endInput.closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
+            const showPickerEnd = vi.fn();
+            (endInput as any).showPicker = showPickerEnd;
+            fireEvent.click(endIcon);
+            expect(showPickerEnd).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not throw when showPicker() is unsupported (older WebView2/browser)', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            const startIcon = screen.getByPlaceholderText('Start Date').closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
+            expect(() => fireEvent.click(startIcon)).not.toThrow();
+        });
+    });
+
     describe('relative time range', () => {
         it('applying a relative "D" range fills in start/end timestamps', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });

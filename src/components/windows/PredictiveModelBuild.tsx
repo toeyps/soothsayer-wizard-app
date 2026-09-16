@@ -258,6 +258,20 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // own doc comment on `PredictiveModelBuildProps`).
     const [filterTimeStart, setFilterTimeStart] = useState("");
     const [filterTimeEnd, setFilterTimeEnd] = useState("");
+    // Lets the Calendar icon (rendered next to each input, see the "Data
+    // filter" JSX below) open the native picker directly on click —
+    // `<input type="datetime-local">`'s own browser-drawn picker-indicator
+    // icon is a `::-webkit-calendar-picker-indicator` pseudo-element this
+    // app already tries to recolor for dark mode (`filter: invert(1)` in
+    // App.css), but how visible that ends up is entirely up to the
+    // WebView2 engine's own rendering of it — reported hard to see/find on
+    // this page (2026-09-16). `showPicker()` sidesteps that uncertainty
+    // instead of trying to fix a browser-native pseudo-element's styling
+    // further: the lucide icon is an ordinary SVG this app already renders
+    // reliably everywhere else, so making IT the trigger guarantees a
+    // visible, clickable way to open the picker regardless.
+    const filterTimeStartRef = useRef<HTMLInputElement>(null);
+    const filterTimeEndRef = useRef<HTMLInputElement>(null);
 
     // ── Filter payload passed through to every Rust data-reading command ──
     // Translates this page's own Time start/end plus the inherited
@@ -2014,8 +2028,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         <div className="filter-row">
                             <label>Time start</label>
                             <div className="date-input-wrapper">
-                                <Calendar size={14} />
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => filterTimeStartRef.current?.showPicker?.()}
+                                />
                                 <input
+                                    ref={filterTimeStartRef}
                                     type="datetime-local"
                                     value={filterTimeStart || targetMinForInput}
                                     min={targetMinForInput || undefined}
@@ -2027,8 +2046,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         <div className="filter-row">
                             <label>Time end</label>
                             <div className="date-input-wrapper">
-                                <Calendar size={14} />
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => filterTimeEndRef.current?.showPicker?.()}
+                                />
                                 <input
+                                    ref={filterTimeEndRef}
                                     type="datetime-local"
                                     value={filterTimeEnd || targetMaxForInput}
                                     min={targetMinForInput || undefined}

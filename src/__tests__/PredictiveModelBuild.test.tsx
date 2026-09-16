@@ -526,6 +526,34 @@ describe('PredictiveModelBuild', () => {
             expect(lastQuery.filter.timestamp_start).toBe('2026-03-01T00:00');
             vi.useRealTimers();
         });
+
+        it('clicking the Calendar icon next to Time start/end opens the native picker (regression: the browser-drawn picker-indicator icon was hard to see on this page -- the Calendar icon is a reliable, always-visible way to open it instead)', async () => {
+            await renderHydrated();
+
+            const startRow = screen.getByText('Time start').closest('.filter-row')!;
+            const startInput = startRow.querySelector('input') as HTMLInputElement;
+            const startIcon = startRow.querySelector('svg') as SVGElement;
+            const showPickerStart = vi.fn();
+            (startInput as any).showPicker = showPickerStart;
+            fireEvent.click(startIcon);
+            expect(showPickerStart).toHaveBeenCalledTimes(1);
+
+            const endRow = screen.getByText('Time end').closest('.filter-row')!;
+            const endInput = endRow.querySelector('input') as HTMLInputElement;
+            const endIcon = endRow.querySelector('svg') as SVGElement;
+            const showPickerEnd = vi.fn();
+            (endInput as any).showPicker = showPickerEnd;
+            fireEvent.click(endIcon);
+            expect(showPickerEnd).toHaveBeenCalledTimes(1);
+        });
+
+        it('clicking the Calendar icon does not throw when showPicker() is unsupported (older WebView2/browser)', async () => {
+            await renderHydrated();
+            const startIcon = screen.getByText('Time start').closest('.filter-row')!.querySelector('svg') as SVGElement;
+            // jsdom (and some real engines) simply don't implement showPicker --
+            // the `?.()` call must no-op rather than throw.
+            expect(() => fireEvent.click(startIcon)).not.toThrow();
+        });
     });
 
     describe('back navigation', () => {

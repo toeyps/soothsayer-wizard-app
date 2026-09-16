@@ -971,6 +971,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // collapse/expand changes whether the split should exist at all.
     const leftColumnRef = useRef<HTMLDivElement>(null);
     const rightColumnRef = useRef<HTMLDivElement>(null);
+    // Lets the TIME RANGE row's Calendar icons open the native
+    // datetime-local picker directly on click, instead of relying on the
+    // browser-drawn `::-webkit-calendar-picker-indicator` pseudo-element
+    // (styled in App.css, but how visible that ends up is entirely up to
+    // WebView2's own rendering of it — reported hard to see on the
+    // Build Model page's matching inputs, 2026-09-16, same
+    // `.date-input-wrapper` pattern reused here).
+    const timeRangeStartRef = useRef<HTMLInputElement>(null);
+    const timeRangeEndRef = useRef<HTMLInputElement>(null);
     const slotLTRef = useRef<HTMLDivElement>(null);
     const slotLBRef = useRef<HTMLDivElement>(null);
     const slotRTRef = useRef<HTMLDivElement>(null);
@@ -1898,8 +1907,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         <label>TIME RANGE</label>
                         <div className="time-range-inputs">
                             <div className="date-input-wrapper">
-                                <Calendar size={14} />
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => timeRangeStartRef.current?.showPicker?.()}
+                                />
                                 <input
+                                    ref={timeRangeStartRef}
                                     type="datetime-local"
                                     value={displayTimestampStart}
                                     onChange={(e) => {
@@ -1911,8 +1925,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             </div>
                             <span className="separator">-</span>
                             <div className="date-input-wrapper">
-                                <Calendar size={14} />
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => timeRangeEndRef.current?.showPicker?.()}
+                                />
                                 <input
+                                    ref={timeRangeEndRef}
                                     type="datetime-local"
                                     value={displayTimestampEnd}
                                     onChange={(e) => {
