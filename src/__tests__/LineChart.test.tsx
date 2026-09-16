@@ -456,6 +456,52 @@ describe('LineChart option building', () => {
         });
     });
 
+    describe('dataZoom resets to the full view when the underlying range actually changes (regression: ECharts preserves a dataZoom window across setOption by design, so zooming in then widening the Time Range filter left the chart stuck showing only a sliver of the new, larger dataset -- reported 2026-09-16)', () => {
+        it('a rerender with the SAME time range (identical first/last timestamp and point count) does not force start/end -- an in-progress pan/zoom is left alone', () => {
+            const columnar = columnarOf(['A'], 5);
+            const { rerender } = render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
+            // Some other, unrelated prop change (mirrors a real re-render
+            // cause like tagging a point or resizing a panel) -- same
+            // columnar object, so the range identity is unchanged.
+            rerender(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} hideYSplitLine />);
+            const { dataZoom } = capturedOptions[capturedOptions.length - 1];
+            expect(dataZoom[0].start).toBeUndefined();
+            expect(dataZoom[1].start).toBeUndefined();
+        });
+
+        it('a rerender with a WIDER time range (different first/last timestamp) forces both dataZoom components back to start:0, end:100', () => {
+            const narrow = columnarOf(['A'], 5); // 2026-01-01T00:00 .. 00:04
+            const { rerender } = render(<LineChart data={[]} columnar={narrow} sensors={['A']} headers={['A']} />);
+
+            const wider: ColumnarSeries = {
+                timestamps: Array.from({ length: 20 }, (_, i) => `2026-01-01T00:${String(i).padStart(2, '0')}:00`),
+                series: [Array.from({ length: 20 }, (_, i) => i)],
+            };
+            rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} />);
+            const { dataZoom } = capturedOptions[capturedOptions.length - 1];
+            expect(dataZoom[0].start).toBe(0);
+            expect(dataZoom[0].end).toBe(100);
+            expect(dataZoom[1].start).toBe(0);
+            expect(dataZoom[1].end).toBe(100);
+        });
+
+        it('does not keep forcing start/end on every subsequent render after the range-change render itself', () => {
+            const narrow = columnarOf(['A'], 5);
+            const { rerender } = render(<LineChart data={[]} columnar={narrow} sensors={['A']} headers={['A']} />);
+            const wider: ColumnarSeries = {
+                timestamps: Array.from({ length: 20 }, (_, i) => `2026-01-01T00:${String(i).padStart(2, '0')}:00`),
+                series: [Array.from({ length: 20 }, (_, i) => i)],
+            };
+            rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} />);
+            // A further render with the SAME wider range -- the one-time
+            // reset must not keep re-firing on every option rebuild after.
+            rerender(<LineChart data={[]} columnar={wider} sensors={['A']} headers={['A']} hideYSplitLine />);
+            const { dataZoom } = capturedOptions[capturedOptions.length - 1];
+            expect(dataZoom[0].start).toBeUndefined();
+            expect(dataZoom[1].start).toBeUndefined();
+        });
+    });
+
     describe('tooltip formatter', () => {
         it('returns an empty string for empty params', () => {
             const columnar = columnarOf(['A'], 3);

@@ -167,6 +167,28 @@ function LineChart({
         () => (columnar ? columnar.timestamps : data.map(d => d.timestamp)),
         [columnar, data],
     );
+
+    // Identifies "the data this chart currently represents" (not xData's
+    // array *identity*, which changes on every refetch even when the actual
+    // span is unchanged) — used below to reset dataZoom to the full view
+    // only when the chart's own reason for existing actually changed (a new
+    // Time Range / aggregation / dataset), not on every re-render (tagging a
+    // point, hovering, resizing a panel). ECharts preserves a dataZoom
+    // window across `setOption` calls by design — even under `notMerge:
+    // true` (ResponsiveECharts' default) — so ordinary interactions don't
+    // blow away the user's own pan/zoom. But that also means: zoom in to a
+    // narrow window, then widen the Time Range filter so the backend
+    // returns a much longer span, and the SAME start/end percentages now
+    // cover only a sliver of the new, larger range — the chart silently
+    // keeps showing a fraction of the data instead of the full new window,
+    // and the slider at the bottom visibly shrinks to match (regression
+    // reported 2026-09-16, screenshot showed the plotted x-axis stopping
+    // partway through the selected Time Range).
+    const rangeId = xData.length > 0 ? `${xData[0]}|${xData[xData.length - 1]}|${xData.length}` : 'empty';
+    const prevRangeIdRef = useRef(rangeId);
+    const rangeChanged = rangeId !== prevRangeIdRef.current;
+    useEffect(() => { prevRangeIdRef.current = rangeId; });
+
     // Refs so the zr click listener (attached once per chart instance, see
     // below) always reads the CURRENT tagMode/xData instead of whatever was
     // in scope when the listener was attached — avoids re-attaching the
@@ -719,9 +741,18 @@ function LineChart({
             animationDuration: 250,
             animationDurationUpdate: 150,
             dataZoom: [
-                { type: 'inside', xAxisIndex: [0], filterMode: 'filter' },
+                {
+                    type: 'inside', xAxisIndex: [0], filterMode: 'filter',
+                    // Force back to the full view exactly when `rangeId`
+                    // (above) shows the underlying data actually changed —
+                    // omitted on every other re-render so ECharts keeps
+                    // whatever window the user is currently panned/zoomed
+                    // to, same as before this fix.
+                    ...(rangeChanged ? { start: 0, end: 100 } : {}),
+                },
                 {
                     type: 'slider', xAxisIndex: [0], filterMode: 'filter',
+                    ...(rangeChanged ? { start: 0, end: 100 } : {}),
                     bottom: sliderBottom, height: sliderH,
                     // Heavy-data mode: the slider's mini preview (data shadow)
                     // re-renders every series into the track on each data
@@ -804,7 +835,7 @@ function LineChart({
             }),
             series: [...baseSeries, ...highlightOverlaySeries],
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints, rangeChanged]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
