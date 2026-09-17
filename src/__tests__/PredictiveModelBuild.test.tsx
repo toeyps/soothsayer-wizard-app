@@ -75,6 +75,7 @@ function pmProps(overrides: Partial<PMProps> = {}): PMProps {
         sensorMetadata,
         runningConditionFilters: [],
         onBack: vi.fn(),
+        onFinish: vi.fn(),
         ...overrides,
     };
 }
@@ -94,7 +95,7 @@ async function renderHydrated(overrides: Partial<PMProps> = {}) {
         await Promise.resolve();
         await Promise.resolve();
     });
-    return { ...utils, onBack: props.onBack };
+    return { ...utils, onBack: props.onBack, onFinish: props.onFinish };
 }
 
 function clickApply(section: 'Relationship Model' | 'Clustering Model') {
@@ -528,6 +529,14 @@ describe('PredictiveModelBuild', () => {
             const { onBack } = await renderHydrated();
             fireEvent.click(screen.getByTitle('Back to Build Model overview'));
             expect(onBack).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('Finish button (2026-09-17: marks the model Complete on the overview list, replacing the old Preview/Save Model flow)', () => {
+        it('clicking Finish calls onFinish', async () => {
+            const { onFinish } = await renderHydrated();
+            fireEvent.click(screen.getByText('Finish'));
+            expect(onFinish).toHaveBeenCalledTimes(1);
         });
     });
 

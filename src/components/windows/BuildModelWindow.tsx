@@ -420,6 +420,18 @@ export default function BuildModelWindow() {
         }));
     };
 
+    /** Sets `status: true` unconditionally (unlike `toggleModelStatus`) —
+     *  used by the PM page's "Finish" button, where clicking it again should
+     *  never accidentally flip an already-complete model back to
+     *  incomplete. Un-marking a model still goes through the overview's own
+     *  status pill (`toggleModelStatus`). */
+    const markModelComplete = (modelId: string) => {
+        persist((models, groups) => ({
+            groups,
+            models: models.map(m => m.id === modelId ? { ...m, status: true } : m),
+        }));
+    };
+
     const trainModel = (modelId: string) => {
         setPmPageModelId(modelId);
         setActivePage('model');
@@ -808,6 +820,10 @@ export default function BuildModelWindow() {
                     sensorMetadata={sensorMetadata}
                     runningConditionFilters={runningConditionFilters}
                     onBack={() => setActivePage('overview')}
+                    onFinish={() => {
+                        markModelComplete(pmPageModel.id);
+                        setActivePage('overview');
+                    }}
                 />
             ) : (
             <>

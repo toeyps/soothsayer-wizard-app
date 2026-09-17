@@ -38,6 +38,7 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
             <div data-testid="pm-page-mock">
                 <span>PM page for {props.modelId}</span>
                 <button onClick={props.onBack}>Mock Back</button>
+                <button onClick={props.onFinish}>Mock Finish</button>
             </div>
         );
     },
@@ -509,6 +510,32 @@ describe('BuildModelWindow', () => {
             fireEvent.click(screen.getByText('Mock Back'));
             expect(screen.queryByTestId('pm-page-mock')).toBeNull();
             expect(screen.queryByText('Build Model →')).toBeNull(); // the row's editor closed along with the old model reference
+        });
+
+        it('the PM page\'s Finish control marks the model Complete and returns to the model overview', async () => {
+            render(<BuildModelWindow />);
+            await deliverData(); // makeModel() defaults to status: false (Incomplete)
+            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getByText('Build Model →'));
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Mock Finish'));
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].status).toBe(true);
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // Finish also navigates back, like Back
+        });
+
+        it('Finish never flips an already-complete model back to Incomplete (one-directional, unlike the overview\'s toggle pill)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
+            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getByText('Build Model →'));
+
+            fireEvent.click(screen.getByText('Mock Finish'));
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].status).toBe(true);
         });
 
         it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to "description (tag)"', async () => {

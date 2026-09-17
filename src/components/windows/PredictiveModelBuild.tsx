@@ -6,7 +6,7 @@ import type {
     RelationshipPreviewResult,
     ClusteringPreview,
 } from "../../types/commands";
-import { Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
@@ -174,6 +174,12 @@ interface PredictiveModelBuildProps {
      *  own doc comment for why), so "closing" it just means switching the
      *  parent's local page state back. */
     onBack: () => void;
+    /** Marks this model `status: true` (Complete) on the overview list, then
+     *  returns to it — the toolbar's "Finish" button. One-directional by
+     *  design: re-clicking Finish on an already-complete model must not
+     *  flip it back to Incomplete (that's what the overview's own status
+     *  pill is for). */
+    onFinish: () => void;
 }
 
 /**
@@ -195,7 +201,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, onBack }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, onBack, onFinish }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -1502,6 +1508,15 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     <span className="pm-crumb-muted">Target</span>
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
+                <div className="pm-flex-spacer" />
+                <button
+                    className="pm-btn pm-btn-primary"
+                    onClick={onFinish}
+                    title="Mark this model Complete and return to the overview"
+                >
+                    <Check size={13} />
+                    <span>Finish</span>
+                </button>
             </div>
 
             {/* Main Content */}
