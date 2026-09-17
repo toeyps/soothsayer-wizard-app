@@ -654,7 +654,16 @@ export default function BuildModelWindow() {
     };
 
     const renderModelFormFooter = () => (
-        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)' }}>
+        // Bottom corners rounded to match the editing card's own
+        // `borderRadius: '10px'` (see `overviewModelRow`'s accent-bordered
+        // wrapper) — that wrapper deliberately has no `overflow: hidden`
+        // (see its own comment: clipping would break this footer's
+        // stickiness), so without matching corners here, this footer's
+        // flat, opaque (`--card-bg`) rectangle visually paints straight
+        // over the parent's rounded bottom corners once it settles at the
+        // bottom of the scroll — reading as the accent border simply not
+        // connecting there (reported 2026-09-17).
+        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px' }}>
             <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
                 Save changes
             </button>

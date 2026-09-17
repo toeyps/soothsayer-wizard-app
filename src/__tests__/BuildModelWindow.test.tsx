@@ -315,6 +315,16 @@ describe('BuildModelWindow', () => {
             });
         });
 
+        it('the sticky footer\'s own bottom corners are rounded to match the editing card\'s border-radius (regression: no overflow:hidden on the card -- the previous item -- means the footer\'s flat, opaque (--card-bg) background paints straight over the card\'s rounded bottom corners once it settles at the bottom of the scroll, reading as the accent border simply not connecting there; reported 2026-09-17)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
+            const footer = saveBtn.parentElement as HTMLElement;
+            expect(footer.style.borderBottomLeftRadius).toBe('10px');
+            expect(footer.style.borderBottomRightRadius).toBe('10px');
+        });
+
         it('the opened form\'s boundary is a real border wrapping the whole card (header + footer), not just a left accent bar (regression: an absolutely-positioned bar was anchored to the row\'s un-scrolled flow position and visually detached from the sticky footer once the page scrolled)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
