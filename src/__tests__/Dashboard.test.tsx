@@ -296,6 +296,36 @@ describe('Dashboard', () => {
         expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
     });
 
+    it('re-reads failureGroupState fresh from disk before an autosave, so a Dashboard-only edit can never clobber a fresher write another window already made (2026-09-18 data-loss fix: the "failure-group-state-changed" broadcast is best-effort cross-window IPC, not a guarantee this window\'s local mirror is current -- a user reported all their Failure Groups gone after nothing more than closing and reopening the app, no rapid clicking needed)', async () => {
+        vi.useFakeTimers();
+        renderDashboard({
+            initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+        });
+        await act(async () => { vi.advanceTimersByTime(300); }); // let the on-mount autosave settle
+        mockSaveWorkspaceData.mockClear();
+
+        // Simulate a Build Model / Predictive Model window (a separate OS
+        // process) having written fresher failure-group state whose
+        // 'failure-group-state-changed' broadcast never reached this window
+        // -- loadWorkspaceData now resolves to that fresher disk content.
+        const fresherFailureGroupState = {
+            groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
+            models: [{ id: 'm-fresh', groupNos: [2] }], // shape trimmed -- never rendered, only round-tripped
+            runningConditionFilters: [],
+        };
+        mockLoadWorkspaceData.mockResolvedValue({ failureGroupState: fresherFailureGroupState });
+
+        // A Dashboard-only edit -- nothing to do with failure groups at all.
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+        await act(async () => { vi.advanceTimersByTime(300); });
+
+        expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+        const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+        // Must be the fresher disk state, not this window's stale local
+        // mirror (still just Group A / no models at this point).
+        expect(saved.failureGroupState).toEqual(fresherFailureGroupState);
+    });
+
     it('still autosaves normally when the state actually changed after a failure-group write', async () => {
         vi.useFakeTimers();
         renderDashboard({
@@ -320,7 +350,7 @@ describe('Dashboard', () => {
         ));
     });
 
-    it('debounces autosave -- a burst of rapid state changes writes to disk once, not once per change (regression: every tracked state change, including each keystroke in a Filter box with no debounce of its own, used to trigger an immediate write)', () => {
+    it('debounces autosave -- a burst of rapid state changes writes to disk once, not once per change (regression: every tracked state change, including each keystroke in a Filter box with no debounce of its own, used to trigger an immediate write)', async () => {
         vi.useFakeTimers();
         renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
         mockSaveWorkspaceData.mockClear(); // drop the initial on-mount autosave
@@ -336,8 +366,11 @@ describe('Dashboard', () => {
         // Still within the debounce window of the LAST change (100 + 100 = 200ms < 250ms) -- no write yet.
         expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
 
-        // Let the debounce settle past the last change.
-        act(() => { vi.advanceTimersByTime(150); });
+        // Let the debounce settle past the last change. Async because the
+        // autosave now awaits a fresh loadWorkspaceData() read before
+        // writing (2026-09-18 cross-window staleness fix) -- a sync
+        // advanceTimersByTime wouldn't let that awaited read resolve.
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // exactly one write, not three
     });
 

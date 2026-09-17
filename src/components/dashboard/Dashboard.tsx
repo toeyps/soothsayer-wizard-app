@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, use
 import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
-import { saveWorkspaceData, updateWorkspaceData } from '../../workspaceManager';
+import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
@@ -1606,12 +1606,56 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // and a new one queued, so only the LAST edit in a rapid burst ever
     // actually reaches disk — same "clear + requeue" shape as the
     // useChartData/useScatterSample/useTablePage debounce this mirrors.
+    //
+    // 🆕 2026-09-18 [CRITICAL FIX]: this write used to bake in this window's
+    // OWN `fgGroups`/`fgModels`/`runningConditionFilters` mirror (via
+    // `buildWorkspaceState()`'s default). That mirror is kept "current" only
+    // by the `failure-group-state-changed` broadcast above — best-effort
+    // cross-window IPC, not a guaranteed-ordered channel. If a Build Model /
+    // Predictive Model window (a SEPARATE OS process — see CLAUDE.md's
+    // "Windows & capabilities") wrote fresher failure-group state and its
+    // broadcast hadn't landed here yet, then ANY Dashboard-only interaction
+    // at all — panning a chart, toggling a sensor, nothing to do with
+    // failure groups — re-armed this 250ms debounce and silently overwrote
+    // that fresher data with this window's stale copy the moment it fired.
+    // No rapid clicking or "Build Model" needed — this is exactly the "I
+    // didn't touch anything, just closed and reopened the app" data-loss
+    // report: the clobber happened quietly during the PRIOR session, and
+    // reopening just revealed the already-corrupted file. Root-caused via
+    // the "close/reopen with FG already gone" repro (rules out the
+    // workspaceManager.ts same-window queue fix from earlier the same day —
+    // that only serializes writes WITHIN one window, and this loss needed no
+    // rapid same-window actions at all to reproduce).
+    //
+    // Fix: re-read `failureGroupState` fresh from disk right before writing,
+    // instead of trusting this window's local mirror — same defensive
+    // pattern `persistFailureGroupState` above already uses for
+    // `runningConditionFilters`. This narrows the race to a genuine
+    // near-simultaneous cross-window write (a few ms IPC round trip)
+    // instead of "any stale mirror, arbitrarily late," but a fully
+    // race-proof fix needs a Rust-side atomic read-modify-write across
+    // processes — out of scope here, flagged separately.
     useEffect(() => {
         if (!initialState) return;
         let timer: ReturnType<typeof setTimeout>;
         pendingSaveRef.current = new Promise<void>((resolve) => {
             timer = setTimeout(async () => {
-                const next = buildWorkspaceState();
+                let freshFailureGroupState = { groups: fgGroups, models: fgModels, runningConditionFilters };
+                try {
+                    const onDisk = await loadWorkspaceData(initialState.id);
+                    if (onDisk?.failureGroupState) {
+                        freshFailureGroupState = {
+                            groups: onDisk.failureGroupState.groups,
+                            models: onDisk.failureGroupState.models,
+                            runningConditionFilters: onDisk.failureGroupState.runningConditionFilters ?? [],
+                        };
+                    }
+                } catch (e) {
+                    // Disk read failed — fall back to this window's own
+                    // mirror rather than blocking the autosave entirely.
+                    console.warn('Autosave: failed to re-read failureGroupState from disk, using local copy:', e);
+                }
+                const next = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
                 const payload = JSON.stringify(next);
                 // 2026-09-03: skip the write when the state is byte-identical
                 // to what is already on disk. Primarily this removes the
@@ -1630,7 +1674,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }, AUTOSAVE_DEBOUNCE_MS);
         });
         return () => clearTimeout(timer);
-    }, [buildWorkspaceState, initialState]);
+    }, [buildWorkspaceState, initialState, fgGroups, fgModels, runningConditionFilters]);
 
     // 2026-09-01: flush a pending autosave before the window is actually
     // allowed to close, instead of letting a change made in the last
