@@ -392,7 +392,11 @@ export default function BuildModelWindow() {
         false
     );
 
-    const commitForm = () => {
+    // Returns the `persist()` promise (rather than firing it and forgetting)
+    // so `buildModelFromForm` below can await the write actually landing on
+    // disk before navigating to the PM page — see that function's own
+    // comment for the race this closes.
+    const commitForm = async () => {
         if (!formValid || !formKind || !formCategory || !editingModelId) return;
         const fields = {
             groupNos: formGroupNos,
@@ -406,7 +410,7 @@ export default function BuildModelWindow() {
             criteriaSensor: formKind === 'clustering' ? formCriteria : '',
             clusterRanges: formKind === 'clustering' && formCriteria ? formClusterRanges : [],
         };
-        persist((models, groups) => ({
+        await persist((models, groups) => ({
             groups,
             models: models.map(m => m.id === editingModelId ? { ...m, ...fields } : m),
         }));
@@ -658,10 +662,19 @@ export default function BuildModelWindow() {
     // it only lets go once the whole accordion block scrolls out of view.
     // Requires no `overflow: hidden` on any ancestor between this and the
     // page's own scroll container (see the group card wrappers above).
-    const buildModelFromForm = () => {
+    // 🆕 2026-09-18 [bug fix]: must await commitForm's write landing on disk
+    // before navigating to the PM page. commitForm used to fire its persist()
+    // and return immediately, so trainModel() below switched pages right
+    // away — the PM page's own hydration effect then read the workspace file
+    // directly (loadWorkspaceData, NOT queued behind the still-in-flight
+    // updateWorkspaceData write) and could win the race, loading the model
+    // record from BEFORE this commit. Symptom: predictors picked on this
+    // form (required for Relationship — formValid demands >=1) showed as
+    // "No predictors selected" the instant the PM page opened.
+    const buildModelFromForm = async () => {
         if (!formValid || !editingModelId) return;
         const modelId = editingModelId;
-        commitForm();
+        await commitForm();
         trainModel(modelId);
     };
 

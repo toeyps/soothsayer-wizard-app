@@ -461,7 +461,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One')); // open the row — makeModel() is already complete
-            fireEvent.click(screen.getByText('Build Model →'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             // No cross-window event — this is now local page-navigation state.
             expect(mockEmit).not.toHaveBeenCalledWith('launch-predictive-model', expect.anything());
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
@@ -471,6 +471,27 @@ describe('BuildModelWindow', () => {
             expect(lastProps.modelId).toBe('m1');
             expect(lastProps.kind).toBe('individual'); // the model's own kind, chosen on this page — PM must not ask again
             expect(lastProps.sensorHeaders).toEqual(['TAG1', 'TAG2', 'TAG3']);
+        });
+
+        it('waits for commitForm\'s persist to actually land before navigating to the PM page (2026-09-18 regression: the write used to be fire-and-forget, so the PM page could hydrate from the model record from BEFORE this commit -- e.g. predictors just picked on this form, required for Relationship, showing as "No predictors selected" the instant the page opened)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+
+            let resolvePersist!: (v: unknown) => void;
+            mockUpdateWorkspaceData.mockImplementation(() => new Promise(resolve => { resolvePersist = resolve; }));
+
+            fireEvent.click(screen.getByText('Build Model →'));
+            // The persist() write hasn't resolved yet -- navigation must not
+            // have happened either, or the PM page could read the workspace
+            // file before this commit lands.
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull();
+
+            await act(async () => {
+                resolvePersist({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel()] } });
+                await Promise.resolve();
+            });
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
         });
 
         it('is disabled until the form is valid, and shows why', async () => {
@@ -494,7 +515,7 @@ describe('BuildModelWindow', () => {
             fireEvent.click(screen.getByText('Model One'));
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed before building' } });
 
-            fireEvent.click(screen.getByText('Build Model →'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
 
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].name).toBe('Renamed before building');
@@ -505,7 +526,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByText('Build Model →'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
             fireEvent.click(screen.getByText('Mock Back'));
             expect(screen.queryByTestId('pm-page-mock')).toBeNull();
@@ -516,7 +537,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData(); // makeModel() defaults to status: false (Incomplete)
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByText('Build Model →'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
 
             fireEvent.click(screen.getByText('Mock Finish'));
@@ -530,7 +551,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByText('Build Model →'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
 
             fireEvent.click(screen.getByText('Mock Finish'));
 
@@ -733,20 +754,29 @@ describe('BuildModelWindow', () => {
 
         it('passes the current filter down to the PM page as runningConditionFilters', async () => {
             const modelWithGroup = makeModel();
+            const filters = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }];
             render(<BuildModelWindow />);
             await deliverData({
                 failureGroupState: {
                     groups: [makeGroup()],
                     models: [modelWithGroup],
-                    runningConditionFilters: [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }],
+                    runningConditionFilters: filters,
                 },
             });
+            // commitForm's persist() round-trips through updateWorkspaceData and
+            // then resyncs this window's local runningConditionFilters from
+            // whatever comes back -- the default mock's `prev` (beforeEach
+            // above) omits runningConditionFilters entirely, which would
+            // otherwise silently wipe it here. Match deliverData's payload so
+            // the round trip is realistic.
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => {
+                const prev = { id, failureGroupState: { groups: [makeGroup()], models: [modelWithGroup], runningConditionFilters: filters } };
+                return patch(prev);
+            });
             fireEvent.click(screen.getByText('Model One'));
-            fireEvent.click(screen.getByText('Build Model →'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
-            expect(lastProps.runningConditionFilters).toEqual([
-                { id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' },
-            ]);
+            expect(lastProps.runningConditionFilters).toEqual(filters);
         });
 
         it('stays untouched when an unrelated model edit is saved (regression: the generic persist() used to drop it)', async () => {

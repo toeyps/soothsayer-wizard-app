@@ -1527,7 +1527,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     <div className="pm-section">
                         <div className="pm-section-header">
                             <span className="pm-eyebrow">Target</span>
-                            <span className="pm-section-title">Predict this sensor</span>
+                            <span className="pm-section-title">Target sensor</span>
                         </div>
                         <div className="pm-target-card">
                             <div className="pm-target-card-top">
