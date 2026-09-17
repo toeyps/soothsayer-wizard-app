@@ -17,11 +17,6 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: (cmd: string, args?: unknown) => mockInvoke(cmd, args),
 }));
 
-const mockOpenDialog = vi.fn();
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-    open: (opts: unknown) => mockOpenDialog(opts),
-}));
-
 const mockUpdateWorkspaceData = vi.fn(async (id: string, patch: (s: any) => any) => patch({ id }));
 const mockLoadWorkspaceData = vi.fn().mockResolvedValue(null);
 vi.mock('../workspaceManager', () => ({
@@ -118,7 +113,6 @@ beforeEach(() => {
         }
         return Promise.resolve({});
     });
-    mockOpenDialog.mockReset();
     mockUpdateWorkspaceData.mockClear().mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id }));
     mockLoadWorkspaceData.mockClear().mockResolvedValue({
         name: 'My Workspace',
@@ -468,41 +462,6 @@ describe('PredictiveModelBuild', () => {
             expect(lastQuery.filter.timestamp_end).toBe('2026-02-01T00:00');
         });
 
-        it('Confirm & Save sends the Time start/end into train_individual_model', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: {
-                    groups: [], models: [makeStoredModel({
-                        filterTimeStart: '2026-01-01T00:00',
-                        filterTimeEnd: '2026-02-01T00:00',
-                    })],
-                },
-            });
-            mockOpenDialog.mockResolvedValue('C:/save/here');
-            await renderHydrated();
-
-            fireEvent.click(screen.getByText('Preview'));
-            fireEvent.click(screen.getByText('Save Model'));
-            // Footnote must acknowledge the active time filter instead of
-            // claiming "none — using the full dataset."
-            expect(screen.getByText(/a time range/)).toBeTruthy();
-            expect(screen.queryByText(/none — using the full dataset\./)).toBeNull();
-
-            await act(async () => {
-                fireEvent.click(screen.getByText('Confirm & Save'));
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-            expect(mockInvoke).toHaveBeenCalledWith('train_individual_model', expect.objectContaining({
-                filter: expect.objectContaining({
-                    timestamp_start: '2026-01-01T00:00',
-                    timestamp_end: '2026-02-01T00:00',
-                }),
-            }));
-        });
-
         it('typing into the Time start field persists it and updates the query filter', async () => {
             const onDiskModel = makeStoredModel();
             mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
@@ -569,84 +528,6 @@ describe('PredictiveModelBuild', () => {
             const { onBack } = await renderHydrated();
             fireEvent.click(screen.getByTitle('Back to Build Model overview'));
             expect(onBack).toHaveBeenCalledTimes(1);
-        });
-    });
-
-    describe('Save flow', () => {
-        it('Confirm & Save is disabled until the plan is valid, then trains the individual model', async () => {
-            mockOpenDialog.mockResolvedValue('C:/save/here');
-            mockInvoke.mockImplementation((cmd: string) => {
-                if (cmd === 'compute_sensor_stats') {
-                    return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
-                }
-                if (cmd === 'train_individual_model') {
-                    return Promise.resolve({ saved_path: 'C:/save/here/individual.json' });
-                }
-                return Promise.resolve({});
-            });
-            await renderHydrated();
-
-            fireEvent.click(screen.getByText('Preview'));
-            fireEvent.click(screen.getByText('Save Model'));
-            const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
-            expect(confirmBtn.disabled).toBe(false); // individual model alone is a valid plan
-
-            await act(async () => {
-                fireEvent.click(confirmBtn);
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-            expect(mockOpenDialog).toHaveBeenCalledWith(expect.objectContaining({ directory: true }));
-            expect(mockInvoke).toHaveBeenCalledWith('train_individual_model', expect.objectContaining({ target: 'TARGET1' }));
-        });
-
-        it('cancelling the save-folder dialog does not train anything', async () => {
-            mockOpenDialog.mockResolvedValue(null);
-            await renderHydrated();
-
-            fireEvent.click(screen.getByText('Preview'));
-            fireEvent.click(screen.getByText('Save Model'));
-            await act(async () => {
-                fireEvent.click(screen.getByText('Confirm & Save'));
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-            expect(mockInvoke).not.toHaveBeenCalledWith('train_individual_model', expect.anything());
-        });
-
-        it('disables Confirm & Save when Relationship is chosen with no predictors (blocking warning)', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
-            });
-            await renderHydrated({ kind: 'relationship' });
-            fireEvent.click(screen.getByText('Preview'));
-            fireEvent.click(screen.getByText('Save Model'));
-            const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
-            expect(confirmBtn.disabled).toBe(true);
-        });
-
-        it('the "Filters on training data" footnote reflects only this page\'s own filters now (2026-09-01: `dashboardSnapshot` removed as dead code — it was never written by anything, so Dashboard\'s own filters never actually carried into training; removing it changes nothing observable)', async () => {
-            await renderHydrated();
-            fireEvent.click(screen.getByText('Preview'));
-            fireEvent.click(screen.getByText('Save Model'));
-            expect(screen.getByText(/Filters on training data:/)).toBeTruthy();
-            expect(screen.getByText(/none — using the full dataset\./)).toBeTruthy();
-            expect(screen.queryByText(/Dashboard sensor filter/)).toBeNull();
-        });
-
-        it('counts the inherited workspace-wide running-condition filter (2026-09-15)', async () => {
-            await renderHydrated({
-                runningConditionFilters: [
-                    { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
-                ],
-            });
-            fireEvent.click(screen.getByText('Preview'));
-            fireEvent.click(screen.getByText('Save Model'));
-            expect(screen.getByText(/the running-condition filter \(1 condition\)/)).toBeTruthy();
-            expect(screen.queryByText(/none — using the full dataset\./)).toBeNull();
         });
     });
 

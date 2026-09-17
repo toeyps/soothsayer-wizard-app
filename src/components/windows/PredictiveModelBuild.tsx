@@ -1,17 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import type { ReactNode } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
-    IndividualModelInfo,
-    ClusteringModelInfo,
-    RelationshipTrainResult,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
+import { Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
@@ -391,22 +386,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const [clusteringLoading, setClusteringLoading] = useState(false);
     const [clusteringError, setClusteringError] = useState<string | null>(null);
 
-    // Save flow status.
-    const [saveStatus, setSaveStatus] = useState<{
-        kind: 'idle' | 'saving' | 'success' | 'error';
-        message?: string;
-        /** Which model is currently being trained — surfaced in the blocking
-         *  save overlay so the user sees concrete progress instead of a
-         *  generic spinner. Set transiently inside `handleSaveModel` right
-         *  before each `invoke('train_*_model')` call. */
-        step?: 'individual' | 'relationship' | 'clustering';
-    }>({ kind: 'idle' });
-    // Last folder the user picked in the Save Model dialog. Acts as the
-    // `defaultPath` for the next picker invocation, and is persisted into the
-    // workspace JSON (`WorkspaceState.outputDir`) so the choice survives app
-    // restarts. We always still open the picker — this never bypasses it.
-    const [outputDir, setOutputDir] = useState<string | null>(null);
-
     // ── Target sensor time-series (for Individual plot) ────────────────
     // Bounded columnar fetch via `get_chart_data` (same path as Dashboard):
     // filter + min/max decimation run in Rust, so the WebView receives at
@@ -458,26 +437,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         return () => window.removeEventListener('keydown', onKey);
     }, [expandedChart]);
 
-    // ── Preview modal ─────────────────────────────────────────────────
-    // Mirrors the wizard.py `PreviewModel.{individual, relationship,
-    // clustering}` outputs in a single modal so the user can sanity-check
-    // the preview payload BEFORE committing to disk via Save Model
-    // (`SaveThisSensor` in wizard.py). Opens via the toolbar's Preview
-    // button. Pure read-only — no disk I/O happens here.
-    const [previewOpen, setPreviewOpen] = useState(false);
-    const [previewError, setPreviewError] = useState<string | null>(null);
-    useEffect(() => {
-        if (!previewOpen) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setPreviewOpen(false);
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [previewOpen]);
-
-    // ESC key closes the sub-models modal (parallels expandedChart /
-    // previewOpen). Listener is only attached while the modal is open
-    // so unrelated key presses don't pay for it.
+    // ESC key closes the sub-models modal (parallels expandedChart above).
+    // Listener is only attached while the modal is open so unrelated key
+    // presses don't pay for it.
     useEffect(() => {
         if (!subModelsOpen) return;
         const onKey = (e: KeyboardEvent) => {
@@ -486,26 +448,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [subModelsOpen]);
-
-    // ── Save-confirmation modal ───────────────────────────────────────
-    // Intercepts the Preview modal's Save Model trigger and presents a
-    // plain-language summary of what will be written
-    // before we open the folder picker + heavy train_*_model invokes.
-    //
-    // Catches three common mistakes BEFORE the user picks a folder:
-    //   • Wrong target sensor still selected from a previous workspace.
-    //   • Relationship mode toggled but no predictors selected.
-    //   • Clustering mode toggled with mismatched cluster ranges /
-    //     missing criteria sensor.
-    const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
-    useEffect(() => {
-        if (!confirmSaveOpen) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setConfirmSaveOpen(false);
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [confirmSaveOpen]);
 
     useEffect(() => {
         let cancelled = false;
@@ -525,9 +467,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 if (cancelled) return;
                 if (ws?.name) setWorkspaceName(ws.name);
                 found = ws?.failureGroupState?.models.find(m => m.id === modelId);
-                // Hydrate the remembered save folder so the next picker
-                // defaults to wherever the user last picked.
-                if (ws?.outputDir) setOutputDir(ws.outputDir);
             } catch (e) {
                 console.warn('Failed to hydrate predictive-model state from workspace:', e);
             }
@@ -1536,259 +1475,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         }
     };
 
-    /**
-     * Open the Preview modal and lazily refresh any stale fits.
-     *
-     * The modal mirrors the per-mode return shapes from `wizard.py` —
-     * `PreviewModel.individual`, `PreviewModel.relationship`,
-     * `PreviewModel.clustering` — so the user can review the preview
-     * payload before committing to disk via Save Model. Crucially, this
-     * does NOT write anything; it just lays out cached state in the
-     * wizard.py shape.
-     *
-     *   • Individual: target stats are auto-fetched on `targetSensor`
-     *     change (via `compute_sensor_stats`), so nothing to do here.
-     *   • Relationship: re-fit only if no cache OR if predictor list has
-     *     drifted since last Apply (`fitIsStale`).
-     *   • Clustering: re-fit only if no cache.
-     *
-     * State updates from `runRelationshipFit` / `handleClusteringApply`
-     * propagate normally — the modal renders skeletons while loading and
-     * fills in as the results land.
-     */
-    const handleOpenPreview = () => {
-        setPreviewError(null);
-        setPreviewOpen(true);
-
-        if (!targetSensor) return;
-
-        if (rcMode === 'relationship' && predictorSensors.length > 0 && !relLoading) {
-            if (!relPreview || fitIsStale) {
-                runRelationshipFit();
-            }
-        }
-        if (rcMode === 'clustering' && !clusteringLoading && !clusteringPreview) {
-            // Fire-and-forget — handleClusteringApply manages its own state.
-            handleClusteringApply();
-        }
-    };
-
-    /** Prompt the user to pick the on-disk root folder for the save (the
-     *  `saved_path` in the wizard payload). Output files land under
-     *  `{savePath}/output/{target}/...` — see `train_*_model` in `lib.rs`.
-     *
-     *  Returns the chosen absolute path, or `null` if the user cancelled.
-     *  Side-effect: persists the choice to `WorkspaceState.outputDir` so the
-     *  next picker invocation defaults to the same folder.
-     */
-    const pickSavePath = async (): Promise<string | null> => {
-        if (!workspaceId) throw new Error("No workspace loaded.");
-        const picked = await openDialog({
-            directory: true,
-            multiple: false,
-            // Default to the last-used folder when available, otherwise let
-            // the OS decide (typically the user's home dir).
-            defaultPath: outputDir ?? undefined,
-            title: 'Choose Save Folder',
-        });
-        if (typeof picked !== 'string' || !picked) return null;
-        // Remember the choice immediately, even if the train calls fail —
-        // the user's intent ("save into X") is independent of the model
-        // training outcome.
-        setOutputDir(picked);
-        try {
-            await updateWorkspaceData(workspaceId, (prev) => ({
-                ...prev,
-                outputDir: picked,
-            }));
-        } catch (e) {
-            console.warn('Failed to persist outputDir to workspace:', e);
-        }
-        return picked;
-    };
-
-    // ── Save plan (drives the confirmation modal) ─────────────────────
-    // Mirrors the branching inside `handleSaveModel` so the modal can
-    // show, per model that will be saved, the inputs the train_* call
-    // will actually receive — plus any blocking validation message that
-    // would cause `handleSaveModel` to throw. The modal disables
-    // Confirm when any warning is present, so the user fixes config
-    // BEFORE we open the folder picker (vs. picking, training, then
-    // failing).
-    interface SavePlanItem {
-        kind: 'individual' | 'relationship' | 'clustering';
-        title: string;
-        /** Blocking validation message — present only when `handleSaveModel`
-         *  would throw for this item. Causes Confirm to be disabled. */
-        warning?: string;
-        details: Array<{ label: string; value: ReactNode }>;
-    }
-    const savePlan = useMemo<SavePlanItem[]>(() => {
-        const items: SavePlanItem[] = [];
-        if (individualChecked) {
-            items.push({
-                kind: 'individual',
-                title: 'Individual model',
-                details: [
-                    { label: 'Target', value: targetSensor || '—' },
-                ],
-            });
-        }
-        if (rcMode === 'relationship') {
-            items.push({
-                kind: 'relationship',
-                title: 'Relationship model',
-                warning: predictorSensors.length === 0
-                    ? 'Requires at least one predictor.'
-                    : undefined,
-                details: [
-                    { label: 'Model name', value: relModelName.trim() || <em style={{ opacity: 0.7 }}>auto-generated</em> },
-                    { label: 'Target', value: targetSensor || '—' },
-                    { label: 'Predictors', value: predictorSensors.length > 0
-                        ? `${predictorSensors.length} · ${predictorSensors.join(', ')}`
-                        : '—' },
-                    { label: 'Stiffness', value: stiffnessLabel(relStiffness) },
-                ],
-            });
-        }
-        if (rcMode === 'clustering') {
-            const firstSensor = scatterXSensor || predictorSensors[0] || "";
-            const effectiveClusters = criteriaSensor ? numClusters : 1;
-            let warning: string | undefined;
-            if (!firstSensor) warning = 'Requires a predictor on the X-axis.';
-            else if (effectiveClusters > 1 && !criteriaSensor) warning = 'Requires a criteria sensor when N ≥ 2.';
-            else if (effectiveClusters > 1 && clusterRanges.length !== effectiveClusters) {
-                warning = `Cluster ranges length (${clusterRanges.length}) does not match N (${effectiveClusters}).`;
-            }
-            items.push({
-                kind: 'clustering',
-                title: 'Clustering model',
-                warning,
-                details: [
-                    { label: 'Model name', value: clusterModelName.trim() || <em style={{ opacity: 0.7 }}>auto-generated</em> },
-                    { label: 'X sensor', value: firstSensor || '—' },
-                    { label: 'Y sensor (target)', value: targetSensor || '—' },
-                    { label: 'Clusters (N)', value: effectiveClusters },
-                    ...(effectiveClusters > 1
-                        ? [{ label: 'Criteria sensor', value: criteriaSensor || '—' } as const]
-                        : []),
-                ],
-            });
-        }
-        return items;
-    }, [individualChecked, rcMode, targetSensor, predictorSensors, relModelName, relStiffness, scatterXSensor, criteriaSensor, numClusters, clusterRanges, clusterModelName]);
-
-    // Aggregated filter footnote shown in the confirm dialog so users
-    // know the filtered slice will carry into training (catches the
-    // "why is my model trained on only 200 rows?" surprise). Only this
-    // page's own `filterTimeStart`/`filterTimeEnd` plus the inherited
-    // workspace-wide `runningConditionFilters` count — see
-    // `dashboardFilterPayload` above for why Dashboard's own filters never
-    // factor in here.
-    const activeFilterCount = useMemo(() => {
-        const runningCondition = runningConditionFilters.filter(f => f.value1 !== '').length;
-        const time = (filterTimeStart || filterTimeEnd) ? 1 : 0;
-        return { runningCondition, time };
-    }, [runningConditionFilters, filterTimeStart, filterTimeEnd]);
-
-    const canConfirmSave = useMemo(() => {
-        if (!targetSensor) return false;
-        if (savePlan.length === 0) return false;
-        if (savePlan.some(p => p.warning)) return false;
-        return true;
-    }, [targetSensor, savePlan]);
-
-    const handleSaveModel = async () => {
-        if (!targetSensor) {
-            setSaveStatus({ kind: 'error', message: 'Select a target sensor first.' });
-            return;
-        }
-        let savePath: string;
-        try {
-            const picked = await pickSavePath();
-            if (picked === null) {
-                // User cancelled — leave saveStatus as-is (don't surface an
-                // error; cancellation is a normal flow).
-                return;
-            }
-            savePath = picked;
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setSaveStatus({ kind: 'error', message: msg });
-            return;
-        }
-        setSaveStatus({ kind: 'saving' });
-        try {
-            const written: string[] = [];
-
-            if (individualChecked) {
-                setSaveStatus({ kind: 'saving', step: 'individual' });
-                const info = await invoke<IndividualModelInfo>("train_individual_model", {
-                    target: targetSensor,
-                    model_name: null,
-                    save_path: savePath,
-                    filter: dashboardFilterPayload,
-                });
-                written.push(`Individual → ${info.saved_path}`);
-            }
-
-            if (rcMode === 'relationship') {
-                if (predictorSensors.length === 0) {
-                    throw new Error("Relationship mode requires at least one predictor.");
-                }
-                setSaveStatus({ kind: 'saving', step: 'relationship' });
-                const trained = await invoke<RelationshipTrainResult>("train_relationship_model", {
-                    predictors: predictorSensors,
-                    target: targetSensor,
-                    lambda: relStiffness,
-                    save_path: savePath,
-                    model_name: relModelName.trim() || null,
-                    filter: dashboardFilterPayload,
-                });
-                written.push(`Relationship → ${trained.info_path}`);
-            }
-
-            if (rcMode === 'clustering') {
-                const firstSensor = scatterXSensor || predictorSensors[0] || "";
-                if (!firstSensor) throw new Error("Clustering mode requires a predictor on the X-axis.");
-                const effectiveClusters = criteriaSensor ? numClusters : 1;
-                if (effectiveClusters > 1) {
-                    if (!criteriaSensor) {
-                        throw new Error("Clustering mode requires a criteria sensor when n_clusters > 1.");
-                    }
-                    if (clusterRanges.length !== effectiveClusters) {
-                        throw new Error(
-                            `Cluster ranges length (${clusterRanges.length}) does not match n_clusters (${effectiveClusters}).`,
-                        );
-                    }
-                }
-                setSaveStatus({ kind: 'saving', step: 'clustering' });
-                const trained = await invoke<ClusteringModelInfo>("train_clustering_model", {
-                    first_sensor: firstSensor,
-                    second_sensor: targetSensor,
-                    n_clusters: effectiveClusters,
-                    criteria_sensor: effectiveClusters > 1 ? criteriaSensor : null,
-                    cluster_ranges: effectiveClusters > 1 ? clusterRanges.slice(0, effectiveClusters) : null,
-                    model_name: clusterModelName.trim() || null,
-                    save_path: savePath,
-                    filter: dashboardFilterPayload,
-                });
-                written.push(`Clustering → ${trained.saved_path}`);
-            }
-
-            if (written.length === 0) {
-                setSaveStatus({ kind: 'error', message: 'Nothing to save — toggle Individual / Relationship / Clustering first.' });
-                return;
-            }
-            setSaveStatus({ kind: 'success', message: written.join('\n') });
-            debugLog("Save model success:", written);
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setSaveStatus({ kind: 'error', message: msg });
-            console.error("Save model failed:", e);
-        }
-    };
-
     if (loading) {
         return (
             <div className="predictive-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1796,31 +1482,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             </div>
         );
     }
-
-    // Shared between the right column (Relationship/Clustering) and the left
-    // column (Individual, which has no right column at all — see pm-col-right
-    // below) so save feedback isn't lost for either layout.
-    const saveStatusBlock = saveStatus.kind !== 'idle' && (
-        <div className="pm-section">
-            <div className="pm-section-header">
-                <span className="pm-eyebrow">Save</span>
-                <span className="pm-section-title">Status</span>
-            </div>
-            <div
-                className="pm-fields"
-                style={{
-                    fontSize: 12,
-                    color: saveStatus.kind === 'error' ? '#f43f5e'
-                        : saveStatus.kind === 'success' ? '#10b981'
-                        : 'var(--text-secondary)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
-                }}
-            >
-                {saveStatus.kind === 'saving' ? 'Saving…' : (saveStatus.message ?? '')}
-            </div>
-        </div>
-    );
 
     return (
         <div className="predictive-container">
@@ -1841,8 +1502,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     <span className="pm-crumb-muted">Target</span>
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
-                <div className="pm-flex-spacer" />
-                <button className="pm-btn pm-btn-secondary" onClick={handleOpenPreview}>Preview</button>
             </div>
 
             {/* Main Content */}
@@ -2053,9 +1712,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         </div>
                     </div>
 
-                    {/* Individual has no right column (see pm-col-right below),
-                        so its save feedback lives here instead. */}
-                    {kind === 'individual' && saveStatusBlock}
                 </div>
 
                 {/* CENTER */}
@@ -2354,9 +2010,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 {/* RIGHT - Context config (predictors chips moved into LEFT
                     "Predictor sensors" section to remove duplicate UI). Only
                     Relationship/Clustering models have config here at all —
-                    for Individual there is nothing to configure on this page
-                    (see the left column's own copy of saveStatusBlock), so
-                    the whole column is dropped rather than shown dimmed. */}
+                    for Individual there is nothing to configure on this page,
+                    so the whole column is dropped rather than shown dimmed. */}
                 {kind !== 'individual' && (
                 <div className="pm-col-right">
                     {/* Relationship Model Config — kind is locked per model
@@ -2739,9 +2394,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         </div>
                     </div>
                     )}
-
-                    {/* Save status */}
-                    {saveStatusBlock}
                 </div>
                 )}
             </div>
@@ -2809,441 +2461,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     <p>No chart data to display</p>
                                 </div>
                             )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Preview Modal ────────────────────────────────────────────
-                Mirrors `wizard.py`'s `PreviewModel.*` return shapes so the
-                user can review the preview payload before Save Model commits
-                files to disk (= `wizard.py`'s `SaveThisSensor`). */}
-            {previewOpen && (
-                <div
-                    className="pm-preview-modal-backdrop"
-                    onClick={() => setPreviewOpen(false)}
-                    role="dialog"
-                    aria-modal="true"
-                >
-                    <div
-                        className="pm-preview-modal-card"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        <div className="pm-preview-modal-header">
-                            <div className="pm-chart-title-block">
-                                <div className="pm-chart-title">Model Preview</div>
-                                <div className="pm-chart-subtitle">
-                                    Review the wizard.py preview output before committing to disk.
-                                </div>
-                            </div>
-                            <button
-                                className="pm-chart-modal-close"
-                                onClick={() => setPreviewOpen(false)}
-                                title="Close (Esc)"
-                                aria-label="Close"
-                            >
-                                <X size={18} />
-                            </button>
-                        </div>
-                        <div className="pm-preview-modal-body">
-                            {previewError && (
-                                <div className="pm-preview-error">{previewError}</div>
-                            )}
-
-                            {!individualChecked && !rcMode && (
-                                <div className="pm-preview-empty">
-                                    Toggle Individual / Relationship / Clustering on the chart row to preview a model.
-                                </div>
-                            )}
-
-                            {/* ── PreviewModel.individual ──────────────── */}
-                            {individualChecked && (
-                                <section className="pm-preview-section">
-                                    <header className="pm-preview-section-header">
-                                        <div>
-                                            <div className="pm-preview-section-title">Individual</div>
-                                            <div className="pm-preview-section-sub">
-                                                request: <code>PreviewModel/individual</code> · target: <code>{targetSensor || '—'}</code>
-                                            </div>
-                                        </div>
-                                    </header>
-                                    {!targetSensor ? (
-                                        <div className="pm-preview-empty">No target sensor selected.</div>
-                                    ) : !targetStats ? (
-                                        <div className="pm-preview-empty">
-                                            <Loader2 size={14} className="animate-spin" /> Computing target stats…
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <div className="pm-preview-meta">
-                                                output_dataframe: <strong>{targetStats.count.toLocaleString()}</strong> rows × <strong>1</strong> col
-                                                <span className="pm-preview-meta-faint">({targetSensor})</span>
-                                            </div>
-                                            <div className="pm-preview-grid">
-                                                <div className="pm-preview-stat">
-                                                    <span className="pm-preview-stat-label">mean</span>
-                                                    <span className="pm-preview-stat-value">{targetStats.mean.toFixed(3)}</span>
-                                                </div>
-                                                <div className="pm-preview-stat">
-                                                    <span className="pm-preview-stat-label">sd</span>
-                                                    <span className="pm-preview-stat-value">{targetStats.sd.toFixed(3)}</span>
-                                                </div>
-                                                <div className="pm-preview-stat">
-                                                    <span className="pm-preview-stat-label">1sd_boundary</span>
-                                                    <span className="pm-preview-stat-value">[{targetStats.lower1.toFixed(3)}, {targetStats.upper1.toFixed(3)}]</span>
-                                                </div>
-                                                <div className="pm-preview-stat">
-                                                    <span className="pm-preview-stat-label">3sd_boundary</span>
-                                                    <span className="pm-preview-stat-value">[{targetStats.lower3.toFixed(3)}, {targetStats.upper3.toFixed(3)}]</span>
-                                                </div>
-                                            </div>
-                                        </>
-                                    )}
-                                </section>
-                            )}
-
-                            {/* ── PreviewModel.relationship ────────────── */}
-                            {rcMode === 'relationship' && (
-                                <section className="pm-preview-section">
-                                    <header className="pm-preview-section-header">
-                                        <div>
-                                            <div className="pm-preview-section-title">Relationship</div>
-                                            <div className="pm-preview-section-sub">
-                                                Relation model preview · stiffness: <code>{stiffnessLabel(relStiffness)}</code>
-                                            </div>
-                                        </div>
-                                    </header>
-                                    {relLoading ? (
-                                        <div className="pm-preview-empty">
-                                            <Loader2 size={14} className="animate-spin" /> Running Relation model…
-                                        </div>
-                                    ) : relError ? (
-                                        <div className="pm-preview-error">{relError}</div>
-                                    ) : !relPreview ? (
-                                        <div className="pm-preview-empty">
-                                            {predictorSensors.length === 0
-                                                ? 'Add a predictor and click Apply on the Relationship config first.'
-                                                : 'Click Apply on the Relationship config to compute a preview.'}
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <div className="pm-preview-meta">
-                                                output_dataframe: <strong>{relPreview.result.predicted.length.toLocaleString()}</strong> rows
-                                                <span className="pm-preview-meta-faint">
-                                                    (predictors: {relPreview.predictorsAtApply.join(', ')} · target: {targetSensor} · plus PREDICTED_* columns per cumulative step)
-                                                </span>
-                                            </div>
-                                            <div className="pm-preview-table-wrap">
-                                                <table className="pm-preview-table">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>step</th>
-                                                            <th>cumulative predictor key</th>
-                                                            <th>r2_dict</th>
-                                                            <th>2rmse_dict</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {relPreview.result.r2_per_step.map((r2, i) => {
-                                                            const cum = relPreview.predictorsAtApply.slice(0, i + 1);
-                                                            const rmse2 = relPreview.result.rmse2_per_step[i];
-                                                            // Build the Python-list-repr-style key wizard.py uses:
-                                                            //   PREDICTED_['SENS01', 'SENS02']
-                                                            const cumRepr = `[${cum.map(s => `'${s}'`).join(', ')}]`;
-                                                            return (
-                                                                <tr key={i}>
-                                                                    <td>{i + 1}</td>
-                                                                    <td><code>PREDICTED_{cumRepr}</code></td>
-                                                                    <td>{typeof r2 === 'number' ? r2.toFixed(2) : '—'}</td>
-                                                                    <td>{typeof rmse2 === 'number' ? rmse2.toFixed(4) : '—'}</td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                            {fitIsStale && (
-                                                <div className="pm-preview-meta" style={{ color: '#f59e0b', marginTop: 8 }}>
-                                                    Predictor selection has changed since last fit — click Apply to refresh.
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
-                                </section>
-                            )}
-
-                            {/* ── PreviewModel.clustering ──────────────── */}
-                            {rcMode === 'clustering' && (
-                                <section className="pm-preview-section">
-                                    <header className="pm-preview-section-header">
-                                        <div>
-                                            <div className="pm-preview-section-title">Clustering</div>
-                                            <div className="pm-preview-section-sub">
-                                                request: <code>PreviewModel/clustering</code>
-                                            </div>
-                                        </div>
-                                    </header>
-                                    {clusteringLoading ? (
-                                        <div className="pm-preview-empty">
-                                            <Loader2 size={14} className="animate-spin" /> Fitting GMM ellipses…
-                                        </div>
-                                    ) : clusteringError ? (
-                                        <div className="pm-preview-error">{clusteringError}</div>
-                                    ) : !clusteringPreview ? (
-                                        <div className="pm-preview-empty">
-                                            Click Apply on the Clustering config to compute a preview.
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <div className="pm-preview-meta">
-                                                cluster_count: <strong>{clusteringPreview.cluster_count}</strong> ·
-                                                output_dataframe: <strong>{clusteringPreview.n_rows.toLocaleString()}</strong> rows
-                                                <span className="pm-preview-meta-faint">
-                                                    (first_sensor: {clusteringPreview.first_sensor} · second_sensor: {clusteringPreview.second_sensor}
-                                                    {clusteringPreview.criteria_sensor && ` · criteria_sensor: ${clusteringPreview.criteria_sensor}`})
-                                                </span>
-                                            </div>
-                                            <div className="pm-preview-table-wrap">
-                                                <table className="pm-preview-table">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>cluster</th>
-                                                            <th>range</th>
-                                                            <th>n_rows</th>
-                                                            <th>x_center</th>
-                                                            <th>y_center</th>
-                                                            <th>x_sd</th>
-                                                            <th>y_sd</th>
-                                                            <th>angle (°)</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {clusteringPreview.clusters.map(c => {
-                                                            // Format range as wizard.py-friendly bracket notation,
-                                                            // using ∞ when a bound is null.
-                                                            const lo = c.range?.min;
-                                                            const hi = c.range?.max;
-                                                            const loStr = lo === null || lo === undefined ? '−∞' : lo.toString();
-                                                            const hiStr = hi === null || hi === undefined ? '+∞' : hi.toString();
-                                                            const rangeStr = c.range
-                                                                ? `[${loStr}, ${hiStr})`
-                                                                : '—';
-                                                            return (
-                                                                <tr key={c.cluster_id}>
-                                                                    <td>{c.cluster_id}</td>
-                                                                    <td><code>{rangeStr}</code></td>
-                                                                    <td>{c.n_rows.toLocaleString()}</td>
-                                                                    <td>{c.ellipse.x_center.toFixed(3)}</td>
-                                                                    <td>{c.ellipse.y_center.toFixed(3)}</td>
-                                                                    <td>{c.ellipse.x_sd.toFixed(3)}</td>
-                                                                    <td>{c.ellipse.y_sd.toFixed(3)}</td>
-                                                                    <td>{c.ellipse.angle_deg.toFixed(3)}</td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </>
-                                    )}
-                                </section>
-                            )}
-                        </div>
-                        <div className="pm-preview-modal-footer">
-                            <span className="pm-preview-footer-status">
-                                {saveStatus.kind === 'saving' && 'Saving…'}
-                                {saveStatus.kind === 'success' && <span style={{ color: '#10b981' }}>Saved.</span>}
-                                {saveStatus.kind === 'error' && <span style={{ color: '#f43f5e' }}>{saveStatus.message}</span>}
-                            </span>
-                            <button
-                                className="pm-btn pm-btn-secondary"
-                                onClick={() => setPreviewOpen(false)}
-                            >
-                                Close
-                            </button>
-                            <button
-                                className="pm-btn pm-btn-primary"
-                                onClick={() => { setConfirmSaveOpen(true); }}
-                                disabled={saveStatus.kind === 'saving'}
-                            >
-                                <Check size={13} />
-                                <span>{saveStatus.kind === 'saving' ? 'Saving…' : 'Save Model'}</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Confirm Save Modal ───────────────────────────────────────
-                Gates the Preview modal's Save Model trigger with a
-                plain-language summary of what will be written. Confirm → close + run
-                handleSaveModel (which opens the folder picker and
-                actually trains/saves). Cancel/Esc/backdrop click → close
-                silently (no error state). */}
-            {confirmSaveOpen && (
-                <div
-                    className="pm-preview-modal-backdrop"
-                    onClick={() => setConfirmSaveOpen(false)}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="pm-confirm-save-title"
-                >
-                    <div
-                        className="pm-preview-modal-card"
-                        onClick={e => e.stopPropagation()}
-                        style={{ maxWidth: 560 }}
-                    >
-                        <div className="pm-preview-modal-header">
-                            <div className="pm-chart-title-block">
-                                <div className="pm-chart-title" id="pm-confirm-save-title">
-                                    Save Model — Confirm
-                                </div>
-                                <div className="pm-chart-subtitle">
-                                    Review what will be written. You'll pick the save folder next.
-                                </div>
-                            </div>
-                            <button
-                                className="pm-chart-modal-close"
-                                onClick={() => setConfirmSaveOpen(false)}
-                                title="Close (Esc)"
-                                aria-label="Close"
-                            >
-                                <X size={18} />
-                            </button>
-                        </div>
-                        <div className="pm-preview-modal-body">
-                            {!targetSensor && (
-                                <div className="pm-preview-error" style={{ marginBottom: '0.6rem' }}>
-                                    No target sensor selected — pick one before saving.
-                                </div>
-                            )}
-
-                            {savePlan.length === 0 ? (
-                                <div className="pm-preview-empty">
-                                    Nothing to save. Toggle <strong>Individual</strong>, <strong>Relationship</strong>, or <strong>Clustering</strong> above first.
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
-                                    {savePlan.map(item => (
-                                        <section key={item.kind} className="pm-preview-section">
-                                            <header className="pm-preview-section-header">
-                                                <div>
-                                                    <div className="pm-preview-section-title">{item.title}</div>
-                                                    <div className="pm-preview-section-sub">
-                                                        {item.kind === 'individual' && <>invokes <code>train_individual_model</code></>}
-                                                        {item.kind === 'relationship' && <>invokes <code>train_relationship_model</code></>}
-                                                        {item.kind === 'clustering' && <>invokes <code>train_clustering_model</code></>}
-                                                    </div>
-                                                </div>
-                                            </header>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                                {item.details.map((d, i) => (
-                                                    <div key={i} style={{
-                                                        display: 'flex',
-                                                        justifyContent: 'space-between',
-                                                        alignItems: 'baseline',
-                                                        gap: '0.8rem',
-                                                        fontSize: '0.78rem',
-                                                        padding: '0.22rem 0',
-                                                        borderBottom: i < item.details.length - 1
-                                                            ? '1px dashed rgba(127,127,127,0.15)'
-                                                            : 'none',
-                                                    }}>
-                                                        <span style={{
-                                                            color: 'var(--text-secondary)',
-                                                            fontSize: '0.72rem',
-                                                            flexShrink: 0,
-                                                            textTransform: 'uppercase',
-                                                            letterSpacing: '0.04em',
-                                                            fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                                                        }}>
-                                                            {d.label}
-                                                        </span>
-                                                        <span style={{
-                                                            color: 'var(--text-primary)',
-                                                            textAlign: 'right',
-                                                            wordBreak: 'break-word',
-                                                        }}>
-                                                            {d.value}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                            {item.warning && (
-                                                <div style={{
-                                                    color: '#f43f5e',
-                                                    fontSize: 12,
-                                                    marginTop: 8,
-                                                    padding: '0.35rem 0.5rem',
-                                                    background: 'rgba(244,63,94,0.08)',
-                                                    border: '1px solid rgba(244,63,94,0.25)',
-                                                    borderRadius: 4,
-                                                }}>
-                                                    ⚠ {item.warning}
-                                                </div>
-                                            )}
-                                        </section>
-                                    ))}
-
-                                    {/* Filter footnote — heads-off "why so few rows trained?" */}
-                                    <div style={{
-                                        fontSize: '0.72rem',
-                                        color: 'var(--text-secondary)',
-                                        padding: '0.45rem 0.55rem',
-                                        background: 'rgba(127,127,127,0.06)',
-                                        border: '1px solid var(--border)',
-                                        borderRadius: 6,
-                                        lineHeight: 1.45,
-                                    }}>
-                                        <strong style={{ color: 'var(--text-primary)' }}>Filters on training data:</strong>{" "}
-                                        {activeFilterCount.runningCondition === 0 && activeFilterCount.time === 0
-                                            ? 'none — using the full dataset.'
-                                            : <>
-                                                {activeFilterCount.time > 0 && <>a time range</>}
-                                                {activeFilterCount.time > 0 && activeFilterCount.runningCondition > 0 && <> and </>}
-                                                {activeFilterCount.runningCondition > 0 && <>the running-condition filter ({activeFilterCount.runningCondition} condition{activeFilterCount.runningCondition !== 1 ? 's' : ''})</>}
-                                                .
-                                            </>
-                                        }
-                                    </div>
-
-                                    {outputDir && (
-                                        <div style={{
-                                            fontSize: '0.7rem',
-                                            color: 'var(--text-secondary)',
-                                            opacity: 0.8,
-                                        }}>
-                                            Folder picker will open at: <code style={{ wordBreak: 'break-all' }}>{outputDir}</code>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                        <div className="pm-preview-modal-footer">
-                            <span className="pm-preview-footer-status" />
-                            <button
-                                className="pm-btn pm-btn-secondary"
-                                onClick={() => setConfirmSaveOpen(false)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                className="pm-btn pm-btn-primary"
-                                onClick={() => {
-                                    setConfirmSaveOpen(false);
-                                    handleSaveModel();
-                                }}
-                                disabled={!canConfirmSave || saveStatus.kind === 'saving'}
-                                title={
-                                    !targetSensor ? 'Select a target sensor first'
-                                    : savePlan.length === 0 ? 'Toggle a model type first'
-                                    : savePlan.some(p => p.warning) ? 'Fix the warnings above first'
-                                    : 'Confirm and pick save folder'
-                                }
-                            >
-                                <Check size={13} />
-                                <span>Confirm &amp; Save</span>
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -3376,57 +2593,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     })}
                                 </>
                             )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Saving overlay ────────────────────────────────────────────
-                Full-viewport blocking overlay shown while `train_*_model`
-                commands run. Renders above every other modal (chart, preview,
-                sub-models) because it's the last JSX node and uses a high
-                `zIndex`. Intentionally has no close button — the save is
-                non-cancellable from Rust's side, so letting the user click
-                away would create a UI that no longer matches the in-flight
-                operation. */}
-            {saveStatus.kind === 'saving' && (
-                <div
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label="Saving model"
-                    style={{
-                        position: 'fixed',
-                        inset: 0,
-                        background: 'rgba(2, 6, 23, 0.55)',
-                        backdropFilter: 'blur(2px)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 9999,
-                    }}
-                >
-                    <div
-                        style={{
-                            background: 'var(--bg-secondary, #1e293b)',
-                            color: 'var(--text-primary, #e2e8f0)',
-                            borderRadius: 12,
-                            padding: '24px 32px',
-                            minWidth: 280,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            gap: 14,
-                            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
-                            border: '1px solid var(--border-strong)',
-                        }}
-                    >
-                        <Loader2 size={36} className="animate-spin" style={{ color: '#3b82f6' }} />
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>Saving model…</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-secondary, #94a3b8)', minHeight: 18 }}>
-                            {saveStatus.step === 'individual' && 'Training individual model'}
-                            {saveStatus.step === 'relationship' && 'Fitting Relation model'}
-                            {saveStatus.step === 'clustering' && 'Fitting GMM ellipses (clustering model)'}
-                            {!saveStatus.step && 'Preparing…'}
                         </div>
                     </div>
                 </div>

@@ -361,11 +361,6 @@ export interface WorkspaceState {
      *  shim (`workspaceManager.ts`) to seed the one model it used to belong
      *  to; never written by current code. */
     predictiveModelState?: PredictiveModelStateSlice;
-    /** Last folder the user picked in the Save Model dialog. Used as the
-     *  `defaultPath` for the next folder-picker invocation so they don't have
-     *  to re-navigate to the same place every save. The actual save still
-     *  always opens the picker — this is only the default, not a bypass. */
-    outputDir?: string;
     /** Dashboard's resizable layout ratios (split.js gutters). Optional so
      *  older workspaces just use the default proportions. Updated on the
      *  fly via `onDragEnd` and persisted by the existing autosave effect. */
