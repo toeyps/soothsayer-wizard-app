@@ -1907,11 +1907,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         <label>TIME RANGE</label>
                         <div className="time-range-inputs">
                             <div className="date-input-wrapper">
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => timeRangeStartRef.current?.showPicker?.()}
-                                />
                                 <input
                                     ref={timeRangeStartRef}
                                     type="datetime-local"
@@ -1922,14 +1917,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     }}
                                     placeholder="Start Date"
                                 />
+                                {/* Flush against the box's own right edge
+                                    and white — explicit color, not just
+                                    `currentColor` inherited from the
+                                    wrapper's dimmer text color, so it reads
+                                    clearly against the dark input
+                                    background instead of blending in. */}
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                    onClick={() => timeRangeStartRef.current?.showPicker?.()}
+                                />
                             </div>
                             <span className="separator">-</span>
                             <div className="date-input-wrapper">
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => timeRangeEndRef.current?.showPicker?.()}
-                                />
                                 <input
                                     ref={timeRangeEndRef}
                                     type="datetime-local"
@@ -1939,6 +1940,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                         setRelativeRangeApplied(false);
                                     }}
                                     placeholder="End Date"
+                                />
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                    onClick={() => timeRangeEndRef.current?.showPicker?.()}
                                 />
                             </div>
                             <span className="separator">·</span>

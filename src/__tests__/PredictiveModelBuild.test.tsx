@@ -554,6 +554,17 @@ describe('PredictiveModelBuild', () => {
             // the `?.()` call must no-op rather than throw.
             expect(() => fireEvent.click(startIcon)).not.toThrow();
         });
+
+        it('the Calendar icon is explicit white and sits after the input (flush to the box\'s own right edge via marginLeft: auto) -- regression: it used to render before the input on the left, and the native picker-indicator it was meant to replace was reported unreadably dim even after trying to recolor it, so this icon needs to be unambiguously visible on its own', async () => {
+            await renderHydrated();
+            const startRow = screen.getByText('Time start').closest('.filter-row')!;
+            const children = Array.from(startRow.querySelector('.date-input-wrapper')!.children);
+            expect(children[0].tagName).toBe('INPUT');
+            const icon = children[1] as HTMLElement;
+            expect(icon.tagName.toLowerCase()).toBe('svg');
+            expect(icon.style.color).toBe('rgb(255, 255, 255)'); // jsdom normalizes '#fff'
+            expect(icon.style.marginLeft).toBe('auto');
+        });
     });
 
     describe('back navigation', () => {

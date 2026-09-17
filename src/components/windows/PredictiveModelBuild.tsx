@@ -2028,11 +2028,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         <div className="filter-row">
                             <label>Time start</label>
                             <div className="date-input-wrapper">
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => filterTimeStartRef.current?.showPicker?.()}
-                                />
                                 <input
                                     ref={filterTimeStartRef}
                                     type="datetime-local"
@@ -2041,16 +2036,24 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     max={targetMaxForInput || undefined}
                                     onChange={e => setFilterTimeStart(e.target.value)}
                                 />
+                                {/* Flush against the box's own right edge
+                                    (`marginLeft: auto` pushes it there
+                                    regardless of how much space the input
+                                    itself takes up) and white — explicit
+                                    color, not just `currentColor` inherited
+                                    from the wrapper's dimmer text color, so
+                                    it reads clearly against the dark input
+                                    background rather than blending in. */}
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                    onClick={() => filterTimeStartRef.current?.showPicker?.()}
+                                />
                             </div>
                         </div>
                         <div className="filter-row">
                             <label>Time end</label>
                             <div className="date-input-wrapper">
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => filterTimeEndRef.current?.showPicker?.()}
-                                />
                                 <input
                                     ref={filterTimeEndRef}
                                     type="datetime-local"
@@ -2058,6 +2061,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     min={targetMinForInput || undefined}
                                     max={targetMaxForInput || undefined}
                                     onChange={e => setFilterTimeEnd(e.target.value)}
+                                />
+                                <Calendar
+                                    size={14}
+                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                    onClick={() => filterTimeEndRef.current?.showPicker?.()}
                                 />
                             </div>
                         </div>

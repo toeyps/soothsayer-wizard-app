@@ -1561,6 +1561,17 @@ describe('Dashboard', () => {
             const startIcon = screen.getByPlaceholderText('Start Date').closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
             expect(() => fireEvent.click(startIcon)).not.toThrow();
         });
+
+        it('the Calendar icon is explicit white and sits after the input (flush to the box\'s own right edge via marginLeft: auto) -- same fix as the Build Model page\'s Time start/end, same reason: the native picker-indicator it replaces was reported unreadably dim even after trying to recolor it', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            const wrapper = screen.getByPlaceholderText('Start Date').closest('.date-input-wrapper')!;
+            const children = Array.from(wrapper.children);
+            expect(children[0].tagName).toBe('INPUT');
+            const icon = children[1] as HTMLElement;
+            expect(icon.tagName.toLowerCase()).toBe('svg');
+            expect(icon.style.color).toBe('rgb(255, 255, 255)'); // jsdom normalizes '#fff'
+            expect(icon.style.marginLeft).toBe('auto');
+        });
     });
 
     describe('relative time range', () => {
