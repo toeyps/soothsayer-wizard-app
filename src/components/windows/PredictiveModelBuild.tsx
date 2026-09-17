@@ -11,8 +11,7 @@ import type {
     ClusteringModelInfo,
     RelationshipTrainResult,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, FileText, Image as ImageIcon, ChevronDown, ArrowLeft } from "lucide-react";
-import { usePMReport } from "../../hooks/usePMReport";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import LineChart from "../charts/LineChart";
@@ -489,9 +488,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     }, [subModelsOpen]);
 
     // ── Save-confirmation modal ───────────────────────────────────────
-    // Intercepts every Save Model trigger (toolbar button, Preview
-    // modal's Save button, native sub-window menu's "Save Model" item)
-    // and presents a plain-language summary of what will be written
+    // Intercepts the Preview modal's Save Model trigger and presents a
+    // plain-language summary of what will be written
     // before we open the folder picker + heavy train_*_model invokes.
     //
     // Catches three common mistakes BEFORE the user picks a folder:
@@ -508,33 +506,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [confirmSaveOpen]);
-
-    // ── Report dropdown (Export PNG) ──
-    // `reportBusy` disables the button while html-to-image is rendering so
-    // the user can't double-click and trigger overlapping captures.
-    const [reportMenuOpen, setReportMenuOpen] = useState(false);
-    const [reportBusy, setReportBusy] = useState(false);
-    const reportMenuRef = useRef<HTMLDivElement>(null);
-    const { exportPNG } = usePMReport();
-    // Click-outside + Escape close the menu. Re-binds only while open so we
-    // don't leave a document listener attached the whole component lifetime.
-    useEffect(() => {
-        if (!reportMenuOpen) return;
-        const onDown = (e: MouseEvent) => {
-            if (reportMenuRef.current && !reportMenuRef.current.contains(e.target as Node)) {
-                setReportMenuOpen(false);
-            }
-        };
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setReportMenuOpen(false);
-        };
-        document.addEventListener('mousedown', onDown);
-        document.addEventListener('keydown', onKey);
-        return () => {
-            document.removeEventListener('mousedown', onDown);
-            document.removeEventListener('keydown', onKey);
-        };
-    }, [reportMenuOpen]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1237,8 +1208,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         };
     }, [clusteringPreview]);
 
-    const containerRef = useRef<HTMLDivElement>(null);
-
     const handlePredictorToggle = (sensor: string) => {
         setPredictorSensors(prev => {
             if (prev.includes(sensor)) {
@@ -1854,7 +1823,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     );
 
     return (
-        <div className="predictive-container" ref={containerRef}>
+        <div className="predictive-container">
             {/* Command bar — no window chrome (minimize/maximize/close) here
                 anymore: this is a page inside BuildModelWindow now, not its
                 own OS window, so that's BuildModelWindow's own titlebar's
@@ -1873,66 +1842,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
                 <div className="pm-flex-spacer" />
-                {/* Report dropdown — captures the whole page as a PNG
-                    screenshot. Lives in a relative wrapper so the floating
-                    menu can anchor to the button. */}
-                <div className="pm-report-wrap" ref={reportMenuRef}>
-                    <button
-                        className="pm-btn pm-btn-secondary pm-btn-with-caret"
-                        onClick={() => setReportMenuOpen(o => !o)}
-                        disabled={reportBusy}
-                        aria-haspopup="menu"
-                        aria-expanded={reportMenuOpen}
-                    >
-                        {reportBusy ? (
-                            <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                            <FileText size={13} />
-                        )}
-                        <span>{reportBusy ? 'Exporting…' : 'Report'}</span>
-                        <ChevronDown size={11} />
-                    </button>
-                    {reportMenuOpen && (
-                        <div className="pm-report-menu" role="menu">
-                            <button
-                                className="pm-report-menu-item"
-                                role="menuitem"
-                                onClick={async () => {
-                                    setReportMenuOpen(false);
-                                    if (!containerRef.current) return;
-                                    setReportBusy(true);
-                                    try {
-                                        await exportPNG(containerRef.current, workspaceName);
-                                    } catch (err) {
-                                        console.error('PNG export failed:', err);
-                                        alert('Export failed: ' + String(err));
-                                    } finally {
-                                        setReportBusy(false);
-                                    }
-                                }}
-                            >
-                                <ImageIcon size={14} />
-                                <div className="pm-report-menu-text">
-                    <span className="pm-report-menu-title">Export as PNG</span>
-                                    <span className="pm-report-menu-sub">Full-page screenshot at 2× resolution</span>
-                                </div>
-                            </button>
-                        </div>
-                    )}
-                </div>
                 <button className="pm-btn pm-btn-secondary" onClick={handleOpenPreview}>Preview</button>
-                <button
-                    className="pm-btn pm-btn-primary"
-                    onClick={() => setConfirmSaveOpen(true)}
-                    disabled={saveStatus.kind === 'saving'}
-                >
-                    {saveStatus.kind === 'saving' ? (
-                        <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                        <Check size={13} />
-                    )}
-                    <span>{saveStatus.kind === 'saving' ? 'Saving…' : 'Save Model'}</span>
-                </button>
             </div>
 
             {/* Main Content */}
@@ -3165,9 +3075,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             )}
 
             {/* ── Confirm Save Modal ───────────────────────────────────────
-                Gates every Save Model trigger (toolbar, native sub-window
-                menu, Preview modal's Save button) with a plain-language
-                summary of what will be written. Confirm → close + run
+                Gates the Preview modal's Save Model trigger with a
+                plain-language summary of what will be written. Confirm → close + run
                 handleSaveModel (which opens the folder picker and
                 actually trains/saves). Cancel/Esc/backdrop click → close
                 silently (no error state). */}

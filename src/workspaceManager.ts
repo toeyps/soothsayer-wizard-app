@@ -7,8 +7,8 @@ import { debugLog } from './utils/debugLog';
 const STORE_FILE = 'settings.json';
 
 // ─────────────────────────────────────────────────────────────────────────
-// FS bridge helpers — for writing user-picked paths (CSV / PDF / PNG exports).
-// These go through a Rust command instead of the fs plugin so they're not
+// FS bridge helper — for writing user-picked paths (CSV / JSON exports).
+// Goes through a Rust command instead of the fs plugin so it's not
 // blocked by tightened fs scope (Phase 2 will limit fs plugin to $APPDATA/**).
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -20,18 +20,6 @@ const STORE_FILE = 'settings.json';
  */
 export async function writeUserTextFile(path: string, content: string): Promise<void> {
     const bytes = new TextEncoder().encode(content);
-    await invoke('write_user_file', {
-        path,
-        contents: Array.from(bytes),
-    });
-}
-
-/**
- * Write raw bytes to a user-picked file path.
- * Use this for PDF / PNG / binary exports. Same bridging rationale as
- * `writeUserTextFile`.
- */
-export async function writeUserBinaryFile(path: string, bytes: Uint8Array): Promise<void> {
     await invoke('write_user_file', {
         path,
         contents: Array.from(bytes),

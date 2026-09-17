@@ -38,8 +38,7 @@
 | Scatter / pair-plot | `regl-scatterplot` (WebGL) | มี context-loss guard ในตัว |
 | Layout | `split.js` (resizable panes) | |
 | Icons | `lucide-react` | |
-| PDF export | `@react-pdf/renderer` (ใช้ yoga-layout WASM runtime) | ดูข้อควรระวัง §8 |
-| PNG export | `html-to-image` + ECharts canvas compositing | |
+| PDF/PNG export | ~~`@react-pdf/renderer`~~ / ~~`html-to-image` + ECharts canvas compositing~~ | ถอดออกหมดแล้ว — ดู entry 🆕 2026-09-17 |
 | Formula UI | `d3-scale` | ใช้ร่วมกับ formula engine ฝั่ง Rust |
 | Test | Vitest 4 + jsdom + @testing-library/react | `src/__tests__/` — coverage ครอบคลุมทุกไฟล์แล้ว (586 เทสต์/45 ไฟล์ ณ 2026-08-10, ดู entry ท้ายเอกสาร) |
 
@@ -2001,3 +2000,16 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **ยังไม่ได้ทดสอบแอปจริง** — รอบนี้เปลี่ยนแนวทางไปเป็นสิ่งที่ verify ได้ชัดเจนกว่ามาก (สีขาวชัดเจน + ตำแหน่งขวาที่คุ้นเคย) ไม่ได้พึ่งพฤติกรรม browser-native ที่ verify ไม่ได้อีกต่อไปแล้ว — รบกวนดูว่าเห็น icon สีขาวชัดเจนที่ขวาของกล่องแล้วครับ
   - ไฟล์ที่แก้: `src/components/windows/PredictiveModelBuild.tsx`, `src/components/dashboard/Dashboard.tsx`, `src/__tests__/PredictiveModelBuild.test.tsx`, `src/__tests__/Dashboard.test.tsx`, `docs/PROJECT_HANDOVER.md` (entry นี้)
   - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ยืนยันทดสอบแอปจริงก่อนตามกติกา)
+
+- **🆕 2026-09-17 (ต่ออีก) — 🗑️ เอาปุ่ม "Report" (dropdown export PNG) และปุ่ม "Save Model" บน toolbar ออกจากหน้า PM (Build Model) — ไม่ได้ใช้**: ผู้ใช้ส่งสกรีนช็อตหน้า Build Model (toolbar บนขวา: Report ▾ / Preview / Save Model) ชี้ลูกศรไปที่ 2 ปุ่ม "Report" กับ "Save Model" (ไม่ได้ชี้ "Preview") บอกว่า "ไม่ได้ใช้ เอาออกทั้ง ui และ code หลังบ้านเลยนะ"
+  - **ตรวจก่อนแก้**: `handleSaveModel`/Confirm Save modal ยังมี trigger เดิมเหลืออีกจุดคือปุ่ม "Save Model" ใน**ตัว Preview modal เอง** (บรรทัดที่ไม่ถูกชี้ในสกรีนช็อต เพราะ modal ไม่ได้เปิดอยู่ตอนถ่าย) — จึงลบเฉพาะปุ่ม toolbar ทิ้งได้โดยที่ฟีเจอร์ "เซฟโมเดล" ยังใช้งานได้ปกติผ่าน Preview → Save Model แทน (ไม่ใช่การลบความสามารถเซฟโมเดลออกทั้งหมด) — เคยมีคอมเมนต์อ้างถึง "native sub-window menu's Save Model item" เป็น trigger ที่ 3 แต่เช็คแล้วไม่มีอยู่จริง (ผู้ใช้เคยตัดสินใจไปแล้วก่อนหน้านี้ว่า "ตัดเมนู native ออก ใช้ปุ่มในหน้าอย่างเดียว") เลยแก้คอมเมนต์ให้ตรงของจริงไปด้วย
+  - **แก้ (UI)**: `PredictiveModelBuild.tsx` — ลบปุ่ม toolbar "Save Model" (คงปุ่ม "Preview" ไว้เดิม), ลบทั้ง Report dropdown block (state `reportMenuOpen`/`reportBusy`/`reportMenuRef`, click-outside effect, JSX ปุ่ม+เมนู), ลบ `containerRef` ที่ใช้เฉพาะตอนส่งให้ `exportPNG` (ไม่มีจุดใช้อื่นแล้ว), ลบ import `usePMReport`/ไอคอน `FileText`/`Image as ImageIcon`/`ChevronDown` ที่ไม่ได้ใช้ที่ไหนอีก
+  - **แก้ (backend/hook)**: ลบไฟล์ `src/hooks/usePMReport.tsx` ทั้งไฟล์ (html-to-image + ECharts canvas compositing — ใช้เฉพาะปุ่ม Report ที่ถูกลบ ไม่มีจุดเรียกอื่นในโค้ดทั้งโปรเจกต์) และลบ `writeUserBinaryFile` ออกจาก `src/workspaceManager.ts` (ตรวจแล้วมี caller เดียวคือ `usePMReport.tsx` — หลังลบ hook ไม่มีอะไรเรียกฟังก์ชันนี้อีกเลย) — `writeUserTextFile` (พี่น้องกันสำหรับ text export) ยังอยู่ปกติเพราะ CSV export ยังใช้อยู่
+  - **ไม่แตะ**: `src/components/reports/pmReportTypes.ts` — ดูชื่อ path เหมือนเกี่ยวกับ Report แต่จริงๆ เก็บแค่ Relation-model stiffness presets (`STIFFNESS_OPTIONS`/`stiffnessLabel`/`snapStiffness`) คนละฟีเจอร์กันเลย ไม่เกี่ยวกับปุ่ม Report ที่ลบ
+  - **เทสต์**: ลบ `src/__tests__/usePMReport.test.ts` ทั้งไฟล์ (คู่กับ hook ที่ลบ), ลบเทสต์ `writeUserBinaryFile` ออกจาก `workspaceManager.test.ts` (เหลือแค่ describe `writeUserTextFile`), ลบ `vi.mock('../hooks/usePMReport', ...)` ออกจาก `PredictiveModelBuild.test.tsx` — จุดที่ต้องแก้เยอะสุดคือ 6 จุดในไฟล์เดียวกันที่เคย `fireEvent.click(screen.getByText('Save Model'))` ตรงๆ (คลิกปุ่ม toolbar เดิม) ต้องเติม `fireEvent.click(screen.getByText('Preview'))` นำหน้าก่อนทุกจุด เพื่อเปิด Preview modal ให้ปุ่ม "Save Model" (ของ modal) โผล่มาให้คลิกได้แทน — เช็คแล้วว่า `handleOpenPreview` สำหรับ 6 เคสนี้ (individual/relationship-no-predictor) ไม่ trigger fetch เพิ่มระหว่างเทสต์
+  - **CSS**: ลบ `.pm-report-wrap`/`.pm-report-menu`/`.pm-report-menu-item`/`.pm-report-menu-text`/`.pm-report-menu-title`/`.pm-report-menu-sub`/`@keyframes pmReportMenuPop` และ `.pm-btn-with-caret` (utility เฉพาะปุ่มมี chevron ที่ไม่มีใครใช้อีกแล้ว) ออกจาก `App.css`
+  - **เอกสาร**: แก้ `CLAUDE.md`'s "Report export (PM page)" section ให้บอกว่าฟีเจอร์ถูกลบแล้ว, แก้ตาราง stack ใน §2 ของไฟล์นี้ (แถว PDF/PNG export) ให้ตรงความจริง
+  - Verify: `npx tsc --noEmit` สะอาด, `npx vitest run` **1037/1037 ผ่าน (53 ไฟล์)** — จำนวนเทสต์ลดจาก 1041 เพราะลบไฟล์เทสต์ที่ตายไปพร้อมโค้ด (`usePMReport.test.ts` ทั้งไฟล์ + 1 เทสต์ `writeUserBinaryFile`) ไม่ใช่ coverage หาย
+  - **ยังไม่ได้ทดสอบแอปจริง** — รบกวนเปิดหน้า Build Model ของโมเดลใดก็ได้ เช็คว่า toolbar เหลือแค่ปุ่ม "Back"/"Preview" (ไม่มี "Report"/"Save Model" อีกแล้ว), ลองกด Preview แล้วกด "Save Model" ในนั้นว่ายังเซฟโมเดลได้ปกติเหมือนเดิม
+  - ไฟล์ที่แก้: `src/components/windows/PredictiveModelBuild.tsx`, `src/workspaceManager.ts`, `src/App.css`, `src/__tests__/PredictiveModelBuild.test.tsx`, `src/__tests__/workspaceManager.test.ts`, `CLAUDE.md`, `docs/PROJECT_HANDOVER.md` (entry นี้) — ลบไฟล์: `src/hooks/usePMReport.tsx`, `src/__tests__/usePMReport.test.ts`
+  - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ยืนยันทดสอบแอปจริงก่อนตามกติกา — รวมกับ commit ก่อนหน้าที่ยังไม่ push เช่นกัน)

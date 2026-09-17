@@ -60,9 +60,9 @@ Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-mod
 - **Relationship**: Python sidecar (LinearGAM) — Rust pre-cleans/projects rows and ships small arrays over stdin; sidecar returns JSON; the sidecar writes the `.pkl`, Rust writes `REL_INFO_*.json` alongside. Output layout matches the legacy `wizard.py` (`{save_path}/output/{target}/`).
 - **Naming rule: the UI must say "Relation model" — the LinearGAM algorithm name is confidential and must never appear in user-facing UI** (code comments are fine).
 
-### Report export (PM page)
+### Report export (PM page) — removed
 
-`usePMReport` exports **PNG only** (html-to-image + `echarts.getInstanceByDom` composited onto a canvas; charts re-rendered offscreen at large size) — it returns just `{ exportPNG }`. PDF export and `@react-pdf/renderer` were removed; `src/components/reports/` holds only `pmReportTypes.ts` now. Don't re-add a PDF path without asking.
+The "Report" (PNG export) and toolbar "Save Model" buttons were removed from `PredictiveModelBuild.tsx` on 2026-09-17 (unused per the user). `usePMReport.tsx` and its test are deleted along with `workspaceManager.ts`'s `writeUserBinaryFile` (its only caller). Saving a model still works via the Preview modal's own "Save Model" button — that's the sole remaining trigger for `handleSaveModel`/the Confirm Save modal. `src/components/reports/pmReportTypes.ts` stays — it holds the unrelated Relation-model stiffness presets, not report code.
 
 **CSP note — `'unsafe-eval'` is REQUIRED, do not remove it**: the production `script-src` in `tauri.conf.json` carries `'unsafe-eval'` because **`regl-scatterplot` cannot work without it**. regl generates its draw commands as source strings and compiles them at runtime through the Function constructor (`node_modules/regl/dist/regl.js:6015`, `Function.apply(null, …)`) — that codegen *is* regl's execution model, not an optional path. Block it and creating a scatterplot throws `EvalError`, so the Scatter and Pair Plot charts render as empty panels.
 

@@ -29,10 +29,6 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
 }));
 
-vi.mock('../hooks/usePMReport', () => ({
-    usePMReport: () => ({ exportPNG: vi.fn().mockResolvedValue(undefined) }),
-}));
-
 const mockUseChartData = vi.fn((_q?: unknown) => ({ view: null, loading: false, error: null } as any));
 vi.mock('../hooks/useChartData', () => ({ useChartData: (q: unknown) => mockUseChartData(q) }));
 
@@ -485,6 +481,7 @@ describe('PredictiveModelBuild', () => {
             mockOpenDialog.mockResolvedValue('C:/save/here');
             await renderHydrated();
 
+            fireEvent.click(screen.getByText('Preview'));
             fireEvent.click(screen.getByText('Save Model'));
             // Footnote must acknowledge the active time filter instead of
             // claiming "none — using the full dataset."
@@ -589,6 +586,7 @@ describe('PredictiveModelBuild', () => {
             });
             await renderHydrated();
 
+            fireEvent.click(screen.getByText('Preview'));
             fireEvent.click(screen.getByText('Save Model'));
             const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
             expect(confirmBtn.disabled).toBe(false); // individual model alone is a valid plan
@@ -608,6 +606,7 @@ describe('PredictiveModelBuild', () => {
             mockOpenDialog.mockResolvedValue(null);
             await renderHydrated();
 
+            fireEvent.click(screen.getByText('Preview'));
             fireEvent.click(screen.getByText('Save Model'));
             await act(async () => {
                 fireEvent.click(screen.getByText('Confirm & Save'));
@@ -623,6 +622,7 @@ describe('PredictiveModelBuild', () => {
                 failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
             });
             await renderHydrated({ kind: 'relationship' });
+            fireEvent.click(screen.getByText('Preview'));
             fireEvent.click(screen.getByText('Save Model'));
             const confirmBtn = screen.getByText('Confirm & Save').closest('button') as HTMLButtonElement;
             expect(confirmBtn.disabled).toBe(true);
@@ -630,6 +630,7 @@ describe('PredictiveModelBuild', () => {
 
         it('the "Filters on training data" footnote reflects only this page\'s own filters now (2026-09-01: `dashboardSnapshot` removed as dead code — it was never written by anything, so Dashboard\'s own filters never actually carried into training; removing it changes nothing observable)', async () => {
             await renderHydrated();
+            fireEvent.click(screen.getByText('Preview'));
             fireEvent.click(screen.getByText('Save Model'));
             expect(screen.getByText(/Filters on training data:/)).toBeTruthy();
             expect(screen.getByText(/none — using the full dataset\./)).toBeTruthy();
@@ -642,6 +643,7 @@ describe('PredictiveModelBuild', () => {
                     { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
                 ],
             });
+            fireEvent.click(screen.getByText('Preview'));
             fireEvent.click(screen.getByText('Save Model'));
             expect(screen.getByText(/the running-condition filter \(1 condition\)/)).toBeTruthy();
             expect(screen.queryByText(/none — using the full dataset\./)).toBeNull();

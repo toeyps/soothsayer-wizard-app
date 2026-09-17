@@ -59,22 +59,13 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-describe('writeUserTextFile / writeUserBinaryFile', () => {
+describe('writeUserTextFile', () => {
     it('encodes a UTF-8 string and bridges through write_user_file', async () => {
         const { writeUserTextFile } = await freshModule();
         await writeUserTextFile('C:/out.txt', 'hi');
         expect(mockInvoke).toHaveBeenCalledWith('write_user_file', {
             path: 'C:/out.txt',
             contents: Array.from(new TextEncoder().encode('hi')),
-        });
-    });
-
-    it('passes raw bytes through as an array', async () => {
-        const { writeUserBinaryFile } = await freshModule();
-        await writeUserBinaryFile('C:/out.bin', new Uint8Array([1, 2, 3]));
-        expect(mockInvoke).toHaveBeenCalledWith('write_user_file', {
-            path: 'C:/out.bin',
-            contents: [1, 2, 3],
         });
     });
 });
