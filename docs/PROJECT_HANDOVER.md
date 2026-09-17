@@ -11,6 +11,8 @@
 > ✅ **2026-09-15: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน (Component select fix) commit `26fef29` ถูก push ไปที่ `personal` สำเร็จ เป็น fast-forward สะอาด (`3ee86bd` → `26fef29`, 23 commits) รวมงานสะสมทั้งหมดตั้งแต่ครั้งก่อน (ชุด intern guide/manual test plan วันที่ 2026-09-08 ถึง 2026-09-14 ทั้งหมด บวก Component select fix วันนี้) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `26fef29`**
 >
 > ✅ **2026-09-16: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน (Line chart time-axis fix ครบทุกจุด: ระยะห่างแกน, tooltip, Tag Point, highlight band) commit `78b7021` ถูก push ไปที่ `personal` สำเร็จ เป็น fast-forward สะอาด (`772dad1` → `78b7021`, 8 commits) รวมงานสะสมทั้งหมดตั้งแต่ครั้งก่อน (Running Condition Filter งานใหญ่, Sensor-value filter pool fix, intern guide expand, Line chart category→time axis fix + tooltip fix + Tag Point fix) — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `78b7021`**
+>
+> ✅ **2026-09-18: push แล้ว** — ผู้ใช้ยืนยันทดสอบแอปจริงผ่าน ("ผมทดสอบ app แล้วววว") commit `d239c65` ถูก push ไปที่ `personal` สำเร็จ เป็น fast-forward สะอาด (`6387675` → `d239c65`, 17 commits) รวมงานสะสมทั้งหมดตั้งแต่ครั้งก่อน — ปุ่ม calendar icon สีขาว, เอาปุ่ม Report/Save Model/Preview ออกจากหน้า PM ทั้งหมด (รวม train_*_model backend ที่เก็บไว้เฉยๆ), เพิ่มปุ่ม Finish, **แก้บั๊ก data-loss ใหญ่ 2 รอบ** (workspaceManager.ts same-window write queue + Dashboard's cross-window stale-mirror autosave), แก้บั๊ก predictor sensors หายหลังกด Build Model →, เปลี่ยน "Predict this sensor" → "Target sensor", เพิ่ม group-by-component + search ให้ predictor picker — **commit ที่ push แล้วล่าสุดที่ `personal` คือ `d239c65`**
 
 ---
 
