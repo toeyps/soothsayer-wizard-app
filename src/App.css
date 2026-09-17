@@ -233,9 +233,22 @@ body {
     padding: 0;
 }
 
+/* Hidden, not just dimmed (2026-09-17 — was `filter: invert(1); opacity:
+   0.5;`, still reported barely visible/hard to see even after that). This
+   pseudo-element is drawn entirely by the browser engine itself (WebView2
+   here) — its actual on-screen appearance can't be verified from this dev
+   environment (no way to open the real packaged app), so rather than keep
+   guessing at filter/opacity values, stop depending on it being visible at
+   all. The lucide `<Calendar>` icon rendered next to each input (an
+   ordinary SVG this app already renders reliably everywhere) is the
+   reliable calendar affordance now, wired to call the input's own
+   `showPicker()` on click — see PredictiveModelBuild.tsx's and
+   Dashboard.tsx's Time start/end and TIME RANGE inputs. Still occupies its
+   normal layout space and is still functionally clickable at opacity: 0
+   (a harmless fallback), just no longer visible to confuse the icon that
+   IS reliably visible right next to it. */
 .date-input-wrapper input::-webkit-calendar-picker-indicator {
-    filter: invert(1);
-    opacity: 0.5;
+    opacity: 0;
     cursor: pointer;
 }
 
