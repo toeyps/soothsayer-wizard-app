@@ -36,7 +36,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: () => <div data-testid="echarts-mock" />,
 }));
 
-import PredictiveModelBuild from '../components/windows/PredictiveModelBuild';
+import PredictiveModelBuild, { SensorAutocomplete } from '../components/windows/PredictiveModelBuild';
 import type { SensorMetadata } from '../types';
 import type { ComponentProps } from 'react';
 
@@ -598,5 +598,66 @@ describe('PredictiveModelBuild', () => {
             }
         });
         expect(screen.getByText('Renamed WS')).toBeTruthy();
+    });
+});
+
+describe('SensorAutocomplete', () => {
+    // 2026-09-18: optional component-grouping, added for BuildModelWindow's
+    // predictor picker (per explicit user request: "แสดงผลเป็น by component
+    // ได้ไหม ... สามารถ search ได้ด้วย"). Tested directly against the real
+    // implementation here -- BuildModelWindow.test.tsx mocks this component
+    // out entirely, so it can only assert that the `getComponent` prop is
+    // wired through, not what it renders.
+    const sensors = ['TAG1', 'TAG2', 'TAG3'];
+    const descriptions: Record<string, string> = { TAG1: 'Pump Pressure', TAG2: 'Pump Temp' }; // TAG3: no description
+    const components: Record<string, string> = { TAG1: 'Pump', TAG2: 'Pump' }; // TAG3: no component
+    const getDesc = (tag: string) => descriptions[tag] ?? '';
+    const getComponent = (tag: string) => components[tag] ?? '';
+
+    afterEach(cleanup);
+
+    it('stays a flat list when getComponent is omitted (default/backward-compatible behavior for every other caller)', () => {
+        render(
+            <SensorAutocomplete sensors={sensors} getDesc={getDesc} value="" onSelect={() => {}} placeholder="Search…" />
+        );
+        // A non-empty query both opens the dropdown and is needed to trigger
+        // React's onChange at all here -- firing `change` with the same
+        // value the input already holds (`''`) is a silent no-op.
+        fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'TAG' } });
+        expect(document.querySelectorAll('.sensor-autocomplete-group-header').length).toBe(0);
+        expect(screen.getByText('TAG1')).toBeTruthy();
+    });
+
+    it('groups options under a component header, alphabetically, with an "Uncategorized" fallback for sensors with no component', () => {
+        render(
+            <SensorAutocomplete sensors={sensors} getDesc={getDesc} getComponent={getComponent} value="" onSelect={() => {}} placeholder="Search…" />
+        );
+        fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'TAG' } });
+        const headers = Array.from(document.querySelectorAll('.sensor-autocomplete-group-header')).map(el => el.textContent);
+        expect(headers).toEqual(['Pump', 'Uncategorized']);
+    });
+
+    it('search still narrows the grouped list, not just the flat one', () => {
+        render(
+            <SensorAutocomplete sensors={sensors} getDesc={getDesc} getComponent={getComponent} value="" onSelect={() => {}} placeholder="Search…" />
+        );
+        fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'Pump Temp' } });
+        expect(screen.getByText('TAG2')).toBeTruthy(); // matched by its description "Pump Temp"
+        expect(screen.getByText('Pump Temp')).toBeTruthy();
+        expect(screen.queryByText('TAG3')).toBeNull();
+        // Only the matching sensor's own component group renders.
+        const headers = Array.from(document.querySelectorAll('.sensor-autocomplete-group-header')).map(el => el.textContent);
+        expect(headers).toEqual(['Pump']);
+    });
+
+    it('clicking a grouped item still selects it and closes the dropdown', () => {
+        const onSelect = vi.fn();
+        render(
+            <SensorAutocomplete sensors={sensors} getDesc={getDesc} getComponent={getComponent} value="" onSelect={onSelect} placeholder="Search…" clearOnSelect />
+        );
+        fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'TAG3' } });
+        fireEvent.click(screen.getByText('TAG3')); // Uncategorized group, bare tag (no description)
+        expect(onSelect).toHaveBeenCalledWith('TAG3');
+        expect(screen.queryByText('Uncategorized')).toBeNull(); // dropdown closed
     });
 });

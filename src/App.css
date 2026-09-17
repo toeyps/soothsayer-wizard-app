@@ -4291,6 +4291,19 @@ tr:hover {
     max-width: 100%;
 }
 
+/* Component-group header inside the dropdown (opt-in via the
+   `getComponent` prop) -- sits above each component's own items, not
+   itself a selectable row. */
+.sensor-autocomplete-group-header {
+    padding: 0.4rem 0.5rem 0.2rem;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint, var(--text-secondary));
+    opacity: 0.75;
+}
+
 .sensor-autocomplete-empty {
     padding: 0.75rem;
     text-align: center;

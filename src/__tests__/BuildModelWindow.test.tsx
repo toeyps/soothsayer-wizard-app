@@ -31,6 +31,7 @@ vi.mock('../workspaceManager', () => ({
 // BuildModelWindow's tests only need to assert the page-navigation wiring
 // (props passed in, onBack switching pages), not PM's own internals.
 const predictiveModelBuildProps: any[] = [];
+const sensorAutocompleteProps: any[] = [];
 vi.mock('../components/windows/PredictiveModelBuild', () => ({
     default: (props: any) => {
         predictiveModelBuildProps.push(props);
@@ -42,16 +43,20 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
             </div>
         );
     },
-    // Minimal stand-in for the real searchable picker (own tests live in
-    // PredictiveModelBuild.test.tsx) — just enough to let the Running
-    // Condition Filter panel's tests exercise everything around it.
-    SensorAutocomplete: (props: any) => (
-        <input
-            placeholder={props.placeholder}
-            value={props.value}
-            onChange={e => props.onSelect(e.target.value)}
-        />
-    ),
+    // Minimal stand-in for the real searchable picker (its own search/
+    // component-grouping tests live in PredictiveModelBuild.test.tsx,
+    // against the real implementation) — just enough to let this page's
+    // wiring around it (which props reach which instance) be asserted.
+    SensorAutocomplete: (props: any) => {
+        sensorAutocompleteProps.push(props);
+        return (
+            <input
+                placeholder={props.placeholder}
+                value={props.value}
+                onChange={e => props.onSelect(e.target.value)}
+            />
+        );
+    },
 }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
@@ -96,6 +101,7 @@ async function deliverData(overrides: Record<string, any> = {}) {
 beforeEach(() => {
     listenCallbacks = {};
     predictiveModelBuildProps.length = 0;
+    sensorAutocompleteProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
@@ -622,7 +628,8 @@ describe('BuildModelWindow', () => {
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
                 expect(save.disabled).toBe(true); // no predictor yet
 
-                fireEvent.change(form.getByDisplayValue('Add a predictor…'), { target: { value: 'TAG2' } });
+                fireEvent.change(form.getByPlaceholderText('Search sensor tag or description…'), { target: { value: 'TAG2' } });
+                fireEvent.click(form.getByText('Pump Temp (TAG2)'));
                 expect(save.disabled).toBe(false);
             });
 
@@ -673,8 +680,22 @@ describe('BuildModelWindow', () => {
                 const form = within(screen.getByTestId('add-model-form'));
                 expect(form.getByText('Pump Pressure (TAG1)').closest('select')).toBeNull(); // Target: locked
 
-                fireEvent.change(form.getByDisplayValue('Add a predictor…'), { target: { value: 'TAG3' } });
-                expect(form.getByText('TAG3')).toBeTruthy(); // Predictors: still freely editable
+                fireEvent.change(form.getByPlaceholderText('Search sensor tag or description…'), { target: { value: 'TAG3' } });
+                fireEvent.click(form.getByText('TAG3')); // no description in the fixture -- bare tag
+                expect(form.getByText('TAG3')).toBeTruthy(); // Predictors: still freely editable (now the chip)
+            });
+
+            it('the predictor picker passes getComponent through to SensorAutocomplete, so its dropdown can group by component (2026-09-18, per explicit user request: "แสดงผลเป็น by component ได้ไหม ... สามารถ search ได้ด้วย") -- the actual grouped/searchable rendering is SensorAutocomplete\'s own behavior, covered directly against the real implementation in PredictiveModelBuild.test.tsx, since this page mocks that component out', async () => {
+                const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+                fireEvent.click(screen.getByText('Rel Model'));
+
+                const predictorProps = sensorAutocompleteProps.find(p => p.placeholder === 'Search sensor tag or description…');
+                expect(predictorProps).toBeTruthy();
+                expect(typeof predictorProps.getComponent).toBe('function');
+                expect(predictorProps.getComponent('TAG2')).toBe('Pump'); // has a component in the fixture
+                expect(predictorProps.getComponent('TAG3')).toBe(''); // no metadata entry -- SensorAutocomplete itself falls this back to "Uncategorized"
             });
 
             it('Clustering\'s X sensor is locked, but its Y sensor stays a normal editable select', async () => {

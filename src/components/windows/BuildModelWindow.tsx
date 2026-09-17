@@ -540,14 +540,16 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="fg-inspector-field">
                         <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
-                        <select
-                            className="fg-inspector-input"
+                        <SensorAutocomplete
+                            sensors={allSensors}
+                            getDesc={getDesc}
+                            getComponent={getComponent}
                             value=""
-                            onChange={e => { if (e.target.value) setFormPredictors(prev => prev.includes(e.target.value) ? prev : [...prev, e.target.value]); }}
-                        >
-                            <option value="">Add a predictor…</option>
-                            {allSensors.filter(s => s !== formTarget && !formPredictors.includes(s)).map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
-                        </select>
+                            onSelect={(tag) => { if (tag) setFormPredictors(prev => prev.includes(tag) ? prev : [...prev, tag]); }}
+                            placeholder="Search sensor tag or description…"
+                            excluded={[formTarget, ...formPredictors]}
+                            clearOnSelect
+                        />
                         {formPredictors.length > 0 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
                                 {formPredictors.map(p => (

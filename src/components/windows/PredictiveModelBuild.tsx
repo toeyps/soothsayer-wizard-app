@@ -57,11 +57,16 @@ export interface SensorAutocompleteProps {
     allowNone?: boolean;
     disabled?: boolean;
     style?: React.CSSProperties;
+    /** When provided, the dropdown groups matches under a header per
+     *  component (alphabetical, same "Uncategorized" fallback used
+     *  elsewhere) instead of one flat list — lets a long sensor list be
+     *  scanned by equipment area. Omit to keep the flat list. */
+    getComponent?: (tag: string) => string;
 }
 
 export function SensorAutocomplete({
     sensors, getDesc, value, onSelect, placeholder, excluded = [],
-    clearOnSelect = false, allowNone = false, disabled = false, style,
+    clearOnSelect = false, allowNone = false, disabled = false, style, getComponent,
 }: SensorAutocompleteProps) {
     const [query, setQuery] = useState(value);
     const [open, setOpen] = useState(false);
@@ -88,10 +93,39 @@ export function SensorAutocomplete({
         return getDesc(s).toLowerCase().includes(q);
     });
 
+    // Component groups, alphabetical — same "Uncategorized" fallback used
+    // elsewhere (BuildModelWindow's own Group-by-Component view). Only
+    // computed when a caller opts in via `getComponent`.
+    const groupedFiltered = useMemo(() => {
+        if (!getComponent) return null;
+        const groups = new Map<string, string[]>();
+        for (const s of filtered) {
+            const comp = getComponent(s) || 'Uncategorized';
+            if (!groups.has(comp)) groups.set(comp, []);
+            groups.get(comp)!.push(s);
+        }
+        return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+    }, [filtered, getComponent]);
+
     const handleSelect = (tag: string) => {
         onSelect(tag);
         setQuery(clearOnSelect ? '' : tag);
         setOpen(false);
+    };
+
+    const renderItem = (s: string) => {
+        const desc = getDesc(s);
+        return (
+            <button
+                type="button"
+                key={s}
+                className={`sensor-autocomplete-item ${s === value ? 'selected' : ''}`}
+                onClick={() => handleSelect(s)}
+            >
+                <span className="sensor-autocomplete-item-tag">{s}</span>
+                {desc && <span className="sensor-autocomplete-item-desc">{desc}</span>}
+            </button>
+        );
     };
 
     return (
@@ -127,20 +161,12 @@ export function SensorAutocomplete({
                     )}
                     {filtered.length === 0 ? (
                         <div className="sensor-autocomplete-empty">No sensors found</div>
-                    ) : filtered.map(s => {
-                        const desc = getDesc(s);
-                        return (
-                            <button
-                                type="button"
-                                key={s}
-                                className={`sensor-autocomplete-item ${s === value ? 'selected' : ''}`}
-                                onClick={() => handleSelect(s)}
-                            >
-                                <span className="sensor-autocomplete-item-tag">{s}</span>
-                                {desc && <span className="sensor-autocomplete-item-desc">{desc}</span>}
-                            </button>
-                        );
-                    })}
+                    ) : groupedFiltered ? groupedFiltered.map(([comp, tags]) => (
+                        <div key={comp}>
+                            <div className="sensor-autocomplete-group-header">{comp}</div>
+                            {tags.map(renderItem)}
+                        </div>
+                    )) : filtered.map(renderItem)}
                 </div>
             )}
         </div>
