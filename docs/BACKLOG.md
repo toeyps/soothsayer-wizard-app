@@ -1196,23 +1196,71 @@ single sweeping refactor.
 
 ## 13. `App.css` is 9,048 lines with duplicate rules that silently cancel out
 
-**Status: identified 2026-09-03. Not started.**
+**Resolved 2026-09-18** — de-duplicated programmatically rather than by hand
+(178 duplicate-selector groups was too many to safely eyeball). Full account
+below; the file-splitting idea in the original entry is untouched, still
+backlog if anyone wants it later.
 
-One stylesheet, 9,048 lines, 25 `!important` declarations, and selectors
-defined several times over. The worst example: `.fg-sensor-dropdown-item` is
-declared **four times** (lines ~2565, ~3389, ~3983, ~5015), plus its
-`:hover` / `.selected` / `-tag` / `-desc` variants — 18 blocks in total. The
-copies at 2565 and 3389 are byte-identical; the one at 3983 differs only in
-`padding` (`0.35rem 0.6rem` vs `0.55rem`).
-
-Because they have equal specificity, **only the last one wins** and the first
-three are dead code that still looks live. Editing the wrong copy and seeing
+**Found 2026-09-03:** one stylesheet, 9,048 lines, 25 `!important`
+declarations, and selectors defined several times over. The worst example:
+`.fg-sensor-dropdown-item` is declared **four times** (lines ~2565, ~3389,
+~3983, ~5015), plus its `:hover` / `.selected` / `-tag` / `-desc` variants —
+18 blocks in total. The copies at 2565 and 3389 are byte-identical; the one
+at 3983 differs only in `padding` (`0.35rem 0.6rem` vs `0.55rem`). Because
+they have equal specificity, **only the last one wins** and the first three
+are dead code that still looks live. Editing the wrong copy and seeing
 nothing change is an easy hour to lose — and the 25 `!important`s look like
 scar tissue from exactly that.
 
-**Approach:** find duplicate selectors first (they are the trap), keep the
-last-wins copy, delete the rest. Splitting the file by feature can follow,
-but de-duplication is the part that removes the hazard.
+**Fix:** wrote a one-off Node script against `postcss` (already a
+dependency via Tailwind) rather than editing by hand — a manual pass over
+178 groups risks exactly the mistake this item warns about. For every
+`(selector, @media-context)` pair repeated more than once in the file, the
+script:
+1. Walks every declaration across all of that group's blocks, in file order.
+2. Resolves each property name to its cascade winner using the real CSS
+   rule for equal-specificity rules — later wins, **except** an earlier
+   `!important` beats a later non-`!important` declaration for that same
+   property (checked explicitly; a few groups genuinely had this, e.g.
+   `.fg-sensor-card--selected`'s `border-color !important`).
+3. Emits **one** merged rule holding exactly those winning declarations, at
+   the position of the group's last occurrence, and deletes the rest.
+
+This is provably behavior-preserving (it's the same algorithm the browser
+already uses to resolve the duplicates today, just applied once at build
+time instead of by the browser on every paint) — not a guess. Verified
+three ways before applying:
+- `postcss` round-trips the original file byte-for-byte first (confirms the
+  parser has no blind spots that could silently mangle unrelated CSS).
+- Spot-checked several merged groups by hand against the originals,
+  including the `.fg-sensor-dropdown-item` example above and both
+  `!important` cases — every merged block matched what's actually rendering
+  today, including properties that only ever appeared in an *earlier* block
+  and were never touched by later ones (e.g. `width`/`border`/`display` on
+  `.fg-sensor-dropdown-item` only exist in the 2565/3389/3983 copies, not
+  5015 — still correctly carried into the merged rule).
+- `npx tsc --noEmit`, `npx vitest run` (1041/1041), and `npm run build`
+  (Vite/PostCSS/Tailwind pipeline) all clean against the merged file.
+
+**Result:** 178 duplicate groups → 292 redundant blocks removed, file drops
+from 9,050 → 6,980 lines (~23%), built CSS output shrinks too. Zero groups
+needed manual handling (no nested at-rules inside a duplicate block, the
+one case the script explicitly refused to touch automatically).
+
+**Not fully verified — flagging honestly:** this app can't be usefully
+checked in a plain browser preview (`npm run dev` alone) — `TitleBar.tsx`
+crashes immediately outside the real Tauri shell (`getCurrentWindow()` has
+nothing to attach to), confirmed to be a pre-existing environment
+limitation and not something this change caused (reproduced identically on
+the pre-change file). No screenshot-level visual diff of the actual running
+app has been done — **needs a real `npm run tauri dev` pass over screens
+that use the heavily-duplicated selectors** (Failure Groups sensor cards/
+dropdowns, Build Model) before this is "Done" per the project's own
+release-checklist rule (automated checks passing ≠ confirmed).
+
+**Approach for the untouched follow-up (splitting the file by feature):**
+still not started — de-duplication was the part that removed the hazard;
+splitting is a separate, lower-urgency readability pass.
 
 ---
 
