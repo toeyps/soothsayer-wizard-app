@@ -1535,9 +1535,41 @@ bands) via real-app testing. The perf complaint itself is NOT fixed.
 
 ## 22. ~40% of `App.css` is dead — 267 of 577 classes are used by no element
 
-**Status: found 2026-09-20 during a whole-project dead-code audit. Not
-started — the user asked for the frontend/Rust dead files first (done, see
-`PROJECT_HANDOVER.md` 2026-09-20); this is the next step.**
+**Resolved 2026-09-20 (code done, awaiting real-app click-through).**
+Pruned with a postcss script: 392 fully-dead rules removed, 5 comma-lists
+trimmed, 4 emptied `@media` blocks dropped, plus 93 section-header
+comments that no longer label anything. `App.css` 6,981 → 3,782 lines,
+built CSS bundle 137.9 → 80.6 kB (gzip 22.3 → 14.5 kB). The original
+finding below is kept for the record.
+
+**How it was made safe** (the first audit script was NOT safe to delete
+from — it would have removed live classes; recorded so nobody reuses it):
+- The original detector only recognised `prefix${x}` / `'prefix-' + x`.
+  A hardened detector now turns every template literal in live code into a
+  wildcard pattern (`\`model-status-pill--${x}\`` → `model-status-pill--*`)
+  and also honours `'prefix-' + x` / `x + '-suffix'`. It caught real
+  dynamic classes the old one would have deleted: `fg-group-color-*`,
+  `pm-selected-dot-1..4`, `model-status-pill--*`, `model-kind-icon--*`,
+  `model-chip--*`, `gutter-horizontal/vertical` (32 in total). Patterns
+  are deliberately loose, so a few genuinely-dead classes
+  (`sensor-list-*`, `model-stats-*`) were kept — dead CSS we chose not to
+  risk; a later pass can remove them.
+- Classes inside `:not()` / `:is()` / `:where()` / `:has()` are ignored
+  when deciding whether a selector can match (they don't *require* the
+  class), so `.a:not(.x)` is never removed just because `.x` is unused.
+- Every surviving rule was asserted byte-identical to an original rule; the
+  5 "used class lost rules" cases (`active`, `disabled`, `selected`,
+  `fg-icon-btn`, `fg-build-model-btn`) were each checked — every one was a
+  compound selector whose other class has 0 references in live code.
+- Comment cleanup changed nothing functional: the built CSS file kept the
+  same content hash before and after it.
+- `tsc`, vitest 970/970, lint 0 errors, `npm run build` all pass.
+
+**Still unverified by a human:** no browser preview can render this Tauri
+app, so no visual diff exists. Needs the manual click-through in
+`PROJECT_HANDOVER.md` (2026-09-20, second entry) before "Done".
+
+**Original finding (2026-09-20):**
 
 A postcss script listed every class in `App.css` and looked for it as a
 token in every `.ts`/`.tsx`/`index.html` (plus template-string prefixes like
