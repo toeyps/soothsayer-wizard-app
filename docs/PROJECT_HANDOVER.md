@@ -2113,9 +2113,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - ไฟล์ที่แก้: `src/App.css`, `docs/BACKLOG.md` (ข้อ 22), `docs/PROJECT_HANDOVER.md` (entry นี้) — สคริปต์เป็น scratch ชั่วคราว ลบแล้ว ไม่ได้ commit
   - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ยืนยันทดสอบแอปจริงก่อนตามกติกา — รวมกับ commit ก่อนหน้าที่ยังไม่ push เช่นกัน)
 
-- **🆕 2026-09-20 (ต่ออีก) — 🧹 ล้างเศษ light/dark theme ที่ค้างในเทสต์**: ระหว่างให้ checklist manual test ผมใส่ข้อ "ลองสลับ light/dark" ผิดพลาด (ผู้ใช้เตือนว่าเอา theme switching ออกไปนานแล้ว) — ตรวจแล้วโค้ดจริงไม่มี  /  / hook / CSS ของ light เหลือเลย (แอป dark อย่างเดียว;  ใน  ต้องเก็บไว้เพราะคุมสีของ native input/date picker/checkbox) เหลือแค่เศษในเทสต์:
-  - ลบบรรทัด  ที่ไม่มีใครอ่านแล้ว 3 จุด (, , )
-  - เปลี่ยนชื่อเทสต์ 2 ข้อที่เล่าถึง "light theme" ( overlay WebGL-unavailable,  badge จำนวนที่เลือก) ให้ตรงกับสิ่งที่ตรวจจริง (ใช้ CSS variable ไม่ใช่สี hardcode) — assertion เดิมไม่เปลี่ยน
-  - **ตั้งใจไม่แตะ**: prop  (default ) ของ  — ไม่มีใครส่งค่าอื่น แต่เป็นตัวส่งต่อ ECharts API และเทสต์ยังตรวจการส่งต่อ
-  - Verify:  สะอาด, vitest **970/970**, lint 0 error — เปลี่ยนเฉพาะไฟล์เทสต์ ไม่กระทบแอป
-  - ไฟล์ที่แก้: 5 ไฟล์ใน ,  (entry นี้)
+- **🆕 2026-09-20 (ต่ออีก) — 🧹 ล้างเศษ light/dark theme ที่ค้างในเทสต์**: ระหว่างให้ checklist manual test ผมใส่ข้อ "ลองสลับ light/dark" ผิดพลาด (ผู้ใช้เตือนว่าเอา theme switching ออกไปนานแล้ว) — ตรวจแล้วโค้ดจริงไม่มี `data-theme` / `prefers-color-scheme` / hook / CSS ของ light เหลือเลย (แอป dark อย่างเดียว; `color-scheme: dark` ใน `:root` ต้องเก็บไว้เพราะคุมสีของ native input/date picker/checkbox) เหลือแค่เศษในเทสต์:
+  - ลบบรรทัด `data-theme` ที่ไม่มีใครอ่านแล้ว 3 จุด (`App.test.tsx`, `LineChart.test.tsx`, `DataUploadPage.test.tsx`)
+  - เปลี่ยนชื่อเทสต์ 2 ข้อที่เล่าถึง "light theme" (`ScatterChart.test.tsx` overlay WebGL-unavailable, `SensorSelection.test.tsx` badge จำนวนที่เลือก) ให้ตรงกับสิ่งที่ตรวจจริง (ใช้ CSS variable ไม่ใช่สี hardcode) — assertion เดิมไม่เปลี่ยน
+  - **ตั้งใจไม่แตะ**: prop `theme` (default `'dark'`) ของ `ResponsiveECharts` — ไม่มีใครส่งค่าอื่น แต่เป็นตัวส่งต่อ ECharts API และเทสต์ยังตรวจการส่งต่อ
+  - Verify: `tsc` สะอาด, vitest **970/970**, lint 0 error — เปลี่ยนเฉพาะไฟล์เทสต์ ไม่กระทบแอป
+  - ไฟล์ที่แก้: 5 ไฟล์ใน `src/__tests__/`, `docs/PROJECT_HANDOVER.md` (entry นี้)
+  - push แล้ว (commit `e526c28`; entry นี้ถูกแก้ข้อความที่เพี้ยนตอนเขียนครั้งแรกในคอมมิตถัดมา)
