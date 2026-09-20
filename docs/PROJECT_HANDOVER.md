@@ -2112,3 +2112,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **ยังไม่ได้ทดสอบแอปจริง** — เปิดใน browser preview ไม่ได้ (TitleBar เรียก `getCurrentWindow()`) จึงไม่มี visual diff เลย. ต้องให้ผู้ใช้เปิด `npm run tauri dev` แล้วไล่เช็คหน้าจอตามรายการที่ให้ไว้ในแชท: Import, Dashboard ทั้ง 4 กราฟ, แท็บ Sensor/Filter/Highlights/Failure Groups, Build Model (Overview + หน้า PM), Add Sensor (Create/Manage), scrollbar, hover/active/disabled ของปุ่ม, light/dark theme — **ถ้าเจอจุดที่หน้าตาเพี้ยน ให้ `git revert` commit นี้ได้ทั้งก้อน (เป็น commit เดียว แยกจากงานอื่น)**
   - ไฟล์ที่แก้: `src/App.css`, `docs/BACKLOG.md` (ข้อ 22), `docs/PROJECT_HANDOVER.md` (entry นี้) — สคริปต์เป็น scratch ชั่วคราว ลบแล้ว ไม่ได้ commit
   - **commit local แล้ว ยังไม่ push** (รอผู้ใช้ยืนยันทดสอบแอปจริงก่อนตามกติกา — รวมกับ commit ก่อนหน้าที่ยังไม่ push เช่นกัน)
+
+- **🆕 2026-09-20 (ต่ออีก) — 🧹 ล้างเศษ light/dark theme ที่ค้างในเทสต์**: ระหว่างให้ checklist manual test ผมใส่ข้อ "ลองสลับ light/dark" ผิดพลาด (ผู้ใช้เตือนว่าเอา theme switching ออกไปนานแล้ว) — ตรวจแล้วโค้ดจริงไม่มี  /  / hook / CSS ของ light เหลือเลย (แอป dark อย่างเดียว;  ใน  ต้องเก็บไว้เพราะคุมสีของ native input/date picker/checkbox) เหลือแค่เศษในเทสต์:
+  - ลบบรรทัด  ที่ไม่มีใครอ่านแล้ว 3 จุด (, , )
+  - เปลี่ยนชื่อเทสต์ 2 ข้อที่เล่าถึง "light theme" ( overlay WebGL-unavailable,  badge จำนวนที่เลือก) ให้ตรงกับสิ่งที่ตรวจจริง (ใช้ CSS variable ไม่ใช่สี hardcode) — assertion เดิมไม่เปลี่ยน
+  - **ตั้งใจไม่แตะ**: prop  (default ) ของ  — ไม่มีใครส่งค่าอื่น แต่เป็นตัวส่งต่อ ECharts API และเทสต์ยังตรวจการส่งต่อ
+  - Verify:  สะอาด, vitest **970/970**, lint 0 error — เปลี่ยนเฉพาะไฟล์เทสต์ ไม่กระทบแอป
+  - ไฟล์ที่แก้: 5 ไฟล์ใน ,  (entry นี้)

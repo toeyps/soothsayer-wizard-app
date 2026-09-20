@@ -205,7 +205,6 @@ let lastFocusHandler: ((e: { payload: boolean }) => void) | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  document.documentElement.setAttribute('data-theme', 'dark');
   mockGetRecent.mockResolvedValue([]);
   // `listen` must return a Promise<unlisten>; the page chains `.then()` on it
   // (e.g. the `upload-page-resumed` subscription). Default to a no-op.

@@ -166,7 +166,7 @@ describe('SensorSelection', () => {
             expect(screen.getByText('2 sensors selected')).toBeTruthy();
         });
 
-        it('the selected-count badge uses theme-aware colors, not a hardcoded dark navy (regression: it stayed dark-navy in light theme, clashing with the rest of the panel)', () => {
+        it('the selected-count badge uses the design-token CSS variables, not hardcoded colors', () => {
             render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
             const badge = screen.getByText('1 sensor selected').closest('div') as HTMLElement;
             expect(badge.style.background).toBe('var(--accent-muted)');

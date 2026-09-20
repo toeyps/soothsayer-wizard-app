@@ -352,7 +352,7 @@ describe('ScatterChart', () => {
         expect(mockReportError).toHaveBeenCalledWith('scatter-init', expect.any(Error));
     });
 
-    it('the WebGL-unavailable overlay uses theme-aware colors, not a hardcoded dark navy card (regression: the canvas goes white in light theme but this overlay stayed hardcoded dark, floating as a jarring dark island)', () => {
+    it('the WebGL-unavailable overlay uses the design-token CSS variables, not hardcoded colors', () => {
         mockCreateScatterplot.mockImplementationOnce(() => { throw new Error('boom'); });
         render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
         const overlay = screen.getByText(/WebGL unavailable/).parentElement as HTMLElement;

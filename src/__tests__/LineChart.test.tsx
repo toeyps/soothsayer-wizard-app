@@ -102,7 +102,6 @@ beforeEach(() => {
     mockZr.on.mockClear();
     mockZr.off.mockClear();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
-    document.documentElement.removeAttribute('data-theme');
 });
 
 afterEach(() => {

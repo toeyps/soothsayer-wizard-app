@@ -96,7 +96,6 @@ beforeEach(() => {
     mockMessage.mockClear().mockResolvedValue(undefined);
     capturedMenuHandlers = null;
     window.localStorage.clear();
-    document.documentElement.removeAttribute('data-theme');
     vi.spyOn(window, 'alert').mockImplementation(() => {});
 });
 
