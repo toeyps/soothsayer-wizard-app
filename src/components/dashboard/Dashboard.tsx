@@ -83,7 +83,7 @@ const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 // how many rows the dataset holds. ~4k points ≈ 2 output points per pixel
 // on a typical panel width — visually indistinguishable from raw.
 const LINE_MAX_POINTS = 4000;
-// Same debounce window as useChartData/useScatterSample/useTablePage's own
+// Same debounce window as useChartData/useScatterSample's own
 // backend-query debounce -- applied here to the autosave-to-disk write
 // instead. Without it, every tracked state change (including e.g. each
 // keystroke in a Filter value box, which has no debounce of its own)
@@ -1605,7 +1605,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // which reruns this effect: the OLD timer is cleared (cleanup below)
     // and a new one queued, so only the LAST edit in a rapid burst ever
     // actually reaches disk — same "clear + requeue" shape as the
-    // useChartData/useScatterSample/useTablePage debounce this mirrors.
+    // useChartData/useScatterSample debounce this mirrors.
     //
     // 🆕 2026-09-18 [CRITICAL FIX]: this write used to bake in this window's
     // OWN `fgGroups`/`fgModels`/`runningConditionFilters` mirror (via
@@ -1705,8 +1705,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // GPU memory and blanks the canvas, and holding them all as JS objects
     // can OOM the renderer. So the scatter & pair-plot charts render a bounded
     // reservoir sample fetched from Rust — the payload, heap, and GPU buffers
-    // stay constant regardless of dataset size. (The line chart / table use
-    // the equally-bounded `get_chart_data` / `get_table_page` path above.)
+    // stay constant regardless of dataset size. (The line chart uses
+    // the equally-bounded `get_chart_data` path above.)
     const scatterActive = chartType === 'scatter' || chartType === 'pair';
     // Pair plot redraws the sample once PER cell across many WebGL contexts,
     // so it gets a tighter point budget than the single-canvas scatter.
@@ -2123,9 +2123,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Which tab the panel shows — Filter, Highlights, or the "Selected
     // Sensor" list (per-sensor show/hide + remove controls; replaces the old
-    // in-chart ECharts legend). The "Data Insight" tab (raw/aggregated table
-    // + its `useTablePage` backend query) was removed 2026-08-16 — unused in
-    // practice; see docs/PROJECT_HANDOVER.md for how to bring it back.
+    // in-chart ECharts legend). The "Data Insight" tab (raw/aggregated table)
+    // was removed 2026-08-16 — unused in practice; its leftover hook/component
+    // and the `get_table_page` Rust command were deleted 2026-09-20.
     const [activeDataTab, setActiveDataTab] = useState<'selected' | 'filter' | 'highlights'>('selected');
 
     const renderDataContent = () => (

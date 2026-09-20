@@ -9,8 +9,6 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useChartData } from '../hooks/useChartData';
 import type { ChartDataQuery } from '../hooks/useChartData';
-import { useTablePage } from '../hooks/useTablePage';
-import type { TablePageQuery } from '../hooks/useTablePage';
 
 const baseQuery: ChartDataQuery = {
     filter: {
@@ -31,12 +29,6 @@ const viewResult = {
     total_rows: 2_000_000,
     ts_min: '2020-01-01T00:00:00',
     ts_max: '2020-06-01T00:00:00',
-};
-
-const pageResult = {
-    headers: ['A', 'B'],
-    rows: [{ timestamp: '2020-01-01T00:00:00', values: [1, 10] }],
-    total_rows: 2_000_000,
 };
 
 beforeEach(() => {
@@ -143,58 +135,5 @@ describe('useChartData', () => {
         await act(async () => { await vi.runAllTimersAsync(); });
         expect(result.current.error).toContain('chart boom');
         expect(result.current.loading).toBe(false);
-    });
-});
-
-describe('useTablePage', () => {
-    const tableQuery: TablePageQuery = {
-        filter: baseQuery.filter,
-        sampling: 'raw',
-        operation: null,
-        page: 0,
-        pageSize: 50,
-    };
-
-    it('invokes get_table_page with snake_case page_size', async () => {
-        mockInvoke.mockResolvedValue(pageResult);
-        const { result } = renderHook(() => useTablePage(tableQuery));
-        await act(async () => { await vi.runAllTimersAsync(); });
-
-        expect(mockInvoke).toHaveBeenCalledWith('get_table_page', {
-            filter: tableQuery.filter,
-            sampling: 'raw',
-            operation: null,
-            page: 0,
-            page_size: 50,
-        });
-        expect(result.current.page?.rows).toHaveLength(1);
-        expect(result.current.page?.total_rows).toBe(2_000_000);
-    });
-
-    it('refetches when the page index changes and keeps the previous rows while loading', async () => {
-        mockInvoke.mockResolvedValue(pageResult);
-        const { result, rerender } = renderHook(
-            ({ q }) => useTablePage(q),
-            { initialProps: { q: tableQuery } },
-        );
-        await act(async () => { await vi.runAllTimersAsync(); });
-        expect(result.current.page).not.toBeNull();
-
-        // Page flip: old rows stay visible (no flicker) while loading.
-        mockInvoke.mockReturnValue(new Promise(() => { /* never resolves */ }));
-        rerender({ q: { ...tableQuery, page: 3 } });
-        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-
-        expect(mockInvoke).toHaveBeenLastCalledWith('get_table_page', expect.objectContaining({
-            page: 3,
-        }));
-        expect(result.current.loading).toBe(true);
-        expect(result.current.page?.rows).toHaveLength(1);
-    });
-
-    it('does not fetch when the query is null', async () => {
-        renderHook(() => useTablePage(null));
-        await act(async () => { await vi.runAllTimersAsync(); });
-        expect(mockInvoke).not.toHaveBeenCalled();
     });
 });

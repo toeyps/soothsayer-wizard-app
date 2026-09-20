@@ -139,7 +139,7 @@ src/
 ├─ App.tsx                # main window entry (upload → dashboard)
 ├─ components/
 │  ├─ upload/              DataUploadPage (3-step: choose/create → name → upload+map)
-│  ├─ dashboard/           Dashboard, FailureGroupsPanel, SensorSelection, DataTable, FilterPanel
+│  ├─ dashboard/           Dashboard, FailureGroupsPanel, SensorSelection, FilterPanel
 │  ├─ charts/              LineChart, ScatterChart, PairPlotChart/Cell
 │  ├─ windows/              secondary windows: AddSensor, PredictiveModelBuild, SaveAs (also serves Rename)
 │  └─ reports/              PM report shared types (pmReportTypes.ts)

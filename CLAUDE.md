@@ -30,7 +30,7 @@ npm run tauri:build               # release bundle; per-target + installer scrip
 1. `load_csv` (Rust) parses one or more CSVs in parallel with rayon (**2 GB/file hard cap** — `MAX_CSV_BYTES` in `csv_processor.rs`), merges multi-file datasets by timestamp (later-non-null-wins on duplicate timestamps; single-file loads take a fast path that skips the merge), and stores the result in Tauri managed state.
 2. The in-RAM store is **`ColumnarData`** (`csv_processor.rs`) — column-major on purpose: one contiguous `Vec<f64>` per sensor, **NaN = missing**; `timestamps` keeps the verbatim CSV text; `ts_parsed` holds epoch-microseconds parsed **once at load** (`TS_MISSING` when absent). `headers[0]` is the canonical timestamp column. Filters must compare against `ts_parsed` — never re-parse timestamp strings per query. New aggregations should walk columns, not rows.
 3. **The frontend never receives the full dataset** (since v0.2.1). Display queries run Rust-side in `chart_query.rs` — filter → operation transform → optional hourly aggregation → min/max downsample — so the WebView only ever gets O(max_points) rows:
-   - `get_chart_data` (hard ceiling 100k points) via `useChartData` — line chart; `get_table_page` (page size ≤ 1000) via `useTablePage` — data table.
+   - `get_chart_data` (hard ceiling 100k points) via `useChartData` — line chart. (There is no data-table query any more: `get_table_page`, `useTablePage` and `DataTable` were deleted 2026-09-20, after the Data Insight tab was removed 2026-08-16.)
    - `get_scatter_sample` (reservoir sampling, `max_points` cap) via `useScatterSample` — scatter + pair plot.
    - `export_chart_csv` writes CSV exports straight to disk from Rust instead of round-tripping rows through JS.
 4. Chart-level GPU guards: `ScatterChart` and `PairPlotCell` handle WebGL context loss (retry overlay) and apply defensive stride caps (500k / 100k points) as a last line of defense.
@@ -43,9 +43,9 @@ npm run tauri:build               # release bundle; per-target + installer scrip
 
 ### Windows & capabilities
 
-Multi-window app: `main` (upload → dashboard) plus sub-windows `predictive-model`, `save-as` (full capability, `src-tauri/capabilities/default.json`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths (CSV/PDF/PNG exports) must go through the Rust `write_user_file` command, via `writeUserTextFile` / `writeUserBinaryFile` in `workspaceManager.ts`.
+Multi-window app: `main` (upload → dashboard) plus sub-windows `build-model` (full capability, `src-tauri/capabilities/default.json`, same as `main`) and `add-sensor` (slimmer capability, `add-sensor.json`). The fs plugin is scoped to `$APPDATA` — writes to arbitrary user-picked paths (CSV/PDF/PNG exports) must go through the Rust `write_user_file` command, via `writeUserTextFile` / `writeUserBinaryFile` in `workspaceManager.ts`.
 
-**2026-08-06**: the standalone `failure-group` sub-window (`FailureGroupCreation.tsx`) was deleted — failure-group management now lives inline in the Dashboard window as a "Failure Groups" tab in the Sensor panel (`FailureGroupsPanel.tsx`), plus a per-sensor quick-assign in the existing Sensor tab (`SensorSelection.tsx`). `save-as`'s window/component is still spawned, but only for the "Rename Workspace" mode now — the "Save As" (duplicate workspace) mode was removed app-wide. See `docs/PROJECT_HANDOVER.md` for the full account.
+**2026-08-06**: the standalone `failure-group` sub-window (`FailureGroupCreation.tsx`) was deleted — failure-group management now lives inline in the Dashboard window as a "Failure Groups" tab in the Sensor panel (`FailureGroupsPanel.tsx`), plus a per-sensor quick-assign in the existing Sensor tab (`SensorSelection.tsx`). **2026-09-20**: the `save-as` window (`SaveAsWindow.tsx`) and its only spawner `useSubWindowMenu` were confirmed unreachable and deleted — renaming a workspace is done inline in `DataUploadPage` (`handleRenameWorkspace`). Don't re-add a `save-as` route/capability label. See `docs/PROJECT_HANDOVER.md` for the full account.
 
 ### Workspace persistence & auto-resume
 

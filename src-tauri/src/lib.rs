@@ -2956,30 +2956,6 @@ fn get_chart_data(
     ))
 }
 
-/// One page of the post-op / post-aggregation row set for the dashboard
-/// data table. Same pipeline as `get_chart_data` minus the decimation —
-/// the table pages through the true row set 50 rows at a time.
-#[tauri::command(rename_all = "snake_case")]
-fn get_table_page(
-    filter: DataFilter,
-    sampling: String,
-    operation: Option<chart_query::OperationConfig>,
-    page: usize,
-    page_size: usize,
-    state: State<AppState>,
-) -> Result<chart_query::TablePage, String> {
-    let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    Ok(chart_query::build_table_page(
-        &session.data,
-        &filter,
-        operation.as_ref(),
-        &sampling,
-        page,
-        page_size,
-    ))
-}
-
 /// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
 /// Seeded with a fixed constant so the same dataset + filter yields the SAME
 /// sample on every call — important so the scatter doesn't visibly reshuffle
@@ -3338,7 +3314,6 @@ pub fn run() {
             load_mapping_csv,
             apply_sensor_mapping,
             get_chart_data,
-            get_table_page,
             evaluate_formula,
             validate_formula,
             extract_formula_refs,

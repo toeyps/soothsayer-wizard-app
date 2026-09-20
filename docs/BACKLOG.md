@@ -1253,10 +1253,16 @@ crashes immediately outside the real Tauri shell (`getCurrentWindow()` has
 nothing to attach to), confirmed to be a pre-existing environment
 limitation and not something this change caused (reproduced identically on
 the pre-change file). No screenshot-level visual diff of the actual running
-app has been done — **needs a real `npm run tauri dev` pass over screens
-that use the heavily-duplicated selectors** (Failure Groups sensor cards/
-dropdowns, Build Model) before this is "Done" per the project's own
-release-checklist rule (automated checks passing ≠ confirmed).
+app has been done.
+
+**Correction (2026-09-20):** an earlier version of this entry told the
+reader to check the Failure Groups sensor cards/dropdowns and Build Model
+because those use the "heavily-duplicated selectors". That was an
+unverified assumption and it was wrong — the `fg-sensor-*` / `fg-group-*`
+family has **no element using it at all** (see item 22), so most of the 292
+merged blocks were already dead CSS. Lower risk than stated, but that
+check-list pointed at the wrong screens. Still needs a real `tauri dev`
+click-through before "Done", just of the whole app, not those two pages.
 
 **Approach for the untouched follow-up (splitting the file by feature):**
 still not started — de-duplication was the part that removed the hazard;
@@ -1524,3 +1530,46 @@ bands) via real-app testing. The perf complaint itself is NOT fixed.
   rendering (ECharts renders in chunks across frames instead of one
   blocking paint); revisiting `dataset` again but built and verified
   standalone first, per the point above.
+
+---
+
+## 22. ~40% of `App.css` is dead — 267 of 577 classes are used by no element
+
+**Status: found 2026-09-20 during a whole-project dead-code audit. Not
+started — the user asked for the frontend/Rust dead files first (done, see
+`PROJECT_HANDOVER.md` 2026-09-20); this is the next step.**
+
+A postcss script listed every class in `App.css` and looked for it as a
+token in every `.ts`/`.tsx`/`index.html` (plus template-string prefixes like
+`\`x-${kind}\``). **267 of 577 classes are referenced nowhere; 409 of 839
+rules (≈2,800 of 6,981 lines) are fully dead** (every comma-selector in the
+rule contains an unused class). Spot-checked by grep — not false positives.
+No dead `@keyframes`, no dead CSS variables, no property declared twice in
+one rule.
+
+Biggest clusters (by name prefix): `fg-sensor` 30, `fg-group` 26, `fg-status`
+17, `pm-preview` 14, `fg-inspector` 13, `sensor-list` 10, `fg-model` 10 — the
+remains of the deleted standalone Failure Group window and the old
+Predictive Model page (Preview/Save Model UI removed 2026-09-17).
+Library-generated classes are handled: `.gutter` comes from a template
+string in `Dashboard.tsx`, so it is correctly counted as used.
+
+Also dead after the 2026-09-20 component deletions and now referenced by no
+live code: `.table-wrapper-compact`, `.table-container`, `.pagination`.
+
+**Approach:** same postcss script as item 13, inverted — remove rules whose
+selectors can never match, then diff the set of classes that are still
+referenced from TSX and assert every one still has all its rules. Cannot
+prove anything about classes built from complex dynamic strings; needs a
+real `tauri dev` click-through (Import, all four charts, Failure Groups,
+Build Model, Add Sensor, Manage Special Sensors) before "Done".
+
+**Other findings from the same audit, not scheduled:**
+- `capabilities/add-sensor.json` still describes/grants permissions (menu
+  API, dialog) written for the deleted `useSubWindowMenu`; tightening needs
+  a real Add Sensor window test.
+- Same function name defined in several files: `fmt` (5), `makeTicks` (2),
+  `getFgGroupColor` (2), `sameTag` (2) — candidates for one shared util.
+- 4 exported types nobody imports (`IndividualModelInfo`,
+  `ClusteringModelInfo`, `RelationshipTrainResult` — tied to the
+  intentionally-kept `train_*_model` commands — and `ModelReference`).

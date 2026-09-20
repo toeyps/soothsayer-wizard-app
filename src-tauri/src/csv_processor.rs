@@ -17,7 +17,7 @@ pub const TS_MISSING: i64 = i64::MIN;
 /// in-RAM store — the loaded dataset lives in [`ColumnarData`]; records of
 /// this shape are materialized only at the IPC boundary (see
 /// [`ColumnarData::wire_record`]), and every command that emits them is
-/// bounded (`get_scatter_sample`, `get_table_page`).
+/// bounded (`get_scatter_sample`).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CsvRecord {
     pub timestamp: Option<String>,

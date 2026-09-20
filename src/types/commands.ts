@@ -115,7 +115,7 @@ export interface RelationshipTrainResult {
 
 /**
  * Shared dashboard filter shape (sensor projection + timestamp window +
- * value gates) accepted by `get_chart_data`, `get_table_page`, and
+ * value gates) accepted by `get_chart_data` and
  * `get_scatter_sample`.
  */
 export interface DashboardDataFilter {
@@ -152,13 +152,6 @@ export interface ChartViewData {
   /** First/last timestamp of the filtered population (time-range inputs). */
   ts_min: string | null;
   ts_max: string | null;
-}
-
-/** One page of the post-op/post-aggregation row set (`get_table_page`). */
-export interface TablePageData {
-  headers: string[];
-  rows: { timestamp: string | null; values: (number | null)[] }[];
-  total_rows: number;
 }
 
 /**

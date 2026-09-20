@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { AddSensorWindow, SaveAsWindow, BuildModelWindow } from "./components/windows";
+import { AddSensorWindow, BuildModelWindow } from "./components/windows";
 import "./App.css";
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -11,8 +11,6 @@ let RootComponent = App;
 
 if (windowType === "add-sensor") {
   RootComponent = AddSensorWindow;
-} else if (windowType === "save-as") {
-  RootComponent = SaveAsWindow;
 } else if (windowType === "build-model") {
   RootComponent = BuildModelWindow;
 }

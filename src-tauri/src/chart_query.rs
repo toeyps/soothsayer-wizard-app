@@ -8,7 +8,7 @@
 //! (duplicating the dataset in the JS heap and freezing the main thread on
 //! large CSVs).
 
-use crate::csv_processor::{micros_to_naive, ColumnarData, CsvRecord, TS_MISSING};
+use crate::csv_processor::{micros_to_naive, ColumnarData, TS_MISSING};
 use crate::{DataFilter, ResolvedFilter};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -18,9 +18,6 @@ use std::collections::BTreeMap;
 /// the size of the dataset and reintroduce the renderer OOM this module
 /// exists to prevent.
 const MAX_POINTS_CEILING: usize = 100_000;
-
-/// Hard ceiling on table page size (the UI asks for 50).
-const MAX_PAGE_SIZE: usize = 1_000;
 
 const HOUR_US: i64 = 3_600_000_000;
 
@@ -76,14 +73,6 @@ pub struct ChartView {
     /// First/last timestamp of the filtered population (time-range inputs).
     pub ts_min: Option<String>,
     pub ts_max: Option<String>,
-}
-
-/// One page of the post-op / post-aggregation row set for the data table.
-#[derive(Debug, Serialize)]
-pub struct TablePage {
-    pub headers: Vec<String>,
-    pub rows: Vec<CsvRecord>,
-    pub total_rows: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -528,64 +517,6 @@ pub fn build_chart_view(
     }
 }
 
-pub fn build_table_page(
-    data: &ColumnarData,
-    filter: &DataFilter,
-    operation: Option<&OperationConfig>,
-    sampling: &str,
-    page: usize,
-    page_size: usize,
-) -> TablePage {
-    let ctx = resolve_ctx(data, filter, operation);
-    let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
-    let start = page.saturating_mul(page_size);
-
-    if sampling == "raw" {
-        let total_rows = ctx.idx.len();
-        let end = start.saturating_add(page_size).min(total_rows);
-        let rows: Vec<CsvRecord> = if start < end {
-            ctx.idx[start..end]
-                .iter()
-                .map(|&r| {
-                    let r = r as usize;
-                    CsvRecord {
-                        timestamp: data.timestamps[r].clone(),
-                        values: (0..ctx.n_out())
-                            .map(|c| nan_to_none(ctx.out_value(c, r)))
-                            .collect(),
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        TablePage {
-            headers: ctx.out_headers,
-            rows,
-            total_rows,
-        }
-    } else {
-        let agg = aggregate_hourly(&ctx, sampling);
-        let total_rows = agg.timestamps.len();
-        let end = start.saturating_add(page_size).min(total_rows);
-        let rows: Vec<CsvRecord> = if start < end {
-            (start..end)
-                .map(|k| CsvRecord {
-                    timestamp: Some(agg.timestamps[k].clone()),
-                    values: agg.rows[k].iter().map(|&v| nan_to_none(v)).collect(),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        TablePage {
-            headers: ctx.out_headers,
-            rows,
-            total_rows,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -749,26 +680,6 @@ mod tests {
     }
 
     #[test]
-    fn table_paging_slices_and_counts() {
-        let d = dataset();
-        let p = build_table_page(&d, &filter(&["A", "B"]), None, "raw", 1, 2);
-        assert_eq!(p.total_rows, 6);
-        assert_eq!(p.rows.len(), 2);
-        assert_eq!(p.rows[0].timestamp.as_deref(), Some("2020-01-01T00:20:00"));
-        assert_eq!(p.rows[0].values, vec![None, Some(30.0)]);
-
-        // Page past the end → empty rows, total intact.
-        let p = build_table_page(&d, &filter(&["A"]), None, "raw", 99, 50);
-        assert_eq!(p.total_rows, 6);
-        assert!(p.rows.is_empty());
-
-        // Aggregated paging.
-        let p = build_table_page(&d, &filter(&["A"]), None, "avg", 0, 50);
-        assert_eq!(p.total_rows, 2);
-        assert_eq!(p.rows[0].values, vec![Some(1.5)]);
-    }
-
-    #[test]
     fn unknown_sensors_are_dropped() {
         let d = dataset();
         let v = build_chart_view(&d, &filter(&["A", "NOPE"]), None, "raw", 100);
@@ -817,11 +728,5 @@ mod tests {
         let v = build_chart_view(&d, &f, None, "avg", 4000);
         println!("chart hourly-avg 2M rows: {:?}", t.elapsed());
         assert!(v.timestamps.len() <= 4000);
-
-        let t = Instant::now();
-        let p = build_table_page(&d, &f, None, "raw", 20_000, 50);
-        println!("table page 2M rows: {:?}", t.elapsed());
-        assert_eq!(p.rows.len(), 50);
-        assert_eq!(p.total_rows, n);
     }
 }
