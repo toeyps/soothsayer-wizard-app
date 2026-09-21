@@ -166,8 +166,9 @@ When your task is complete, output this block before stopping:
 - ❌ An agent modifying files outside its zone
 - ❌ Landing a code change (new or modified) without a matching new/updated test in the same pass
 
-## Repo state snapshot (2026-07-14 — verify with `git log` before trusting)
+## Repo state snapshot (2026-07-14; last shipped release updated 2026-09-21 — verify with `git log` before trusting)
 
-- `main` @ v0.2.1 (`6ed6559`) is canonical. It contains the full RAM-optimization work: **step 1** (columnar store, ~52% RSS reduction, merged via PR #1) and **step 2** (bounded chart pipeline `chart_query.rs` + error reporting `log_frontend_error`/`get_error_log_path` + chart perf + sidecar fixes, `3620eb6`).
+- **Last shipped: v0.5.0 (2026-09-21)** — next changelog entry diffs against tag `v0.5.0`. The RAM-optimization notes below are from v0.2.1 and still describe the architecture.
+- `main` @ v0.2.1 (`6ed6559`) was canonical at the time of that snapshot. It contains the full RAM-optimization work: **step 1** (columnar store, ~52% RSS reduction, merged via PR #1) and **step 2** (bounded chart pipeline `chart_query.rs` + error reporting `log_frontend_error`/`get_error_log_path` + chart perf + sidecar fixes, `3620eb6`).
 - **Step 3** (disk-backed store, e.g. DuckDB / mmap Arrow) is planned only if RAM is still insufficient after step 2.
 - Branches `feat/columnar-ram-opt` and `claude/gifted-kepler-*` are superseded by main — don't base new work on them.
