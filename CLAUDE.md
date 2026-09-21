@@ -110,6 +110,10 @@ This was tried and reverted on 2026-09-03 (shipped broken in 0.4.0, fixed in 0.4
 - Verify with `npx tsc --noEmit` + `npx vitest run` (frontend) and `cargo test` (Rust) before calling a task done.
 - Coverage reached 586 frontend tests / 45 files + 139 Rust unit tests as of 2026-08-10 specifically because this discipline was absent for most of the project's history — UI was reshaped multiple times (step-based onboarding, Failure Group panel moves, Class B persistence) while old tests sat untouched. They happened to still be accurate on inspection, but that was luck, not process — see `docs/PROJECT_HANDOVER.md` entry 2026-08-10 for the audit. Don't rely on luck going forward.
 
+## Manual test plan — two files, one source of truth
+
+`docs/testing/MANUAL_TEST_PLAN.md` is the source; `docs/testing/manual-test-plan.html` (the interactive page testers fill in) is **generated** from it. Edit the `.md`, then run `python scripts/build-manual-test-html.py` (`--check` verifies the two match — don't hand-edit the HTML's data line). Whenever a user-visible feature is added, changed or removed, update the matching plan items in the same pass: a removed feature's items must be deleted (a stale item sends the tester looking for a button that no longer exists), and a changed one needs a **new id** if its meaning changed enough that an old saved pass/fail would be misleading (results in the HTML are keyed by id).
+
 ## Post-task checklist — Notion sync + git push, required after every task, no exceptions, don't wait to be asked
 
 The user tracks all work in the Notion database **"wizard application plan improvement"** (`collection://39e959a6-c718-8039-b30b-000bbea5ca96`). Schema: `Project name` (title), `Status` (status type: `Not started` → `In progress` / `wait for advisor` / `waiting re design` → `Done`), `Note` (text), `technical stack` (multi-select: `UX/UI`, `algorithum`, `backend`, `Sequence UX/UI`).
