@@ -6,6 +6,78 @@
 
 ---
 
+## [0.5.0] — 2026-09-21
+
+Minor release — รวมงาน 2 สัปดาห์หลัง 0.4.1: Running Condition Filter, กราฟเส้นแกนเวลาจริง +
+Horizontal Zoom, ปรับหน้า Build Model ครั้งใหญ่, แก้บั๊ก **Failure Group หาย** 2 กลไก
+และบั๊กข้อมูลปนกันเมื่อเปิดมากกว่า 1 project
+
+> ⚠️ **สิ่งที่เปลี่ยนแล้วผู้ใช้จะสังเกตเห็น**: หน้า Build Model (Predictive Model) **ไม่มีปุ่ม
+> Report / Preview / Save Model อีกแล้ว** ตามที่สั่งเอาออก — ตอนนี้ยังไม่มีทางเซฟไฟล์โมเดล
+> (`INDV_INFO`/`REL_INFO`/`CLUS_INFO`) จากหน้าจอได้ (โค้ดเทรนฝั่ง Rust ยังอยู่ครบ
+> เตรียมไว้สำหรับฟีเจอร์ health score ในอนาคต) แทนด้วยปุ่ม **Finish** ที่ทำเครื่องหมายว่าโมเดลเสร็จแล้ว
+> ไฟล์ workspace เดิมยังเปิดได้ตามปกติ
+
+### ✨ Features
+
+- **Running Condition Filter** — ตั้งเงื่อนไข "เครื่องกำลังทำงาน" ครั้งเดียวที่หน้า Build Model
+  Overview ใช้กับทุกโมเดลใน workspace อัตโนมัติ แทนที่ Sensor value filter ที่เคยต้องตั้งซ้ำทีละโมเดล
+  (ช่อง Sensor value เลือกได้ทุก sensor แล้ว ไม่ใช่แค่ target/predictor)
+- **กราฟเส้นใช้แกนเวลาจริง** — ระยะห่างจุดบนกราฟสัมพันธ์กับเวลาจริง (ข้อมูลห่าง 10 นาทีกับ
+  10 ชั่วโมงไม่ถูกวาดเท่ากันอีกต่อไป)
+- **Horizontal Zoom** — แทนแถบเลื่อนล่างกราฟ ด้วยเมนู Zoom (Horizontal zoom / Zoom out)
+  ข้างปุ่ม Tag: ลากเลือกช่วงเวลาเพื่อซูมเข้า
+- **หน้า Build Model**
+  - ปุ่ม **Finish** — กดแล้วโมเดลเปลี่ยนจาก Incomplete เป็น Complete และกลับหน้า Overview
+  - Group by **Model Type** (Individual / Relationship / Clustering) เพิ่มจาก FG / Component
+  - ปุ่ม Build Model ย้ายไปต่อจาก Save changes และกดไม่ได้จนกว่าจะกรอกครบ
+  - ช่อง Add a predictor **ค้นหาได้และจัดกลุ่มตาม Component**
+  - ช่อง Time start / Time end ใช้กำหนดช่วงข้อมูลที่ใช้เทรนได้จริง
+  - Individual model ซ่อนส่วน Predictor sensors ที่ไม่เกี่ยวข้อง; ปัดทศนิยมป้ายแกนกราฟ
+  - ไอคอนปฏิทินที่ช่อง Time start/end มองเห็นชัด (สีขาว ชิดขวา)
+- **Special sensor**
+  - **เปลี่ยนชื่อ** special sensor ได้ (ระบบแก้สูตรของ sensor อื่น กราฟ สี และโมเดลที่อ้างชื่อเดิมให้อัตโนมัติ)
+  - บังคับกรอก Name / Description / Unit / Component ครบก่อน Add / Save (มีเครื่องหมาย \* ชัดเจน)
+  - ช่อง Component เลือกจากรายการที่มีอยู่แล้ว ไม่ต้องพิมพ์เอง
+  - ตอนแก้ไขแบบ operation ใช้ปุ่มชุดเดียวกับตอนสร้าง
+
+### 🐛 Bug fixes
+
+- **Failure Group / model หาย (ร้ายแรง — 2 สาเหตุ)**
+  1. สร้างเยอะๆ แล้วกด Build Model รัวๆ ข้อมูลหายเกือบหมด — การเขียนไฟล์ workspace แข่งกันเอง
+  2. แค่ปิดแอปแล้วเปิดใหม่ก็หายได้ โดยไม่ต้องทำอะไร — autosave ของหน้า Dashboard เขียนทับข้อมูล FG
+     ที่หน้าต่าง Build Model เพิ่งบันทึก ด้วยสำเนาเก่า
+  ตอนนี้เขียนแบบต่อคิว และอ่านข้อมูลสดจากดิสก์ก่อนเขียนทุกครั้ง
+- **เปิดมากกว่า 1 project แล้วข้อมูลปนกัน** — special sensor โชว์ component/ชื่อของอีก project และ FG
+  ขึ้นบ้างไม่ขึ้นบ้าง/ไม่ตรง: หน้าต่าง Add Special Sensor ค้างจาก project เดิม, listener ค้างตอบข้อมูลเก่า,
+  และ event ข้ามหน้าต่างไม่บอกว่าเป็นของ project ไหน — แก้แล้ว หน้าต่างลูกปิดเมื่อสลับ project
+  และทุกข้อความระบุ project ที่เป็นเจ้าของ
+- **Predictor sensors ที่เลือกไว้หายตอนกด Build Model →** — หน้า PM เปิดเร็วกว่าที่ไฟล์จะบันทึกเสร็จ
+- **หน้า Build Model** ปุ่ม Build Model ดูเหมือนกดได้ทั้งที่ถูกปิดอยู่; ขอบกรอบโมเดลที่กำลังแก้ขาดที่มุมล่าง;
+  ป้ายชื่ออัลกอริทึมผิด (ต้องเป็น "Relation model")
+- **กราฟเส้น** Time Range ใหม่แล้วแถบเลื่อนค้างช่วงเก่า; Tooltip และ Tag Point ทำงานถูกกับแกนเวลา;
+  เมนู Zoom ถูกตัดขอบ; ลากเลือกแล้วไม่ซูม
+- **Special sensor** ช่อง Component ว่างแล้วตกเป็น Uncategorized เงียบๆ; Combine with operators ยังกดได้
+  ทั้งที่เลือก Combine all; ตั้งชื่อ special sensor ไม่ครบแล้วไม่ขึ้นเตือน
+
+### 🗑️ Removed
+
+- ปุ่ม **Report (PNG)**, **Preview**, **Save Model** และขั้นตอนยืนยันการเซฟทั้งหมดในหน้า Build Model (ดูหมายเหตุด้านบน)
+- แถบเลื่อน (dataZoom slider) ใต้กราฟเส้น — แทนด้วย Horizontal Zoom
+- โค้ดที่ไม่มีใครเรียกใช้ 20 ไฟล์ (ตารางข้อมูลเก่า, หน้าต่าง Save As ฯลฯ), คำสั่ง `get_table_page`,
+  dependency ที่ไม่ใช้ 2 ตัว และ CSS ตาย (ไฟล์ CSS หลักเหลือ ~3,800 จาก ~7,000 บรรทัด) — ไม่กระทบการใช้งาน
+
+### 🧪 Tests
+
+- frontend 993 เทสต์ (เพิ่มเทสต์ที่จำลองบั๊ก data-loss, multi-project และ event listener โดยตรง)
+  + Rust 155 unit / 8 integration ผ่านทั้งหมด; tsc, eslint (0 error) ผ่าน
+
+### 📝 Docs
+
+- คู่มือทดสอบ manual (`docs/testing/`), คู่มือน้อง BA/SA และ handover จัดโฟลเดอร์ใหม่
+
+---
+
 ## [0.4.1] — 2026-09-07
 
 Patch release. 0.4.0 shipped a Content-Security-Policy that breaks the Scatter
