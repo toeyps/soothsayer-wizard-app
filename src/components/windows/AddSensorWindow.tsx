@@ -3,7 +3,8 @@ import Split from 'split.js';
 import { X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
+import { subscribe } from "../../utils/tauriEvents";
 import { FailureModel, SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
@@ -58,6 +59,8 @@ export default function AddSensorWindow() {
     // the dashboard's `specialSensorRecipes` -- it arrives with sensors-data,
     // grows as sensors are created here, and shrinks as they are deleted.
     const [recipes, setRecipes] = useState<SpecialSensorRecipe[]>([]);
+    // Workspace the last `sensors-data` belonged to — stamped on every emit.
+    const workspaceIdRef = useRef<string | undefined>(undefined);
     const [models, setModels] = useState<FailureModel[]>([]);
     // Formula tag -> sensors it references, from Rust. Null until the lookup
     // answers; Manage refuses to delete anything while it is null, because an
@@ -95,7 +98,8 @@ export default function AddSensorWindow() {
 
         const setup = async () => {
             // 1. Listen for data from Dashboard (Rich data with metadata)
-            unlistenData = await listen<{
+            const off = subscribe<{
+                workspaceId?: string,
                 sensors: string[],
                 selectedSensors: string[],
                 sensorMetadata: SensorMetadata[],
@@ -103,6 +107,10 @@ export default function AddSensorWindow() {
                 models?: FailureModel[]
             }>('sensors-data', (event) => {
                 debugLog("Received sensors-data:", event.payload);
+                // This window belongs to whichever workspace it was last
+                // handed data for; every emit below is tagged with it so the
+                // Dashboard can drop anything from a different project.
+                workspaceIdRef.current = event.payload.workspaceId;
                 setSensors(event.payload.sensors);
                 // Deliberately NOT pre-checking `event.payload.selectedSensors`
                 // (whatever's currently plotted on the Dashboard chart) --
@@ -120,6 +128,10 @@ export default function AddSensorWindow() {
                 setModels(event.payload.models ?? []);
                 setLoading(false);
             });
+
+            unlistenData = off;
+            // Registered before asking, so the reply can't be missed.
+            await off.ready;
 
             // 2. Request data
             await emit('request-sensors');
@@ -200,7 +212,7 @@ export default function AddSensorWindow() {
         // in it would put the sensor straight back on the chart.
         setPendingSensors(prev => prev.filter(t => !gone(t)));
         try {
-            await emit('delete-special-sensors', { tags });
+            await emit('delete-special-sensors', { tags, workspaceId: workspaceIdRef.current });
         } catch (err) {
             console.error('Failed to tell the dashboard about the deletion:', err);
         }
@@ -360,12 +372,14 @@ export default function AddSensorWindow() {
                     recipe: next.recipe,
                     metadata: next.metadata,
                     updatedRecipes: renamedDownstream,
+                    workspaceId: workspaceIdRef.current,
                 });
             } else {
                 await emit('update-special-sensor', {
                     recipe: next.recipe,
                     metadata: next.metadata,
                     recomputed: [next.recipe.tag, ...downstream.map(r => r.tag)],
+                    workspaceId: workspaceIdRef.current,
                 });
             }
 
@@ -512,6 +526,7 @@ export default function AddSensorWindow() {
                 operation: null,
                 newMetadata,
                 newRecipes,
+                workspaceId: workspaceIdRef.current,
             });
 
             showToast(createdName ? `Added: ${newMetadata[0].description || createdName}` : `Added ${sensorsForEmit.length} sensor(s)`);

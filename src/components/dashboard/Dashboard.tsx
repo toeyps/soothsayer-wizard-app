@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useDeferredValue, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
-import { listen, emit, UnlistenFn } from "@tauri-apps/api/event";
+import { emit, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
+import { subscribe } from '../../utils/tauriEvents';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
@@ -339,7 +340,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
             },
         }))
-            .then(() => {
+            .then((next) => {
+                // Tell any open Build Model window (a separate OS window that
+                // otherwise only sees Dashboard's edits when it is next
+                // opened) — scoped to this workspace, and tagged so this
+                // window's own listener below skips its own echo.
+                if (next?.failureGroupState) {
+                    emit('failure-group-state-changed', {
+                        ...next.failureGroupState,
+                        workspaceId: initialState.id,
+                        origin: 'dashboard',
+                    }).catch(e => console.warn('Failed to broadcast failure-group state:', e));
+                }
                 // 2026-09-03: this write already made the new failure-group
                 // state durable, so record what the disk now holds. Without
                 // it the debounced autosave rewrote the very same content
@@ -363,17 +375,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // next tick. Both windows broadcast this event after every persist so
     // this copy never drifts. Also carries `runningConditionFilters` now,
     // for the same reason.
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[] }>('failure-group-state-changed', (event) => {
-                setFgGroups(event.payload.groups);
-                setFgModels(event.payload.models);
-                setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, []);
+    //
+    // 2026-09-21: events are global broadcasts across every window, so with
+    // more than one project the payload can belong to a DIFFERENT workspace
+    // (a stale window from the previous project). Only apply the one that
+    // names THIS workspace — and skip this window's own echo.
+    const currentWorkspaceId = initialState?.id;
+    useEffect(() => subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+        if (event.payload.workspaceId !== currentWorkspaceId) return;
+        if (event.payload.origin === 'dashboard') return;
+        setFgGroups(event.payload.groups);
+        setFgModels(event.payload.models);
+        setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
+    }), [currentWorkspaceId]);
 
     // Default PM build config for a freshly created model of a given kind —
     // mirrors spawnPredictiveModel's own seed defaults below so a model
@@ -1092,6 +1106,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `buildSpecialSensorUsage`). They travel on the same
     // request-sensors/sensors-data handshake rather than a second one.
     const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups });
+    // 2026-09-21: every event from the Add Sensor window is a GLOBAL
+    // broadcast, so with a second project loaded a leftover window from the
+    // previous one could push ITS sensors/metadata/recipes into this
+    // workspace. Each payload now names its workspace and is dropped here
+    // unless it matches.
+    const workspaceIdRef = useRef(initialState?.id);
+    workspaceIdRef.current = initialState?.id;
+    const forThisWorkspace = (payload: unknown) =>
+        (payload as { workspaceId?: string } | null | undefined)?.workspaceId === workspaceIdRef.current;
     useEffect(() => {
         stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups };
     }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups]);
@@ -1103,13 +1126,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let unlistenUpdate: UnlistenFn | undefined;
         let unlistenRename: UnlistenFn | undefined;
 
-        const setupListeners = async () => {
+        const setupListeners = () => {
             debugLog("Setting up Dashboard listeners");
             // Listen for request from child window
-            unlistenRequest = await listen('request-sensors', () => {
+            unlistenRequest = subscribe('request-sensors', () => {
                 debugLog("Dashboard received 'request-sensors', emitting data...");
                 const { allSensorTags, selectedSensors, sensorMetadata, specialSensorRecipes, fgModels } = stateRef.current;
                 emit('sensors-data', {
+                    workspaceId: workspaceIdRef.current,
                     sensors: allSensorTags,
                     selectedSensors: selectedSensors,
                     sensorMetadata: sensorMetadata,
@@ -1119,7 +1143,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             });
 
             // Listen for new selections from child window
-            unlistenAdd = await listen<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[], newRecipes?: SpecialSensorRecipe[] }>('add-sensor-selection', async (event) => {
+            unlistenAdd = subscribe<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[], newRecipes?: SpecialSensorRecipe[], workspaceId?: string }>('add-sensor-selection', async (event) => {
+                if (!forThisWorkspace(event.payload)) return;
                 debugLog("Dashboard received 'add-sensor-selection'", event.payload);
 
                 let newSelectedSensors: string[] = [];
@@ -1194,7 +1219,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             //
             // No explicit save call — every setter here feeds
             // `buildWorkspaceState`, so the debounced autosave writes it.
-            unlistenDelete = await listen<{ tags: string[] }>('delete-special-sensors', (event) => {
+            unlistenDelete = subscribe<{ tags: string[]; workspaceId?: string }>('delete-special-sensors', (event) => {
+                if (!forThisWorkspace(event.payload)) return;
                 const drop = new Set((event.payload?.tags ?? []).map(t => t.trim().toLowerCase()));
                 if (drop.size === 0) return;
                 debugLog('Dashboard received delete-special-sensors', event.payload);
@@ -1220,7 +1246,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // sensor` instead (below), which is where every tag-keyed piece
             // of this file's own state gets re-keyed. This listener only
             // ever sees an edit that keeps the same tag.
-            unlistenUpdate = await listen<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata }>('update-special-sensor', (event) => {
+            unlistenUpdate = subscribe<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata; workspaceId?: string }>('update-special-sensor', (event) => {
+                if (!forThisWorkspace(event.payload)) return;
                 const { recipe, metadata } = event.payload ?? {};
                 if (!recipe) return;
                 debugLog('Dashboard received update-special-sensor', event.payload);
@@ -1247,13 +1274,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // point at the new name (their OWN tags are unchanged, so they're
             // matched into `specialSensorRecipes` by tag, same as `recipe`
             // itself is matched by `oldTag`).
-            unlistenRename = await listen<{
+            unlistenRename = subscribe<{
                 oldTag: string;
                 newTag: string;
                 recipe: SpecialSensorRecipe;
                 metadata: SensorMetadata;
                 updatedRecipes: SpecialSensorRecipe[];
+                workspaceId?: string;
             }>('rename-special-sensor', (event) => {
+                if (!forThisWorkspace(event.payload)) return;
                 const { oldTag, newTag, recipe, metadata, updatedRecipes } = event.payload ?? {};
                 if (!oldTag || !newTag || !recipe) return;
                 debugLog('Dashboard received rename-special-sensor', event.payload);
@@ -1325,21 +1354,26 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     //    per-group window already exists" and "create it" steps can't
     //    happen anymore for group-switching (it's local state now); it's
     //    still guarded here for the singleton spawn itself.
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen('request-build-model-data', async () => {
-                if (!initialState) return;
-                await emit('build-model-data', {
-                    workspaceId: initialState.id,
-                    sensorHeaders: allSensorTags,
-                    sensorMetadata,
-                    metadata,
-                });
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, [initialState, allSensorTags, sensorMetadata, metadata]);
+    //
+    // 2026-09-21: reads the freshest values through `stateRef` and subscribes
+    // ONCE instead of re-subscribing on every change of the four values it
+    // used to close over. Each re-subscription raced its own async
+    // unlisten, leaving stale copies alive that answered the Build Model
+    // window's request with an older workspace id / older sensor metadata
+    // (e.g. before the special sensors' component and description had been
+    // merged in) — the window applied whichever reply arrived last.
+    const emitBuildModelData = useCallback(async () => {
+        const wsId = workspaceIdRef.current;
+        if (!wsId) return;
+        const { allSensorTags: sensors, sensorMetadata: meta, metadata: csvMeta } = stateRef.current;
+        await emit('build-model-data', {
+            workspaceId: wsId,
+            sensorHeaders: sensors,
+            sensorMetadata: meta,
+            metadata: csvMeta,
+        });
+    }, []);
+    useEffect(() => subscribe('request-build-model-data', () => { emitBuildModelData(); }), [emitBuildModelData]);
 
     // Guards the gap between the `getByLabel` existence check and the
     // `new WebviewWindow(...)` call below (both async IPC round-trips) so
@@ -1356,6 +1390,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const existing = await WebviewWindow.getByLabel(label);
             if (existing) {
                 try { await existing.setFocus(); } catch { /* ignore */ }
+                // The open window fetched its data once, on its own mount —
+                // re-point it at THIS workspace instead of trusting that it
+                // still is (it may be a leftover from the previous project).
+                try { await emitBuildModelData(); } catch { /* ignore */ }
                 return;
             }
             const screenW = window.screen.width;
@@ -1376,7 +1414,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         } finally {
             pendingSpawnLabels.current.delete(label);
         }
-    }, [initialState]);
+    }, [initialState, emitBuildModelData]);
 
     // Close the (singleton, workspace-scoped) Build Model window when
     // leaving this workspace. It only ever fetches its data once, on its
@@ -1388,11 +1426,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // `WebviewWindow.getByLabel('build-model')` above instead of opening
     // one for the new workspace — the user edits what looks like the right
     // project but is actually still writing to the old one.
+    //
+    // 2026-09-21: the Add Special Sensor window is workspace-scoped in
+    // exactly the same way and was never closed here. It keeps the previous
+    // project's sensor list, metadata (component/description) and recipes,
+    // and — because its events are global broadcasts and it computes columns
+    // in the ONE shared Rust session — kept feeding that project's special
+    // sensors into whichever project was open next.
     useEffect(() => {
         return () => {
-            WebviewWindow.getByLabel('build-model')
-                .then(w => w?.close())
-                .catch(() => { /* ignore — window may already be gone */ });
+            for (const label of ['build-model', 'add-sensor']) {
+                WebviewWindow.getByLabel(label)
+                    .then(w => w?.close())
+                    .catch(() => { /* ignore — window may already be gone */ });
+            }
         };
     }, []);
 
@@ -1686,18 +1733,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // the close when there's actually something pending — an already-saved
     // Dashboard closes exactly as before, no added delay.
     useEffect(() => {
+        let disposed = false;
         let unlisten: (() => void) | undefined;
-        (async () => {
-            const win = getCurrentWindow();
-            unlisten = await win.onCloseRequested(async (event) => {
-                const pending = pendingSaveRef.current;
-                if (!pending) return;
-                event.preventDefault();
-                await pending;
-                await win.close();
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
+        const win = getCurrentWindow();
+        Promise.resolve(win.onCloseRequested(async (event) => {
+            const pending = pendingSaveRef.current;
+            if (!pending) return;
+            event.preventDefault();
+            await pending;
+            await win.close();
+        })).then(fn => { if (disposed) fn(); else unlisten = fn; });
+        return () => { disposed = true; if (unlisten) unlisten(); };
     }, []);
 
     // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
@@ -2458,6 +2504,23 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <button
                         className="add-sensor-btn"
                         onClick={async () => {
+                            const existing = await WebviewWindow.getByLabel('add-sensor');
+                            if (existing) {
+                                // Already open — creating another with the
+                                // same label just errors. Focus it and hand
+                                // it this workspace's data afresh.
+                                try { await existing.setFocus(); } catch { /* ignore */ }
+                                const cur = stateRef.current;
+                                emit('sensors-data', {
+                                    workspaceId: workspaceIdRef.current,
+                                    sensors: cur.allSensorTags,
+                                    selectedSensors: cur.selectedSensors,
+                                    sensorMetadata: cur.sensorMetadata,
+                                    specialSensorRecipes: cur.specialSensorRecipes,
+                                    models: cur.fgModels,
+                                });
+                                return;
+                            }
                             const webview = new WebviewWindow('add-sensor', {
                                 url: '/?window=add-sensor',
                                 title: 'Add Special Sensor',

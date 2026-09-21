@@ -564,7 +564,7 @@ describe('PredictiveModelBuild', () => {
             expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').filterTimeStart).toBe('2026-03-01T00:00');
             // Broadcast so Dashboard/BuildModelWindow (separate OS windows) refresh too.
             await act(async () => { await Promise.resolve(); });
-            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', state.failureGroupState);
+            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', { ...state.failureGroupState, workspaceId: 'ws1', origin: 'predictive-model' });
             vi.useRealTimers();
         });
 

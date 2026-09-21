@@ -20,7 +20,7 @@ import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
 import { recomputeCall } from "../../utils/specialSensorRecompute";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+import { subscribe } from "../../utils/tauriEvents";
 import { useDataUpload } from "../../hooks/useDataUpload";
 import { useMappingData, buildSensorMetadataFromMapping } from "../../hooks/useMappingData";
 import type { CsvMetadata, SensorMetadata, SpecialSensorRecipe, WorkspaceState, WorkspaceMetadata } from "../../types";
@@ -209,13 +209,13 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   // We refresh the workspace list on either signal since the user may have
   // saved / renamed in the sub-window.
   useEffect(() => {
-    let disposeListen: (() => void) | undefined;
+    let disposed = false;
     let disposeFocus: (() => void) | undefined;
 
-    listen('upload-page-resumed', () => {
+    const disposeListen = subscribe('upload-page-resumed', () => {
       clearLoadingState();
       refreshWorkspaces();
-    }).then((fn) => { disposeListen = fn; });
+    });
 
     getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
@@ -224,10 +224,11 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
         clearLoadingState();
         refreshWorkspaces();
       }
-    }).then((fn) => { disposeFocus = fn; });
+    }).then((fn) => { if (disposed) fn(); else disposeFocus = fn; });
 
     return () => {
-      if (disposeListen) disposeListen();
+      disposed = true;
+      disposeListen();
       if (disposeFocus) disposeFocus();
     };
   }, []);

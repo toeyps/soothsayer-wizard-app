@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { listen, emit } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
+import { subscribe } from "../../utils/tauriEvents";
 import { invoke } from "@tauri-apps/api/core";
 import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
 import type {
@@ -571,15 +572,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // Keep workspaceName synced when the user renames the workspace from
     // Dashboard's native menu (App.tsx) while this page is open — that
     // rename UI emits `workspace-renamed-internal` globally after disk write.
-    useEffect(() => {
-        let unlisten: (() => void) | undefined;
-        (async () => {
-            unlisten = await listen<{ newName: string }>('workspace-renamed-internal', (event) => {
-                setWorkspaceName(event.payload.newName);
-            });
-        })();
-        return () => { if (unlisten) unlisten(); };
-    }, []);
+    useEffect(() => subscribe<{ newName: string }>('workspace-renamed-internal', (event) => {
+        setWorkspaceName(event.payload.newName);
+    }), []);
 
     // Persist config back into THIS model's own record in
     // failureGroupState.models (not a global slot) so training one model can
@@ -622,7 +617,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     },
                 }));
                 if (next?.failureGroupState) {
-                    await emit('failure-group-state-changed', next.failureGroupState);
+                    // origin differs from BuildModelWindow's own so that window (this
+                    // page's parent) still applies it and refreshes the overview.
+                    await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'predictive-model' });
                 }
             })().catch(e => console.error('Failed to persist predictive-model state:', e));
         }, 250);

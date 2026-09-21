@@ -107,6 +107,7 @@ function App() {
             <div className="app-page-transition">
               <Suspense fallback={null}>
                 <Dashboard
+                  key={initialWorkspaceState?.id}
                   ref={dashboardRef}
                   metadata={metadata}
                   sensorMetadata={sensorMetadata}

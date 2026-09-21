@@ -220,10 +220,121 @@ describe('BuildModelWindow', () => {
 
         await act(async () => {
             for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
-                cb({ payload: { groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model' })] } });
+                cb({ payload: { workspaceId: 'ws1', origin: 'dashboard', groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model' })] } });
             }
         });
         expect(screen.getByText('New Model')).toBeTruthy();
+    });
+
+    // 2026-09-21: multi-project isolation. This window is a singleton that
+    // fetches its data once; with a second project loaded in `main` it could
+    // be left showing (or being fed) the previous project's data.
+    describe('multi-project isolation', () => {
+        async function fire(event: string, payload: any) {
+            await act(async () => {
+                for (const cb of listenCallbacks[event] ?? []) cb({ payload });
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+        }
+
+        it('ignores a failure-group-state-changed broadcast about another project, or one with no workspace id', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            await fire('failure-group-state-changed', {
+                workspaceId: 'some-other-workspace', origin: 'dashboard',
+                groups: [makeGroup()], models: [makeModel({ id: 'x', name: 'Foreign Model' })],
+            });
+            await fire('failure-group-state-changed', {
+                groups: [makeGroup()], models: [makeModel({ id: 'y', name: 'Unscoped Model' })],
+            });
+            expect(screen.queryByText('Foreign Model')).toBeNull();
+            expect(screen.queryByText('Unscoped Model')).toBeNull();
+            expect(screen.getByText('Model One')).toBeTruthy();
+        });
+
+        it('skips its own echo but still applies the Predictive Model page\'s broadcast (that page lives inside this window)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            await fire('failure-group-state-changed', {
+                workspaceId: 'ws1', origin: 'build-model',
+                groups: [makeGroup()], models: [makeModel({ id: 'e', name: 'Echoed Model' })],
+            });
+            expect(screen.queryByText('Echoed Model')).toBeNull();
+            await fire('failure-group-state-changed', {
+                workspaceId: 'ws1', origin: 'predictive-model',
+                groups: [makeGroup()], models: [makeModel({ id: 'p', name: 'PM Edit' })],
+            });
+            expect(screen.getByText('PM Edit')).toBeTruthy();
+        });
+
+        it('stamps every failure-group broadcast it sends with its workspace id', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Incomplete')); // toggles the status pill -> persist()
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
+                workspaceId: 'ws1',
+                origin: 'build-model',
+            }));
+        });
+
+        it('being re-pointed at a DIFFERENT workspace drops the old one\'s open PM page and shows only the new workspace\'s models', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+
+            mockLoadWorkspaceData.mockResolvedValue({
+                id: 'ws2',
+                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model' })] },
+            });
+            await fire('build-model-data', {
+                workspaceId: 'ws2',
+                sensorHeaders: ['OTHER1'],
+                sensorMetadata: [],
+                metadata: { headers: ['timestamp', 'OTHER1'], total_rows: 1 },
+            });
+
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // model 'm1' does not exist in ws2
+            expect(screen.getByText('Other Project Model')).toBeTruthy();
+            expect(screen.queryByText('Model One')).toBeNull();
+        });
+
+        it('re-delivery for the SAME workspace keeps the open PM page', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Model One'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            await deliverData();
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+        });
+
+        it('a slow, superseded load cannot overwrite the result of a newer one (several build-model-data replies used to race and the last to finish won)', async () => {
+            render(<BuildModelWindow />);
+            let resolveFirst!: (v: any) => void;
+            mockLoadWorkspaceData.mockReturnValueOnce(new Promise(res => { resolveFirst = res; }));
+            mockLoadWorkspaceData.mockResolvedValueOnce({
+                id: 'ws1',
+                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model' })] },
+            });
+            const payload = {
+                workspaceId: 'ws1', sensorHeaders: ['TAG1'], sensorMetadata: [],
+                metadata: { headers: ['timestamp', 'TAG1'], total_rows: 1 },
+            };
+            await fire('build-model-data', payload); // first reply: its load stays pending
+            await fire('build-model-data', payload); // second reply: resolves immediately
+            expect(screen.getByText('Fresh Model')).toBeTruthy();
+
+            await act(async () => {
+                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model' })] } });
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(screen.queryByText('Stale Model')).toBeNull();
+            expect(screen.getByText('Fresh Model')).toBeTruthy();
+        });
     });
 
     it('Close calls the Tauri window close API', async () => {

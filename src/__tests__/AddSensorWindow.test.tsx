@@ -770,3 +770,38 @@ describe('AddSensorWindow', () => {
         expect(mockClose).toHaveBeenCalled();
     });
 });
+
+describe('AddSensorWindow multi-project isolation', () => {
+    async function deliverFor(workspaceId: string) {
+        await act(async () => {
+            for (const cb of listenCallbacks['sensors-data'] ?? []) {
+                cb({ payload: { workspaceId, sensors: ['TAG1', 'TAG2'], selectedSensors: [], sensorMetadata: [] } });
+            }
+        });
+    }
+    async function addTag1() {
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        await act(async () => {
+            fireEvent.click(screen.getByText('Add sensor'));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+    }
+
+    it('stamps the workspace id it was handed on what it emits, so the Dashboard can tell whose data it is (2026-09-21: a leftover window from the previous project used to push its special sensors, component and description into the newly opened one)', async () => {
+        render(<AddSensorWindow />);
+        await deliverFor('ws-A');
+        await addTag1();
+        expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({ sensors: ['TAG1'], workspaceId: 'ws-A' }));
+    });
+
+    it('follows the Dashboard when it re-points this window at another workspace: the LATEST sensors-data decides the id it stamps', async () => {
+        render(<AddSensorWindow />);
+        await deliverFor('ws-A');
+        await deliverFor('ws-B');
+        await addTag1();
+        const sent = mockEmit.mock.calls.filter((c) => c[0] === 'add-sensor-selection');
+        expect(sent).toHaveLength(1);
+        expect(sent[0][1].workspaceId).toBe('ws-B');
+    });
+});

@@ -1162,7 +1162,7 @@ describe('Dashboard', () => {
             await act(async () => {
                 for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
                     cb({
-                        payload: {
+                        payload: { workspaceId: 'ws1',
                             sensors: ['CALC1'],
                             operation: { mode: 'single', singleOp: { type: 'add', value: 1 } },
                             newMetadata: [{ tag: 'CALC1', description: 'Calculated', unit: '', component: '' }],
@@ -1226,7 +1226,7 @@ describe('Dashboard', () => {
             await act(async () => {
                 for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
                     cb({
-                        payload: {
+                        payload: { workspaceId: 'ws1',
                             sensors: ['CALC1'],
                             operation: null,
                             newMetadata: [{ tag: 'CALC1', description: 'Calculated', unit: '', component: '' }],
@@ -1248,7 +1248,7 @@ describe('Dashboard', () => {
             const revisedRecipe = { kind: 'operation' as const, tag: 'CALC1', sourceSensors: ['TAG1', 'TAG2'], operationConfig: { mode: 'single' as const, singleOp: { type: 'multiply' as const, value: 2 } } };
             await act(async () => {
                 for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
-                    cb({ payload: { sensors: ['CALC1'], operation: null, newMetadata: [], newRecipes: [revisedRecipe] } });
+                    cb({ payload: { workspaceId: 'ws1', sensors: ['CALC1'], operation: null, newMetadata: [], newRecipes: [revisedRecipe] } });
                 }
             });
             await waitFor(() => {
@@ -1303,7 +1303,7 @@ describe('Dashboard', () => {
 
             await act(async () => {
                 for (const cb of listenCallbacks['delete-special-sensors'] ?? []) {
-                    cb({ payload: { tags: ['CALC1'] } });
+                    cb({ payload: { workspaceId: 'ws1', tags: ['CALC1'] } });
                 }
             });
 
@@ -1333,7 +1333,7 @@ describe('Dashboard', () => {
 
             await act(async () => {
                 for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
-                    cb({ payload: {
+                    cb({ payload: { workspaceId: 'ws1',
                         recipe: after,
                         metadata: { tag: 'CALC1', description: 'Five times', unit: 'bar', component: 'Pump' },
                         recomputed: ['CALC1'],
@@ -1369,7 +1369,7 @@ describe('Dashboard', () => {
 
             await act(async () => {
                 for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
-                    cb({ payload: { recipe: { kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 5' }, recomputed: ['CALC1'] } });
+                    cb({ payload: { workspaceId: 'ws1', recipe: { kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 5' }, recomputed: ['CALC1'] } });
                 }
             });
 
@@ -1410,7 +1410,7 @@ describe('Dashboard', () => {
 
             await act(async () => {
                 for (const cb of listenCallbacks['rename-special-sensor'] ?? []) {
-                    cb({ payload: {
+                    cb({ payload: { workspaceId: 'ws1',
                         oldTag: 'CALC1',
                         newTag: 'CALC1-renamed',
                         recipe: { kind: 'formula', tag: 'CALC1-renamed', formula: '$TAG1 * 2' },
@@ -1457,12 +1457,12 @@ describe('Dashboard', () => {
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
             await act(async () => {
-                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { tags: [] } });
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { workspaceId: 'ws1', tags: [] } });
             });
             expect(last(sensorSelectionProps).sensors).toContain('TAG1');
 
             await act(async () => {
-                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { tags: ['  calc1  '] } });
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { workspaceId: 'ws1', tags: ['  calc1  '] } });
             });
             await waitFor(() => {
                 const saved = last(mockSaveWorkspaceData.mock.calls)[0];
@@ -1556,6 +1556,167 @@ describe('Dashboard', () => {
                 await Promise.resolve();
             });
             expect(mockGetByLabel).toHaveBeenCalledWith('build-model');
+        });
+    });
+
+    // 2026-09-21: with more than one project, every cross-window event is a
+    // global broadcast and a window left over from the PREVIOUS project keeps
+    // talking. Reported symptoms: a special sensor showing the component and
+    // name of a sensor from another project; Failure Groups appearing,
+    // vanishing, or belonging to the wrong project.
+    describe('multi-project isolation', () => {
+        const otherWs = { workspaceId: 'some-other-workspace' };
+
+        it('stamps its workspace id on the sensor data it hands the Add Sensor window', async () => {
+            renderDashboard({ initialState: makeInitialState({ id: 'ws-A' }) });
+            await act(async () => { for (const cb of listenCallbacks['request-sensors'] ?? []) cb({}); });
+            expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-A' }));
+        });
+
+        it('ignores "add-sensor-selection" from a leftover window of another project (its special sensors, metadata and recipes must not land in this one)', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await Promise.resolve(); });
+            await act(async () => {
+                for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
+                    cb({ payload: {
+                        ...otherWs,
+                        sensors: ['FOREIGN'],
+                        operation: null,
+                        newMetadata: [{ tag: 'FOREIGN', description: 'From project A', unit: '', component: 'Turbine A' }],
+                        newRecipes: [{ kind: 'formula', tag: 'FOREIGN', formula: '$TAG1 * 2' }],
+                    } });
+                }
+            });
+            expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1']);
+            await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
+            const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+            expect(saved.specialSensorRecipes ?? []).toEqual([]);
+            expect(saved.extraSensorMetadata ?? []).toEqual([]);
+        });
+
+        it('ignores an event with no workspace id at all (an un-upgraded sender is treated as foreign, never guessed at)', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await Promise.resolve(); });
+            await act(async () => {
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { tags: ['TAG1'] } });
+            });
+            expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1']);
+        });
+
+        it('ignores delete/rename special-sensor events from another project', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await Promise.resolve(); });
+            await act(async () => {
+                for (const cb of listenCallbacks['delete-special-sensors'] ?? []) cb({ payload: { ...otherWs, tags: ['TAG1'] } });
+                for (const cb of listenCallbacks['rename-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        ...otherWs, oldTag: 'TAG1', newTag: 'RENAMED',
+                        recipe: { kind: 'formula', tag: 'RENAMED', formula: '$TAG2' },
+                        metadata: { tag: 'RENAMED', description: '', unit: '', component: '' },
+                        updatedRecipes: [],
+                    } });
+                }
+            });
+            expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1']);
+        });
+
+        it('ignores a failure-group-state-changed broadcast about another project, applies its own, and skips its own echo', async () => {
+            renderDashboard({ initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Mine' }], models: [] } }) });
+            fireEvent.click(screen.getByText('Failure Groups'));
+            const fire = async (payload: any) => act(async () => {
+                for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) cb({ payload });
+            });
+
+            await fire({ workspaceId: 'some-other-workspace', groups: [{ no: 1, name: 'Theirs' }], models: [] });
+            expect(last(fgPanelProps).fgGroups.map((g: any) => g.name)).toEqual(['Mine']);
+
+            await fire({ groups: [{ no: 1, name: 'No id' }], models: [] });
+            expect(last(fgPanelProps).fgGroups.map((g: any) => g.name)).toEqual(['Mine']);
+
+            await fire({ workspaceId: 'ws1', origin: 'dashboard', groups: [{ no: 1, name: 'Echo' }], models: [] });
+            expect(last(fgPanelProps).fgGroups.map((g: any) => g.name)).toEqual(['Mine']);
+
+            await fire({ workspaceId: 'ws1', origin: 'build-model', groups: [{ no: 1, name: 'Fresh' }], models: [] });
+            expect(last(fgPanelProps).fgGroups.map((g: any) => g.name)).toEqual(['Fresh']);
+        });
+
+        it('broadcasts its own failure-group edits, scoped to its workspace, so an open Build Model window does not go stale', async () => {
+            renderDashboard({ initialState: makeInitialState({ id: 'ws-A', failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }) });
+            await act(async () => {
+                fireEvent.click(screen.getByText('toggle-group'));
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
+                workspaceId: 'ws-A',
+                origin: 'dashboard',
+            }));
+        });
+
+        it('answers request-build-model-data from ONE subscription, with the current workspace id -- no stale duplicates from re-subscribing on every state change', async () => {
+            renderDashboard({ initialState: makeInitialState({ id: 'ws-A', selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await Promise.resolve(); });
+            // Merging a special sensor's metadata changes `sensorMetadata`, one
+            // of the values the old subscription depended on -- it used to
+            // tear down and re-subscribe on every such change.
+            await act(async () => {
+                for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
+                    cb({ payload: {
+                        workspaceId: 'ws-A', sensors: ['CALC1'], operation: null,
+                        newMetadata: [{ tag: 'CALC1', description: 'Calculated', unit: '', component: 'Pump' }],
+                    } });
+                }
+                await Promise.resolve();
+            });
+
+            expect(mockListen.mock.calls.filter((c) => c[0] === 'request-build-model-data')).toHaveLength(1);
+            expect((listenCallbacks['request-build-model-data'] ?? [])).toHaveLength(1);
+
+            mockEmit.mockClear();
+            await act(async () => {
+                for (const cb of listenCallbacks['request-build-model-data'] ?? []) cb({});
+                await Promise.resolve();
+            });
+            const replies = mockEmit.mock.calls.filter((c) => c[0] === 'build-model-data');
+            expect(replies).toHaveLength(1);
+            expect(replies[0][1]).toEqual(expect.objectContaining({ workspaceId: 'ws-A' }));
+        });
+
+        it('closes the Add Special Sensor window too when this workspace\'s Dashboard unmounts (it used to survive the switch and keep feeding the old project into the new one)', async () => {
+            const existing = { close: vi.fn().mockResolvedValue(undefined) };
+            mockGetByLabel.mockResolvedValue(existing);
+            const { unmount } = renderDashboard();
+            await act(async () => { unmount(); await Promise.resolve(); await Promise.resolve(); });
+            expect(mockGetByLabel).toHaveBeenCalledWith('add-sensor');
+            expect(mockGetByLabel).toHaveBeenCalledWith('build-model');
+        });
+
+        it('re-points an already-open Build Model window at THIS workspace instead of just focusing it', async () => {
+            const existing = { setFocus: vi.fn().mockResolvedValue(undefined) };
+            mockGetByLabel.mockResolvedValue(existing);
+            renderDashboard({ initialState: makeInitialState({ id: 'ws-B' }) });
+            fireEvent.click(screen.getByText('Failure Groups'));
+            mockEmit.mockClear();
+            await act(async () => {
+                fireEvent.click(screen.getByText('open-build-model'));
+                for (let i = 0; i < 6; i++) await Promise.resolve();
+            });
+            expect(existing.setFocus).toHaveBeenCalled();
+            expect(mockEmit).toHaveBeenCalledWith('build-model-data', expect.objectContaining({ workspaceId: 'ws-B' }));
+        });
+
+        it('"Add Special Sensor" focuses and refreshes an already-open window rather than trying to create a second one with the same label', async () => {
+            const existing = { setFocus: vi.fn().mockResolvedValue(undefined) };
+            mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'add-sensor' ? existing : null));
+            renderDashboard({ initialState: makeInitialState({ id: 'ws-B' }) });
+            mockEmit.mockClear();
+            await act(async () => {
+                fireEvent.click(screen.getByText('Add Special Sensor'));
+                for (let i = 0; i < 6; i++) await Promise.resolve();
+            });
+            expect(existing.setFocus).toHaveBeenCalled();
+            expect(webviewWindowCalls.some((c) => c.label === 'add-sensor')).toBe(false);
+            expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-B' }));
         });
     });
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen, emit } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
+import { subscribe } from "../../utils/tauriEvents";
 import { X, Plus, ChevronDown, Gauge } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
@@ -225,45 +226,69 @@ export default function BuildModelWindow() {
         return sensorMetaMap.get(normalizeSensorTag(targetTag))?.component || UNCATEGORIZED;
     }, [sensorMetaMap]);
 
+    // Which workspace this window is currently showing, and a counter that
+    // lets a slow, superseded `loadWorkspaceData` drop its result instead of
+    // overwriting a newer one (2026-09-21: several `build-model-data` replies
+    // could be in flight at once and whichever load finished last won).
+    const workspaceIdRef = useRef<string | null>(null);
+    const loadSeq = useRef(0);
+
     useEffect(() => {
-        let unlistenData: (() => void) | undefined;
-        let unlistenChanged: (() => void) | undefined;
+        const offData = subscribe<BuildModelData>('build-model-data', async (event) => {
+            const d = event.payload;
+            // Re-pointed at a DIFFERENT workspace than the one on screen (the
+            // main window moved on to another project while this window
+            // stayed open): drop everything belonging to the old one —
+            // including a PM page or half-edited form for a model that does
+            // not exist in the new workspace.
+            const switched = workspaceIdRef.current !== null && workspaceIdRef.current !== d.workspaceId;
+            workspaceIdRef.current = d.workspaceId;
+            setWorkspaceId(d.workspaceId);
+            if (switched) {
+                setActivePage('overview');
+                setPmPageModelId(null);
+                setEditingModelId(null);
+                setShowForm(false);
+                setAllGroups([]);
+                setAllModels([]);
+                setRunningConditionFilters([]);
+            }
+            setAllSensors(d.sensorHeaders);
+            setSensorMetadata(d.sensorMetadata);
+            const seq = ++loadSeq.current;
+            try {
+                const ws = await loadWorkspaceData(d.workspaceId);
+                if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
+                setAllGroups(ws?.failureGroupState?.groups ?? []);
+                setAllModels(ws?.failureGroupState?.models ?? []);
+                setRunningConditionFilters(ws?.failureGroupState?.runningConditionFilters ?? []);
+            } catch (e) {
+                console.warn('Failed to hydrate failure-group state:', e);
+            }
+            hydratedRef.current = true;
+            setLoading(false);
+        });
 
-        const setup = async () => {
-            unlistenData = await listen<BuildModelData>('build-model-data', async (event) => {
-                const d = event.payload;
-                setWorkspaceId(d.workspaceId);
-                setAllSensors(d.sensorHeaders);
-                setSensorMetadata(d.sensorMetadata);
-                try {
-                    const ws = await loadWorkspaceData(d.workspaceId);
-                    setAllGroups(ws?.failureGroupState?.groups ?? []);
-                    setAllModels(ws?.failureGroupState?.models ?? []);
-                    setRunningConditionFilters(ws?.failureGroupState?.runningConditionFilters ?? []);
-                } catch (e) {
-                    console.warn('Failed to hydrate failure-group state:', e);
-                }
-                hydratedRef.current = true;
-                setLoading(false);
-            });
+        // Any other window (Dashboard, PredictiveModelBuild) that
+        // persists failureGroupState broadcasts this so our copy never
+        // goes stale. Ignores another workspace's broadcast (events are
+        // global) and this window's own echo.
+        const offChanged = subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+            if (event.payload.workspaceId !== workspaceIdRef.current) return;
+            if (event.payload.origin === 'build-model') return;
+            // A load already in flight is now older than this broadcast.
+            loadSeq.current++;
+            setAllGroups(event.payload.groups);
+            setAllModels(event.payload.models);
+            setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
+        });
 
-            // Any other window (Dashboard, PredictiveModelBuild) that
-            // persists failureGroupState broadcasts this so our copy never
-            // goes stale.
-            unlistenChanged = await listen<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[] }>('failure-group-state-changed', (event) => {
-                setAllGroups(event.payload.groups);
-                setAllModels(event.payload.models);
-                setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
-            });
-
-            await emit('request-build-model-data');
-        };
-
-        setup();
+        // Register both before asking, so the reply can't be missed.
+        Promise.all([offData.ready, offChanged.ready]).then(() => emit('request-build-model-data'));
 
         return () => {
-            if (unlistenData) unlistenData();
-            if (unlistenChanged) unlistenChanged();
+            offData();
+            offChanged();
         };
     }, []);
 
@@ -292,7 +317,7 @@ export default function BuildModelWindow() {
             setAllGroups(next.failureGroupState.groups);
             setAllModels(next.failureGroupState.models);
             setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
-            await emit('failure-group-state-changed', next.failureGroupState);
+            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
     }, [workspaceId]);
 
@@ -313,7 +338,7 @@ export default function BuildModelWindow() {
             setAllGroups(next.failureGroupState.groups);
             setAllModels(next.failureGroupState.models);
             setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
-            await emit('failure-group-state-changed', next.failureGroupState);
+            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
     }, [workspaceId]);
 
