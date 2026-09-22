@@ -824,6 +824,33 @@ describe('Dashboard', () => {
             const lastCall = last(mockUseChartData.mock.calls)![0] as any;
             expect(lastCall.filter.timestamp_start).toBe('2026-01-01T00:00');
         });
+
+        // 2026-09-22, per explicit user question ("filter รวม... การแสดงผล
+        // ยังต้องแสดงผลทั้งหมดเหมือนเดิมนะ การทำงานตรงนี้ถูกต้องไหม"): the
+        // workspace-wide Running Condition Filter is meant ONLY for every
+        // model's PM preview/training query (compute_sensor_stats,
+        // preview_relationship_model, compute_clustering_preview all take
+        // it) — Dashboard keeps its own copy in local state purely so its
+        // autosave can round-trip it without clobbering a fresher write from
+        // BuildModelWindow (see the data-loss-fix test above), never to
+        // filter its OWN chart/scatter display. That display is driven
+        // exclusively by Dashboard's own Filter tab (`filters.sensorFilters`
+        // -> wireValueFilters), a completely separate piece of state.
+        it("a non-empty Running Condition Filter does NOT leak into Dashboard's own chart/scatter queries — the main display keeps showing everything, unaffected", () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1'], visibleSensors: ['TAG1'],
+                    failureGroupState: {
+                        groups: [], models: [],
+                        runningConditionFilters: [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }],
+                    },
+                }),
+            });
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.value_filters).toEqual([]);
+            expect(lastCall.filter.timestamp_start).toBeNull();
+            expect(lastCall.filter.timestamp_end).toBeNull();
+        });
     });
 
     describe('failure-group wiring (from the Sensor tab quick-assign)', () => {
