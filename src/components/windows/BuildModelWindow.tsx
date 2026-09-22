@@ -6,7 +6,7 @@ import { X, Plus, ChevronDown, Gauge } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
-import PredictiveModelBuild, { SensorAutocomplete, SensorPickerModal } from "./PredictiveModelBuild";
+import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 
 interface BuildModelData {
     workspaceId: string;
@@ -917,14 +917,17 @@ export default function BuildModelWindow() {
                         </p>
                         {runningConditionFilters.map(f => (
                             <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', marginBottom: '6px', background: 'var(--chip-bg)', border: '1px solid var(--border)', borderRadius: '6px' }}>
-                                <SensorAutocomplete
-                                    sensors={allSensors}
-                                    getDesc={getDesc}
-                                    value={f.sensor}
-                                    onSelect={sensor => updateRunningConditionFilter(f.id, { sensor })}
-                                    placeholder="Search sensor..."
-                                    style={{ flex: 1, minWidth: 0 }}
-                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <SensorPickerModal
+                                        sensors={allSensors}
+                                        getDesc={getDesc}
+                                        getComponent={getComponent}
+                                        single
+                                        value={f.sensor}
+                                        onSelect={sensor => updateRunningConditionFilter(f.id, { sensor })}
+                                        noun="sensor"
+                                    />
+                                </div>
                                 <select
                                     value={f.operation}
                                     onChange={e => updateRunningConditionFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}

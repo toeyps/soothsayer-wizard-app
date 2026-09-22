@@ -921,6 +921,33 @@ describe('BuildModelWindow', () => {
             expect(state.failureGroupState.runningConditionFilters[0].value1).toBe('1200');
         });
 
+        it('the condition\'s sensor field is a single-select SensorPickerModal grouped by component (2026-09-22 fix — see next test for the reported bug this replaces)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            fireEvent.click(screen.getByText('Add condition (AND)'));
+
+            const rcProps = sensorPickerModalProps.find(p => p.noun === 'sensor');
+            expect(rcProps).toBeTruthy();
+            expect(rcProps.single).toBe(true); // one sensor per condition, not the multi-select Predictor popup
+            expect(typeof rcProps.getComponent).toBe('function'); // grouped, like every other picker now
+        });
+
+        it('picking a different sensor for a condition persists it (regression: this field used to render an unusable, unreachable dropdown — plain SensorAutocomplete at full row width with no test ever actually selecting through it)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            fireEvent.click(screen.getByText('Add condition (AND)')); // defaults to sensor: 'TAG1'
+            await act(async () => { await Promise.resolve(); });
+            mockUpdateWorkspaceData.mockClear();
+
+            fireEvent.change(screen.getByDisplayValue('TAG1'), { target: { value: 'TAG2' } });
+            await act(async () => { await Promise.resolve(); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.runningConditionFilters[0].sensor).toBe('TAG2');
+        });
+
         it('removing the only condition goes back to "not set"', async () => {
             render(<BuildModelWindow />);
             await deliverData();
