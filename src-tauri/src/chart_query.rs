@@ -466,6 +466,38 @@ fn decimate(
 }
 
 // ---------------------------------------------------------------------------
+// Dataset-wide time bounds (NOT filtered — see `get_dataset_time_bounds`)
+// ---------------------------------------------------------------------------
+
+/// True first/last timestamp across the WHOLE dataset, ignoring any
+/// dashboard filter. `ChartView::ts_min`/`ts_max` can't serve this — they're
+/// computed from the (possibly filtered) query population, so once any time
+/// filter is applied they stop reflecting the dataset's real extent. This is
+/// the one source of truth for "what does this dataset span," used to label
+/// the Time Range panel and to anchor the relative-range (Y/M/W/D/H) buttons
+/// to the data itself instead of the machine's clock.
+///
+/// Scans `ts_parsed` rather than trusting `timestamps.first()`/`.last()`:
+/// rows are ordered by the ORIGINAL text (string order), which only matches
+/// chronological order when every row shares one zero-padded format — a
+/// single unparseable row at either end (e.g. a Buddhist-calendar leap day
+/// that isn't one in the Gregorian calendar) would otherwise silently skew
+/// the bound by that row's position rather than being excluded.
+pub fn full_dataset_time_bounds(data: &ColumnarData) -> (Option<String>, Option<String>) {
+    let mut min_us: Option<i64> = None;
+    let mut max_us: Option<i64> = None;
+    for &us in &data.ts_parsed {
+        if us == TS_MISSING {
+            continue;
+        }
+        min_us = Some(min_us.map_or(us, |m| m.min(us)));
+        max_us = Some(max_us.map_or(us, |m| m.max(us)));
+    }
+    let fmt = |us: i64| micros_to_naive(us).map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string());
+    (min_us.and_then(fmt), max_us.and_then(fmt))
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
@@ -677,6 +709,44 @@ mod tests {
         assert_eq!(v.series[0], vec![Some(10.0), Some(40.0)]);
         let v = build_chart_view(&d, &filter(&["B"]), None, "last", 100);
         assert_eq!(v.series[0], vec![Some(30.0), Some(60.0)]);
+    }
+
+    #[test]
+    fn full_dataset_time_bounds_ignores_filter_state_and_unparseable_rows() {
+        let d = dataset();
+        let (min, max) = full_dataset_time_bounds(&d);
+        assert_eq!(min.as_deref(), Some("2020-01-01T00:00:00"));
+        assert_eq!(max.as_deref(), Some("2020-01-01T01:20:00"));
+    }
+
+    #[test]
+    fn full_dataset_time_bounds_skips_ts_missing_rows() {
+        let ts: Vec<Option<String>> = vec![
+            Some("2020-01-01T00:00:00".into()),
+            Some("not a timestamp".into()), // parses to TS_MISSING
+            Some("2020-01-01T02:00:00".into()),
+        ];
+        let d = ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            ts,
+            vec![vec![f64::NAN; 3], vec![1.0, 2.0, 3.0]],
+        );
+        let (min, max) = full_dataset_time_bounds(&d);
+        assert_eq!(min.as_deref(), Some("2020-01-01T00:00:00"));
+        assert_eq!(max.as_deref(), Some("2020-01-01T02:00:00"));
+    }
+
+    #[test]
+    fn full_dataset_time_bounds_all_missing_is_none() {
+        let ts: Vec<Option<String>> = vec![Some("nope".into()), None];
+        let d = ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            ts,
+            vec![vec![f64::NAN; 2], vec![1.0, 2.0]],
+        );
+        let (min, max) = full_dataset_time_bounds(&d);
+        assert_eq!(min, None);
+        assert_eq!(max, None);
     }
 
     #[test]

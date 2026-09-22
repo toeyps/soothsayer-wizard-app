@@ -155,6 +155,20 @@ export interface ChartViewData {
 }
 
 /**
+ * True first/last timestamp across the WHOLE loaded dataset, from
+ * `get_dataset_time_bounds` — ignores whatever time filter is currently
+ * applied, unlike `ChartViewData.ts_min`/`ts_max` (which reflect only the
+ * filtered population). The one source of truth for "what does this dataset
+ * span": labels the Time Range panel and anchors the Y/M/W/D/H relative-range
+ * buttons to the data itself instead of the machine's clock. Both null when
+ * every row's timestamp failed to parse (or the dataset is empty).
+ */
+export interface DatasetTimeBounds {
+  min: string | null;
+  max: string | null;
+}
+
+/**
  * Bounded sample of the (filtered) dataset for scatter / pair-plot rendering,
  * returned by `get_scatter_sample`. `rows.length <= max_points`, so the IPC
  * payload, JS heap, and WebGL buffers stay bounded regardless of how large

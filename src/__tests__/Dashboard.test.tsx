@@ -111,6 +111,15 @@ vi.mock('../hooks/useScatterSample', () => ({
         mockUseScatterSample(filter, max, active, revision),
 }));
 
+// Default `bounds: null` matches the old default fixture's `ts_min: null,
+// ts_max: null` — most tests don't care about the dataset's true extent and
+// expect `dataRange`-gated UI (the "Data: …" hint, "Reset Period") to stay
+// absent by default.
+const mockUseDatasetTimeBounds = vi.fn(() => ({ bounds: null, loading: false, error: null } as any));
+vi.mock('../hooks/useDatasetTimeBounds', () => ({
+    useDatasetTimeBounds: () => mockUseDatasetTimeBounds(),
+}));
+
 // ── Tauri / infra mocks ────────────────────────────────────────────────
 
 const mockInvoke = vi.fn().mockResolvedValue(undefined);
@@ -240,6 +249,7 @@ beforeEach(() => {
     listenCallbacks = {};
     mockUseChartData.mockClear().mockReturnValue({ view: null, loading: false, error: null });
     mockUseScatterSample.mockClear().mockReturnValue({ rows: [], headers: [], total: 0, sampled: 0, loading: false, error: null });
+    mockUseDatasetTimeBounds.mockClear().mockReturnValue({ bounds: null, loading: false, error: null });
     mockInvoke.mockClear().mockResolvedValue(undefined);
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
@@ -1776,6 +1786,37 @@ describe('Dashboard', () => {
             expect(lastCall.filter.timestamp_start).not.toBe('');
         });
 
+        // Regression: this data is historical, and its end can sit anywhere
+        // relative to today — anchoring "last N D/W/M/Y" to `new Date()`
+        // (the machine clock) routinely landed outside the dataset entirely
+        // and silently produced 0 points. Must anchor to the dataset's OWN
+        // last timestamp instead.
+        it("anchors Apply to the dataset's own last timestamp, not the machine clock", () => {
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2020-01-01T00:00:00', max: '2026-01-15T10:00:00' },
+                loading: false, error: null,
+            });
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1'], visibleSensors: ['TAG1'],
+                    // Explicit (empty) saved filters so the separate
+                    // first-open-default effect doesn't also fire here.
+                    filters: { timestampStart: '', timestampEnd: '', sensorFilters: [] },
+                }),
+            });
+            fireEvent.click(screen.getByTitle('Apply relative range')); // default: last 1 D
+
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            const end = new Date(lastCall.filter.timestamp_end);
+            const start = new Date(lastCall.filter.timestamp_start);
+            const datasetMax = new Date('2026-01-15T10:00:00');
+            // Within a minute: `formatForInput` truncates to the minute.
+            expect(Math.abs(end.getTime() - datasetMax.getTime())).toBeLessThan(60_000);
+            expect(Math.abs(start.getTime() - (datasetMax.getTime() - 24 * 60 * 60 * 1000))).toBeLessThan(60_000);
+            // And NOT anchored anywhere near the real current time.
+            expect(Math.abs(end.getTime() - Date.now())).toBeGreaterThan(24 * 60 * 60 * 1000);
+        });
+
         // Regression #1 (fixed first): the unit button (D/H/W/...) kept
         // showing the STRONG "active" accent background forever after being
         // clicked, even once the user hand-edited Start/End and the shown
@@ -1881,10 +1922,15 @@ describe('Dashboard', () => {
         describe('"Reset Period" button (regression: used to be labelled just "Reset" and sit after the AGGREGATION dropdown, reading as if it might also reset that — it only ever clears the time period)', () => {
             beforeEach(() => {
                 // The button only renders once there's a data range to reset
-                // BACK TO (dataRange, from view.ts_min/ts_max) and an active
-                // Start filter to reset AWAY FROM.
+                // BACK TO (dataRange, from useDatasetTimeBounds — the TRUE
+                // dataset extent, independent of the filter under test) and
+                // an active Start filter to reset AWAY FROM.
                 mockUseChartData.mockReturnValue({
                     view: { headers: ['TAG1'], timestamps: [], series: [[]], total_rows: 5, ts_min: '2025-01-01T00:00:00Z', ts_max: '2025-06-01T00:00:00Z' },
+                    loading: false, error: null,
+                });
+                mockUseDatasetTimeBounds.mockReturnValue({
+                    bounds: { min: '2025-01-01T00:00:00Z', max: '2025-06-01T00:00:00Z' },
                     loading: false, error: null,
                 });
             });
@@ -1927,6 +1973,101 @@ describe('Dashboard', () => {
                 fireEvent.click(screen.getByText('Reset Period'));
                 expect((screen.getByRole('button', { name: 'D' }) as HTMLButtonElement).style.background).toBe('transparent');
             });
+        });
+    });
+
+    describe('dataset time-bounds label ("Data: <start> – <end>", next to Reset Period)', () => {
+        it('shows the dataset\'s true start/end once known — independent of the current filter', () => {
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2023-05-13T01:00:00', max: '2026-07-31T00:00:00' },
+                loading: false, error: null,
+            });
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            expect(screen.getByTitle('First and last timestamp across the whole loaded dataset')).toBeTruthy();
+        });
+
+        it('stays absent while the dataset bounds are not yet known', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            expect(screen.queryByTitle('First and last timestamp across the whole loaded dataset')).toBeNull();
+        });
+    });
+
+    describe('first-open default time range (last 6 months of the dataset, once per workspace)', () => {
+        it('applies a 6-month-back default when the workspace has never had a time filter saved', () => {
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2020-01-01T00:00:00', max: '2026-07-31T00:00:00' },
+                loading: false, error: null,
+            });
+            // makeInitialState() omits `filters` entirely — the "never saved" case.
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).not.toBeNull();
+            const start = new Date(lastCall.filter.timestamp_start);
+            const expectedStart = new Date('2026-07-31T00:00:00');
+            expectedStart.setMonth(expectedStart.getMonth() - 6);
+            expect(Math.abs(start.getTime() - expectedStart.getTime())).toBeLessThan(60_000);
+
+            const mBtn = screen.getByRole('button', { name: 'M' }) as HTMLButtonElement;
+            expect(mBtn.title).toMatch(/^Currently applied — last 6 Months/);
+        });
+
+        it('does NOT override a workspace that already has explicit (even empty) saved filters — e.g. after "Reset Period"', () => {
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2020-01-01T00:00:00', max: '2026-07-31T00:00:00' },
+                loading: false, error: null,
+            });
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1'], visibleSensors: ['TAG1'],
+                    filters: { timestampStart: '', timestampEnd: '', sensorFilters: [] },
+                }),
+            });
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBeNull();
+            expect(lastCall.filter.timestamp_end).toBeNull();
+        });
+
+        it('does not override an explicit non-empty saved range', () => {
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2020-01-01T00:00:00', max: '2026-07-31T00:00:00' },
+                loading: false, error: null,
+            });
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1'], visibleSensors: ['TAG1'],
+                    filters: { timestampStart: '2021-01-01T00:00', timestampEnd: '2021-02-01T00:00', sensorFilters: [] },
+                }),
+            });
+            const lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBe('2021-01-01T00:00');
+            expect(lastCall.filter.timestamp_end).toBe('2021-02-01T00:00');
+        });
+
+        it('never fires more than once even if the dataset bounds value is replaced later', () => {
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2020-01-01T00:00:00', max: '2026-07-31T00:00:00' },
+                loading: false, error: null,
+            });
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+
+            // Simulate the user manually clearing the period after the
+            // default applied (same as clicking "Reset Period").
+            fireEvent.click(screen.getByText('Reset Period'));
+            let lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBeNull();
+
+            // Bounds "changing" (e.g. a re-render with a new object identity
+            // from the hook) must NOT re-fire the default and clobber the
+            // user's explicit reset.
+            mockUseDatasetTimeBounds.mockReturnValue({
+                bounds: { min: '2020-01-01T00:00:00', max: '2026-08-01T00:00:00' },
+                loading: false, error: null,
+            });
+            fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
+            fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '' } });
+            lastCall = last(mockUseChartData.mock.calls)![0] as any;
+            expect(lastCall.filter.timestamp_start).toBeNull();
         });
     });
 });

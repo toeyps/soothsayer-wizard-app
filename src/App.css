@@ -1307,6 +1307,13 @@ body {
     border-color: var(--border-strong);
 }
 
+.data-range-hint {
+    font-size: 11px;
+    color: var(--text-faint);
+    font-family: var(--mono);
+    white-space: nowrap;
+}
+
 /* Export button in header — secondary style */
 .export-btn-header {
     display: flex;

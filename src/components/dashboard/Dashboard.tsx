@@ -26,6 +26,7 @@ import ColorPlatePicker from './ColorPlatePicker';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
 import { useChartData } from '../../hooks/useChartData';
+import { useDatasetTimeBounds } from '../../hooks/useDatasetTimeBounds';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { renameTagInArray, renameTagInRecord, renameTagInModels } from '../../utils/specialSensorRename';
 
@@ -33,6 +34,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
 import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
 import { debugLog } from '../../utils/debugLog';
+import { formatDateTime } from '../../utils/dateFormat';
 
 // Panel configuration
 const PANELS = {
@@ -90,6 +92,38 @@ const LINE_MAX_POINTS = 4000;
 // keystroke in a Filter value box, which has no debounce of its own)
 // triggered an immediate JSON.stringify + writeTextFile to $APPDATA.
 const AUTOSAVE_DEBOUNCE_MS = 250;
+
+type RelativeRangeUnit = 'Y' | 'M' | 'W' | 'D' | 'H';
+
+/**
+ * `end` minus `n` of `unit` — calendar-accurate for Y/M (not a fixed
+ * duration, so `setFullYear`/`setMonth`, with a clamp for month-end
+ * overflow like Mar 31 minus 1 month landing on Mar 3 instead of Feb 28/29)
+ * and plain millisecond math for W/D/H. Shared by the relative-range Apply
+ * button and the one-time "last 6 months" default so both agree on what
+ * "N months back" means.
+ */
+const subtractRelativeAmount = (end: Date, unit: RelativeRangeUnit, n: number): Date => {
+    const start = new Date(end);
+    switch (unit) {
+        case 'Y': {
+            const day = start.getDate();
+            start.setFullYear(start.getFullYear() - Math.trunc(n));
+            if (start.getDate() !== day) start.setDate(0);
+            break;
+        }
+        case 'M': {
+            const day = start.getDate();
+            start.setMonth(start.getMonth() - Math.trunc(n));
+            if (start.getDate() !== day) start.setDate(0);
+            break;
+        }
+        case 'W': start.setTime(start.getTime() - n * 7 * 24 * 60 * 60 * 1000); break;
+        case 'D': start.setTime(start.getTime() - n * 24 * 60 * 60 * 1000); break;
+        case 'H': start.setTime(start.getTime() - n * 60 * 60 * 1000); break;
+    }
+    return start;
+};
 
 // Alarm-level constants/helpers live in ../../utils/alarmLevels — shared
 // with SensorSelection.tsx, which is where the setpoint checkboxes actually
@@ -1529,6 +1563,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }
             : null
     );
+    // True dataset extent, independent of the current time filter — the one
+    // source of truth for "what does this dataset span" (see the hook's own
+    // docstring for why `view.ts_min`/`ts_max` can't serve this once any
+    // time filter is applied). Fetched once per Dashboard mount.
+    const { bounds: datasetBounds } = useDatasetTimeBounds();
+
     // Both data hooks swallow backend failures into state; in a production
     // build there's no console, so route them to the global reporter
     // (toast + persistent log file) or they die invisible.
@@ -1821,14 +1861,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // the line-chart-only visible subset.
     const scatterChartHeaders = scatterSample.headers.length > 0 ? scatterSample.headers : selectedSensors;
 
-    // Data range for auto-filling the time inputs — first/last timestamp of
-    // the filtered population, computed backend-side.
+    // Data range for auto-filling the time inputs — the TRUE dataset extent
+    // (see useDatasetTimeBounds), not `view.ts_min`/`ts_max`: those reflect
+    // only the currently-filtered population, so once any time filter is
+    // applied they'd shrink to the filtered window instead of staying the
+    // full range "Reset Period" and this fallback need.
     const dataRange = useMemo(() => {
-        if (view?.ts_min && view?.ts_max) {
-            return { min: view.ts_min, max: view.ts_max };
+        if (datasetBounds?.min && datasetBounds?.max) {
+            return { min: datasetBounds.min, max: datasetBounds.max };
         }
         return undefined;
-    }, [view]);
+    }, [datasetBounds]);
 
     // Format timestamp for datetime-local input
     const formatForInput = useCallback((dateStr: string) => {
@@ -1849,42 +1892,52 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const applyRelativeRange = useCallback(() => {
         const n = parseFloat(relativeAmount);
         if (!n || n <= 0) return;
-        const end = new Date();
-        const start = new Date(end);
-        switch (relativeUnit) {
-            case 'Y': {
-                // Y/M aren't a fixed duration, so fractional amounts (e.g.
-                // "0.5") can't be applied precisely — truncate to whole
-                // units rather than Math.round(), which would silently
-                // double a "0.5" input by rounding it up to a full unit.
-                const day = start.getDate();
-                start.setFullYear(start.getFullYear() - Math.trunc(n));
-                // setFullYear can overflow into the next month on leap-day
-                // edges (e.g. Feb 29 in a non-leap target year rolls to
-                // Mar 1) — clamp back to the last valid day of the
-                // intended month instead of silently drifting forward.
-                if (start.getDate() !== day) start.setDate(0);
-                break;
-            }
-            case 'M': {
-                const day = start.getDate();
-                start.setMonth(start.getMonth() - Math.trunc(n));
-                // Same overflow guard for month-end dates (e.g. Mar 31 minus
-                // 1 month naively lands on Mar 3, not Feb 28/29).
-                if (start.getDate() !== day) start.setDate(0);
-                break;
-            }
-            case 'W': start.setTime(start.getTime() - n * 7 * 24 * 60 * 60 * 1000); break;
-            case 'D': start.setTime(start.getTime() - n * 24 * 60 * 60 * 1000); break;
-            case 'H': start.setTime(start.getTime() - n * 60 * 60 * 1000); break;
-        }
+        // Anchored to the dataset's OWN last timestamp, not the machine's
+        // clock — this data is historical and its end can sit anywhere
+        // relative to today, so "today minus 6 months" routinely landed
+        // outside the dataset entirely and silently produced 0 points.
+        // Falls back to now only in the brief window before the dataset's
+        // bounds have loaded.
+        const end = datasetBounds?.max ? new Date(datasetBounds.max) : new Date();
+        if (isNaN(end.getTime())) return;
+        const start = subtractRelativeAmount(end, relativeUnit, n);
         handleFiltersChange({
             ...filters,
             timestampStart: formatForInput(start.toISOString()),
             timestampEnd: formatForInput(end.toISOString()),
         });
         setRelativeRangeApplied(true);
-    }, [relativeAmount, relativeUnit, filters, handleFiltersChange, formatForInput]);
+    }, [relativeAmount, relativeUnit, filters, handleFiltersChange, formatForInput, datasetBounds]);
+
+    // First-open default: a genuinely fresh workspace (`initialState.filters`
+    // was never saved — see `WorkspaceState.filters`'s docstring) starts
+    // showing the dataset's last 6 months instead of everything, once its
+    // real end timestamp is known. Fires at most once, ever, per workspace
+    // — a workspace reopened with ANY previously-saved filters (including an
+    // explicitly empty one from "Reset Period", which is meant to keep
+    // showing everything) is left exactly as it was.
+    const appliedInitialDefaultRangeRef = useRef(false);
+    useEffect(() => {
+        if (appliedInitialDefaultRangeRef.current) return;
+        if (initialState?.filters) return;
+        if (!datasetBounds?.max) return;
+        appliedInitialDefaultRangeRef.current = true;
+        const end = new Date(datasetBounds.max);
+        if (isNaN(end.getTime())) return;
+        const start = subtractRelativeAmount(end, 'M', 6);
+        setRelativeAmount('6');
+        setRelativeUnit('M');
+        setRelativeRangeApplied(true);
+        handleFiltersChange({
+            ...filters,
+            timestampStart: formatForInput(start.toISOString()),
+            timestampEnd: formatForInput(end.toISOString()),
+        });
+        // `appliedInitialDefaultRangeRef` makes this a true one-shot no
+        // matter how many times the effect re-runs — `initialState` never
+        // changes post-mount, so in practice only `datasetBounds` arriving
+        // triggers the run that actually does anything.
+    }, [datasetBounds, initialState, filters, handleFiltersChange, formatForInput]);
 
     // Drag-and-drop swap was removed in favor of a fixed layout (see
     // SLOT_LAYOUT at the top of this file). Resize via split.js remains.
@@ -2111,6 +2164,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             </button>
                         </div>
                     </div>
+                    {/* Always visible once the dataset's real bounds are
+                        known (not gated on a filter being applied, unlike
+                        Reset Period below) — tells the user up front what
+                        time period the loaded data actually covers, since
+                        the chart no longer defaults to showing all of it. */}
+                    {dataRange && (
+                        <span
+                            className="data-range-hint"
+                            title="First and last timestamp across the whole loaded dataset"
+                        >
+                            Data: {formatDateTime(new Date(dataRange.min))} – {formatDateTime(new Date(dataRange.max))}
+                        </span>
+                    )}
                     {/* Sits right after TIME RANGE (not after AGGREGATION,
                         which it never touches) — only clears
                         timestampStart/End back to the full data range.

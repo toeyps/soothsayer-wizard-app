@@ -349,6 +349,13 @@ export interface WorkspaceState {
     selectedSensors: string[];
     visibleSensors: string[];
     operationConfig: SensorOperationConfig | null;
+    /** Undefined only for a workspace that has never been through Dashboard's
+     *  autosave — a freshly-created one (see `DataUploadPage.handleContinue`,
+     *  which omits this field entirely). Dashboard reads that absence as
+     *  "never had a time period chosen" and applies its one-time "last 6
+     *  months" default range; a workspace that HAS been autosaved always has
+     *  this set (even to explicitly-empty strings, e.g. after "Reset
+     *  Period"), and Dashboard leaves those alone. */
     filters?: WorkspaceFilterState;
     chartType?: 'line' | 'scatter' | 'pair';
     samplingMethod?: 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';

@@ -2956,6 +2956,25 @@ fn get_chart_data(
     ))
 }
 
+/// True first/last timestamp across the WHOLE loaded dataset, ignoring any
+/// dashboard time filter — see `chart_query::full_dataset_time_bounds`'s
+/// docstring for why `ChartView::ts_min`/`ts_max` can't serve this. Powers
+/// the Dashboard's "data available" label and the anchor point for the
+/// relative-range (Y/M/W/D/H) buttons.
+#[derive(Debug, Serialize)]
+struct DatasetTimeBounds {
+    min: Option<String>,
+    max: Option<String>,
+}
+
+#[tauri::command]
+fn get_dataset_time_bounds(state: State<AppState>) -> Result<DatasetTimeBounds, String> {
+    let state_lock = state.0.read().map_err(|e| e.to_string())?;
+    let session = state_lock.as_ref().ok_or("No data loaded")?;
+    let (min, max) = chart_query::full_dataset_time_bounds(&session.data);
+    Ok(DatasetTimeBounds { min, max })
+}
+
 /// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
 /// Seeded with a fixed constant so the same dataset + filter yields the SAME
 /// sample on every call — important so the scatter doesn't visibly reshuffle
@@ -3314,6 +3333,7 @@ pub fn run() {
             load_mapping_csv,
             apply_sensor_mapping,
             get_chart_data,
+            get_dataset_time_bounds,
             evaluate_formula,
             validate_formula,
             extract_formula_refs,
