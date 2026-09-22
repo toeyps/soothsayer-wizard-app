@@ -1061,6 +1061,48 @@ tr:hover {
     border-color: var(--accent-color);
     color: var(--text-primary);
 }
+.predictor-picker-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.predictor-picker-trigger:disabled:hover {
+    border-color: var(--border-strong, var(--border));
+    color: var(--text-secondary);
+}
+
+/* Single-select trigger — looks like a real input (solid border), unlike
+   the multi-select trigger's dashed "add more" affordance, since there's
+   always exactly one value here, same as the SensorAutocomplete/native
+   <select> it replaces. */
+.sensor-picker-trigger-single {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 0.4rem 0.6rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 0.35rem;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.sensor-picker-trigger-single:hover {
+    border-color: var(--accent-color);
+}
+.sensor-picker-trigger-single:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.sensor-picker-trigger-single:disabled:hover {
+    border-color: var(--border);
+}
+.sensor-picker-trigger-placeholder {
+    color: var(--text-faint, var(--text-secondary));
+    opacity: 0.75;
+}
 
 .predictor-picker-backdrop {
     position: fixed;
@@ -1161,12 +1203,26 @@ tr:hover {
     display: flex;
     align-items: center;
     gap: 8px;
+    width: 100%;
     padding: 6px 12px 6px 30px;
     cursor: pointer;
     font-size: 0.78rem;
+    /* Reset native <button> chrome — this class renders on a <label> in
+       multi-select mode and a <button> in single-select mode (a row click
+       selects and closes immediately, no checkbox), and both must look
+       identical. */
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-family: inherit;
+    color: inherit;
 }
 .predictor-picker-item:hover { background: var(--hover-bg); }
 .predictor-picker-item.checked { background: var(--accent-muted); }
+.predictor-picker-item--none {
+    padding-left: 12px;
+    color: var(--text-faint, var(--text-secondary));
+}
 .predictor-picker-item input[type="checkbox"] {
     flex-shrink: 0;
     accent-color: var(--accent-color);

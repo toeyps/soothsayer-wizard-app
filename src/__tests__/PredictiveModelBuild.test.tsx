@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
 
 let listenCallbacks: Record<string, Array<(e: any) => void>> = {};
 const mockListen = vi.fn((event: string, cb: (e: any) => void) => {
@@ -365,6 +365,63 @@ describe('PredictiveModelBuild', () => {
             await renderHydrated({ kind: 'clustering' });
             expect(screen.getByText(/pick one as the X sensor below/)).toBeTruthy();
             expect(screen.queryByText(/informs the target/)).toBeNull();
+        });
+    });
+
+    // 2026-09-22: X sensor and Criteria Sensor moved from a flat
+    // SensorAutocomplete to the same SensorPickerModal popup as Predictor
+    // sensors, but in `single` mode — per explicit user request ("ต้องเลือก
+    // sensor ได้แค่ตัวเดียว ตาม concept ของ model"). Picking a row selects it
+    // and closes the popup immediately, with no OK step.
+    describe('X sensor / Criteria Sensor — single-select popups (2026-09-22)', () => {
+        it('X sensor is disabled with an explanatory placeholder until at least one predictor is chosen', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering', predictorSensors: [] })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+
+            const xRow = screen.getByText(/X sensor \(vs target on Y\)/).closest('.filter-row') as HTMLElement;
+            const trigger = within(xRow).getByText('No predictors selected').closest('button') as HTMLButtonElement;
+            expect(trigger.disabled).toBe(true);
+        });
+
+        it('picking an X sensor selects it immediately — no OK needed, unlike the multi-select Predictor popup', async () => {
+            // scatterXSensor starts unset, so the page auto-fills X to the
+            // first predictor (PRED1) — pick the OTHER one to prove the
+            // popup actually changes the selection.
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering', predictorSensors: ['PRED1', 'PRED2'] })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+
+            const xRow = screen.getByText(/X sensor \(vs target on Y\)/).closest('.filter-row') as HTMLElement;
+            expect(within(xRow).getByText(/PRED1/)).toBeTruthy(); // auto-filled default
+
+            fireEvent.click(within(xRow).getByText(/PRED1/));
+            fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED2' } });
+            fireEvent.click(within(xRow).getByText(/^PRED2$/));
+
+            expect(screen.queryByText('Select X sensor')).toBeNull(); // popup closed on click, no OK needed
+            expect(within(xRow).getByText(/PRED2/)).toBeTruthy(); // trigger now shows the newly-picked sensor
+        });
+
+        it('Criteria Sensor offers a "None" row and every sensor, not just the model\'s chosen predictors', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering', predictorSensors: ['PRED1'] })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+
+            const criteriaRow = screen.getByText('Criteria Sensor').closest('.filter-row') as HTMLElement;
+            fireEvent.click(within(criteriaRow).getByText('Pick criteria sensor...'));
+            expect(screen.getByText('None')).toBeTruthy();
+
+            fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED2' } });
+            fireEvent.click(within(criteriaRow).getByText(/^PRED2$/)); // exact -- the list row's bare tag span, not the trigger
+
+            expect(within(criteriaRow).getByText(/PRED2/)).toBeTruthy(); // trigger now shows the picked sensor
         });
     });
 

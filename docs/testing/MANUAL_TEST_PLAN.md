@@ -1062,6 +1062,12 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - กด Cancel (หรือกด Esc หรือคลิกนอก popup) แล้วเปิด popup ใหม่อีกครั้ง
   - **คาดหวัง:** ติ๊กได้มากกว่า 1 ตัวสะสมไว้ก่อนกด OK (ตัวนับ "N selected" ที่มุมล่างเพิ่มตามที่ติ๊ก), กลุ่มเริ่มพับเสมอจนกว่าจะกดเปิดเองหรือพิมพ์ค้นหา, Cancel/Esc/คลิกนอก popup **ไม่มีผลอะไรกับ predictor ที่เลือกไว้เดิมเลย** — เปิด popup ใหม่ต้องกลับไปเป็นค่าที่เคย OK ไว้ล่าสุด ไม่ใช่ค่าที่เพิ่งติ๊กค้างไว้ตอนยกเลิก
 
+- [ ] **BMW-14 — Clustering: Y sensor และ Criteria sensor เปลี่ยนจาก dropdown ธรรมดา เป็น popup แบบเดียวกัน แต่เลือกได้ตัวเดียว (เพิ่ม 2026-09-22)** 🆕
+  - เปิดแก้โมเดล Clustering ที่หน้า Overview ดูช่อง "Y sensor (target)" และ "Criteria sensor (optional)"
+  - คลิกช่อง Y sensor เลือก sensor 1 ตัว
+  - คลิกช่อง Criteria sensor ดูว่ามีตัวเลือก "None" ให้ด้วยไหม แล้วเลือก sensor 1 ตัว
+  - **คาดหวัง:** ทั้งสองช่องเปิด popup ค้นหา+จัดกลุ่มตาม Component แบบเดียวกับ Predictor sensors — แต่**คลิกเลือกแล้ว popup ปิดทันที ไม่มีปุ่ม OK/Cancel และไม่ติ๊กได้มากกว่า 1 ตัว** (X sensor ที่อยู่ข้างๆ ยังคงล็อกไว้เหมือนเดิม ไม่ใช่ popup) — ช่อง Criteria sensor มีแถว "None" ให้เลือกล้างค่าได้ ช่อง Y sensor ไม่มี
+
 - [ ] **BMW-10 — Predictor ที่เลือกไว้ต้องตามไปที่หน้า Build Model ครบ** 🆕
   - เปิดแก้โมเดล Relationship แล้วเลือก predictor 2-3 ตัว (ยังไม่กด Save)
   - กด "Build Model →" ทันที
@@ -1176,6 +1182,13 @@ _อยู่ในหน้าต่าง Build Model — เข้าจา�
   - คลิกปุ่ม "Add predictors…" เลือกหลายตัว (ข้ามหลายกลุ่ม Component) แล้วกด OK
   - ลบ predictor ออกทีละตัวด้วยปุ่ม x บนชิป
   - **คาดหวัง:** popup หน้านี้ทำงานเหมือนที่ Overview เป๊ะ (ค้นหา/จัดกลุ่ม/พับ-กาง/เลือกหลายตัว/OK-Cancel) — target sensor ของโมเดลไม่โผล่ในตัวเลือกให้เลือกซ้ำ, ชิปที่เลือกไว้อยู่นอก popup ลบออกทีละตัวได้ทันทีโดยไม่ต้องเปิด popup ใหม่
+
+- [ ] **PM-20 — Clustering ที่หน้า PM: X sensor และ Criteria Sensor ก็เป็น popup เลือกตัวเดียวเหมือนกัน (เพิ่ม 2026-09-22 — ดู BMW-14)** 🆕
+  - เปิดโมเดล Clustering เข้าหน้า PM ก่อนเลือก predictor ใดๆ ดูช่อง "X sensor (vs target on Y)"
+  - เพิ่ม predictor 2 ตัวขึ้นไป (ผ่านช่อง Predictor sensors ด้านบน) แล้วกลับมาดูช่อง X sensor อีกครั้ง
+  - คลิกช่อง X sensor เลือก sensor อื่นแทน
+  - คลิกช่อง Criteria Sensor เลือก sensor 1 ตัว (ไม่จำเป็นต้องเป็น predictor)
+  - **คาดหวัง:** ช่อง X sensor เขียนว่า "No predictors selected" และกดไม่ได้ตอนยังไม่มี predictor, พอมี predictor แล้วเลือกได้ทันที (ตัวเลือกจำกัดแค่ predictor ที่เลือกไว้เท่านั้น) — เลือกแล้ว popup ปิดทันทีไม่มีปุ่ม OK — ช่อง Criteria Sensor เลือกได้จาก**ทุก sensor** ไม่ใช่แค่ predictor และมีตัวเลือก "None"
 
 ---
 

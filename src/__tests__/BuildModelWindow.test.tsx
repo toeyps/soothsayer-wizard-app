@@ -32,7 +32,7 @@ vi.mock('../workspaceManager', () => ({
 // (props passed in, onBack switching pages), not PM's own internals.
 const predictiveModelBuildProps: any[] = [];
 const sensorAutocompleteProps: any[] = [];
-const predictorPickerModalProps: any[] = [];
+const sensorPickerModalProps: any[] = [];
 vi.mock('../components/windows/PredictiveModelBuild', () => ({
     default: (props: any) => {
         predictiveModelBuildProps.push(props);
@@ -58,16 +58,24 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
             />
         );
     },
-    // Minimal stand-in for the popup multi-select picker (2026-09-22) — its
-    // own search/collapsible-group/checkbox behavior is tested directly
-    // against the real implementation in PredictiveModelBuild.test.tsx.
-    // Typing a tag and firing change confirms `[...selected, tag]` in one
-    // step, standing in for "open, check it, click OK".
-    PredictorPickerModal: (props: any) => {
-        predictorPickerModalProps.push(props);
-        return (
+    // Minimal stand-in for the popup picker (2026-09-22, extended the same
+    // day to also cover single-select fields) — its own search/collapsible-
+    // group/checkbox/single-vs-multi behavior is tested directly against the
+    // real implementation in PredictiveModelBuild.test.tsx. Typing a value
+    // and firing change stands in for "open the popup, pick it" in one step,
+    // branching on `single` the same way the real component's trigger does.
+    SensorPickerModal: (props: any) => {
+        sensorPickerModalProps.push(props);
+        return props.single ? (
             <input
-                placeholder={props.triggerLabel}
+                placeholder={props.value ? undefined : (props.placeholder ?? `Pick ${props.noun}...`)}
+                value={props.value ?? ''}
+                disabled={props.disabled}
+                onChange={e => props.onSelect(e.target.value)}
+            />
+        ) : (
+            <input
+                placeholder={`Add ${props.noun}…`}
                 onChange={e => props.onConfirm([...props.selected, e.target.value])}
             />
         );
@@ -117,7 +125,7 @@ beforeEach(() => {
     listenCallbacks = {};
     predictiveModelBuildProps.length = 0;
     sensorAutocompleteProps.length = 0;
-    predictorPickerModalProps.length = 0;
+    sensorPickerModalProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
@@ -770,8 +778,7 @@ describe('BuildModelWindow', () => {
                 expect(save.disabled).toBe(true); // Y still unset
                 expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked X readout
 
-                const yy = form.getByText('Select…').closest('select') as HTMLSelectElement;
-                fireEvent.change(yy, { target: { value: 'TAG2' } });
+                fireEvent.change(form.getByPlaceholderText('Pick Y sensor...'), { target: { value: 'TAG2' } });
                 expect(save.disabled).toBe(false);
             });
 
@@ -816,11 +823,11 @@ describe('BuildModelWindow', () => {
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
                 fireEvent.click(screen.getByText('Rel Model'));
 
-                const predictorProps = predictorPickerModalProps.find(p => p.triggerLabel === 'Add predictors…');
+                const predictorProps = sensorPickerModalProps.find(p => p.noun === 'predictors');
                 expect(predictorProps).toBeTruthy();
                 expect(typeof predictorProps.getComponent).toBe('function');
                 expect(predictorProps.getComponent('TAG2')).toBe('Pump'); // has a component in the fixture
-                expect(predictorProps.getComponent('TAG3')).toBe(''); // no metadata entry -- PredictorPickerModal itself falls this back to "Uncategorized"
+                expect(predictorProps.getComponent('TAG3')).toBe(''); // no metadata entry -- SensorPickerModal itself falls this back to "Uncategorized"
             });
 
             it('Clustering\'s X sensor is locked, but its Y sensor stays a normal editable select', async () => {
@@ -831,9 +838,37 @@ describe('BuildModelWindow', () => {
                 const form = within(screen.getByTestId('add-model-form'));
                 expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // X: locked
 
-                const ySelect = form.getByDisplayValue('Pump Temp (TAG2)') as HTMLSelectElement; // Y: still a select
-                fireEvent.change(ySelect, { target: { value: 'TAG3' } });
-                expect(ySelect.value).toBe('TAG3');
+                const yPicker = form.getByDisplayValue('TAG2') as HTMLInputElement; // Y: still freely editable
+                fireEvent.change(yPicker, { target: { value: 'TAG3' } });
+                expect(yPicker.value).toBe('TAG3');
+            });
+
+            it('Y sensor and Criteria sensor are both single-select popups (2026-09-22, per explicit user request: "ต้องเลือก sensor ได้แค่ตัวเดียว ตาม concept ของ model") -- not the multi-select Predictor popup', async () => {
+                const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '', criteriaSensor: '' });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+                fireEvent.click(screen.getByText('Clu Model'));
+
+                const yProps = sensorPickerModalProps.find(p => p.noun === 'Y sensor');
+                const criteriaProps = sensorPickerModalProps.find(p => p.noun === 'criteria sensor');
+                expect(yProps).toBeTruthy();
+                expect(criteriaProps).toBeTruthy();
+                expect(yProps.single).toBe(true);
+                expect(criteriaProps.single).toBe(true);
+                expect(criteriaProps.allowNone).toBe(true); // Criteria is optional -- Y is not
+                expect(yProps.allowNone).toBeFalsy();
+                expect(typeof criteriaProps.getComponent).toBe('function'); // grouped by component too
+            });
+
+            it('picking a Criteria sensor updates the field\'s own value (freely editable, unlike locked X)', async () => {
+                const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: '' });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+                fireEvent.click(screen.getByText('Clu Model'));
+                const form = within(screen.getByTestId('add-model-form'));
+
+                fireEvent.change(form.getByPlaceholderText('Pick criteria sensor...'), { target: { value: 'TAG3' } });
+                expect(form.getByDisplayValue('TAG3')).toBeTruthy();
             });
 
             it('a fresh clustering model (X set, Y still unset) is grouped under its X sensor\'s component in "Group by Component" view, not left in "Uncategorized" (2026-09-01 fix — component derivation only looked at Y before)', async () => {

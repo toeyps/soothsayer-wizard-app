@@ -6,7 +6,7 @@ import { X, Plus, ChevronDown, Gauge } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
-import PredictiveModelBuild, { SensorAutocomplete, PredictorPickerModal } from "./PredictiveModelBuild";
+import PredictiveModelBuild, { SensorAutocomplete, SensorPickerModal } from "./PredictiveModelBuild";
 
 interface BuildModelData {
     workspaceId: string;
@@ -565,14 +565,14 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="fg-inspector-field">
                         <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
-                        <PredictorPickerModal
+                        <SensorPickerModal
                             sensors={allSensors}
                             getDesc={getDesc}
                             getComponent={getComponent}
                             selected={formPredictors}
                             excluded={[formTarget]}
                             onConfirm={setFormPredictors}
-                            triggerLabel="Add predictors…"
+                            noun="predictors"
                         />
                         {formPredictors.length > 0 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
@@ -600,18 +600,29 @@ export default function BuildModelWindow() {
                         </div>
                         <div className="fg-inspector-field" style={{ flex: 1 }}>
                             <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
-                            <select className="fg-inspector-input" value={formY} onChange={e => setFormY(e.target.value)}>
-                                <option value="">Select…</option>
-                                {sensorOptions.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
-                            </select>
+                            <SensorPickerModal
+                                sensors={sensorOptions}
+                                getDesc={getDesc}
+                                getComponent={getComponent}
+                                single
+                                value={formY}
+                                onSelect={setFormY}
+                                noun="Y sensor"
+                            />
                         </div>
                     </div>
                     <div className="fg-inspector-field">
                         <div className="fg-inspector-field-label-row"><label>Criteria sensor (optional)</label></div>
-                        <select className="fg-inspector-input" value={formCriteria} onChange={e => setFormCriteria(e.target.value)}>
-                            <option value="">None</option>
-                            {allSensors.map(s => <option key={s} value={s}>{sensorLabel(s)}</option>)}
-                        </select>
+                        <SensorPickerModal
+                            sensors={allSensors}
+                            getDesc={getDesc}
+                            getComponent={getComponent}
+                            single
+                            allowNone
+                            value={formCriteria}
+                            onSelect={setFormCriteria}
+                            noun="criteria sensor"
+                        />
                     </div>
                     {formCriteria && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>

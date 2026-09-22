@@ -174,55 +174,84 @@ export function SensorAutocomplete({
     );
 }
 
-// ── Reusable Predictor Picker (popup, multi-select) ──────────────────
-// Exported alongside SensorAutocomplete for the same reason — BuildModelWindow's
-// Relationship form and this page's own "Predictor sensors" section both need
-// "pick several sensors, grouped and searchable" and shouldn't drift into two
-// implementations.
+// ── Reusable Sensor Picker popup (multi- or single-select) ───────────
+// Exported alongside SensorAutocomplete for the same reason — every page that
+// picks sensors this way (BuildModelWindow's Relationship/Clustering forms,
+// this page's own Predictor/X/Criteria sensor fields) shouldn't drift into
+// separate implementations.
 //
-// 2026-09-22: replaces the inline SensorAutocomplete that used to sit directly
-// in both forms for predictor picking. That component closes on every single
-// selection (by design — it's built for "pick ONE value", e.g. a target
-// sensor), so adding N predictors took N separate reopen-search-click cycles,
-// and a long sensor list with no way to collapse a component's members made
-// the page itself feel cluttered. This is a popup instead: search + collapsible
-// component groups (mirrors Dashboard's SensorSelection.tsx — everything starts
-// collapsed, and a non-empty search forces every matching group open, since
-// browsing-by-system and searching-for-one-tag want opposite defaults) +
-// checkboxes, with changes staged locally until OK is clicked. SensorAutocomplete
-// itself is untouched and still used for genuine single-value pickers (Target
-// sensor, criteria sensor, etc.).
-export interface PredictorPickerModalProps {
+// 2026-09-22: introduced (as "PredictorPickerModal", multi-select only) to
+// replace the inline SensorAutocomplete/native <select> that used to sit
+// directly in these forms. Extended the same day to also cover single-select
+// fields (X sensor, Y sensor, criteria sensor) — per explicit user request,
+// after trying the multi-select popup: "ใช้เป็นการเลือกแบบเดียวกันเลย แต่
+// ต้องเลือกได้แค่ตัวเดียว ตาม concept ของ model" (Y/criteria are conceptually
+// single-value; the model can't have two). One component, `single` selects
+// the mode:
+//   - multi (default): checkboxes, staged in local `pending` state, only
+//     committed via `onConfirm(tags)` on OK — Cancel/Escape/backdrop-click
+//     discard. Trigger is a dashed "Add …" button.
+//   - single: clicking a row selects it and closes immediately via
+//     `onSelect(tag)` — there's only one value, nothing to batch, so no
+//     OK/Cancel footer. Trigger looks like a real input, showing the
+//     current `value`'s label (or `placeholder` when empty).
+// Search + collapsible per-component groups (mirrors Dashboard's
+// SensorSelection.tsx — everything starts collapsed, and a non-empty search
+// forces every matching group open) work identically in both modes.
+// SensorAutocomplete itself is untouched and still used for genuine
+// type-to-filter-as-you-go fields (the "Running Condition Filter" panel's
+// sensor picker) where a popup would be overkill.
+export interface SensorPickerModalProps {
     sensors: string[];
     getDesc: (tag: string) => string;
     /** Omit to render one flat, unlabeled group instead of per-component
      *  sections — mirrors SensorAutocomplete's own `getComponent` contract. */
     getComponent?: (tag: string) => string;
-    /** The last CONFIRMED selection — what the popup starts from every time
-     *  it opens, discarding anything left over from a cancelled attempt. */
-    selected: string[];
     /** Never offered (e.g. the model's own target sensor). */
     excluded?: string[];
+    /** Header title and trigger text/placeholder default from this, e.g.
+     *  "predictor sensors", "X sensor", "criteria sensor". */
+    noun: string;
+    disabled?: boolean;
+    /** false (default) = multi-select; true = single-select. See the
+     *  component doc comment above for the behavioral difference. */
+    single?: boolean;
+
+    // ── multi-select props (used when `single` is false/omitted) ──
+    /** The last CONFIRMED selection — what the popup starts from every time
+     *  it opens, discarding anything left over from a cancelled attempt. */
+    selected?: string[];
     /** Fires once, with the full new selection, when the user clicks OK.
      *  Never called on Cancel or backdrop-click. */
-    onConfirm: (tags: string[]) => void;
-    /** Trigger button text. */
-    triggerLabel?: string;
+    onConfirm?: (tags: string[]) => void;
+
+    // ── single-select props (used when `single` is true) ──
+    value?: string;
+    onSelect?: (tag: string) => void;
+    /** Adds a "— None —" row above the list that clears the selection. */
+    allowNone?: boolean;
+    /** Overrides the trigger's empty-state text (default: "Pick {noun}...")
+     *  — e.g. to explain WHY it's disabled ("No predictors selected"). */
+    placeholder?: string;
 }
 
 const UNCATEGORIZED_GROUP = 'Uncategorized';
 
-export function PredictorPickerModal({
-    sensors, getDesc, getComponent, selected, excluded = [], onConfirm, triggerLabel,
-}: PredictorPickerModalProps) {
+export function SensorPickerModal({
+    sensors, getDesc, getComponent, excluded = [], noun, disabled = false, single = false,
+    selected = [], onConfirm, value = '', onSelect, allowNone = false, placeholder,
+}: SensorPickerModalProps) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
-    // Staged selection — only committed to `selected` (via onConfirm) on OK,
-    // so Cancel/Escape/backdrop-click can throw it away with zero side effects.
+    // Staged selection (multi mode only) — only committed to `selected` (via
+    // onConfirm) on OK, so Cancel/Escape/backdrop-click can throw it away
+    // with zero side effects. Single mode has nothing to stage: a click
+    // selects and closes in the same step.
     const [pending, setPending] = useState<string[]>(selected);
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
     const openPicker = () => {
+        if (disabled) return;
         setPending(selected);
         setQuery('');
         setExpandedGroups(new Set());
@@ -270,15 +299,45 @@ export function PredictorPickerModal({
     const togglePending = (tag: string) => setPending(prev =>
         prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
 
-    const handleConfirm = () => { onConfirm(pending); setOpen(false); };
+    const handleItemClick = (tag: string) => {
+        if (single) {
+            onSelect?.(tag);
+            setOpen(false);
+        } else {
+            togglePending(tag);
+        }
+    };
+
+    const handleConfirm = () => { onConfirm?.(pending); setOpen(false); };
     const handleCancel = () => setOpen(false);
+
+    const selectedLabel = value ? (getDesc(value) ? `${getDesc(value)} (${value})` : value) : '';
 
     return (
         <>
-            <button type="button" className="predictor-picker-trigger" onClick={openPicker}>
-                <Search size={12} />
-                <span>{triggerLabel ?? 'Add predictors…'}</span>
-            </button>
+            {single ? (
+                <button
+                    type="button"
+                    className="sensor-picker-trigger-single"
+                    onClick={openPicker}
+                    disabled={disabled}
+                >
+                    <Search size={12} className="sensor-autocomplete-icon" />
+                    <span className={selectedLabel ? '' : 'sensor-picker-trigger-placeholder'}>
+                        {selectedLabel || placeholder || `Pick ${noun}...`}
+                    </span>
+                </button>
+            ) : (
+                <button
+                    type="button"
+                    className="predictor-picker-trigger"
+                    onClick={openPicker}
+                    disabled={disabled}
+                >
+                    <Search size={12} />
+                    <span>Add {noun}…</span>
+                </button>
+            )}
             {open && (
                 <div className="predictor-picker-backdrop" onClick={handleCancel} role="presentation">
                     <div
@@ -286,10 +345,10 @@ export function PredictorPickerModal({
                         onClick={e => e.stopPropagation()}
                         role="dialog"
                         aria-modal="true"
-                        aria-label="Select predictor sensors"
+                        aria-label={`Select ${noun}`}
                     >
                         <div className="predictor-picker-header">
-                            <span>Select predictor sensors</span>
+                            <span>Select {noun}</span>
                             <button type="button" className="predictor-picker-close" onClick={handleCancel} aria-label="Close">
                                 <X size={16} />
                             </button>
@@ -306,11 +365,20 @@ export function PredictorPickerModal({
                             />
                         </div>
                         <div className="predictor-picker-list">
+                            {single && allowNone && (
+                                <button
+                                    type="button"
+                                    className="predictor-picker-item predictor-picker-item--none"
+                                    onClick={() => handleItemClick('')}
+                                >
+                                    <em>None</em>
+                                </button>
+                            )}
                             {groups.length === 0 ? (
                                 <div className="sensor-autocomplete-empty">No sensors found</div>
                             ) : groups.map(([comp, tags]) => {
                                 const groupExpanded = isGroupExpanded(comp);
-                                const checkedInGroup = tags.filter(t => pending.includes(t)).length;
+                                const checkedInGroup = single ? 0 : tags.filter(t => pending.includes(t)).length;
                                 return (
                                     <div key={comp || '__flat__'} className="predictor-picker-group">
                                         {comp && (
@@ -329,8 +397,18 @@ export function PredictorPickerModal({
                                         )}
                                         {(groupExpanded || !comp) && tags.map(tag => {
                                             const desc = getDesc(tag);
-                                            const checked = pending.includes(tag);
-                                            return (
+                                            const checked = single ? tag === value : pending.includes(tag);
+                                            return single ? (
+                                                <button
+                                                    type="button"
+                                                    key={tag}
+                                                    className={`predictor-picker-item${checked ? ' checked' : ''}`}
+                                                    onClick={() => handleItemClick(tag)}
+                                                >
+                                                    <span className="predictor-picker-item-tag">{tag}</span>
+                                                    {desc && <span className="predictor-picker-item-desc">{desc}</span>}
+                                                </button>
+                                            ) : (
                                                 <label key={tag} className={`predictor-picker-item${checked ? ' checked' : ''}`}>
                                                     <input type="checkbox" checked={checked} onChange={() => togglePending(tag)} />
                                                     <span className="predictor-picker-item-tag">{tag}</span>
@@ -342,15 +420,17 @@ export function PredictorPickerModal({
                                 );
                             })}
                         </div>
-                        <div className="predictor-picker-footer">
-                            <span className="predictor-picker-count">{pending.length} selected</span>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                <button type="button" className="pm-btn pm-btn-secondary" onClick={handleCancel}>Cancel</button>
-                                <button type="button" className="pm-btn pm-btn-primary" onClick={handleConfirm}>
-                                    <Check size={13} /> OK
-                                </button>
+                        {!single && (
+                            <div className="predictor-picker-footer">
+                                <span className="predictor-picker-count">{pending.length} selected</span>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button type="button" className="pm-btn pm-btn-secondary" onClick={handleCancel}>Cancel</button>
+                                    <button type="button" className="pm-btn pm-btn-primary" onClick={handleConfirm}>
+                                        <Check size={13} /> OK
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1779,14 +1859,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     ? 'Add candidate sensors, then pick one as the X sensor below.'
                                     : 'Select sensors whose history informs the target. Multi-select.'}
                             </div>
-                            <PredictorPickerModal
+                            <SensorPickerModal
                                 sensors={allSensors}
                                 getDesc={getDesc}
                                 getComponent={getComponent}
                                 selected={predictorSensors}
                                 excluded={[targetSensor]}
                                 onConfirm={setPredictorSensors}
-                                triggerLabel="Add predictors…"
+                                noun="predictors"
                             />
                             {/* Selected predictor chips — uses the richer pm-selected
                                 styling (color dot per slot, tag + description, remove)
@@ -2386,12 +2466,15 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         <span className="pm-field-hint-inline"> · add a predictor first</span>
                                     )}
                                 </label>
-                                <SensorAutocomplete
+                                <SensorPickerModal
                                     sensors={predictorSensors}
                                     getDesc={getDesc}
+                                    getComponent={getComponent}
+                                    single
                                     value={scatterXSensor}
                                     onSelect={setScatterXSensor}
-                                    placeholder={predictorSensors.length === 0 ? 'No predictors selected' : 'Pick from predictors...'}
+                                    noun="X sensor"
+                                    placeholder={predictorSensors.length === 0 ? 'No predictors selected' : undefined}
                                     disabled={rcMode !== 'clustering' || predictorSensors.length === 0}
                                 />
                             </div>
@@ -2429,12 +2512,15 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                             <span className="pm-field-hint-inline"> · used when N ≥ 2</span>
                                         )}
                                     </label>
-                                    <SensorAutocomplete
+                                    <SensorPickerModal
                                         sensors={allSensors}
                                         getDesc={getDesc}
+                                        getComponent={getComponent}
+                                        single
                                         value={criteriaSensor}
                                         onSelect={setCriteriaSensor}
-                                        placeholder={numClusters <= 1 ? 'Not needed for 1 cluster' : 'Pick criteria sensor...'}
+                                        noun="criteria sensor"
+                                        placeholder={numClusters <= 1 ? 'Not needed for 1 cluster' : undefined}
                                         allowNone
                                         disabled={rcMode !== 'clustering' || numClusters <= 1}
                                     />
