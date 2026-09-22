@@ -1103,6 +1103,11 @@ tr:hover {
     color: var(--text-faint, var(--text-secondary));
     opacity: 0.75;
 }
+.sensor-picker-trigger-icon {
+    color: var(--text-secondary);
+    opacity: 0.7;
+    flex-shrink: 0;
+}
 
 .predictor-picker-backdrop {
     position: fixed;

@@ -374,6 +374,19 @@ describe('PredictiveModelBuild', () => {
     // sensor ได้แค่ตัวเดียว ตาม concept ของ model"). Picking a row selects it
     // and closes the popup immediately, with no OK step.
     describe('X sensor / Criteria Sensor — single-select popups (2026-09-22)', () => {
+        it("the trigger's icon uses its own class, not .sensor-autocomplete-icon (regression: that class is position:absolute, meant to overlay a real <input> inside .sensor-autocomplete-input-wrap -- this button has no such wrapper, so the icon escaped to whatever ancestor WAS positioned and rendered off in an unrelated spot, reported 2026-09-22)", async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering', predictorSensors: ['PRED1'] })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+
+            const criteriaRow = screen.getByText('Criteria Sensor').closest('.filter-row') as HTMLElement;
+            const trigger = within(criteriaRow).getByText('Pick criteria sensor...').closest('button') as HTMLButtonElement;
+            expect(trigger.querySelector('.sensor-picker-trigger-icon')).toBeTruthy();
+            expect(trigger.querySelector('.sensor-autocomplete-icon')).toBeNull();
+        });
+
         it('X sensor is disabled with an explanatory placeholder until at least one predictor is chosen', async () => {
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',

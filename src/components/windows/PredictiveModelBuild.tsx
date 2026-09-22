@@ -322,7 +322,15 @@ export function SensorPickerModal({
                     onClick={openPicker}
                     disabled={disabled}
                 >
-                    <Search size={12} className="sensor-autocomplete-icon" />
+                    {/* Plain inline icon, NOT `.sensor-autocomplete-icon` —
+                        that class is `position: absolute`, meant to overlay
+                        a real <input> inside `.sensor-autocomplete-input-wrap`
+                        (which is `position: relative`). This button has no
+                        such wrapper, so the icon escaped to the nearest
+                        positioned ancestor up the tree and rendered off in a
+                        random spot (regression reported 2026-09-22, fixed
+                        same day). A flex child needs no positioning trick. */}
+                    <Search size={12} className="sensor-picker-trigger-icon" />
                     <span className={selectedLabel ? '' : 'sensor-picker-trigger-placeholder'}>
                         {selectedLabel || placeholder || `Pick ${noun}...`}
                     </span>
