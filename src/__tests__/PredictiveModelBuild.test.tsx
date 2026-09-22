@@ -416,6 +416,51 @@ describe('PredictiveModelBuild', () => {
     // `runningConditionFilters`, owned and edited only on BuildModelWindow's
     // Overview page; this page just displays it read-only (see the
     // `runningConditionFilters` prop's own doc comment).
+    // 2026-09-22: renamed from "Data filter" after the user reported not
+    // being able to tell whether Time start/end + Running condition scoped
+    // the chart's DISPLAY or the TRAINING data — they're the same filter
+    // (feeds both), so the fix is naming that explicitly rather than
+    // building a second, genuinely separate date filter (see the section's
+    // own JSX comment for the full reasoning).
+    describe('"Training scope" section (renamed from "Data filter")', () => {
+        it('shows "Training scope" as the section title, not the old "Data filter"', async () => {
+            await renderHydrated();
+            expect(screen.getByText('Training scope')).toBeTruthy();
+            expect(screen.queryByText('Data filter')).toBeNull();
+        });
+
+        it('explains the filter feeds both the model and the chart preview', async () => {
+            await renderHydrated();
+            expect(screen.getByText(/Feeds the model and the chart preview/)).toBeTruthy();
+        });
+    });
+
+    // Companion to the section above: the chart's own zoom tool (LineChart's
+    // 🔍 button) is genuinely display-only — client-side, never re-queries —
+    // so it's called out next to the legend instead of adding a second,
+    // easy-to-confuse date filter for "just viewing".
+    describe('chart zoom-is-view-only note (next to the Individual chart legend)', () => {
+        it('renders next to the legend when the Individual chart is shown', async () => {
+            await renderHydrated();
+            expect(screen.getByText('Zoom = view only')).toBeTruthy();
+        });
+
+        it('its tooltip spells out that zoom never touches Training scope or the model', async () => {
+            await renderHydrated();
+            const note = screen.getByText('Zoom = view only').closest('[title]') as HTMLElement;
+            expect(note.title).toMatch(/never changes Training scope or what the model trains on/);
+        });
+
+        it('is absent on a Relationship-kind model (no Individual chart to attach it to)', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+            expect(screen.queryByText('Zoom = view only')).toBeNull();
+        });
+    });
+
     describe('running condition (read-only, inherited from Overview)', () => {
         it('shows "not set" with no editable controls when the workspace has no filter', async () => {
             await renderHydrated({ runningConditionFilters: [] });

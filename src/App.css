@@ -1948,6 +1948,30 @@ body {
     height: 0;
 }
 
+/* Called out next to the chart's own 🔍 zoom control (added 2026-09-22) —
+   clarifies that zoom only changes what's visible here, unlike the
+   Training scope panel's Time start/end, which changes what's queried and
+   trained on. Accent-tinted (not plain --chip-bg like .pm-count-pill) so
+   it reads as "worth reading", not just another stat pill. */
+.pm-chart-zoom-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: var(--accent-muted);
+    border: 1px solid oklch(0.68 0.17 245 / 0.35);
+    border-radius: 999px;
+    color: var(--accent-hi);
+    /* Explicit rather than inherited — this renders both inside
+       .pm-chart-legend (which would supply these) and inside
+       .pm-chart-title-block in the expanded-chart modal (which wouldn't),
+       so it must not depend on which parent it's in. */
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: help;
+}
+
 .pm-chart-body {
     flex: 1;
     display: flex;

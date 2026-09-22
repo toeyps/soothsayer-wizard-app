@@ -1626,11 +1626,24 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     )}
 
 
-                    {/* Data filter */}
+                    {/* Training scope — was labeled "Data filter" until 2026-09-22.
+                        Renamed after user confusion: this filter (Time start/end +
+                        Running condition) is what BOTH the chart preview below AND
+                        every train_* command use — there's no separate display-only
+                        version, unlike Dashboard's own "Filter" tab, which the old
+                        generic "Data filter" name read as a match for. The chart's
+                        own 🔍 zoom (LineChart.tsx) is the actual display-only
+                        control — client-side only, never re-queries — called out
+                        explicitly next to it (see the "pm-chart-zoom-note" badge
+                        below) instead of adding a second, easy-to-confuse date
+                        filter here. */}
                     <div className="pm-section">
                         <div className="pm-section-header">
                             <span className="pm-eyebrow">Scope</span>
-                            <span className="pm-section-title">Data filter</span>
+                            <span className="pm-section-title">Training scope</span>
+                        </div>
+                        <div className="pm-section-hint">
+                            Feeds the model and the chart preview — the chart's own 🔍 zoom is view-only and doesn't change this.
                         </div>
                         <div className="filter-row">
                             <label>Time start</label>
@@ -1816,6 +1829,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         <div className="pm-chart-subtitle">1σ + 3σ boundary drawn automatically</div>
                                     </div>
                                     <div className="pm-chart-legend">
+                                        <span
+                                            className="pm-chart-zoom-note"
+                                            title="Using the 🔍 zoom tool above only changes what's visible in this chart — it never changes Training scope or what the model trains on."
+                                        >
+                                            <Search size={10} /> Zoom = view only
+                                        </span>
                                         <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-accent" />Target</span>
                                         <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-warn" />±1σ</span>
                                         <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-danger pm-legend-dashed" />±3σ</span>
@@ -2456,6 +2475,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         <div className="pm-chart-subtitle">
                                             {targetSensor || '—'} · 1σ + 3σ boundary
                                         </div>
+                                        <span
+                                            className="pm-chart-zoom-note"
+                                            style={{ marginTop: '6px' }}
+                                            title="Using the 🔍 zoom tool above only changes what's visible in this chart — it never changes Training scope or what the model trains on."
+                                        >
+                                            <Search size={10} /> Zoom = view only
+                                        </span>
                                     </>
                                 ) : (
                                     <>

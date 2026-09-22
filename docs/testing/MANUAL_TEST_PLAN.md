@@ -1065,7 +1065,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ที่หน้า Overview เปิดแผง "Running Condition Filter" ด้านบน (ตอนยังไม่ตั้งต้องเขียนว่า "Not set — every model trains on the full dataset…")
   - กด "Add condition (AND)" แล้วเลือก sensor (เลือกได้**ทุก sensor** ไม่ใช่แค่ target/predictor), operation, ค่า
   - เพิ่มเงื่อนไขที่ 2 แล้วลบเงื่อนไขที่ 1
-  - เปิดโมเดลใดก็ได้เข้าหน้า Build Model แล้วดูส่วน Data filter → Running condition
+  - เปิดโมเดลใดก็ได้เข้าหน้า Build Model แล้วดูส่วน Training scope → Running condition
   - ปิดเปิดโปรแกรมแล้วกลับมาดูแผง
   - **คาดหวัง:** ตั้งครั้งเดียวมีผลกับ**ทุกโมเดล** — หน้า PM ทุกโมเดลแสดงเงื่อนไขนี้แบบอ่านอย่างเดียว พร้อมลิงก์ "Edit on Overview →", กราฟตัวอย่างในหน้า PM กรองตามเงื่อนไข, ค่าที่ตั้งไว้อยู่ครบหลังปิดเปิด (ของเดิมเป็น Sensor value filter ต่อโมเดลที่ต้องตั้งซ้ำทีละตัว — ถูกแทนที่แล้ว)
 
@@ -1114,13 +1114,20 @@ _อยู่ในหน้าต่าง Build Model — เข้าจา�
   - เปิดมุมมอง Sub-models
   - **คาดหวัง:** เปิดได้และแสดงผลของ subset นั้น
 
-- [ ] **PM-8 — Data filter ในหน้า PM — Time start/end ต้องมีผลกับกราฟและการ fit จริง (แก้บั๊กแล้ว 2026-09-14 — เดิมเป็น no-op เงียบ ๆ)** 🆕
+- [ ] **PM-8 — "Training scope" ในหน้า PM — Time start/end ต้องมีผลกับกราฟและการ fit จริง (แก้บั๊กแล้ว 2026-09-14 — เดิมเป็น no-op เงียบ ๆ; แผงนี้ชื่อ "Data filter" มาก่อน เปลี่ยนชื่อ 2026-09-22 — ดู PM-18)**
   - ตั้ง target sensor ที่มีข้อมูลหลายเดือน/หลายปี
   - ตั้ง "Time start" / "Time end" ให้แคบกว่าช่วงข้อมูลจริงมาก ๆ (เช่น เหลือแค่ 1 วัน) แล้วดูไอคอนปฏิทินท้ายช่อง
   - ดูกราฟ Individual time-series และแถบ Target Stats ว่าช่วงและตัวเลข N/Mean/SD เปลี่ยนตามที่ตั้งไหม
   - (โมเดล Relationship/Clustering) กด Apply ดูว่าผล fit เปลี่ยนตามช่วงเวลา
   - ดูบรรทัด "Running condition" ใต้ช่องเวลา แล้วกด "Edit on Overview →"
   - **คาดหวัง:** **Time start/end มีผลจริงกับกราฟ สถิติ และการ fit** — เดิมถูก hardcode ส่ง `null` เสมอ ไอคอนปฏิทินสีขาวชิดขวากดเปิดตัวเลือกวันที่ได้ · ส่วน "Running condition" เป็น**อ่านอย่างเดียว** แสดงเงื่อนไขระดับ workspace (หรือ "No running-condition filter set…" ถ้ายังไม่ตั้ง) และมีผล AND รวมกับช่วงเวลา · filter ที่ตั้งจากแท็บ Filter ของ Dashboard **ไม่ถูกนำมาใช้ในหน้านี้** (ตั้งใจแยกขาด — หน้านี้เลือก training period ของโมเดลเอง)
+
+- [ ] **PM-18 — "Training scope" อธิบายตัวเองว่าคุมทั้งกราฟและ training (ไม่ใช่ 2 filter แยกกัน) — เพิ่ม 2026-09-22** 🆕
+  - เปิดโมเดลชนิด Individual เข้าหน้า PM
+  - ดูหัวข้อแผงซ้ายเหนือ Time start/end และดูมุมขวาบนของกราฟ ข้าง legend (Target/±1σ/±3σ)
+  - เอาเมาส์ชี้ป้าย "Zoom = view only" ที่กราฟค้างไว้
+  - ลอง 🔍 Zoom → Horizontal zoom บนกราฟ แล้วดูว่า Target Stats/ผล fit เปลี่ยนไหม
+  - **คาดหวัง:** หัวข้อแผงซ้ายเขียนว่า **"Training scope"** (ไม่ใช่ "Data filter") มีบรรทัดอธิบายว่าใช้ทั้งกับกราฟและโมเดล · ข้างกราฟมีป้าย **"Zoom = view only"** พร้อม tooltip อธิบายว่าไม่กระทบ training · หลังซูมกราฟด้วย 🔍 **ตัวเลขใน Target Stats และผล fit ต้องไม่เปลี่ยน** (ซูมเป็นแค่มุมมอง client-side)
 
 - [ ] **PM-11b — Expand chart — ขยายกราฟเต็มจอ**
   - กดไอคอนขยาย (⤢) ที่มุมกราฟการ์ดใดก็ได้ (Individual time-series, Relationship/Clustering chart)
