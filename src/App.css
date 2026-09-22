@@ -3030,6 +3030,12 @@ body {
     padding: 2px 6px;
     border-radius: 3px;
     cursor: pointer;
+    /* Wide enough that a real description ("description (tag)", the same
+       convention used everywhere else a sensor is shown) isn't clipped —
+       2026-09-22, replacing the old bare "tag (X)"/"tag (Y)" option text
+       that fit in a much narrower box. */
+    min-width: 120px;
+    max-width: 320px;
 }
 
 .scatter-regl-select:hover {
@@ -3040,6 +3046,24 @@ body {
     color: var(--text-secondary);
     margin: 0 2px;
     font-size: 11px;
+}
+
+/* "X"/"Y" moved out of the option text into its own small badge next to
+   each select (2026-09-22) — the axis no longer eats into the space a
+   sensor's description needs. */
+.scatter-regl-axis-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--accent-muted, rgba(59, 130, 246, 0.15));
+    color: var(--accent-color);
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
 }
 
 .scatter-regl-hint {

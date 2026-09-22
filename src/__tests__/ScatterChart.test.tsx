@@ -508,6 +508,48 @@ describe('ScatterChart', () => {
         });
     });
 
+    // 2026-09-22, per explicit user request: the option text used to be
+    // "tag (X)"/"tag (Y)" — a bare tag says nothing useful on its own, and
+    // the axis was already obvious from position/the picker's own label. "X"
+    // and "Y" moved into their own small badge outside the <select>, and the
+    // option text became "description (tag)" (same convention as everywhere
+    // else a sensor is shown), so the axis dropdowns actually help pick the
+    // right sensor.
+    describe('X/Y sensor picker: description in the option text, X/Y as a separate badge', () => {
+        const sensorMetadata = [
+            { tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
+            { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
+        ];
+
+        it('shows "description (tag)" in both selects\' options when a description is known, falling back to the bare tag otherwise', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const selects = container.querySelectorAll('.scatter-regl-select');
+            expect(selects.length).toBe(2);
+            for (const select of selects) {
+                const options = Array.from(select.querySelectorAll('option')).map(o => o.textContent);
+                expect(options).toEqual(['Pump Pressure (A)', 'B']);
+            }
+        });
+
+        it('falls back to the bare tag for every option when sensorMetadata is not provided at all', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+            const selects = container.querySelectorAll('.scatter-regl-select');
+            for (const select of selects) {
+                const options = Array.from(select.querySelectorAll('option')).map(o => o.textContent);
+                expect(options).toEqual(['A', 'B']);
+            }
+        });
+
+        it('renders "X" and "Y" as their own badge next to each select, not appended inside the option text', () => {
+            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const badges = Array.from(container.querySelectorAll('.scatter-regl-axis-badge')).map(b => b.textContent);
+            expect(badges).toEqual(['X', 'Y']);
+            // Neither option text carries the old "(X)"/"(Y)" suffix any more.
+            const optionTexts = Array.from(container.querySelectorAll('.scatter-regl-select option')).map(o => o.textContent);
+            expect(optionTexts.every(t => !t!.includes('(X)') && !t!.includes('(Y)'))).toBe(true);
+        });
+    });
+
     describe('Tag Point (click a point to compare it with others — local/ephemeral, not persisted; see LineTaggedPoint\'s docstring for why)', () => {
         function getCanvas(container: HTMLElement): HTMLElement {
             return container.querySelector('[data-testid="scatter-main-canvas"]')!;

@@ -760,14 +760,25 @@ function ScatterChart({
 
     return (
         <div ref={wrapperRef} className="scatter-regl-wrap">
-            {/* Sensor pickers */}
+            {/* Sensor pickers — "X"/"Y" is its own small badge outside the
+                select now (2026-09-22, per explicit user request), not
+                appended inside the option text: the axis is already known
+                from position/the badge, so that space is better spent on
+                the sensor's description, which needs it far more (a bare
+                tag like "11MOV1603.PV" says nothing on its own — the option
+                text is "description (tag)", the same convention used
+                everywhere else a sensor is shown to the user). The select
+                itself is no longer width-capped, so a long description
+                isn't clipped. */}
             <div className="scatter-regl-controls">
+                <span className="scatter-regl-axis-badge">X</span>
                 <select value={scatterX} onChange={e => setScatterX(e.target.value)} className="scatter-regl-select">
-                    {sensors.map(s => <option key={s} value={s}>{s} (X)</option>)}
+                    {sensors.map(s => <option key={s} value={s}>{getDescription(s) ? `${getDescription(s)} (${s})` : s}</option>)}
                 </select>
                 <span className="scatter-regl-vs">vs</span>
+                <span className="scatter-regl-axis-badge">Y</span>
                 <select value={scatterY} onChange={e => setScatterY(e.target.value)} className="scatter-regl-select">
-                    {sensors.map(s => <option key={s} value={s}>{s} (Y)</option>)}
+                    {sensors.map(s => <option key={s} value={s}>{getDescription(s) ? `${getDescription(s)} (${s})` : s}</option>)}
                 </select>
             </div>
 
