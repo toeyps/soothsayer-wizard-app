@@ -6,7 +6,7 @@ import { X, Plus, ChevronDown, Gauge } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
-import PredictiveModelBuild, { SensorAutocomplete } from "./PredictiveModelBuild";
+import PredictiveModelBuild, { SensorAutocomplete, PredictorPickerModal } from "./PredictiveModelBuild";
 
 interface BuildModelData {
     workspaceId: string;
@@ -565,15 +565,14 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="fg-inspector-field">
                         <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
-                        <SensorAutocomplete
+                        <PredictorPickerModal
                             sensors={allSensors}
                             getDesc={getDesc}
                             getComponent={getComponent}
-                            value=""
-                            onSelect={(tag) => { if (tag) setFormPredictors(prev => prev.includes(tag) ? prev : [...prev, tag]); }}
-                            placeholder="Search sensor tag or description…"
-                            excluded={[formTarget, ...formPredictors]}
-                            clearOnSelect
+                            selected={formPredictors}
+                            excluded={[formTarget]}
+                            onConfirm={setFormPredictors}
+                            triggerLabel="Add predictors…"
                         />
                         {formPredictors.length > 0 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>

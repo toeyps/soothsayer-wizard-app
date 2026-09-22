@@ -233,18 +233,72 @@ describe('PredictiveModelBuild', () => {
         it('is not shown at all for an Individual-kind model', async () => {
             await renderHydrated(); // default kind: 'individual'
             expect(screen.queryByText('Predictor sensors')).toBeNull();
-            expect(screen.queryByPlaceholderText('Search sensor tag or description...')).toBeNull();
+            expect(screen.queryByText('Add predictors…')).toBeNull();
         });
 
-        it('picking a sensor from the autocomplete adds it as a predictor chip', async () => {
+        it('picking a sensor from the picker popup adds it as a predictor chip', async () => {
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',
                 failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
             });
             await renderHydrated({ kind: 'relationship' });
+
+            fireEvent.click(screen.getByText('Add predictors…'));
             fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED1' } });
-            fireEvent.click(screen.getByText('Predictor One'));
+            fireEvent.click(screen.getByText('PRED1')); // checkbox row label — checks it
+            fireEvent.click(screen.getByText('OK'));
+
             expect(screen.getByText('1')).toBeTruthy(); // predictor count pill
+            expect(screen.getByText('Predictor One')).toBeTruthy(); // chip, outside the popup
+        });
+
+        it('the popup groups sensors by component and starts every group collapsed until searched', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+
+            fireEvent.click(screen.getByText('Add predictors…'));
+            expect(screen.getByText('Motor')).toBeTruthy(); // group header visible
+            expect(screen.queryByText('PRED1')).toBeNull(); // but collapsed — member hidden
+
+            fireEvent.click(screen.getByText('Motor'));
+            expect(screen.getByText('PRED1')).toBeTruthy(); // expanded — member visible
+        });
+
+        it('multiple sensors can be checked before OK is clicked, and Cancel discards a pending change', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+
+            fireEvent.click(screen.getByText('Add predictors…'));
+            fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED' } });
+            fireEvent.click(screen.getByText('PRED1'));
+            fireEvent.click(screen.getByText('PRED2'));
+            expect(screen.getByText('2 selected')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Cancel'));
+            expect(screen.queryByText('Predictor One')).toBeNull(); // nothing committed
+            expect(screen.getByText('0')).toBeTruthy(); // predictor count pill back to 0
+        });
+
+        it('Escape also closes the popup without committing (same convention as the chart expand modal)', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship' })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+
+            fireEvent.click(screen.getByText('Add predictors…'));
+            fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'PRED1' } });
+            fireEvent.click(screen.getByText('PRED1'));
+            fireEvent.keyDown(window, { key: 'Escape' });
+
+            expect(screen.queryByText('1 selected')).toBeNull(); // popup gone
+            expect(screen.getByText('0')).toBeTruthy(); // nothing committed
         });
 
         it('removing a predictor chip drops it from the selection', async () => {
