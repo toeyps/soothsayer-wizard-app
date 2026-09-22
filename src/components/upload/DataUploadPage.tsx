@@ -693,6 +693,27 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                         <span>{dataUpload.error}</span>
                       </div>
                     )}
+
+                    {/* Non-fatal issues Rust found while parsing (duplicate
+                        columns, duplicate timestamps merged, a Buddhist-Era
+                        year corrected to Gregorian, ...) — parsing still
+                        succeeded, but the user should know before Continue. */}
+                    {report && report.warnings.length > 0 && (
+                      <div style={{
+                        marginTop: 10, padding: "8px 10px", borderRadius: 7,
+                        background: "oklch(0.78 0.14 75 / 0.1)",
+                        border: `1px solid oklch(0.78 0.14 75 / 0.3)`,
+                        display: "flex", flexDirection: "column", gap: 5,
+                        fontSize: 11.5, color: T.warn,
+                      }}>
+                        {report.warnings.map((w, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                            <AlertTriangle size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+                            <span>{w}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </Card>
 

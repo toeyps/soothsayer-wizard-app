@@ -413,6 +413,34 @@ describe('C. Dataset parse', () => {
 
     expect(screen.getByText('Ready · 1,234 rows')).toBeTruthy();
   });
+
+  it('C17. non-fatal load-report warnings (e.g. a Buddhist-Era year correction) render inside the dataset card', () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({
+        selectedFiles: ['/x.csv'],
+        loadReport: {
+          ...FAKE_REPORT,
+          warnings: [
+            '288 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) for display and calculations',
+          ],
+        },
+      })
+    );
+
+    renderAtStep2();
+
+    expect(screen.getByText(/Buddhist-Era year/)).toBeTruthy();
+  });
+
+  it('C18. no warnings banner when the load report has none', () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT })
+    );
+
+    renderAtStep2();
+
+    expect(screen.queryByText(/Buddhist-Era year/)).toBeNull();
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════

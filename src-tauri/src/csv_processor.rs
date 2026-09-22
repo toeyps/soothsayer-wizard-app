@@ -36,8 +36,13 @@ pub struct ColumnarData {
     /// Column names; `headers[0]` is the canonical timestamp column after
     /// the merge step.
     pub headers: Vec<String>,
-    /// Original timestamp text per row, kept verbatim so rows shipped to
-    /// the frontend round-trip exactly what the CSV contained.
+    /// Timestamp text per row, round-tripped to the frontend as-is — EXCEPT
+    /// a detected Buddhist-Era year (see [`normalize_buddhist_era`]), which
+    /// `from_parts` rewrites to Gregorian here too, not just in `ts_parsed`.
+    /// Keeping this text and `ts_parsed` derived from the exact same
+    /// (possibly-corrected) string is what keeps Raw-mode display (which
+    /// reads this text directly) and Aggregated-mode display (built from
+    /// `ts_parsed`) agreeing on the year for the same rows.
     pub timestamps: Vec<Option<String>>,
     /// Timestamps parsed ONCE at load to epoch microseconds ([`TS_MISSING`]
     /// when absent/unparseable). Filters compare against this — never
@@ -50,8 +55,11 @@ pub struct ColumnarData {
 }
 
 impl ColumnarData {
-    /// Assemble a dataset from already-built parts, computing `ts_parsed`
-    /// (the one-time timestamp parse) in parallel.
+    /// Assemble a dataset from already-built parts, normalizing a detected
+    /// Buddhist-Era year (see [`normalize_buddhist_era`]) in `timestamps`
+    /// BEFORE computing `ts_parsed` (the one-time timestamp parse), both in
+    /// parallel — so every downstream consumer of either field, in Rust or
+    /// shipped to the frontend, sees only the corrected Gregorian year.
     pub fn from_parts(
         headers: Vec<String>,
         timestamps: Vec<Option<String>>,
@@ -59,6 +67,10 @@ impl ColumnarData {
     ) -> Self {
         use rayon::prelude::*;
         debug_assert!(columns.iter().all(|c| c.len() == timestamps.len()));
+        let timestamps: Vec<Option<String>> = timestamps
+            .into_par_iter()
+            .map(|t| t.map(normalize_buddhist_era))
+            .collect();
         let ts_parsed: Vec<i64> = timestamps
             .par_iter()
             .map(|t| {
@@ -105,6 +117,62 @@ impl ColumnarData {
             values: col_indices.iter().map(|&c| self.value(c, row)).collect(),
         }
     }
+}
+
+/// Detects a Buddhist-Era (BE = CE + 543) year in the leading `YYYY` of a
+/// timestamp string and rewrites it to Gregorian in place — every format
+/// [`parse_timestamp`] accepts starts with `%Y`, so the first 4 characters
+/// are always the year regardless of which one matches.
+///
+/// Detection rule: `year >= 2400`. No genuine CE sensor timestamp is ever
+/// that far out (2400 CE is over 370 years away), and no genuine BE year is
+/// ever under 2400 either (BE 2400 = CE 1857, decades before any plausible
+/// sensor log) — safe both directions for this app's domain, so this runs
+/// unconditionally with no per-import opt-in.
+///
+/// Why this matters beyond cosmetics: a BE date's leap day, e.g.
+/// `2567-02-29` (BE 2567 = CE 2024, a real leap year), fails to parse
+/// entirely if read as literal CE — CE 2567 is not a leap year, so
+/// `chrono` rejects the date outright and the whole row is dropped as
+/// [`TS_MISSING`]. Correcting the year here, before any parse attempt, is
+/// what makes that row valid again.
+fn normalize_buddhist_era(mut s: String) -> String {
+    if let Some(year) = s.get(0..4).and_then(|y| y.parse::<i32>().ok()) {
+        if year >= 2400 {
+            // `year` came from exactly 4 ASCII digits, so `year - 543` is
+            // always in [1857, 9456] — always 4 digits, same byte width.
+            s.replace_range(0..4, &format!("{:04}", year - 543));
+        }
+    }
+    s
+}
+
+/// True if `s`'s leading `YYYY` reads as a Buddhist-Era year, per
+/// [`normalize_buddhist_era`]'s detection rule — without rewriting it. Used
+/// only to decide whether a load-report warning is worth surfacing.
+fn is_buddhist_era_year(s: &str) -> bool {
+    s.get(0..4)
+        .and_then(|y| y.parse::<i32>().ok())
+        .is_some_and(|y| y >= 2400)
+}
+
+/// Load-report warning for detected Buddhist-Era years, or `None` if none
+/// were found — `from_parts` corrects them silently, so this is the only
+/// place the user finds out it happened. Scan BEFORE normalization (pass
+/// the still-original timestamp text): after `from_parts` runs, every year
+/// has already been rewritten and there's nothing left to detect.
+fn buddhist_era_warning<'a>(timestamps: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let count = timestamps
+        .into_iter()
+        .filter(|s| is_buddhist_era_year(s))
+        .count();
+    if count == 0 {
+        return None;
+    }
+    Some(format!(
+        "{} timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) for display and calculations",
+        count
+    ))
 }
 
 /// Try the common timestamp formats and return the parsed `NaiveDateTime`,
@@ -379,9 +447,20 @@ pub fn read_merge_csvs_with_report(paths: Vec<String>) -> Result<MergeResult, St
     // timestamp key per row) — pure overhead when there's nothing to merge.
     // `merge_single_file` produces the SAME result (timestamp column first,
     // null-timestamp rows dropped, ordered by timestamp, duplicate timestamps
-    // merged) but works on indices + per-column gathers.
+    // merged) but works on indices + per-column gathers — and does its own
+    // Buddhist-Era detection, so skip the one below entirely on this path.
     if results.len() == 1 {
         return Ok(merge_single_file(results.pop().unwrap()));
+    }
+
+    // Buddhist-Era detection across every file's raw timestamps, before any
+    // merge/parse step touches them — see `buddhist_era_warning`'s docstring.
+    if let Some(w) = buddhist_era_warning(
+        results
+            .iter()
+            .flat_map(|r| r.data.timestamps.iter().flatten().map(String::as_str)),
+    ) {
+        warnings.push(w);
     }
 
     // 2. Detect duplicate column names across files
@@ -569,6 +648,11 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
         parse_fail_counts,
     } = result;
 
+    // Computed before anything below partially moves `ds` — see
+    // `buddhist_era_warning`'s docstring for why this has to run on the
+    // still-original text.
+    let be_warning = buddhist_era_warning(ds.timestamps.iter().flatten().map(String::as_str));
+
     // Global headers: the timestamp column first, then the rest in file order.
     let canonical_ts = ds
         .headers
@@ -642,7 +726,7 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
     if identity_headers && sorted_already && !has_dups && order.len() == ds.n_rows() {
         return MergeResult {
             data: ColumnarData::from_parts(global_headers, ds.timestamps, ds.columns),
-            warnings: Vec::new(),
+            warnings: be_warning.clone().into_iter().collect(),
             parse_fail_counts: global_fail_counts,
         };
     }
@@ -701,7 +785,7 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
 
     MergeResult {
         data: ColumnarData::from_parts(global_headers, out_timestamps, out_columns),
-        warnings: Vec::new(),
+        warnings: be_warning.into_iter().collect(),
         parse_fail_counts: global_fail_counts,
     }
 }
@@ -1094,5 +1178,88 @@ mod tests {
         let rec = d.wire_record(0, &[2, 1]);
         assert_eq!(rec.timestamp.as_deref(), Some("t1"));
         assert_eq!(rec.values, vec![Some(f64::INFINITY), Some(1.5)]);
+    }
+
+    // ── Buddhist-Era (พ.ศ.) year detection/normalization ───────────────────
+
+    #[test]
+    fn normalize_buddhist_era_rewrites_a_be_year_leaving_the_rest_untouched() {
+        assert_eq!(
+            normalize_buddhist_era("2566-05-13T01:00:00+07:00".to_string()),
+            "2023-05-13T01:00:00+07:00"
+        );
+    }
+
+    #[test]
+    fn normalize_buddhist_era_leaves_an_ordinary_ce_year_alone() {
+        assert_eq!(
+            normalize_buddhist_era("2024-02-29T00:00:00".to_string()),
+            "2024-02-29T00:00:00"
+        );
+    }
+
+    #[test]
+    fn normalize_buddhist_era_leaves_garbage_alone() {
+        assert_eq!(normalize_buddhist_era("t1".to_string()), "t1");
+        assert_eq!(
+            normalize_buddhist_era("not-a-date-string".to_string()),
+            "not-a-date-string"
+        );
+    }
+
+    #[test]
+    fn is_buddhist_era_year_matches_the_2400_threshold() {
+        assert!(!is_buddhist_era_year("2399-01-01"));
+        assert!(is_buddhist_era_year("2400-01-01"));
+        assert!(is_buddhist_era_year("2566-05-13T01:00:00"));
+        assert!(!is_buddhist_era_year("garbage"));
+    }
+
+    #[test]
+    fn buddhist_era_warning_counts_matches_and_is_none_when_absent() {
+        assert_eq!(buddhist_era_warning(["2020-01-01", "2020-01-02"]), None);
+        let w = buddhist_era_warning(["2566-01-01", "2020-01-01", "2567-01-02"]).unwrap();
+        assert!(w.starts_with("2 "), "got: {w}");
+    }
+
+    /// The real-world case that motivated this: a Buddhist-Era leap day
+    /// (BE 2567 = CE 2024, a genuine Gregorian leap year) fails to parse
+    /// entirely if the year is read literally as CE 2567 — chrono rejects
+    /// Feb 29 outright since CE 2567 is not a leap year. Normalizing the
+    /// year to Gregorian BEFORE the parse attempt is what recovers it.
+    #[test]
+    fn single_file_merge_recovers_a_buddhist_era_leap_day_and_agrees_on_the_year() {
+        let m = single(
+            vec!["timestamp", "A"],
+            vec![
+                (Some("2567-02-28 00:00:00+07:00"), vec![None, Some(1.0)]),
+                (Some("2567-02-29 00:00:00+07:00"), vec![None, Some(2.0)]),
+            ],
+            vec![0, 0],
+        );
+        // Both rows parse now (neither is TS_MISSING) — the leap day survives.
+        assert_eq!(m.data.ts_parsed.iter().filter(|&&t| t == TS_MISSING).count(), 0);
+        // The STORED text is corrected too, not just ts_parsed — Raw-mode
+        // display and Aggregated-mode display must agree on the year.
+        assert_eq!(
+            m.data.timestamps[0].as_deref(),
+            Some("2024-02-28 00:00:00+07:00")
+        );
+        assert_eq!(
+            m.data.timestamps[1].as_deref(),
+            Some("2024-02-29 00:00:00+07:00")
+        );
+        assert_eq!(m.warnings.len(), 1);
+        assert!(m.warnings[0].starts_with("2 "), "got: {:?}", m.warnings[0]);
+    }
+
+    #[test]
+    fn single_file_merge_has_no_be_warning_for_ordinary_ce_data() {
+        let m = single(
+            vec!["timestamp", "A"],
+            vec![(Some("2024-01-01T00:00:00"), vec![None, Some(1.0)])],
+            vec![0, 0],
+        );
+        assert!(m.warnings.is_empty());
     }
 }
