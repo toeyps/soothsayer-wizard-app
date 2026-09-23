@@ -975,6 +975,52 @@ describe('BuildModelWindow', () => {
             expect(state.failureGroupState.runningConditionCombine).toBe('or');
         });
 
+        it('typing into the workspace Time start/end fields persists runningConditionTimeStart/-End (debounced) — 2026-09-23: time range merged into this same panel', async () => {
+            vi.useFakeTimers();
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+
+            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
+            fireEvent.change(startInput, { target: { value: '2026-05-01T00:00' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.runningConditionTimeStart).toBe('2026-05-01T00:00');
+            vi.useRealTimers();
+        });
+
+        it('passes the current workspace time range down to the PM page', async () => {
+            const modelWithGroup = makeModel();
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [modelWithGroup],
+                    runningConditionTimeStart: '2026-05-01T00:00',
+                    runningConditionTimeEnd: '2026-06-01T00:00',
+                },
+            });
+            // Same round-trip concern as the runningConditionFilters test
+            // below -- commitForm's persist() resyncs local state from
+            // whatever updateWorkspaceData's mock returns.
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => {
+                const prev = {
+                    id,
+                    failureGroupState: {
+                        groups: [makeGroup()], models: [modelWithGroup],
+                        runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00',
+                    },
+                };
+                return patch(prev);
+            });
+            fireEvent.click(screen.getByText('Model One'));
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
+            expect(lastProps.runningConditionTimeStart).toBe('2026-05-01T00:00');
+            expect(lastProps.runningConditionTimeEnd).toBe('2026-06-01T00:00');
+        });
+
         it('passes the current filter down to the PM page as runningConditionFilters', async () => {
             const modelWithGroup = makeModel();
             const filters = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }];

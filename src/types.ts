@@ -134,17 +134,28 @@ export interface PredictiveModelStateSlice {
     /** One entry per cluster, length === numClusters. Replaces the
      *  pre-multi-cluster `clusterRangeMin` / `clusterRangeMax` fields. */
     clusterRanges: PredictiveClusterRange[];
+    /** Only read when `runningConditionMode === 'custom'` (see below) — in
+     *  'workspace' mode the effective time range is
+     *  `FailureGroupStateSlice.runningConditionTimeStart`/`runningConditionTimeEnd`
+     *  instead. Reused rather than replaced by a new field when time range
+     *  joined the Workspace/Custom split (2026-09-23) — no schema migration
+     *  needed, since these already existed as "this model's own time range"
+     *  before the split existed (it just used to apply unconditionally). */
     filterTimeStart: string;
     filterTimeEnd: string;
-    /** 'workspace' (default): this model's Running Condition Filter is
-     *  whatever's set on BuildModelWindow's Overview page
-     *  (`FailureGroupStateSlice.runningConditionFilters`/`runningConditionCombine`).
-     *  'custom': this model ignores the workspace default entirely and uses
-     *  its own `customRunningConditionFilters`/`customRunningConditionCombine`
-     *  instead — set from this model's own Build page (2026-09-23 redesign,
-     *  replacing an earlier "which models does the workspace filter apply
-     *  to" idea with a per-model override chosen where training actually
-     *  happens, per explicit user direction). */
+    /** 'workspace' (default): this model's training window AND running
+     *  condition are whatever's set on BuildModelWindow's Overview page
+     *  (`FailureGroupStateSlice.runningConditionTimeStart`/`runningConditionTimeEnd`/
+     *  `runningConditionFilters`/`runningConditionCombine`). 'custom': this
+     *  model ignores the workspace default entirely and uses its own
+     *  `filterTimeStart`/`filterTimeEnd` + `customRunningConditionFilters`/
+     *  `customRunningConditionCombine` instead — set from this model's own
+     *  Build page (2026-09-23 redesign, replacing an earlier "which models
+     *  does the workspace filter apply to" idea with a per-model override
+     *  chosen where training actually happens, per explicit user direction;
+     *  extended the same day, also per explicit user correction, to cover
+     *  the time range too — it used to be a structurally separate,
+     *  always-per-model-only field with no workspace default at all). */
     runningConditionMode: 'workspace' | 'custom';
     /** Only read when `runningConditionMode === 'custom'`. Seeded from the
      *  workspace's conditions at the moment the user switches to Custom (a
@@ -229,6 +240,17 @@ interface FailureGroupStateSlice {
      *  older workspace without it reads as 'and' (`?? 'and'`) — see
      *  BuildModelWindow's "Running Condition Filter" panel (2026-09-23). */
     runningConditionCombine?: 'and' | 'or';
+    /** Workspace-default training time range — sibling to `runningConditionFilters`,
+     *  same optionality/`?? ''` convention. A model in `runningConditionMode:
+     *  'workspace'` uses THIS range (not its own `filterTimeStart`/`filterTimeEnd`,
+     *  which only apply in `'custom'` mode) — see `PredictiveModelStateSlice`'s
+     *  own doc comment for the full workspace/custom split (2026-09-23: merged
+     *  time range into the same Workspace/Custom mechanism as the value
+     *  conditions, per explicit user correction — time range used to be
+     *  unconditionally per-model with no workspace default at all). Empty
+     *  string (same as `filterTimeStart`'s own convention) = no bound. */
+    runningConditionTimeStart?: string;
+    runningConditionTimeEnd?: string;
 }
 
 type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';

@@ -473,6 +473,14 @@ interface PredictiveModelBuildProps {
      *  Overview page, read-only display here unless this model's own
      *  `runningConditionMode` is 'custom' (2026-09-23). */
     runningConditionCombine: 'and' | 'or';
+    /** Workspace-default training time range — same ownership/read-only
+     *  rule as `runningConditionFilters` above. In 'workspace' mode this
+     *  page's effective time range is THIS, not the model's own
+     *  `filterTimeStart`/`filterTimeEnd` (which apply only in 'custom' mode
+     *  — see `runningConditionMode` state's own doc comment). Empty string
+     *  = no bound, same convention as `filterTimeStart` itself. */
+    runningConditionTimeStart: string;
+    runningConditionTimeEnd: string;
     /** Returns to BuildModelWindow's overview page. This page is a child of
      *  that window (not a spawned OS window of its own — see BuildModelWindow's
      *  own doc comment for why), so "closing" it just means switching the
@@ -505,7 +513,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, onBack, onFinish }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimeStart, runningConditionTimeEnd, onBack, onFinish }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -595,16 +603,26 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const [customRunningConditionFilters, setCustomRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
     const [customRunningConditionCombine, setCustomRunningConditionCombine] = useState<'and' | 'or'>('and');
 
-    // Switching to Custom seeds from the workspace's current conditions —
-    // a sensible starting point to edit from rather than an empty list —
-    // but only the very first time (an already-populated custom set from a
-    // previous switch is never silently overwritten). Switching back to
-    // Workspace leaves the custom set untouched so toggling back and forth
-    // doesn't lose edits.
+    // Switching to Custom seeds from the workspace's current conditions AND
+    // time range — a sensible starting point to edit from rather than an
+    // empty/unbounded one — but only the very first time each (an
+    // already-populated custom set, or an already-set custom time range,
+    // from a previous switch is never silently overwritten). Switching back
+    // to Workspace leaves the custom values untouched so toggling back and
+    // forth doesn't lose edits. Time range seeds independently of value
+    // conditions (e.g. a model that already had its own filterTimeStart set
+    // — from before this merge existed — keeps it even if it has no custom
+    // conditions to seed).
     const handleRunningConditionModeChange = (mode: 'workspace' | 'custom') => {
-        if (mode === 'custom' && customRunningConditionFilters.length === 0 && runningConditionFilters.length > 0) {
-            setCustomRunningConditionFilters(runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })));
-            setCustomRunningConditionCombine(runningConditionCombine);
+        if (mode === 'custom') {
+            if (customRunningConditionFilters.length === 0 && runningConditionFilters.length > 0) {
+                setCustomRunningConditionFilters(runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })));
+                setCustomRunningConditionCombine(runningConditionCombine);
+            }
+            if (!filterTimeStart && !filterTimeEnd && (runningConditionTimeStart || runningConditionTimeEnd)) {
+                setFilterTimeStart(runningConditionTimeStart);
+                setFilterTimeEnd(runningConditionTimeEnd);
+            }
         }
         setRunningConditionMode(mode);
     };
@@ -654,6 +672,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // render.
     const activeRunningConditionFilters = runningConditionMode === 'custom' ? customRunningConditionFilters : runningConditionFilters;
     const activeRunningConditionCombine = runningConditionMode === 'custom' ? customRunningConditionCombine : runningConditionCombine;
+    // Time range now follows the same Workspace/Custom split as the value
+    // conditions (2026-09-23 — was unconditionally `filterTimeStart`/
+    // `filterTimeEnd` before, per explicit user correction that the filter
+    // concept isn't just sensor value, it needs a time range too).
+    const activeTimeStart = runningConditionMode === 'custom' ? filterTimeStart : runningConditionTimeStart;
+    const activeTimeEnd = runningConditionMode === 'custom' ? filterTimeEnd : runningConditionTimeEnd;
 
     const dashboardFilterPayload = useMemo(() => {
         const valueFilters = activeRunningConditionFilters
@@ -665,14 +689,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
             }));
 
-        if (valueFilters.length === 0 && !filterTimeStart && !filterTimeEnd) return null;
+        if (valueFilters.length === 0 && !activeTimeStart && !activeTimeEnd) return null;
         return {
-            timestamp_start: filterTimeStart || null,
-            timestamp_end: filterTimeEnd || null,
+            timestamp_start: activeTimeStart || null,
+            timestamp_end: activeTimeEnd || null,
             value_filters: valueFilters,
             combine: activeRunningConditionCombine,
         };
-    }, [activeRunningConditionFilters, activeRunningConditionCombine, filterTimeStart, filterTimeEnd]);
+    }, [activeRunningConditionFilters, activeRunningConditionCombine, activeTimeStart, activeTimeEnd]);
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -1990,58 +2014,19 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         <div className="pm-section-hint">
                             Feeds the model and the chart preview — the chart's own 🔍 zoom is view-only and doesn't change this.
                         </div>
-                        <div className="filter-row">
-                            <label>Time start</label>
-                            <div className="date-input-wrapper">
-                                <input
-                                    ref={filterTimeStartRef}
-                                    type="datetime-local"
-                                    value={filterTimeStart || targetMinForInput}
-                                    min={targetMinForInput || undefined}
-                                    max={targetMaxForInput || undefined}
-                                    onChange={e => setFilterTimeStart(e.target.value)}
-                                />
-                                {/* Flush against the box's own right edge
-                                    (`marginLeft: auto` pushes it there
-                                    regardless of how much space the input
-                                    itself takes up) and white — explicit
-                                    color, not just `currentColor` inherited
-                                    from the wrapper's dimmer text color, so
-                                    it reads clearly against the dark input
-                                    background rather than blending in. */}
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                    onClick={() => filterTimeStartRef.current?.showPicker?.()}
-                                />
-                            </div>
-                        </div>
-                        <div className="filter-row">
-                            <label>Time end</label>
-                            <div className="date-input-wrapper">
-                                <input
-                                    ref={filterTimeEndRef}
-                                    type="datetime-local"
-                                    value={filterTimeEnd || targetMaxForInput}
-                                    min={targetMinForInput || undefined}
-                                    max={targetMaxForInput || undefined}
-                                    onChange={e => setFilterTimeEnd(e.target.value)}
-                                />
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                    onClick={() => filterTimeEndRef.current?.showPicker?.()}
-                                />
-                            </div>
-                        </div>
-                        {/* Running condition — 'workspace' (default) shows
-                            BuildModelWindow's Overview-owned filter read-only;
-                            'custom' lets this one model define its own,
-                            independent of the workspace default (2026-09-23
-                            redesign — see runningConditionMode prop/state
-                            doc comments). */}
+                        {/* Training time range + Running condition — 'workspace'
+                            (default) shows BuildModelWindow's Overview-owned
+                            time range and value conditions read-only; 'custom'
+                            lets this one model define its own of both,
+                            independent of the workspace default. Time range
+                            merged into this same Workspace/Custom split
+                            2026-09-23 (was a structurally separate,
+                            always-per-model-only pair of fields with no
+                            workspace default at all, per explicit user
+                            correction — see runningConditionMode's own doc
+                            comment). */}
                         <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-                            <label style={{ marginBottom: '0.35rem' }}>Running condition</label>
+                            <label style={{ marginBottom: '0.35rem' }}>Training conditions</label>
 
                             <div style={{ display: 'flex', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px', marginBottom: '0.5rem' }}>
                                 {(['workspace', 'custom'] as const).map(mode => (
@@ -2075,6 +2060,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
 
                             {runningConditionMode === 'workspace' ? (
                                 <>
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                                        {runningConditionTimeStart || runningConditionTimeEnd
+                                            ? <>Time: {runningConditionTimeStart || '…'} – {runningConditionTimeEnd || '…'}</>
+                                            : <span style={{ opacity: 0.65, fontStyle: 'italic' }}>Time: no limit set — full dataset</span>}
+                                    </div>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
                                         <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                                             {runningConditionFilters.length > 0 && (
@@ -2139,6 +2129,50 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 </>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                        <div className="filter-row" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}>
+                                            <label>Time start</label>
+                                            <div className="date-input-wrapper">
+                                                <input
+                                                    ref={filterTimeStartRef}
+                                                    type="datetime-local"
+                                                    value={filterTimeStart || targetMinForInput}
+                                                    min={targetMinForInput || undefined}
+                                                    max={targetMaxForInput || undefined}
+                                                    onChange={e => setFilterTimeStart(e.target.value)}
+                                                />
+                                                {/* Flush against the box's own
+                                                    right edge (`marginLeft:
+                                                    auto`) and white — explicit
+                                                    color so it reads clearly
+                                                    against the dark input
+                                                    background. */}
+                                                <Calendar
+                                                    size={14}
+                                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                                    onClick={() => filterTimeStartRef.current?.showPicker?.()}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="filter-row" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}>
+                                            <label>Time end</label>
+                                            <div className="date-input-wrapper">
+                                                <input
+                                                    ref={filterTimeEndRef}
+                                                    type="datetime-local"
+                                                    value={filterTimeEnd || targetMaxForInput}
+                                                    min={targetMinForInput || undefined}
+                                                    max={targetMaxForInput || undefined}
+                                                    onChange={e => setFilterTimeEnd(e.target.value)}
+                                                />
+                                                <Calendar
+                                                    size={14}
+                                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                                    onClick={() => filterTimeEndRef.current?.showPicker?.()}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
                                     <div style={{ display: 'inline-flex', alignSelf: 'flex-start', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '6px', padding: '2px', gap: '2px' }}>
                                         {(['and', 'or'] as const).map(mode => (
                                             <button

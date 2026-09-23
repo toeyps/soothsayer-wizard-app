@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, Plus, ChevronDown, Gauge } from "lucide-react";
+import { X, Plus, ChevronDown, Gauge, Calendar } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
@@ -153,6 +153,16 @@ export default function BuildModelWindow() {
     // workspace's behavior before this existed) or 'or'. Same panel, same
     // persist path as runningConditionFilters (2026-09-23).
     const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>('and');
+    // Workspace-default training time range — merged into this same panel
+    // 2026-09-23 (was a structurally separate, always-per-model-only field
+    // on PredictiveModelBuild.tsx with no workspace default at all, per
+    // explicit user correction: "เงื่อนไขการ filter มันไม่ใช่แค่ value of
+    // sensor แต่ต้องมีการ filter timestamp ด้วย"). A model in Workspace mode
+    // uses THIS; Custom mode uses its own filterTimeStart/filterTimeEnd.
+    const [runningConditionTimeStart, setRunningConditionTimeStart] = useState('');
+    const [runningConditionTimeEnd, setRunningConditionTimeEnd] = useState('');
+    const rcTimeStartRef = useRef<HTMLInputElement>(null);
+    const rcTimeEndRef = useRef<HTMLInputElement>(null);
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
     const [loading, setLoading] = useState(true);
     const hydratedRef = useRef(false);
@@ -257,6 +267,8 @@ export default function BuildModelWindow() {
                 setAllModels([]);
                 setRunningConditionFilters([]);
                 setRunningConditionCombine('and');
+                setRunningConditionTimeStart('');
+                setRunningConditionTimeEnd('');
             }
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
@@ -268,6 +280,8 @@ export default function BuildModelWindow() {
                 setAllModels(ws?.failureGroupState?.models ?? []);
                 setRunningConditionFilters(ws?.failureGroupState?.runningConditionFilters ?? []);
                 setRunningConditionCombine(ws?.failureGroupState?.runningConditionCombine ?? 'and');
+                setRunningConditionTimeStart(ws?.failureGroupState?.runningConditionTimeStart ?? '');
+                setRunningConditionTimeEnd(ws?.failureGroupState?.runningConditionTimeEnd ?? '');
             } catch (e) {
                 console.warn('Failed to hydrate failure-group state:', e);
             }
@@ -279,7 +293,7 @@ export default function BuildModelWindow() {
         // persists failureGroupState broadcasts this so our copy never
         // goes stale. Ignores another workspace's broadcast (events are
         // global) and this window's own echo.
-        const offChanged = subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or'; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+        const offChanged = subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or'; runningConditionTimeStart?: string; runningConditionTimeEnd?: string; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
             if (event.payload.workspaceId !== workspaceIdRef.current) return;
             if (event.payload.origin === 'build-model') return;
             // A load already in flight is now older than this broadcast.
@@ -288,6 +302,8 @@ export default function BuildModelWindow() {
             setAllModels(event.payload.models);
             setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
             setRunningConditionCombine(event.payload.runningConditionCombine ?? 'and');
+            setRunningConditionTimeStart(event.payload.runningConditionTimeStart ?? '');
+            setRunningConditionTimeEnd(event.payload.runningConditionTimeEnd ?? '');
         });
 
         // Register both before asking, so the reply can't be missed.
@@ -314,10 +330,12 @@ export default function BuildModelWindow() {
                     models: result.models,
                     // This path never touches the running-condition filter —
                     // preserve whatever is on disk right now (see
-                    // persistRunningConditionFilters/-Combine below for the
-                    // paths that do change them).
+                    // persistRunningCondition below for the path that does
+                    // change any of these four).
                     runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
                     runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
+                    runningConditionTimeStart: prev.failureGroupState?.runningConditionTimeStart ?? '',
+                    runningConditionTimeEnd: prev.failureGroupState?.runningConditionTimeEnd ?? '',
                 },
             };
         });
@@ -326,22 +344,37 @@ export default function BuildModelWindow() {
             setAllModels(next.failureGroupState.models);
             setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
             setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
+            setRunningConditionTimeStart(next.failureGroupState.runningConditionTimeStart ?? '');
+            setRunningConditionTimeEnd(next.failureGroupState.runningConditionTimeEnd ?? '');
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
     }, [workspaceId]);
 
-    // The one path that actually changes the running-condition filter —
-    // edited entirely from this window's own "Running Condition Filter"
-    // panel (see the JSX below), never per-model.
-    const persistRunningConditionFilters = useCallback(async (filters: WorkspaceSensorFilter[]) => {
+    // The one path that actually changes the workspace-wide running
+    // condition — edited entirely from this window's own "Running Condition
+    // Filter" panel (see the JSX below), never per-model. One function for
+    // all four sub-fields (filters/combine/time start/time end) rather than
+    // a near-duplicate persist-function per field — each earlier one had to
+    // remember to explicitly preserve every OTHER sibling field on write,
+    // which is exactly the kind of easy-to-miss duplication that caused a
+    // real bug once already (see `persist` above's own comment). A field
+    // left out of `patch` falls through to whatever's already on disk.
+    const persistRunningCondition = useCallback(async (patch: {
+        filters?: WorkspaceSensorFilter[];
+        combine?: 'and' | 'or';
+        timeStart?: string;
+        timeEnd?: string;
+    }) => {
         if (!workspaceId) return;
         const next = await updateWorkspaceData(workspaceId, prev => ({
             ...prev,
             failureGroupState: {
                 groups: prev.failureGroupState?.groups ?? [],
                 models: prev.failureGroupState?.models ?? [],
-                runningConditionFilters: filters,
-                runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
+                runningConditionFilters: patch.filters ?? prev.failureGroupState?.runningConditionFilters ?? [],
+                runningConditionCombine: patch.combine ?? prev.failureGroupState?.runningConditionCombine ?? 'and',
+                runningConditionTimeStart: patch.timeStart ?? prev.failureGroupState?.runningConditionTimeStart ?? '',
+                runningConditionTimeEnd: patch.timeEnd ?? prev.failureGroupState?.runningConditionTimeEnd ?? '',
             },
         }));
         if (next?.failureGroupState) {
@@ -349,27 +382,8 @@ export default function BuildModelWindow() {
             setAllModels(next.failureGroupState.models);
             setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
             setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
-            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
-        }
-    }, [workspaceId]);
-
-    // Same shape as persistRunningConditionFilters, for the AND/OR toggle.
-    const persistRunningConditionCombine = useCallback(async (combine: 'and' | 'or') => {
-        if (!workspaceId) return;
-        const next = await updateWorkspaceData(workspaceId, prev => ({
-            ...prev,
-            failureGroupState: {
-                groups: prev.failureGroupState?.groups ?? [],
-                models: prev.failureGroupState?.models ?? [],
-                runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
-                runningConditionCombine: combine,
-            },
-        }));
-        if (next?.failureGroupState) {
-            setAllGroups(next.failureGroupState.groups);
-            setAllModels(next.failureGroupState.models);
-            setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
-            setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
+            setRunningConditionTimeStart(next.failureGroupState.runningConditionTimeStart ?? '');
+            setRunningConditionTimeEnd(next.failureGroupState.runningConditionTimeEnd ?? '');
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
     }, [workspaceId]);
@@ -383,20 +397,33 @@ export default function BuildModelWindow() {
             value2: '',
         }];
         setRunningConditionFilters(next);
-        persistRunningConditionFilters(next);
-    }, [runningConditionFilters, allSensors, persistRunningConditionFilters]);
+        persistRunningCondition({ filters: next });
+    }, [runningConditionFilters, allSensors, persistRunningCondition]);
 
     const updateRunningConditionFilter = useCallback((id: string, patch: Partial<WorkspaceSensorFilter>) => {
         const next = runningConditionFilters.map(f => f.id === id ? { ...f, ...patch } : f);
         setRunningConditionFilters(next);
-        persistRunningConditionFilters(next);
-    }, [runningConditionFilters, persistRunningConditionFilters]);
+        persistRunningCondition({ filters: next });
+    }, [runningConditionFilters, persistRunningCondition]);
 
     const removeRunningConditionFilter = useCallback((id: string) => {
         const next = runningConditionFilters.filter(f => f.id !== id);
         setRunningConditionFilters(next);
-        persistRunningConditionFilters(next);
-    }, [runningConditionFilters, persistRunningConditionFilters]);
+        persistRunningCondition({ filters: next });
+    }, [runningConditionFilters, persistRunningCondition]);
+
+    // Debounced (matches every other free-text field in this app) — commits
+    // 250ms after the user stops typing/picking rather than on every
+    // keystroke.
+    const rcTimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const updateRunningConditionTimeRange = useCallback((patch: { timeStart?: string; timeEnd?: string }) => {
+        if (patch.timeStart !== undefined) setRunningConditionTimeStart(patch.timeStart);
+        if (patch.timeEnd !== undefined) setRunningConditionTimeEnd(patch.timeEnd);
+        if (rcTimeDebounceRef.current) clearTimeout(rcTimeDebounceRef.current);
+        rcTimeDebounceRef.current = setTimeout(() => {
+            persistRunningCondition(patch);
+        }, 250);
+    }, [persistRunningCondition]);
 
     // ---- Model edit accordion — 2026-08-31: "add" removed entirely per
     //      explicit user request; toggling a sensor into a group (Sensor
@@ -902,6 +929,8 @@ export default function BuildModelWindow() {
                     sensorMetadata={sensorMetadata}
                     runningConditionFilters={runningConditionFilters}
                     runningConditionCombine={runningConditionCombine}
+                    runningConditionTimeStart={runningConditionTimeStart}
+                    runningConditionTimeEnd={runningConditionTimeEnd}
                     onBack={() => setActivePage('overview')}
                     onFinish={() => {
                         markModelComplete(pmPageModel.id);
@@ -914,8 +943,13 @@ export default function BuildModelWindow() {
                 every model of every kind picks it up automatically at train
                 time instead of each needing its own "is the machine
                 running" filter (2026-09-15 — replaces the old per-model
-                Sensor value filter on PredictiveModelBuild.tsx). */}
-            <div style={{ margin: '12px 20px 0', border: `1px solid ${runningConditionFilters.length > 0 ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
+                Sensor value filter on PredictiveModelBuild.tsx). Also the
+                workspace-default TRAINING TIME RANGE since 2026-09-23 — was
+                a structurally separate, always-per-model-only field with no
+                workspace default at all until the user pointed out the
+                filter concept isn't just sensor value, it needs a time
+                range too, same as this panel's value conditions. */}
+            <div style={{ margin: '12px 20px 0', border: `1px solid ${(runningConditionFilters.length > 0 || runningConditionTimeStart || runningConditionTimeEnd) ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
                 <div
                     onClick={() => setRcFilterOpen(o => !o)}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 14px', cursor: 'pointer', userSelect: 'none' }}
@@ -927,8 +961,11 @@ export default function BuildModelWindow() {
                         <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>Running Condition Filter</div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {runningConditionTimeStart || runningConditionTimeEnd
+                                    ? `${runningConditionTimeStart || '…'} – ${runningConditionTimeEnd || '…'}${runningConditionFilters.length > 0 ? ' · ' : ''}`
+                                    : ''}
                                 {runningConditionFilters.length === 0
-                                    ? 'Not set — models train on the full dataset, including idle periods, unless configured otherwise.'
+                                    ? (runningConditionTimeStart || runningConditionTimeEnd ? '' : 'Not set — models train on the full dataset, including idle periods, unless configured otherwise.')
                                     : runningConditionFilters.map(f => `${getDesc(f.sensor) || f.sensor} ${f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`).join(runningConditionCombine === 'or' ? ' OR ' : ' AND ')}
                             </div>
                         </div>
@@ -941,8 +978,43 @@ export default function BuildModelWindow() {
                 {rcFilterOpen && (
                     <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                         <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
-                            Workspace default, AND‑combined with each model's own Time start/end. A model follows this automatically, or can override it — set per model on its own Build page.
+                            Workspace default training time range + value conditions. A model follows this automatically, or can override either — set per model on its own Build page.
                         </p>
+
+                        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                            <div className="filter-row" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                                <label>Time start</label>
+                                <div className="date-input-wrapper">
+                                    <input
+                                        ref={rcTimeStartRef}
+                                        type="datetime-local"
+                                        value={runningConditionTimeStart}
+                                        onChange={e => updateRunningConditionTimeRange({ timeStart: e.target.value })}
+                                    />
+                                    <Calendar
+                                        size={14}
+                                        style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                        onClick={() => rcTimeStartRef.current?.showPicker?.()}
+                                    />
+                                </div>
+                            </div>
+                            <div className="filter-row" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                                <label>Time end</label>
+                                <div className="date-input-wrapper">
+                                    <input
+                                        ref={rcTimeEndRef}
+                                        type="datetime-local"
+                                        value={runningConditionTimeEnd}
+                                        onChange={e => updateRunningConditionTimeRange({ timeEnd: e.target.value })}
+                                    />
+                                    <Calendar
+                                        size={14}
+                                        style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
+                                        onClick={() => rcTimeEndRef.current?.showPicker?.()}
+                                    />
+                                </div>
+                            </div>
+                        </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match</span>
@@ -953,7 +1025,7 @@ export default function BuildModelWindow() {
                                         type="button"
                                         onClick={() => {
                                             setRunningConditionCombine(mode);
-                                            persistRunningConditionCombine(mode);
+                                            persistRunningCondition({ combine: mode });
                                         }}
                                         style={{
                                             fontSize: '0.68rem', fontWeight: 700, padding: '4px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer',
