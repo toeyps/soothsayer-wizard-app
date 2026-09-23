@@ -390,6 +390,19 @@ describe('PredictiveModelBuild', () => {
             expect(trigger.querySelector('.sensor-autocomplete-icon')).toBeNull();
         });
 
+        it("the trigger's label carries a truncation class (regression: a long sensor description wrapped onto a second line in a narrow row -- e.g. a Custom Running Condition row sharing space with the operator select, value input and remove button -- because the label <span> had no min-width:0/ellipsis, and a flex item's default min-width is 'auto', which refuses to shrink below its text's natural width; reported 2026-09-23)", async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'clustering', predictorSensors: ['PRED1'], criteriaSensor: 'PRED1' })] },
+            });
+            await renderHydrated({ kind: 'clustering' });
+
+            const criteriaRow = screen.getByText('Criteria Sensor').closest('.filter-row') as HTMLElement;
+            const trigger = within(criteriaRow).getByText(/PRED1/).closest('button') as HTMLButtonElement;
+            const label = trigger.querySelector('span') as HTMLElement;
+            expect(label.className).toContain('sensor-picker-trigger-label');
+        });
+
         it('X sensor is disabled with an explanatory placeholder until at least one predictor is chosen', async () => {
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',

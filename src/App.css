@@ -1099,6 +1099,18 @@ tr:hover {
 .sensor-picker-trigger-single:disabled:hover {
     border-color: var(--border);
 }
+.sensor-picker-trigger-label {
+    /* min-width: 0 overrides the flex-item default of `auto`, which would
+       otherwise refuse to shrink below the text's natural width and force
+       the row to wrap onto a second line instead of truncating — most
+       visible in a narrow row (e.g. a Custom condition row sharing space
+       with an operator select, value input and remove button) with a long
+       sensor description. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .sensor-picker-trigger-placeholder {
     color: var(--text-faint, var(--text-secondary));
     opacity: 0.75;

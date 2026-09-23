@@ -331,7 +331,7 @@ export function SensorPickerModal({
                         random spot (regression reported 2026-09-22, fixed
                         same day). A flex child needs no positioning trick. */}
                     <Search size={12} className="sensor-picker-trigger-icon" />
-                    <span className={selectedLabel ? '' : 'sensor-picker-trigger-placeholder'}>
+                    <span className={`sensor-picker-trigger-label${selectedLabel ? '' : ' sensor-picker-trigger-placeholder'}`}>
                         {selectedLabel || placeholder || `Pick ${noun}...`}
                     </span>
                 </button>
