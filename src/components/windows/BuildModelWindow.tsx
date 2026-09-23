@@ -149,6 +149,10 @@ export default function BuildModelWindow() {
     // workspace, setting the same "is the machine running" condition 100
     // times separately was the actual problem being solved.
     const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
+    // How the conditions above combine — 'and' (default, matches every
+    // workspace's behavior before this existed) or 'or'. Same panel, same
+    // persist path as runningConditionFilters (2026-09-23).
+    const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>('and');
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
     const [loading, setLoading] = useState(true);
     const hydratedRef = useRef(false);
@@ -252,6 +256,7 @@ export default function BuildModelWindow() {
                 setAllGroups([]);
                 setAllModels([]);
                 setRunningConditionFilters([]);
+                setRunningConditionCombine('and');
             }
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
@@ -262,6 +267,7 @@ export default function BuildModelWindow() {
                 setAllGroups(ws?.failureGroupState?.groups ?? []);
                 setAllModels(ws?.failureGroupState?.models ?? []);
                 setRunningConditionFilters(ws?.failureGroupState?.runningConditionFilters ?? []);
+                setRunningConditionCombine(ws?.failureGroupState?.runningConditionCombine ?? 'and');
             } catch (e) {
                 console.warn('Failed to hydrate failure-group state:', e);
             }
@@ -273,7 +279,7 @@ export default function BuildModelWindow() {
         // persists failureGroupState broadcasts this so our copy never
         // goes stale. Ignores another workspace's broadcast (events are
         // global) and this window's own echo.
-        const offChanged = subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+        const offChanged = subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or'; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
             if (event.payload.workspaceId !== workspaceIdRef.current) return;
             if (event.payload.origin === 'build-model') return;
             // A load already in flight is now older than this broadcast.
@@ -281,6 +287,7 @@ export default function BuildModelWindow() {
             setAllGroups(event.payload.groups);
             setAllModels(event.payload.models);
             setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
+            setRunningConditionCombine(event.payload.runningConditionCombine ?? 'and');
         });
 
         // Register both before asking, so the reply can't be missed.
@@ -307,9 +314,10 @@ export default function BuildModelWindow() {
                     models: result.models,
                     // This path never touches the running-condition filter —
                     // preserve whatever is on disk right now (see
-                    // persistRunningConditionFilters below for the one path
-                    // that does change it).
+                    // persistRunningConditionFilters/-Combine below for the
+                    // paths that do change them).
                     runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
+                    runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
                 },
             };
         });
@@ -317,6 +325,7 @@ export default function BuildModelWindow() {
             setAllGroups(next.failureGroupState.groups);
             setAllModels(next.failureGroupState.models);
             setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
+            setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
     }, [workspaceId]);
@@ -332,12 +341,35 @@ export default function BuildModelWindow() {
                 groups: prev.failureGroupState?.groups ?? [],
                 models: prev.failureGroupState?.models ?? [],
                 runningConditionFilters: filters,
+                runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
             },
         }));
         if (next?.failureGroupState) {
             setAllGroups(next.failureGroupState.groups);
             setAllModels(next.failureGroupState.models);
             setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
+            setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
+            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+        }
+    }, [workspaceId]);
+
+    // Same shape as persistRunningConditionFilters, for the AND/OR toggle.
+    const persistRunningConditionCombine = useCallback(async (combine: 'and' | 'or') => {
+        if (!workspaceId) return;
+        const next = await updateWorkspaceData(workspaceId, prev => ({
+            ...prev,
+            failureGroupState: {
+                groups: prev.failureGroupState?.groups ?? [],
+                models: prev.failureGroupState?.models ?? [],
+                runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
+                runningConditionCombine: combine,
+            },
+        }));
+        if (next?.failureGroupState) {
+            setAllGroups(next.failureGroupState.groups);
+            setAllModels(next.failureGroupState.models);
+            setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
+            setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
     }, [workspaceId]);
@@ -869,6 +901,7 @@ export default function BuildModelWindow() {
                     sensorHeaders={allSensors}
                     sensorMetadata={sensorMetadata}
                     runningConditionFilters={runningConditionFilters}
+                    runningConditionCombine={runningConditionCombine}
                     onBack={() => setActivePage('overview')}
                     onFinish={() => {
                         markModelComplete(pmPageModel.id);
@@ -895,17 +928,12 @@ export default function BuildModelWindow() {
                             <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>Running Condition Filter</div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {runningConditionFilters.length === 0
-                                    ? 'Not set — every model trains on the full dataset, including idle periods.'
-                                    : runningConditionFilters.map(f => `${getDesc(f.sensor) || f.sensor} ${f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`).join(' AND ')}
+                                    ? 'Not set — models train on the full dataset, including idle periods, unless configured otherwise.'
+                                    : runningConditionFilters.map(f => `${getDesc(f.sensor) || f.sensor} ${f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`).join(runningConditionCombine === 'or' ? ' OR ' : ' AND ')}
                             </div>
                         </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                        {runningConditionFilters.length > 0 && (
-                            <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'rgba(16,185,129,0.14)', color: '#10b981' }}>
-                                ✓ applies to {totalModels} model{totalModels !== 1 ? 's' : ''}
-                            </span>
-                        )}
                         <ChevronDown size={14} color="var(--text-faint)" style={{ transform: rcFilterOpen ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
                     </div>
                 </div>
@@ -913,8 +941,36 @@ export default function BuildModelWindow() {
                 {rcFilterOpen && (
                     <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                         <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
-                            Applied before training <strong style={{ color: 'var(--text-primary)' }}>every model</strong> in this workspace, AND-combined with each model's own Time start/end. No model has its own separate value filter any more — this is the only place to set one.
+                            Workspace default, AND‑combined with each model's own Time start/end. A model follows this automatically, or can override it — set per model on its own Build page.
                         </p>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match</span>
+                            <div style={{ display: 'inline-flex', background: 'var(--card-bg, var(--bg-secondary))', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px' }}>
+                                {(['and', 'or'] as const).map(mode => (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        onClick={() => {
+                                            setRunningConditionCombine(mode);
+                                            persistRunningConditionCombine(mode);
+                                        }}
+                                        style={{
+                                            fontSize: '0.68rem', fontWeight: 700, padding: '4px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer',
+                                            background: runningConditionCombine === mode ? 'var(--accent-color)' : 'none',
+                                            color: runningConditionCombine === mode ? '#06111f' : 'var(--text-secondary)',
+                                            letterSpacing: '0.03em',
+                                        }}
+                                    >
+                                        {mode.toUpperCase()}
+                                    </button>
+                                ))}
+                            </div>
+                            <span style={{ fontSize: '0.64rem', color: 'var(--text-faint)' }}>
+                                {runningConditionCombine === 'or' ? '— a row passes if any condition below is true' : '— a row must pass every condition below'}
+                            </span>
+                        </div>
+
                         {runningConditionFilters.map(f => (
                             <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', marginBottom: '6px', background: 'var(--chip-bg)', border: '1px solid var(--border)', borderRadius: '6px' }}>
                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -975,8 +1031,12 @@ export default function BuildModelWindow() {
                                 cursor: allSensors.length === 0 ? 'not-allowed' : 'pointer', opacity: allSensors.length === 0 ? 0.5 : 1,
                             }}
                         >
-                            <Plus size={11} /> Add condition (AND)
+                            <Plus size={11} /> Add condition
                         </button>
+
+                        <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
+                            Default for every model — override per model on its own Build page.
+                        </div>
                     </div>
                 )}
             </div>

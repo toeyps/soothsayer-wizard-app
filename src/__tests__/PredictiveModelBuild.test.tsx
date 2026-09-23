@@ -74,6 +74,7 @@ function pmProps(overrides: Partial<PMProps> = {}): PMProps {
         sensorHeaders: ['TARGET1', 'PRED1', 'PRED2'],
         sensorMetadata,
         runningConditionFilters: [],
+        runningConditionCombine: 'and',
         onBack: vi.fn(),
         onFinish: vi.fn(),
         ...overrides,
@@ -611,6 +612,100 @@ describe('PredictiveModelBuild', () => {
             const { onBack } = await renderHydrated({ runningConditionFilters: [] });
             fireEvent.click(screen.getByText('Edit on Overview →'));
             expect(onBack).toHaveBeenCalledTimes(1);
+        });
+
+        it('shows the inherited combine mode next to the condition count', async () => {
+            await renderHydrated({
+                runningConditionFilters: [
+                    { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
+                ],
+                runningConditionCombine: 'or',
+            });
+            expect(screen.getByText(/OR/)).toBeTruthy();
+        });
+    });
+
+    describe('running condition — Workspace/Custom override (2026-09-23)', () => {
+        it('defaults to Workspace mode and carries the workspace filter/combine into the query', async () => {
+            await renderHydrated({
+                runningConditionFilters: [
+                    { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
+                ],
+                runningConditionCombine: 'or',
+            });
+            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
+            expect(lastQuery.filter.value_filters).toEqual([
+                { sensor: 'PRED1', operation: 'greater_than', value1: 1200, value2: null },
+            ]);
+            expect(lastQuery.filter.combine).toBe('or');
+        });
+
+        it('switching to Custom seeds an editable condition from the workspace filter, and Time start/end stays untouched', async () => {
+            await renderHydrated({
+                runningConditionFilters: [
+                    { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
+                ],
+                runningConditionCombine: 'or',
+            });
+            fireEvent.click(screen.getByText('Custom'));
+
+            // Seeded row is now editable -- a "val" input exists (read-only
+            // Workspace view never renders one, per the describe block above).
+            expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('1200');
+            // Seeded combine mode carries over too.
+            expect(screen.getByRole('button', { name: 'OR' })).toBeTruthy();
+        });
+
+        it('editing a Custom condition persists customRunningConditionFilters and leaves the workspace runningConditionFilters on disk untouched', async () => {
+            const onDiskModel = makeStoredModel();
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({
+                    id,
+                    failureGroupState: {
+                        groups: [], models: [onDiskModel],
+                        runningConditionFilters: [{ id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' }],
+                    },
+                }));
+            vi.useFakeTimers();
+            await renderHydrated({
+                runningConditionFilters: [{ id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' }],
+            });
+
+            fireEvent.click(screen.getByText('Custom'));
+            fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '999' } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            const saved = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+            expect(saved.runningConditionMode).toBe('custom');
+            expect(saved.customRunningConditionFilters[0].value1).toBe('999');
+            // The workspace-wide filter this model started from is untouched.
+            expect(state.failureGroupState.runningConditionFilters[0].value1).toBe('1200');
+            vi.useRealTimers();
+        });
+
+        it('once in Custom mode, the query filter uses the custom condition instead of the workspace one', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: {
+                    groups: [], models: [makeStoredModel({
+                        runningConditionMode: 'custom',
+                        customRunningConditionFilters: [{ id: 'c1', sensor: 'PRED1', operation: 'less_than', value1: '50', value2: '' }],
+                        customRunningConditionCombine: 'or',
+                    })],
+                },
+            });
+            await renderHydrated({
+                runningConditionFilters: [{ id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' }],
+                runningConditionCombine: 'and',
+            });
+
+            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
+            expect(lastQuery.filter.value_filters).toEqual([
+                { sensor: 'PRED1', operation: 'less_than', value1: 50, value2: null },
+            ]);
+            expect(lastQuery.filter.combine).toBe('or');
         });
     });
 

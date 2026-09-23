@@ -890,7 +890,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(screen.getByText('Running Condition Filter')).toBeTruthy();
-            expect(screen.getByText(/Not set — every model trains on the full dataset/)).toBeTruthy();
+            expect(screen.getByText(/Not set — models train on the full dataset/)).toBeTruthy();
             expect(screen.queryByText(/applies to/)).toBeNull();
         });
 
@@ -898,7 +898,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Running Condition Filter'));
-            fireEvent.click(screen.getByText('Add condition (AND)'));
+            fireEvent.click(screen.getByText('Add condition'));
 
             expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
             await act(async () => { await Promise.resolve(); });
@@ -911,7 +911,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Running Condition Filter'));
-            fireEvent.click(screen.getByText('Add condition (AND)'));
+            fireEvent.click(screen.getByText('Add condition'));
             await act(async () => { await Promise.resolve(); });
             mockUpdateWorkspaceData.mockClear();
 
@@ -925,7 +925,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Running Condition Filter'));
-            fireEvent.click(screen.getByText('Add condition (AND)'));
+            fireEvent.click(screen.getByText('Add condition'));
 
             const rcProps = sensorPickerModalProps.find(p => p.noun === 'sensor');
             expect(rcProps).toBeTruthy();
@@ -937,7 +937,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Running Condition Filter'));
-            fireEvent.click(screen.getByText('Add condition (AND)')); // defaults to sensor: 'TAG1'
+            fireEvent.click(screen.getByText('Add condition')); // defaults to sensor: 'TAG1'
             await act(async () => { await Promise.resolve(); });
             mockUpdateWorkspaceData.mockClear();
 
@@ -952,12 +952,27 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getByText('Running Condition Filter'));
-            fireEvent.click(screen.getByText('Add condition (AND)'));
+            fireEvent.click(screen.getByText('Add condition'));
             await act(async () => { await Promise.resolve(); });
 
             fireEvent.click(screen.getByTitle('Remove condition'));
             await act(async () => { await Promise.resolve(); });
-            expect(screen.getByText(/Not set — every model trains on the full dataset/)).toBeTruthy();
+            expect(screen.getByText(/Not set — models train on the full dataset/)).toBeTruthy();
+        });
+
+        it('the Match AND/OR toggle persists runningConditionCombine and switches the summary joiner', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            fireEvent.click(screen.getByText('Add condition'));
+            await act(async () => { await Promise.resolve(); });
+            mockUpdateWorkspaceData.mockClear();
+
+            fireEvent.click(screen.getByText('OR'));
+            await act(async () => { await Promise.resolve(); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.runningConditionCombine).toBe('or');
         });
 
         it('passes the current filter down to the PM page as runningConditionFilters', async () => {

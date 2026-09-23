@@ -349,6 +349,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>(
         initialState?.failureGroupState?.runningConditionFilters ?? []
     );
+    // Same persistence-round-trip-only mirror as above, for the AND/OR
+    // combine mode (2026-09-23) — never read into `dataFilter`/`scatterFilter`.
+    const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>(
+        initialState?.failureGroupState?.runningConditionCombine ?? 'and'
+    );
 
     // Serialized WorkspaceState that is already known to be on disk. The
     // debounced autosave below compares against this and skips a write whose
@@ -372,6 +377,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // stale-by-a-tick) local copy, since `prev` here is a fresh
                 // read, not the closure's `runningConditionFilters`.
                 runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
+                runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
             },
         }))
             .then((next) => {
@@ -393,11 +399,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // plus two full-state writes.
                 const build = buildWorkspaceStateRef.current;
                 if (build) {
-                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: { groups, models, runningConditionFilters } }));
+                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: { groups, models, runningConditionFilters, runningConditionCombine } }));
                 }
             })
             .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
-    }, [initialState, runningConditionFilters]);
+    }, [initialState, runningConditionFilters, runningConditionCombine]);
 
     // BuildModelWindow and PredictiveModelBuild persist failureGroupState
     // independently (their own updateWorkspaceData read-modify-write calls)
@@ -415,12 +421,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // (a stale window from the previous project). Only apply the one that
     // names THIS workspace — and skip this window's own echo.
     const currentWorkspaceId = initialState?.id;
-    useEffect(() => subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+    useEffect(() => subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or'; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
         if (event.payload.workspaceId !== currentWorkspaceId) return;
         if (event.payload.origin === 'dashboard') return;
         setFgGroups(event.payload.groups);
         setFgModels(event.payload.models);
         setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
+        setRunningConditionCombine(event.payload.runningConditionCombine ?? 'and');
     }), [currentWorkspaceId]);
 
     // Default PM build config for a freshly created model of a given kind —
@@ -465,6 +472,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         ],
         filterTimeStart: '',
         filterTimeEnd: '',
+        runningConditionMode: 'workspace',
+        customRunningConditionFilters: [],
+        customRunningConditionCombine: 'and',
     }), [getSensorMeta]);
 
     const isDuplicateGroupName = useCallback((name: string, excludeNo?: number) =>
@@ -1648,7 +1658,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // not the stale failureGroupState captured in `initialState` at
         // mount — otherwise this full-overwrite autosave would silently
         // erase what was just written via read-modify-write elsewhere.
-        failureGroupState: { groups: fgGroups, models: fgModels, runningConditionFilters },
+        failureGroupState: { groups: fgGroups, models: fgModels, runningConditionFilters, runningConditionCombine },
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
         extraSensorMetadata,
@@ -1665,7 +1675,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
-        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, runningConditionFilters, alarmLinesEnabled, scatterAxes,
+        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, runningConditionFilters, runningConditionCombine, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, specialSensorRecipes, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
         valueHighlight, relativeAmount, relativeUnit,
     ]);
@@ -1727,7 +1737,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let timer: ReturnType<typeof setTimeout>;
         pendingSaveRef.current = new Promise<void>((resolve) => {
             timer = setTimeout(async () => {
-                let freshFailureGroupState = { groups: fgGroups, models: fgModels, runningConditionFilters };
+                let freshFailureGroupState = { groups: fgGroups, models: fgModels, runningConditionFilters, runningConditionCombine };
                 try {
                     const onDisk = await loadWorkspaceData(initialState.id);
                     if (onDisk?.failureGroupState) {
@@ -1735,6 +1745,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             groups: onDisk.failureGroupState.groups,
                             models: onDisk.failureGroupState.models,
                             runningConditionFilters: onDisk.failureGroupState.runningConditionFilters ?? [],
+                            runningConditionCombine: onDisk.failureGroupState.runningConditionCombine ?? 'and',
                         };
                     }
                 } catch (e) {
@@ -1761,7 +1772,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }, AUTOSAVE_DEBOUNCE_MS);
         });
         return () => clearTimeout(timer);
-    }, [buildWorkspaceState, initialState, fgGroups, fgModels, runningConditionFilters]);
+    }, [buildWorkspaceState, initialState, fgGroups, fgModels, runningConditionFilters, runningConditionCombine]);
 
     // 2026-09-01: flush a pending autosave before the window is actually
     // allowed to close, instead of letting a change made in the last

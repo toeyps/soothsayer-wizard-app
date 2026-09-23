@@ -11,6 +11,7 @@ function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
         clusterRanges: [], filterTimeStart: '', filterTimeEnd: '',
+        runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
         ...overrides,
     };
 }

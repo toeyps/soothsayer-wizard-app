@@ -468,6 +468,11 @@ interface PredictiveModelBuildProps {
      *  save preserves whatever value is on disk at write time rather than
      *  round-tripping this prop back into the write. */
     runningConditionFilters: WorkspaceSensorFilter[];
+    /** How `runningConditionFilters` combine — 'and' (default) or 'or'. Same
+     *  ownership as the prop above: edited only on BuildModelWindow's
+     *  Overview page, read-only display here unless this model's own
+     *  `runningConditionMode` is 'custom' (2026-09-23). */
+    runningConditionCombine: 'and' | 'or';
     /** Returns to BuildModelWindow's overview page. This page is a child of
      *  that window (not a spawned OS window of its own — see BuildModelWindow's
      *  own doc comment for why), so "closing" it just means switching the
@@ -500,7 +505,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, onBack, onFinish }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, onBack, onFinish }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -581,12 +586,54 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const filterTimeStartRef = useRef<HTMLInputElement>(null);
     const filterTimeEndRef = useRef<HTMLInputElement>(null);
 
+    // Running condition source — 'workspace' (default) follows the
+    // BuildModelWindow-owned `runningConditionFilters`/`runningConditionCombine`
+    // props read-only; 'custom' uses this model's own independent condition
+    // set instead (2026-09-23 redesign — lets one model opt out of the
+    // workspace default without a workspace-wide "which models" picker).
+    const [runningConditionMode, setRunningConditionMode] = useState<'workspace' | 'custom'>('workspace');
+    const [customRunningConditionFilters, setCustomRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
+    const [customRunningConditionCombine, setCustomRunningConditionCombine] = useState<'and' | 'or'>('and');
+
+    // Switching to Custom seeds from the workspace's current conditions —
+    // a sensible starting point to edit from rather than an empty list —
+    // but only the very first time (an already-populated custom set from a
+    // previous switch is never silently overwritten). Switching back to
+    // Workspace leaves the custom set untouched so toggling back and forth
+    // doesn't lose edits.
+    const handleRunningConditionModeChange = (mode: 'workspace' | 'custom') => {
+        if (mode === 'custom' && customRunningConditionFilters.length === 0 && runningConditionFilters.length > 0) {
+            setCustomRunningConditionFilters(runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })));
+            setCustomRunningConditionCombine(runningConditionCombine);
+        }
+        setRunningConditionMode(mode);
+    };
+
+    const addCustomRunningCondition = () => {
+        setCustomRunningConditionFilters(prev => [...prev, {
+            id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            sensor: allSensors[0] ?? '',
+            operation: 'greater_than',
+            value1: '',
+            value2: '',
+        }]);
+    };
+
+    const updateCustomRunningCondition = (id: string, patch: Partial<WorkspaceSensorFilter>) => {
+        setCustomRunningConditionFilters(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
+    };
+
+    const removeCustomRunningCondition = (id: string) => {
+        setCustomRunningConditionFilters(prev => prev.filter(f => f.id !== id));
+    };
+
     // ── Filter payload passed through to every Rust data-reading command ──
-    // Translates this page's own Time start/end plus the inherited
-    // workspace-wide `runningConditionFilters` into the snake_case shape
-    // Rust expects (`PreviewFilter`) and forwards it on every invoke so
-    // target chart, σ markers, clustering preview, and all `train_*`
-    // commands operate on the same filtered slice.
+    // Translates this page's own Time start/end plus the active running
+    // condition (workspace default, or this model's own custom override —
+    // see `runningConditionMode`) into the snake_case shape Rust expects
+    // (`PreviewFilter`) and forwards it on every invoke so target chart, σ
+    // markers, clustering preview, and all `train_*` commands operate on the
+    // same filtered slice.
     //
     // 2026-09-01: this used to also merge in a `dashboardSnapshot` carried
     // over from Dashboard's own filter panel via a "Save & Continue" flow —
@@ -605,8 +652,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // those effects depend on `dashboardFilterKey` — placing the memos right
     // after the filter inputs avoids a temporal-dead-zone reference during
     // render.
+    const activeRunningConditionFilters = runningConditionMode === 'custom' ? customRunningConditionFilters : runningConditionFilters;
+    const activeRunningConditionCombine = runningConditionMode === 'custom' ? customRunningConditionCombine : runningConditionCombine;
+
     const dashboardFilterPayload = useMemo(() => {
-        const valueFilters = runningConditionFilters
+        const valueFilters = activeRunningConditionFilters
             .filter(sf => sf.value1 !== '')
             .map(sf => ({
                 sensor: sf.sensor,
@@ -620,8 +670,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             timestamp_start: filterTimeStart || null,
             timestamp_end: filterTimeEnd || null,
             value_filters: valueFilters,
+            combine: activeRunningConditionCombine,
         };
-    }, [runningConditionFilters, filterTimeStart, filterTimeEnd]);
+    }, [activeRunningConditionFilters, activeRunningConditionCombine, filterTimeStart, filterTimeEnd]);
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -713,6 +764,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 timestamp_start: dashboardFilterPayload?.timestamp_start ?? null,
                 timestamp_end: dashboardFilterPayload?.timestamp_end ?? null,
                 value_filters: dashboardFilterPayload?.value_filters ?? [],
+                combine: dashboardFilterPayload?.combine ?? 'and',
             },
             sampling: 'raw' as const,
             operation: null,
@@ -834,6 +886,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 }
                 setFilterTimeStart(slice.filterTimeStart);
                 setFilterTimeEnd(slice.filterTimeEnd);
+                // `?? ` fallbacks: a model saved before this 2026-09-23
+                // feature existed (or migrated through the legacy shim in
+                // workspaceManager.ts) simply has no opinion yet — default to
+                // following the workspace, same as it always effectively did.
+                setRunningConditionMode(slice.runningConditionMode ?? 'workspace');
+                setCustomRunningConditionFilters(slice.customRunningConditionFilters ?? []);
+                setCustomRunningConditionCombine(slice.customRunningConditionCombine ?? 'and');
                 // NOTE: Fit results (relPreview / subModels / clusteringPreview)
                 // are deliberately NOT persisted. With many target sensors or
                 // large datasets the predictor_raw matrices balloon the workspace
@@ -883,6 +942,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 clusterRanges,
                 filterTimeStart,
                 filterTimeEnd,
+                runningConditionMode,
+                customRunningConditionFilters,
+                customRunningConditionCombine,
             };
             (async () => {
                 const next = await updateWorkspaceData(workspaceId, (prev) => ({
@@ -895,6 +957,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         // is on disk right now rather than dropping it, since this
                         // write only intends to touch this one model's own fields.
                         runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
+                        runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
                     },
                 }));
                 if (next?.failureGroupState) {
@@ -909,6 +972,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         workspaceId, pmModelId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
         clusterRanges, filterTimeStart, filterTimeEnd,
+        runningConditionMode, customRunningConditionFilters, customRunningConditionCombine,
     ]);
 
     // Auto-divide cluster ranges across the criteria sensor's [min, max]
@@ -1970,75 +2034,196 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 />
                             </div>
                         </div>
-                        {/* Running condition — workspace-wide, read-only here. Owned
-                            and edited entirely from BuildModelWindow's Overview page
-                            ("Running Condition Filter" panel) so every model (any
-                            kind, any count) shares one definition instead of each
-                            needing its own "machine running" filter set separately
-                            (2026-09-15 — see runningConditionFilters prop doc). */}
+                        {/* Running condition — 'workspace' (default) shows
+                            BuildModelWindow's Overview-owned filter read-only;
+                            'custom' lets this one model define its own,
+                            independent of the workspace default (2026-09-23
+                            redesign — see runningConditionMode prop/state
+                            doc comments). */}
                         <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                gap: '0.4rem',
-                            }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                    Running condition
-                                    {runningConditionFilters.length > 0 && (
-                                        <span className="pm-count-pill">{runningConditionFilters.length}</span>
-                                    )}
-                                </label>
-                                <button
-                                    type="button"
-                                    onClick={onBack}
-                                    title="Edit the workspace-wide running-condition filter on the Overview page"
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.2rem',
-                                        padding: '0.2rem 0.45rem',
-                                        background: 'rgba(59,130,246,0.12)',
-                                        border: '1px solid rgba(59,130,246,0.3)',
-                                        borderRadius: '4px',
-                                        color: 'var(--accent-color)',
-                                        fontSize: '0.65rem',
-                                        fontWeight: 600,
-                                        cursor: 'pointer',
-                                    }}
-                                >
-                                    Edit on Overview →
-                                </button>
+                            <label style={{ marginBottom: '0.35rem' }}>Running condition</label>
+
+                            <div style={{ display: 'flex', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px', marginBottom: '0.5rem' }}>
+                                {(['workspace', 'custom'] as const).map(mode => (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        onClick={() => handleRunningConditionModeChange(mode)}
+                                        title={mode === 'workspace' ? 'Use the Overview page\'s workspace-wide setting' : 'Set a running condition for only this model'}
+                                        style={{
+                                            flex: 1,
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'flex-start',
+                                            gap: '1px',
+                                            padding: '0.3rem 0.5rem',
+                                            borderRadius: '5px',
+                                            border: runningConditionMode === mode ? '1px solid rgba(59,130,246,0.4)' : '1px solid transparent',
+                                            background: runningConditionMode === mode ? 'rgba(59,130,246,0.12)' : 'none',
+                                            cursor: 'pointer',
+                                        }}
+                                    >
+                                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: runningConditionMode === mode ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                                            {mode === 'workspace' ? 'Workspace' : 'Custom'}
+                                        </span>
+                                        <span style={{ fontSize: '0.58rem', color: 'var(--text-faint)' }}>
+                                            {mode === 'workspace' ? 'use Overview setting' : 'only this model'}
+                                        </span>
+                                    </button>
+                                ))}
                             </div>
 
-                            {runningConditionFilters.length === 0 ? (
-                                <div style={{
-                                    fontSize: '0.7rem',
-                                    color: 'var(--text-secondary)',
-                                    opacity: 0.65,
-                                    padding: '0.3rem 0 0',
-                                    fontStyle: 'italic',
-                                }}>
-                                    No running-condition filter set — training on the full dataset, including idle periods.
-                                </div>
-                            ) : (
-                                <div style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    gap: '0.3rem',
-                                    marginTop: '0.3rem',
-                                }}>
-                                    {runningConditionFilters.map(f => (
-                                        <span key={f.id} className="pm-count-pill" style={{
-                                            padding: '0.25rem 0.5rem',
-                                            fontSize: '0.68rem',
-                                            fontWeight: 500,
-                                        }}>
-                                            {getDesc(f.sensor) || f.sensor}{' '}
-                                            {f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='}{' '}
-                                            {f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}
+                            {runningConditionMode === 'workspace' ? (
+                                <>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
+                                        <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                            {runningConditionFilters.length > 0 && (
+                                                <>
+                                                    <span className="pm-count-pill">{runningConditionFilters.length}</span>
+                                                    condition{runningConditionFilters.length !== 1 ? 's' : ''} · {runningConditionCombine.toUpperCase()}
+                                                </>
+                                            )}
                                         </span>
+                                        <button
+                                            type="button"
+                                            onClick={onBack}
+                                            title="Edit the workspace-wide running-condition filter on the Overview page"
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.2rem',
+                                                padding: '0.2rem 0.45rem',
+                                                background: 'rgba(59,130,246,0.12)',
+                                                border: '1px solid rgba(59,130,246,0.3)',
+                                                borderRadius: '4px',
+                                                color: 'var(--accent-color)',
+                                                fontSize: '0.65rem',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                            }}
+                                        >
+                                            Edit on Overview →
+                                        </button>
+                                    </div>
+
+                                    {runningConditionFilters.length === 0 ? (
+                                        <div style={{
+                                            fontSize: '0.7rem',
+                                            color: 'var(--text-secondary)',
+                                            opacity: 0.65,
+                                            padding: '0.3rem 0 0',
+                                            fontStyle: 'italic',
+                                        }}>
+                                            No running-condition filter set — training on the full dataset, including idle periods.
+                                        </div>
+                                    ) : (
+                                        <div style={{
+                                            display: 'flex',
+                                            flexWrap: 'wrap',
+                                            gap: '0.3rem',
+                                            marginTop: '0.3rem',
+                                        }}>
+                                            {runningConditionFilters.map(f => (
+                                                <span key={f.id} className="pm-count-pill" style={{
+                                                    padding: '0.25rem 0.5rem',
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: 500,
+                                                }}>
+                                                    {getDesc(f.sensor) || f.sensor}{' '}
+                                                    {f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='}{' '}
+                                                    {f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                    <div style={{ display: 'inline-flex', alignSelf: 'flex-start', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '6px', padding: '2px', gap: '2px' }}>
+                                        {(['and', 'or'] as const).map(mode => (
+                                            <button
+                                                key={mode}
+                                                type="button"
+                                                onClick={() => setCustomRunningConditionCombine(mode)}
+                                                style={{
+                                                    fontSize: '0.62rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                                                    background: customRunningConditionCombine === mode ? 'var(--accent-color)' : 'none',
+                                                    color: customRunningConditionCombine === mode ? '#06111f' : 'var(--text-secondary)',
+                                                }}
+                                            >
+                                                {mode.toUpperCase()}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {customRunningConditionFilters.map(f => (
+                                        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 5px', background: 'var(--chip-bg)', border: '1px solid var(--border)', borderRadius: '5px' }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <SensorPickerModal
+                                                    sensors={allSensors}
+                                                    getDesc={getDesc}
+                                                    getComponent={getComponent}
+                                                    single
+                                                    value={f.sensor}
+                                                    onSelect={sensor => updateCustomRunningCondition(f.id, { sensor })}
+                                                    noun="sensor"
+                                                />
+                                            </div>
+                                            <select
+                                                value={f.operation}
+                                                onChange={e => updateCustomRunningCondition(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
+                                                style={{ padding: '3px 5px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '4px', color: 'var(--accent-color)', fontSize: '0.62rem', fontWeight: 600, outline: 'none', flexShrink: 0 }}
+                                            >
+                                                <option value="greater_than">&gt;</option>
+                                                <option value="less_than">&lt;</option>
+                                                <option value="between">between</option>
+                                                <option value="equals">=</option>
+                                            </select>
+                                            <input
+                                                type="number"
+                                                value={f.value1}
+                                                onChange={e => updateCustomRunningCondition(f.id, { value1: e.target.value })}
+                                                placeholder="val"
+                                                style={{ width: '44px', padding: '3px 4px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.62rem', outline: 'none', flexShrink: 0 }}
+                                            />
+                                            {f.operation === 'between' && (
+                                                <input
+                                                    type="number"
+                                                    value={f.value2}
+                                                    onChange={e => updateCustomRunningCondition(f.id, { value2: e.target.value })}
+                                                    placeholder="max"
+                                                    style={{ width: '44px', padding: '3px 4px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.62rem', outline: 'none', flexShrink: 0 }}
+                                                />
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => removeCustomRunningCondition(f.id)}
+                                                title="Remove condition"
+                                                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex', flexShrink: 0 }}
+                                            >
+                                                <X size={11} />
+                                            </button>
+                                        </div>
                                     ))}
+
+                                    <button
+                                        type="button"
+                                        onClick={addCustomRunningCondition}
+                                        disabled={allSensors.length === 0}
+                                        style={{
+                                            display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px',
+                                            background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '4px',
+                                            color: 'var(--accent-color)', fontSize: '0.62rem', fontWeight: 600,
+                                            cursor: allSensors.length === 0 ? 'not-allowed' : 'pointer', opacity: allSensors.length === 0 ? 0.5 : 1,
+                                            width: 'fit-content',
+                                        }}
+                                    >
+                                        + Add condition
+                                    </button>
+
+                                    <div style={{ fontSize: '0.6rem', color: 'var(--text-faint)' }}>
+                                        Only this model · the workspace default is untouched.
+                                    </div>
                                 </div>
                             )}
                         </div>

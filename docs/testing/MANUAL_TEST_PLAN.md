@@ -1,6 +1,6 @@
 # Wizard — Manual Test Plan
 
-> 217 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom)
+> 227 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
@@ -1075,13 +1075,14 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ดูส่วน Predictor sensors ที่หน้า PM
   - **คาดหวัง:** predictor ที่เพิ่งเลือกอยู่ครบและตัวเลขนับถูก — **ต้องไม่ขึ้น "No predictors selected"** (เคยเป็นบั๊ก race: หน้า PM อ่านไฟล์ก่อนที่การบันทึกจะเสร็จ ทำได้ไม่ทุกครั้ง ให้ลองซ้ำหลายรอบ)
 
-- [ ] **BMW-11 — Running Condition Filter (เงื่อนไข "เครื่องกำลังทำงาน" ระดับ workspace) — sensor picker แก้เป็น popup แล้ว (แก้บั๊ก 2026-09-22: ของเดิมเปิดเลือกไม่ได้เลย)** 🆕
-  - ที่หน้า Overview เปิดแผง "Running Condition Filter" ด้านบน (ตอนยังไม่ตั้งต้องเขียนว่า "Not set — every model trains on the full dataset…")
-  - กด "Add condition (AND)" แล้วคลิกที่ช่อง sensor — **ต้องเปิด popup ค้นหา+จัดกลุ่มตาม Component แบบเดียวกับ Predictor/X/Y/Criteria sensor ที่อื่นในแอป** (เลือกได้**ทุก sensor** ไม่ใช่แค่ target/predictor) แล้วลองเปลี่ยนเป็น sensor อื่น ตั้ง operation, ค่า
-  - เพิ่มเงื่อนไขที่ 2 แล้วลบเงื่อนไขที่ 1
+- [ ] **BMW-11 — Running Condition Filter (เงื่อนไข "เครื่องกำลังทำงาน" ระดับ workspace) — sensor picker เป็น popup + เลือก AND/OR ได้ (แก้บั๊ก 2026-09-22, เพิ่ม AND/OR 2026-09-23)** 🆕
+  - ที่หน้า Overview เปิดแผง "Running Condition Filter" ด้านบน (ตอนยังไม่ตั้งต้องเขียนว่า "Not set — models train on the full dataset…")
+  - กด "Add condition" แล้วคลิกที่ช่อง sensor — **ต้องเปิด popup ค้นหา+จัดกลุ่มตาม Component แบบเดียวกับ Predictor/X/Y/Criteria sensor ที่อื่นในแอป** (เลือกได้**ทุก sensor** ไม่ใช่แค่ target/predictor) แล้วลองเปลี่ยนเป็น sensor อื่น ตั้ง operation, ค่า
+  - เพิ่มเงื่อนไขที่ 2 แล้วลองสลับปุ่ม "Match" ระหว่าง AND/OR — ดูว่าข้อความสรุปด้านบนแผง (ตอนพับ) เปลี่ยนคำเชื่อมตามด้วย
+  - ลบเงื่อนไขที่ 1
   - เปิดโมเดลใดก็ได้เข้าหน้า Build Model แล้วดูส่วน Training scope → Running condition
   - ปิดเปิดโปรแกรมแล้วกลับมาดูแผง
-  - **คาดหวัง:** เลือก/เปลี่ยน sensor ในเงื่อนไขได้จริง (ผู้ใช้เคยรายงานว่าช่องนี้กดแล้วเลือกไม่ได้เลย — เป็นแถวที่กว้างเต็มแผงจนตัว dropdown เดิมใช้งานไม่ได้) — ตั้งครั้งเดียวมีผลกับ**ทุกโมเดล** — หน้า PM ทุกโมเดลแสดงเงื่อนไขนี้แบบอ่านอย่างเดียว พร้อมลิงก์ "Edit on Overview →", กราฟตัวอย่างในหน้า PM กรองตามเงื่อนไข, ค่าที่ตั้งไว้อยู่ครบหลังปิดเปิด (ของเดิมเป็น Sensor value filter ต่อโมเดลที่ต้องตั้งซ้ำทีละตัว — ถูกแทนที่แล้ว)
+  - **คาดหวัง:** เลือก/เปลี่ยน sensor ในเงื่อนไขได้จริง (ผู้ใช้เคยรายงานว่าช่องนี้กดแล้วเลือกไม่ได้เลย — เป็นแถวที่กว้างเต็มแผงจนตัว dropdown เดิมใช้งานไม่ได้) — สลับ AND/OR ได้และมีผลกับสรุปที่แสดง — ตั้งครั้งเดียวเป็น**ค่าเริ่มต้นของทุกโมเดล** (โมเดลไหนตั้ง Custom ของตัวเองแล้วจะไม่ตามค่านี้ — ดู PM-21), หน้า PM ที่ยังใช้ Workspace mode แสดงเงื่อนไขนี้แบบอ่านอย่างเดียว พร้อมลิงก์ "Edit on Overview →" และ combine mode ที่สืบทอดมา, ค่าที่ตั้งไว้อยู่ครบหลังปิดเปิด (ของเดิมเป็น Sensor value filter ต่อโมเดลที่ต้องตั้งซ้ำทีละตัว — ถูกแทนที่แล้ว)
 
 - [ ] **BMW-12 — ป้ายสถานะ Complete / Incomplete ที่แถวโมเดล** 🆕
   - ที่แถวโมเดลกดป้าย "Incomplete" (ไม่ต้องเปิดฟอร์มก่อน)
@@ -1190,6 +1191,15 @@ _อยู่ในหน้าต่าง Build Model — เข้าจา�
   - คลิกช่อง X sensor เลือก sensor อื่นแทน
   - คลิกช่อง Criteria Sensor เลือก sensor 1 ตัว (ไม่จำเป็นต้องเป็น predictor)
   - **คาดหวัง:** ช่อง X sensor เขียนว่า "No predictors selected" และกดไม่ได้ตอนยังไม่มี predictor, พอมี predictor แล้วเลือกได้ทันที (ตัวเลือกจำกัดแค่ predictor ที่เลือกไว้เท่านั้น) — เลือกแล้ว popup ปิดทันทีไม่มีปุ่ม OK — ช่อง Criteria Sensor เลือกได้จาก**ทุก sensor** ไม่ใช่แค่ predictor และมีตัวเลือก "None"
+
+- [ ] **PM-21 — Running condition: สลับ Workspace/Custom ได้ต่อโมเดล (เพิ่ม 2026-09-23)** 🆕
+  - ที่ Overview ตั้ง Running Condition Filter ไว้อย่างน้อย 1 เงื่อนไข (ดู BMW-11)
+  - เปิดโมเดลใดก็ได้เข้าหน้า PM ดูส่วน "Running condition" — ต้องเห็นสวิตช์ "Workspace / Custom" อยู่บนสุด เริ่มที่ Workspace
+  - คลิก "Custom" — ดูว่าเงื่อนไขจาก Overview ถูกก็อปมาเป็นแถวที่แก้ไขได้ (ไม่ใช่อ่านอย่างเดียวอีกต่อไป)
+  - แก้ sensor/operation/ค่า ของแถวที่ก็อปมา แล้วลองกด "+ Add condition" เพิ่มอีกแถว พร้อมสลับ AND/OR ของโมเดลนี้เอง
+  - สลับกลับไป "Workspace" แล้วกลับมา "Custom" อีกครั้ง
+  - ปิดเปิดโปรแกรม
+  - **คาดหวัง:** ค่าที่แก้ใน Custom ไม่กระทบเงื่อนไขที่ Overview เลย (กลับไปดูที่ Overview ต้องเหมือนเดิม) — กราฟ preview ของโมเดลนี้กรองตามเงื่อนไข Custom ไม่ใช่ของ Workspace แล้ว — สลับ Workspace→Custom→Workspace→Custom ครั้งที่ 2 ไม่ล้างแถวที่เคยแก้ไปแล้ว (ไม่ seed ซ้ำ) — ปิดเปิดโปรแกรมแล้วโหมด/เงื่อนไข Custom ยังอยู่ครบ — โมเดลอื่นที่ยังไม่ได้สลับเป็น Custom ต้องยังตาม Workspace ปกติ ไม่ได้รับผลกระทบ
 
 ---
 

@@ -32,6 +32,9 @@ function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
         clusterRanges: [],
         filterTimeStart: '',
         filterTimeEnd: '',
+        runningConditionMode: 'workspace',
+        customRunningConditionFilters: [],
+        customRunningConditionCombine: 'and',
         ...overrides,
     };
 }

@@ -136,6 +136,23 @@ export interface PredictiveModelStateSlice {
     clusterRanges: PredictiveClusterRange[];
     filterTimeStart: string;
     filterTimeEnd: string;
+    /** 'workspace' (default): this model's Running Condition Filter is
+     *  whatever's set on BuildModelWindow's Overview page
+     *  (`FailureGroupStateSlice.runningConditionFilters`/`runningConditionCombine`).
+     *  'custom': this model ignores the workspace default entirely and uses
+     *  its own `customRunningConditionFilters`/`customRunningConditionCombine`
+     *  instead — set from this model's own Build page (2026-09-23 redesign,
+     *  replacing an earlier "which models does the workspace filter apply
+     *  to" idea with a per-model override chosen where training actually
+     *  happens, per explicit user direction). */
+    runningConditionMode: 'workspace' | 'custom';
+    /** Only read when `runningConditionMode === 'custom'`. Seeded from the
+     *  workspace's conditions at the moment the user switches to Custom (a
+     *  sensible starting point to edit from), then fully independent —
+     *  editing the workspace default afterward does not change this. */
+    customRunningConditionFilters: WorkspaceSensorFilter[];
+    /** Only read when `runningConditionMode === 'custom'`. */
+    customRunningConditionCombine: 'and' | 'or';
 }
 
 /**
@@ -206,6 +223,12 @@ interface FailureGroupStateSlice {
      * just read as "no filter" (`?? []`).
      */
     runningConditionFilters?: WorkspaceSensorFilter[];
+    /** How `runningConditionFilters` combine: 'and' (default, matches every
+     *  workspace's behavior before this field existed) requires every
+     *  condition to pass; 'or' keeps a row if any one does. Optional so an
+     *  older workspace without it reads as 'and' (`?? 'and'`) — see
+     *  BuildModelWindow's "Running Condition Filter" panel (2026-09-23). */
+    runningConditionCombine?: 'and' | 'or';
 }
 
 type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';

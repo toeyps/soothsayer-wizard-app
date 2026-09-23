@@ -191,6 +191,9 @@ const DEFAULT_PM_SLICE = {
     ],
     filterTimeStart: '',
     filterTimeEnd: '',
+    runningConditionMode: 'workspace' as 'workspace' | 'custom',
+    customRunningConditionFilters: [] as WorkspaceSensorFilter[],
+    customRunningConditionCombine: 'and' as 'and' | 'or',
 };
 
 /** Best-effort detection of the new `ModelKind` from the old free-text
@@ -235,7 +238,7 @@ function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
  * every model already has `groupNos`).
  */
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
-    const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[] } | undefined;
+    const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or' } | undefined;
     if (!fg) return state;
 
     if (Array.isArray(fg.models)) {
@@ -247,6 +250,7 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
                 groups: (fg.groups as FailureGroup[] | undefined) ?? [],
                 models: normalizeModelGroups(fg.models),
                 runningConditionFilters: fg.runningConditionFilters ?? [],
+                runningConditionCombine: fg.runningConditionCombine ?? 'and',
             },
         };
     }
@@ -291,6 +295,12 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
                         clusterRanges: pm!.clusterRanges,
                         filterTimeStart: pm!.filterTimeStart,
                         filterTimeEnd: pm!.filterTimeEnd,
+                        // The legacy global PM slice predates this feature
+                        // entirely — nothing to inherit, same as every other
+                        // migrated model.
+                        runningConditionMode: DEFAULT_PM_SLICE.runningConditionMode,
+                        customRunningConditionFilters: DEFAULT_PM_SLICE.customRunningConditionFilters,
+                        customRunningConditionCombine: DEFAULT_PM_SLICE.customRunningConditionCombine,
                     }
                     : DEFAULT_PM_SLICE),
             };
@@ -302,6 +312,7 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
             groups: (fg.groups as FailureGroup[] | undefined) ?? [],
             models,
             runningConditionFilters: fg.runningConditionFilters ?? [],
+            runningConditionCombine: fg.runningConditionCombine ?? 'and',
         },
     };
 }

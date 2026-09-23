@@ -586,6 +586,7 @@ mod tests {
             timestamp_start: None,
             timestamp_end: None,
             value_filters: vec![],
+            combine: None,
         }
     }
 

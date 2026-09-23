@@ -626,6 +626,14 @@ struct PreviewFilter {
     timestamp_end: Option<String>,
     #[serde(default)]
     value_filters: Vec<PreviewValueFilter>,
+    /// "and" | "or" — how `value_filters` combine. Missing/anything else
+    /// defaults to "and" (the only mode this ever had before the Running
+    /// Condition Filter's AND/OR toggle). `DataFilter::to_preview` (below)
+    /// never sets this, so Dashboard's own chart/scatter queries always stay
+    /// AND-only — only the Build Model page's Running Condition Filter can
+    /// opt into "or".
+    #[serde(default)]
+    combine: Option<String>,
 }
 
 /// One pre-resolved value filter: sensor name → header index (resolved once
@@ -649,6 +657,9 @@ struct ResolvedFilter {
     ts_start: Option<i64>,
     ts_end: Option<i64>,
     value_filters: Vec<ResolvedValueFilter>,
+    /// true = OR (any value filter passing keeps the row), false = AND (all
+    /// must pass) — the pre-existing, still-default behavior.
+    or_combine: bool,
 }
 
 impl ResolvedFilter {
@@ -658,6 +669,7 @@ impl ResolvedFilter {
                 ts_start: None,
                 ts_end: None,
                 value_filters: Vec::new(),
+                or_combine: false,
             };
         };
         let ts_start = f
@@ -689,6 +701,7 @@ impl ResolvedFilter {
             ts_start,
             ts_end,
             value_filters,
+            or_combine: f.combine.as_deref() == Some("or"),
         }
     }
 
@@ -719,6 +732,14 @@ impl ResolvedFilter {
                 }
             }
         }
+        if self.value_filters.is_empty() {
+            return true;
+        }
+        // AND: every condition must pass (the original, still-default
+        // behavior). OR: at least one must pass — an empty list is handled
+        // above and never reaches here, so this is never a vacuous "OR of
+        // nothing" false.
+        let mut matched_any = false;
         for rf in &self.value_filters {
             let val = data.value(rf.sensor_idx, row);
             let ok = match val {
@@ -734,11 +755,20 @@ impl ResolvedFilter {
                     _ => true,
                 },
             };
-            if !ok {
+            if self.or_combine {
+                if ok {
+                    matched_any = true;
+                    break;
+                }
+            } else if !ok {
                 return false;
             }
         }
-        true
+        if self.or_combine {
+            matched_any
+        } else {
+            true
+        }
     }
 }
 
@@ -781,6 +811,7 @@ mod resolved_filter_tests {
             timestamp_start: Some("2020-01-01T00:05".into()),
             timestamp_end: None,
             value_filters: vec![],
+            ..Default::default()
         };
         let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
         assert!(!resolved.is_noop());
@@ -796,6 +827,7 @@ mod resolved_filter_tests {
             timestamp_start: Some("2020-01-01T00:00".into()),
             timestamp_end: None,
             value_filters: vec![],
+            ..Default::default()
         };
         let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
         assert!(!resolved.keeps(&data, 3)); // row 3 has no timestamp
@@ -813,6 +845,7 @@ mod resolved_filter_tests {
                 value1: Some(0.0),
                 value2: None,
             }],
+            ..Default::default()
         };
         let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
         assert!(resolved.keeps(&data, 3)); // A=4.0 > 0, no timestamp gate active
@@ -830,6 +863,7 @@ mod resolved_filter_tests {
                 value1: Some(0.0),
                 value2: None,
             }],
+            ..Default::default()
         };
         let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
         // Unknown sensor -> filtered out during resolve -> effectively a noop.
@@ -850,6 +884,7 @@ mod resolved_filter_tests {
                         value1: v1,
                         value2: v2,
                     }],
+                    ..Default::default()
                 }),
                 &data.headers,
             )
@@ -881,10 +916,87 @@ mod resolved_filter_tests {
                     value1: Some(999.0),
                     value2: None,
                 }],
+                ..Default::default()
             }),
             &data.headers,
         );
         assert_eq!((0..4).filter(|&r| resolved.keeps(&data, r)).count(), 4);
+    }
+
+    #[test]
+    fn or_combine_keeps_a_row_that_matches_any_one_condition() {
+        let data = dataset(); // A values: 1, 2, 3, 4
+        let filter = PreviewFilter {
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![
+                PreviewValueFilter {
+                    sensor: "A".into(),
+                    operation: "less_than".into(),
+                    value1: Some(1.5), // only row 0 (A=1)
+                    value2: None,
+                },
+                PreviewValueFilter {
+                    sensor: "A".into(),
+                    operation: "greater_than".into(),
+                    value1: Some(3.5), // only row 3 (A=4)
+                    value2: None,
+                },
+            ],
+            combine: Some("or".into()),
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        assert!(resolved.keeps(&data, 0)); // A=1 < 1.5
+        assert!(!resolved.keeps(&data, 1)); // A=2 matches neither
+        assert!(!resolved.keeps(&data, 2)); // A=3 matches neither
+        assert!(resolved.keeps(&data, 3)); // A=4 > 3.5
+    }
+
+    #[test]
+    fn and_combine_still_requires_every_condition_when_combine_is_set_explicitly() {
+        let data = dataset(); // A values: 1, 2, 3, 4
+        let filter = PreviewFilter {
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![
+                PreviewValueFilter {
+                    sensor: "A".into(),
+                    operation: "greater_than".into(),
+                    value1: Some(1.0),
+                    value2: None,
+                },
+                PreviewValueFilter {
+                    sensor: "A".into(),
+                    operation: "less_than".into(),
+                    value1: Some(4.0),
+                    value2: None,
+                },
+            ],
+            combine: Some("and".into()),
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        assert!(!resolved.keeps(&data, 0)); // A=1 fails > 1
+        assert!(resolved.keeps(&data, 1)); // A=2 passes both
+        assert!(resolved.keeps(&data, 2)); // A=3 passes both
+        assert!(!resolved.keeps(&data, 3)); // A=4 fails < 4
+    }
+
+    #[test]
+    fn missing_or_unrecognized_combine_defaults_to_and() {
+        let data = dataset(); // A values: 1, 2, 3, 4
+        let filter = PreviewFilter {
+            timestamp_start: None,
+            timestamp_end: None,
+            value_filters: vec![PreviewValueFilter {
+                sensor: "A".into(),
+                operation: "greater_than".into(),
+                value1: Some(1.0),
+                value2: None,
+            }],
+            combine: Some("banana".into()),
+        };
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        assert!(!resolved.or_combine);
     }
 }
 
@@ -2903,6 +3015,15 @@ struct DataFilter {
     timestamp_start: Option<String>,
     timestamp_end: Option<String>,
     value_filters: Vec<ValueFilter>,
+    /// Passed straight through to `PreviewFilter.combine` below. `get_chart_data`
+    /// is shared by Dashboard's own multi-sensor chart (whose JS-side filter
+    /// object never sets this, so it stays "and") AND the Build Model page's
+    /// own target-sensor preview chart (whose `dashboardFilterPayload` does
+    /// set it, matching whatever the Running Condition Filter in effect for
+    /// that model uses) — Rust can't tell those two callers apart, so this
+    /// type has to accept the field faithfully rather than hardcoding it.
+    #[serde(default)]
+    combine: Option<String>,
 }
 
 impl DataFilter {
@@ -2923,6 +3044,7 @@ impl DataFilter {
                     value2: vf.value2,
                 })
                 .collect(),
+            combine: self.combine.clone(),
         }
     }
 }
@@ -3133,6 +3255,7 @@ mod scatter_sample_tests {
             timestamp_start: None,
             timestamp_end: None,
             value_filters: vec![],
+            combine: None,
         }
     }
 
