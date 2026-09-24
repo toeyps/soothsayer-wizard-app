@@ -1,0 +1,98 @@
+{
+  "_comment": "Shared TS <-> Rust contract for the training/preview filter (Feature 4-C timestamp_ranges). Read by src/__tests__/filterContract.test.ts + src/__tests__/Feature4BuildFlow.integration.test.tsx (the TS side must PRODUCE exactly these shapes) and by src-tauri/tests/filter_contract_tests.rs (the Rust side must ACCEPT them, and its struct field names must equal the *_fields lists). Edit both sides together.",
+  "preview_filter_fields": ["timestamp_start", "timestamp_end", "value_filters", "combine", "timestamp_ranges"],
+  "data_filter_fields": ["sensors", "timestamp_start", "timestamp_end", "value_filters", "combine", "timestamp_ranges"],
+  "time_range_fields": ["start", "end"],
+  "value_filter_fields": ["sensor", "operation", "value1", "value2"],
+  "range_cases": [
+    {
+      "name": "empty list = no time gate",
+      "periods": [],
+      "ranges": []
+    },
+    {
+      "name": "two closed periods (e.g. months 1-2 and 6-7)",
+      "periods": [
+        { "id": "a", "start": "2026-01-01T00:00", "end": "2026-02-28T23:59" },
+        { "id": "b", "start": "2026-06-01T00:00", "end": "2026-07-31T23:59" }
+      ],
+      "ranges": [
+        { "start": "2026-01-01T00:00", "end": "2026-02-28T23:59" },
+        { "start": "2026-06-01T00:00", "end": "2026-07-31T23:59" }
+      ]
+    },
+    {
+      "name": "open start on the first period and open end on the last become null bounds",
+      "periods": [
+        { "id": "a", "start": "", "end": "2026-01-31T23:59" },
+        { "id": "b", "start": "2026-03-01T00:00", "end": "" }
+      ],
+      "ranges": [
+        { "start": null, "end": "2026-01-31T23:59" },
+        { "start": "2026-03-01T00:00", "end": null }
+      ]
+    },
+    {
+      "name": "datetime-local with seconds is passed through verbatim",
+      "periods": [
+        { "id": "a", "start": "2026-01-01T00:00:30", "end": "2026-01-01T12:00:59" }
+      ],
+      "ranges": [
+        { "start": "2026-01-01T00:00:30", "end": "2026-01-01T12:00:59" }
+      ]
+    },
+    {
+      "name": "an invalid (reversed) period is dropped from the wire",
+      "periods": [
+        { "id": "a", "start": "2026-01-01T00:00", "end": "2026-01-31T23:59" },
+        { "id": "b", "start": "2026-03-10T00:00", "end": "2026-03-01T00:00" }
+      ],
+      "ranges": [
+        { "start": "2026-01-01T00:00", "end": "2026-01-31T23:59" }
+      ]
+    },
+    {
+      "name": "a single blank-both period is two null bounds (the PM page collapses this to [] before sending)",
+      "periods": [
+        { "id": "a", "start": "", "end": "" }
+      ],
+      "ranges": [
+        { "start": null, "end": null }
+      ]
+    }
+  ],
+  "pm_payloads": [
+    {
+      "name": "Custom model: two periods with open ends, OR-combined value conditions",
+      "kind": "preview",
+      "json": {
+        "timestamp_ranges": [
+          { "start": null, "end": "2026-01-31T23:59" },
+          { "start": "2026-03-01T00:00", "end": null }
+        ],
+        "value_filters": [
+          { "sensor": "TAG2", "operation": "greater_than", "value1": 10, "value2": null },
+          { "sensor": "TAG3", "operation": "between", "value1": 1, "value2": 5 }
+        ],
+        "combine": "or"
+      }
+    },
+    {
+      "name": "no condition and no periods: the filter argument is null",
+      "kind": "preview",
+      "json": null
+    },
+    {
+      "name": "PM target chart filter (DataFilter) with an empty range list",
+      "kind": "chart",
+      "json": {
+        "sensors": ["TAG1"],
+        "timestamp_start": null,
+        "timestamp_end": null,
+        "timestamp_ranges": [],
+        "value_filters": [],
+        "combine": "and"
+      }
+    }
+  ]
+}
