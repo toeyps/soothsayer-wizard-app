@@ -1,7 +1,7 @@
 import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
-import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, ModelKind, WorkspaceSensorFilter } from './types';
+import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter } from './types';
 import { debugLog } from './utils/debugLog';
 
 const STORE_FILE = 'settings.json';
@@ -244,14 +244,17 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
     if (Array.isArray(fg.models)) {
         const needsGroupNosMigration = fg.models.some(m => !Array.isArray((m as unknown as { groupNos?: unknown }).groupNos));
         if (!needsGroupNosMigration) return state;
+        // Spread first: every field this migration doesn't own (the
+        // workspace time range, anything added later) must survive it.
         return {
             ...state,
             failureGroupState: {
+                ...(fg as object),
                 groups: (fg.groups as FailureGroup[] | undefined) ?? [],
                 models: normalizeModelGroups(fg.models),
                 runningConditionFilters: fg.runningConditionFilters ?? [],
                 runningConditionCombine: fg.runningConditionCombine ?? 'and',
-            },
+            } as FailureGroupStateSlice,
         };
     }
 
@@ -306,14 +309,19 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
             };
         });
 
+    // `rows` is the legacy field this branch just converted — drop it, keep
+    // everything else (same reasoning as the groupNos branch above).
+    const { rows: _legacyRows, ...restOfFg } = fg;
+    void _legacyRows;
     return {
         ...state,
         failureGroupState: {
+            ...(restOfFg as object),
             groups: (fg.groups as FailureGroup[] | undefined) ?? [],
             models,
             runningConditionFilters: fg.runningConditionFilters ?? [],
             runningConditionCombine: fg.runningConditionCombine ?? 'and',
-        },
+        } as FailureGroupStateSlice,
     };
 }
 

@@ -305,6 +305,26 @@ describe('loadWorkspaceData', () => {
             expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [0] }]);
         });
 
+        it('keeps every other failureGroupState field when it migrates groupNos (regression 2026-09-23: the migration rebuilt the object from an explicit field list and silently dropped the workspace time range and any future field)', async () => {
+            mockReadTextFile.mockResolvedValue(JSON.stringify({
+                id: 'ws1', name: 'A',
+                failureGroupState: {
+                    groups: [], models: [{ id: 'm1', groupNo: 1, kind: 'individual' }],
+                    runningConditionFilters: [{ id: 'f1', sensor: 'S', operation: 'greater_than', value1: '1', value2: '' }],
+                    runningConditionCombine: 'or',
+                    runningConditionTimeStart: '2026-01-01T00:00',
+                    runningConditionTimeEnd: '2026-02-01T00:00',
+                    someFutureField: { keep: 'me' },
+                },
+            }));
+            const { loadWorkspaceData } = await freshModule();
+            const fg = (await loadWorkspaceData('ws1'))?.failureGroupState as unknown as Record<string, unknown>;
+            expect(fg.runningConditionTimeStart).toBe('2026-01-01T00:00');
+            expect(fg.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+            expect(fg.runningConditionCombine).toBe('or');
+            expect(fg.someFutureField).toEqual({ keep: 'me' });
+        });
+
         it('converts legacy rows into individual-kind models by default', async () => {
             mockReadTextFile.mockResolvedValue(JSON.stringify({
                 id: 'ws1', name: 'A',

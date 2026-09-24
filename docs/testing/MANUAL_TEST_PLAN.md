@@ -1,6 +1,6 @@
 # Wizard — Manual Test Plan
 
-> 227 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่)
+> 228 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
@@ -1299,6 +1299,12 @@ _หมวดที่สำคัญที่สุด — ทุกอย่�
 - [ ] **PER-8 — ไฟล์ workspace อยู่ที่ไหน**
   - เปิด `%APPDATA%` แล้วหาโฟลเดอร์ของ `com.prompt-solution.tauri-app`
   - **คาดหวัง:** เห็นไฟล์ของ workspace และเวลาแก้ล่าสุดขยับตามที่ทำจริง
+
+- [ ] **PER-9 — ช่วงเวลา training ของ workspace ต้องไม่หายเมื่อไปแก้อย่างอื่นที่ Dashboard (แก้บั๊ก 2026-09-23)** 🆕
+  - ที่ Build Model → Overview เปิดแผง Running Condition Filter แล้วตั้ง Time start / Time end ของ workspace
+  - กลับไปหน้า Dashboard ทำอะไรก็ได้ที่เป็นการแก้ค่า (เลื่อนกราฟ, ติ๊กเลือก sensor, สลับ sensor เข้า/ออก Failure Group)
+  - รอ 1 วินาที แล้วปิดโปรแกรม เปิดใหม่ ไปดูแผงเดิม
+  - **คาดหวัง:** Time start / Time end ที่ตั้งไว้ยังอยู่ครบ (เดิมหายไปหลังแก้อะไรที่ Dashboard ทั้งที่หน้าจอยังโชว์ค่าเดิมอยู่จนกว่าจะปิดเปิด) — หน้า PM ของโมเดลที่ยังเป็นโหมด Workspace ก็เห็นช่วงเวลานั้นเช่นกัน
 
 ---
 

@@ -3,12 +3,13 @@ import { emit, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
+import { withFailureGroupState } from '../../utils/failureGroupState';
 import { subscribe } from '../../utils/tauriEvents';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
     FailureGroup, FailureModel, ModelKind, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
-    WorkspaceSensorFilter,
+    FailureGroupStateSlice, FailureGroupStateChangedPayload,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -54,6 +55,15 @@ const getFgGroupColor = (no: number): string =>
  *  sensor tag (see the `byTag` maps in the `add-sensor-selection` listener
  *  below) — used here too for the special-sensor rename cascade. */
 const sameTag = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// A model "of kind K for sensor S" is identified by targetSensor (for
+// individual/relationship) or xSensor (for clustering, which seeded this
+// sensor as X on creation — see makeDefaultModelForKind). Pure so it can run
+// against the mirror AND against what is on disk inside a write.
+const findKindIn = (models: FailureModel[], tag: string, kind: ModelKind) =>
+    models.find(m => m.kind === kind && (
+        kind === 'clustering' ? (m.xSensor ?? '').toLowerCase() === tag.toLowerCase() : (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase()
+    ));
 
 type PanelId = keyof typeof PANELS;
 
@@ -340,20 +350,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [fgModels, setFgModels] = useState<FailureModel[]>(
         initialState?.failureGroupState?.models ?? []
     );
-    // Workspace-wide "machine running" filter (2026-09-15) — owned/edited
-    // entirely on BuildModelWindow's Overview page, but Dashboard's own
-    // full-overwrite autosave (`buildWorkspaceState` below) rebuilds
-    // `failureGroupState` from local state on every tick, same as
-    // fgGroups/fgModels — without tracking this too, the very next Dashboard
-    // autosave after BuildModelWindow sets it would silently erase it.
-    const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>(
-        initialState?.failureGroupState?.runningConditionFilters ?? []
-    );
-    // Same persistence-round-trip-only mirror as above, for the AND/OR
-    // combine mode (2026-09-23) — never read into `dataFilter`/`scatterFilter`.
-    const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>(
-        initialState?.failureGroupState?.runningConditionCombine ?? 'and'
-    );
+    // Everything in `failureGroupState` that Dashboard does NOT own — the
+    // workspace running condition (filters, AND/OR, time range) and any field
+    // added later — mirrored whole rather than field by field. BuildModelWindow
+    // owns these, but Dashboard's full-overwrite autosave (`buildWorkspaceState`
+    // below) rebuilds `failureGroupState` from local state on every tick, so
+    // without a complete mirror the very next autosave would erase whatever it
+    // didn't list (2026-09-23: it listed 4 fields and dropped the time range).
+    // Persistence round-trip ONLY — never read into `dataFilter`/`scatterFilter`.
+    const [fgExtra, setFgExtra] = useState<Omit<FailureGroupStateSlice, 'groups' | 'models'>>(() => {
+        const { groups: _g, models: _m, ...rest } = initialState?.failureGroupState ?? { groups: [], models: [] };
+        void _g; void _m;
+        return rest;
+    });
 
     // Serialized WorkspaceState that is already known to be on disk. The
     // debounced autosave below compares against this and skips a write whose
@@ -365,22 +374,27 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // a dependency array) would be a temporal-dead-zone error at render time.
     const buildWorkspaceStateRef = useRef<((overrides?: Partial<WorkspaceState>) => WorkspaceState) | null>(null);
 
-    const persistFailureGroupState = useCallback((groups: FailureGroup[], models: FailureModel[]) => {
+    // Core writer: `compute` receives the groups/models that are on DISK right
+    // now (`prev` is a fresh read, not this window's possibly-stale mirror) and
+    // returns the new ones. Everything else in `failureGroupState` — filters,
+    // combine, the workspace time range, fields added later — is carried by
+    // `withFailureGroupState`'s spread, so this writer never has to know about
+    // it (2026-09-23: it used to list four fields and erase the rest).
+    const persistFailureGroupStateFrom = useCallback((
+        compute: (disk: { groups: FailureGroup[]; models: FailureModel[] }) => { groups: FailureGroup[]; models: FailureModel[] },
+    ) => {
         if (!initialState) return;
-        updateWorkspaceData(initialState.id, prev => ({
-            ...prev,
-            failureGroupState: {
-                groups,
-                models,
-                // Dashboard never edits this itself — preserve whatever is
-                // actually on disk right now rather than the (possibly
-                // stale-by-a-tick) local copy, since `prev` here is a fresh
-                // read, not the closure's `runningConditionFilters`.
-                runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
-                runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
-            },
-        }))
+        updateWorkspaceData(initialState.id, prev => withFailureGroupState(prev, compute({
+            groups: prev.failureGroupState?.groups ?? [],
+            models: prev.failureGroupState?.models ?? [],
+        })))
             .then((next) => {
+                // The result may differ from what the click computed from the
+                // mirror (another window wrote first) — adopt what is durable.
+                if (next?.failureGroupState) {
+                    setFgGroups(next.failureGroupState.groups);
+                    setFgModels(next.failureGroupState.models);
+                }
                 // Tell any open Build Model window (a separate OS window that
                 // otherwise only sees Dashboard's edits when it is next
                 // opened) — scoped to this workspace, and tagged so this
@@ -398,12 +412,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // ~250ms later, making every single toggle cost one disk read
                 // plus two full-state writes.
                 const build = buildWorkspaceStateRef.current;
-                if (build) {
-                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: { groups, models, runningConditionFilters, runningConditionCombine } }));
+                if (build && next?.failureGroupState) {
+                    lastSavedPayloadRef.current = JSON.stringify(build({ failureGroupState: next.failureGroupState }));
                 }
             })
             .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
-    }, [initialState, runningConditionFilters, runningConditionCombine]);
+    }, [initialState]);
+
+    // For callers that already computed the exact arrays to write (rename,
+    // details, delete-group, …). The ones that DERIVE the new models from the
+    // current ones (`toggleSensorGroupKind`, `createGroupForSensor`,
+    // `deleteModel`) use `persistFailureGroupStateFrom` directly so the
+    // derivation runs against disk, not the mirror.
+    const persistFailureGroupState = useCallback(
+        (groups: FailureGroup[], models: FailureModel[]) => persistFailureGroupStateFrom(() => ({ groups, models })),
+        [persistFailureGroupStateFrom],
+    );
 
     // BuildModelWindow and PredictiveModelBuild persist failureGroupState
     // independently (their own updateWorkspaceData read-modify-write calls)
@@ -421,13 +445,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // (a stale window from the previous project). Only apply the one that
     // names THIS workspace — and skip this window's own echo.
     const currentWorkspaceId = initialState?.id;
-    useEffect(() => subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or'; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+    useEffect(() => subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
         if (event.payload.workspaceId !== currentWorkspaceId) return;
         if (event.payload.origin === 'dashboard') return;
-        setFgGroups(event.payload.groups);
-        setFgModels(event.payload.models);
-        setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
-        setRunningConditionCombine(event.payload.runningConditionCombine ?? 'and');
+        const { groups, models, workspaceId: _w, origin: _o, ...rest } = event.payload;
+        void _w; void _o;
+        setFgGroups(groups);
+        setFgModels(models);
+        setFgExtra(rest);
     }), [currentWorkspaceId]);
 
     // Default PM build config for a freshly created model of a given kind —
@@ -481,15 +506,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         fgGroups.some(g => g.no !== 0 && g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase()),
     [fgGroups]);
 
-    // A model "of kind K for sensor S" is identified by targetSensor (for
-    // individual/relationship) or xSensor (for clustering, which seeded
-    // this sensor as X on creation — see makeDefaultModelForKind above).
-    const findModelForKind = useCallback((tag: string, kind: ModelKind) =>
-        fgModels.find(m => m.kind === kind && (
-            kind === 'clustering' ? (m.xSensor ?? '').toLowerCase() === tag.toLowerCase() : (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase()
-        )),
-    [fgModels]);
-
     // A sensor's per-kind, per-group toggle (SensorSelection's FolderPlus
     // menu and its chips) — 2026-08-25 redesign: a sensor can legitimately
     // sit in several Failure Groups at once, expressed as several entries
@@ -516,25 +532,32 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // the same way removing it from `0` already did (2026-08-31 fix, same
     // reasoning: no group left to represent it), rather than special-casing
     // groupNo 0 vs. a real group.
-    const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
-        const existing = findModelForKind(tag, kind);
+    // Pure: the models after toggling one (sensor, group, kind) membership.
+    // Run twice — once against the mirror for the instant UI update, once
+    // against DISK inside the write (2026-09-23 race hardening: a toggle
+    // used to overwrite the whole models array with the mirror's copy, which
+    // reverted whatever another window had just written to any model).
+    const applyToggle = useCallback((models: FailureModel[], tag: string, groupNo: number, kind: ModelKind): FailureModel[] => {
+        const existing = findKindIn(models, tag, kind);
         const isMember = !!existing && existing.groupNos.includes(groupNo);
-        let nextModels: FailureModel[];
         if (isMember) {
             const remaining = existing!.groupNos.filter(n => n !== groupNo);
-            nextModels = remaining.length > 0
-                ? fgModels.map(m => m === existing ? { ...m, groupNos: remaining } : m)
-                : fgModels.filter(m => m !== existing);
-        } else if (existing) {
-            nextModels = fgModels.map(m => m === existing
+            return remaining.length > 0
+                ? models.map(m => m === existing ? { ...m, groupNos: remaining } : m)
+                : models.filter(m => m !== existing);
+        }
+        if (existing) {
+            return models.map(m => m === existing
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }
                 : m);
-        } else {
-            nextModels = [...fgModels, makeDefaultModelForKind(tag, [groupNo], kind)];
         }
-        setFgModels(nextModels);
-        persistFailureGroupState(fgGroups, nextModels);
-    }, [fgModels, fgGroups, findModelForKind, makeDefaultModelForKind, persistFailureGroupState]);
+        return [...models, makeDefaultModelForKind(tag, [groupNo], kind)];
+    }, [makeDefaultModelForKind]);
+
+    const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
+        setFgModels(applyToggle(fgModels, tag, groupNo, kind));
+        persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: applyToggle(disk.models, tag, groupNo, kind) }));
+    }, [fgModels, applyToggle, persistFailureGroupStateFrom]);
 
     // "Create a brand new group for this sensor" — creates the empty group
     // and, for convenience, reuses-or-creates this sensor's Individual
@@ -544,19 +567,25 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const createGroupForSensor = useCallback((tag: string, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
-        const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
-        const newGroupNo = maxNo + 1;
-        const newGroups = [...fgGroups, { no: newGroupNo, name: trimmed }];
-        const existing = findModelForKind(tag, 'individual');
-        const newModels = existing
-            ? fgModels.map(m => m === existing
-                ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
-                : m)
-            : [...fgModels, makeDefaultModelForKind(tag, [newGroupNo], 'individual')];
-        setFgGroups(newGroups);
-        setFgModels(newModels);
-        persistFailureGroupState(newGroups, newModels);
-    }, [fgGroups, fgModels, findModelForKind, isDuplicateGroupName, makeDefaultModelForKind, persistFailureGroupState]);
+        // Pure over (groups, models) so it can run against the mirror (instant
+        // UI) and again against disk inside the write.
+        const build = (groups: FailureGroup[], models: FailureModel[]) => {
+            const newGroupNo = Math.max(...groups.map(g => g.no), 0) + 1;
+            const existing = findKindIn(models, tag, 'individual');
+            return {
+                groups: [...groups, { no: newGroupNo, name: trimmed }],
+                models: existing
+                    ? models.map(m => m === existing
+                        ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
+                        : m)
+                    : [...models, makeDefaultModelForKind(tag, [newGroupNo], 'individual')],
+            };
+        };
+        const optimistic = build(fgGroups, fgModels);
+        setFgGroups(optimistic.groups);
+        setFgModels(optimistic.models);
+        persistFailureGroupStateFrom(disk => build(disk.groups, disk.models));
+    }, [fgGroups, fgModels, isDuplicateGroupName, makeDefaultModelForKind, persistFailureGroupStateFrom]);
 
     // 2026-08-31: model deletion now lives on Dashboard (Failure Groups
     // tab's own per-model delete button) — Build Model no longer has a
@@ -564,10 +593,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // confirmation dialog, matching this session's "click does the thing"
     // policy for every other destructive action in the app.
     const deleteModel = useCallback((modelId: string) => {
-        const newModels = fgModels.filter(m => m.id !== modelId);
-        setFgModels(newModels);
-        persistFailureGroupState(fgGroups, newModels);
-    }, [fgGroups, fgModels, persistFailureGroupState]);
+        setFgModels(fgModels.filter(m => m.id !== modelId));
+        persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: disk.models.filter(m => m.id !== modelId) }));
+    }, [fgModels, persistFailureGroupStateFrom]);
 
     // Renaming/deleting a group is global (not tied to one sensor's model),
     // so these operate on fgGroups/fgModels directly rather than through
@@ -1658,7 +1686,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // not the stale failureGroupState captured in `initialState` at
         // mount — otherwise this full-overwrite autosave would silently
         // erase what was just written via read-modify-write elsewhere.
-        failureGroupState: { groups: fgGroups, models: fgModels, runningConditionFilters, runningConditionCombine },
+        failureGroupState: { ...fgExtra, groups: fgGroups, models: fgModels },
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
         extraSensorMetadata,
@@ -1675,7 +1703,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         ...overrides,
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
-        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, runningConditionFilters, runningConditionCombine, alarmLinesEnabled, scatterAxes,
+        samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, fgExtra, alarmLinesEnabled, scatterAxes,
         extraSensorMetadata, specialSensorRecipes, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
         valueHighlight, relativeAmount, relativeUnit,
     ]);
@@ -1737,16 +1765,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let timer: ReturnType<typeof setTimeout>;
         pendingSaveRef.current = new Promise<void>((resolve) => {
             timer = setTimeout(async () => {
-                let freshFailureGroupState = { groups: fgGroups, models: fgModels, runningConditionFilters, runningConditionCombine };
+                let freshFailureGroupState: FailureGroupStateSlice = { ...fgExtra, groups: fgGroups, models: fgModels };
                 try {
                     const onDisk = await loadWorkspaceData(initialState.id);
                     if (onDisk?.failureGroupState) {
-                        freshFailureGroupState = {
-                            groups: onDisk.failureGroupState.groups,
-                            models: onDisk.failureGroupState.models,
-                            runningConditionFilters: onDisk.failureGroupState.runningConditionFilters ?? [],
-                            runningConditionCombine: onDisk.failureGroupState.runningConditionCombine ?? 'and',
-                        };
+                        // The whole slice as it is on disk — never a field list.
+                        freshFailureGroupState = onDisk.failureGroupState;
                     }
                 } catch (e) {
                     // Disk read failed — fall back to this window's own
@@ -1772,7 +1796,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }, AUTOSAVE_DEBOUNCE_MS);
         });
         return () => clearTimeout(timer);
-    }, [buildWorkspaceState, initialState, fgGroups, fgModels, runningConditionFilters, runningConditionCombine]);
+    }, [buildWorkspaceState, initialState, fgGroups, fgModels, fgExtra]);
 
     // 2026-09-01: flush a pending autosave before the window is actually
     // allowed to close, instead of letting a change made in the last

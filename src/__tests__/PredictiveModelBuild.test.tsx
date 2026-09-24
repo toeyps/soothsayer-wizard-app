@@ -935,6 +935,42 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
+    it('a per-model config autosave keeps the workspace-level failureGroupState fields it does not own, e.g. the workspace time range (regression 2026-09-23: it rebuilt the slice from an explicit field list and dropped them)', async () => {
+        const thisModel = makeStoredModel({ runningConditionMode: 'custom' });
+        mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [thisModel] } });
+        mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
+            id,
+            failureGroupState: {
+                groups: [], models: [thisModel],
+                runningConditionTimeStart: '2026-01-01T00:00',
+                runningConditionTimeEnd: '2026-02-01T00:00',
+                someFutureField: 'keep-me',
+            },
+        }));
+        vi.useFakeTimers();
+        await renderHydrated();
+        mockUpdateWorkspaceData.mockClear();
+        mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
+            id,
+            failureGroupState: {
+                groups: [], models: [thisModel],
+                runningConditionTimeStart: '2026-01-01T00:00',
+                runningConditionTimeEnd: '2026-02-01T00:00',
+                someFutureField: 'keep-me',
+            },
+        }));
+
+        const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
+        fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
+        await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+        const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+        expect(state.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
+        expect(state.failureGroupState.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+        expect(state.failureGroupState.someFutureField).toBe('keep-me');
+        vi.useRealTimers();
+    });
+
     it('picks up a rename via the workspace-renamed-internal event', async () => {
         await renderHydrated();
         await act(async () => {

@@ -5,6 +5,7 @@ import { subscribe } from "../../utils/tauriEvents";
 import { X, Plus, ChevronDown, Gauge, Calendar } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
+import { withFailureGroupState } from "../../utils/failureGroupState";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 
@@ -323,21 +324,9 @@ export default function BuildModelWindow() {
             const groups = prev.failureGroupState?.groups ?? [];
             const models = prev.failureGroupState?.models ?? [];
             const result = updater(models, groups);
-            return {
-                ...prev,
-                failureGroupState: {
-                    groups: result.groups,
-                    models: result.models,
-                    // This path never touches the running-condition filter —
-                    // preserve whatever is on disk right now (see
-                    // persistRunningCondition below for the path that does
-                    // change any of these four).
-                    runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
-                    runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
-                    runningConditionTimeStart: prev.failureGroupState?.runningConditionTimeStart ?? '',
-                    runningConditionTimeEnd: prev.failureGroupState?.runningConditionTimeEnd ?? '',
-                },
-            };
+            // Spread-merge: this path only changes groups/models; every other slice
+            // field (running condition incl. time range, future fields) must survive.
+            return withFailureGroupState(prev, { groups: result.groups, models: result.models });
         });
         if (next?.failureGroupState) {
             setAllGroups(next.failureGroupState.groups);
@@ -366,16 +355,12 @@ export default function BuildModelWindow() {
         timeEnd?: string;
     }) => {
         if (!workspaceId) return;
-        const next = await updateWorkspaceData(workspaceId, prev => ({
-            ...prev,
-            failureGroupState: {
-                groups: prev.failureGroupState?.groups ?? [],
-                models: prev.failureGroupState?.models ?? [],
-                runningConditionFilters: patch.filters ?? prev.failureGroupState?.runningConditionFilters ?? [],
-                runningConditionCombine: patch.combine ?? prev.failureGroupState?.runningConditionCombine ?? 'and',
-                runningConditionTimeStart: patch.timeStart ?? prev.failureGroupState?.runningConditionTimeStart ?? '',
-                runningConditionTimeEnd: patch.timeEnd ?? prev.failureGroupState?.runningConditionTimeEnd ?? '',
-            },
+        const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, {
+            // Only the fields this call was given; everything else stays as it is.
+            ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
+            ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
+            ...(patch.timeStart !== undefined ? { runningConditionTimeStart: patch.timeStart } : {}),
+            ...(patch.timeEnd !== undefined ? { runningConditionTimeEnd: patch.timeEnd } : {}),
         }));
         if (next?.failureGroupState) {
             setAllGroups(next.failureGroupState.groups);

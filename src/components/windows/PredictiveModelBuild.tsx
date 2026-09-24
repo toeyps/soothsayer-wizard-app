@@ -10,6 +10,7 @@ import type {
 import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, ChevronDown, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
+import { withFailureGroupState } from "../../utils/failureGroupState";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
@@ -971,18 +972,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 customRunningConditionCombine,
             };
             (async () => {
-                const next = await updateWorkspaceData(workspaceId, (prev) => ({
-                    ...prev,
-                    failureGroupState: {
-                        groups: prev.failureGroupState?.groups ?? [],
-                        models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
-                        // This page never edits the workspace-wide running-condition
-                        // filter (that's BuildModelWindow's job) — preserve whatever
-                        // is on disk right now rather than dropping it, since this
-                        // write only intends to touch this one model's own fields.
-                        runningConditionFilters: prev.failureGroupState?.runningConditionFilters ?? [],
-                        runningConditionCombine: prev.failureGroupState?.runningConditionCombine ?? 'and',
-                    },
+                // `withFailureGroupState` carries every field this page does not own
+                // (the workspace running condition incl. its time range, and anything
+                // added later) — never list them by hand (2026-09-23).
+                const next = await updateWorkspaceData(workspaceId, (prev) => withFailureGroupState(prev, {
+                    models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
                 }));
                 if (next?.failureGroupState) {
                     // origin differs from BuildModelWindow's own so that window (this

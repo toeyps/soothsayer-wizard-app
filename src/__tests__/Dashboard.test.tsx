@@ -198,6 +198,13 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
 }));
 
+// A sensor-kind toggle is now computed against what is on DISK (so a stale
+// mirror can't overwrite another window's write) — so a test that toggles must
+// say what disk holds. In real life it holds what the Dashboard was opened with.
+const seedDisk = (state: { failureGroupState?: unknown }) => {
+    mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id, failureGroupState: state.failureGroupState }));
+};
+
 const mockReportError = vi.fn();
 vi.mock('../errorReporter', () => ({
     reportError: (source: string, err: unknown) => mockReportError(source, err),
@@ -335,6 +342,32 @@ describe('Dashboard', () => {
         // Must be the fresher disk state, not this window's stale local
         // mirror (still just Group A / no models at this point).
         expect(saved.failureGroupState).toEqual(fresherFailureGroupState);
+    });
+
+    it('the autosave keeps every failureGroupState field it does not own, e.g. the workspace time range (regression 2026-09-23: the fresh-from-disk copy listed only groups/models/filters/combine, so BuildModelWindow\'s runningConditionTimeStart/End vanished ~250ms after any Dashboard edit)', async () => {
+        vi.useFakeTimers();
+        renderDashboard({
+            initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+        });
+        await act(async () => { vi.advanceTimersByTime(300); });
+        mockSaveWorkspaceData.mockClear();
+
+        mockLoadWorkspaceData.mockResolvedValue({
+            failureGroupState: {
+                groups: [{ no: 1, name: 'Group A' }], models: [],
+                runningConditionFilters: [], runningConditionCombine: 'and',
+                runningConditionTimeStart: '2026-01-01T00:00',
+                runningConditionTimeEnd: '2026-02-01T00:00',
+                someFutureField: 'keep-me',
+            },
+        });
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+        await act(async () => { vi.advanceTimersByTime(300); });
+
+        const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+        expect(saved.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
+        expect(saved.failureGroupState.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+        expect(saved.failureGroupState.someFutureField).toBe('keep-me');
     });
 
     it('still autosaves normally when the state actually changed after a failure-group write', async () => {
@@ -867,6 +900,56 @@ describe('Dashboard', () => {
             });
         });
 
+        it('a sensor-kind toggle keeps failureGroupState fields it does not own, e.g. the workspace time range (2026-09-23: persistFailureGroupState listed only 4 fields)', async () => {
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
+                id,
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'Group A' }], models: [],
+                    runningConditionTimeStart: '2026-01-01T00:00',
+                    runningConditionTimeEnd: '2026-02-01T00:00',
+                    someFutureField: 'keep-me',
+                },
+            }));
+            renderDashboard({
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+            });
+            fireEvent.click(screen.getByText('toggle-group'));
+            const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
+            expect(state.failureGroupState.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+            expect(state.failureGroupState.someFutureField).toBe('keep-me');
+        });
+
+        it('a sensor-kind toggle is computed against what is on DISK, not this window\'s in-memory mirror, so a model another window just wrote survives (2026-09-23 race hardening: a stale mirror used to overwrite the whole models array)', async () => {
+            const diskOnlyModel = { id: 'm-disk', groupNos: [1], kind: 'individual', targetSensor: 'OTHER', name: 'written elsewhere' };
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
+                id,
+                failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [diskOnlyModel] },
+            }));
+            renderDashboard({
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+            });
+            fireEvent.click(screen.getByText('toggle-group'));
+            const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.models.map((m: any) => m.id)).toContain('m-disk');
+            expect(state.failureGroupState.models.some((m: any) => m.targetSensor === 'TAG1')).toBe(true);
+        });
+
+        it('deleting a model removes only that model from what is on DISK, keeping one another window wrote (2026-09-23 race hardening)', async () => {
+            const other = { id: 'm-disk', groupNos: [1], kind: 'individual', targetSensor: 'OTHER' };
+            const mine = { id: 'm1', groupNos: [1], kind: 'individual', targetSensor: 'TAG1' };
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
+                id, failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [mine, other] },
+            }));
+            renderDashboard({
+                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [mine] } as any }),
+            });
+            fireEvent.click(screen.getByText('Failure Groups'));
+            fireEvent.click(screen.getByText('delete-model-fg'));
+            const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.models.map((m: any) => m.id)).toEqual(['m-disk']);
+        });
+
         it('creating a group for a sensor adds both the group and its model, with no dead "isCollapsed" field (2026-09-01: removed — nothing in the app ever read or toggled it)', async () => {
             renderDashboard();
             fireEvent.click(screen.getByText('create-group-for-sensor'));
@@ -901,8 +984,7 @@ describe('Dashboard', () => {
 
         describe('2026-08-25 redesign — a model can belong to more than one Failure Group at once (real many-to-many, not a duplicate model per group)', () => {
             it('toggling a sensor into a SECOND group adds to its existing individual model\'s groupNos instead of creating a duplicate model', () => {
-                renderDashboard({
-                    initialState: makeInitialState({
+                const initialState = makeInitialState({
                         failureGroupState: {
                             groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
                             models: [{
@@ -913,8 +995,9 @@ describe('Dashboard', () => {
                                 clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
-                    }),
-                });
+                    });
+                seedDisk(initialState);
+                renderDashboard({ initialState });
                 // The mocked SensorSelection's toggle-group button always toggles TAG1 into group 1 as individual -- use onToggleSensorGroupKind directly via the same mock button pattern isn't available for group 2, so drive it through sensorSelectionProps instead.
                 act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 2, 'individual'); });
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
@@ -925,8 +1008,7 @@ describe('Dashboard', () => {
             });
 
             it('toggling a sensor OUT of its last group deletes the model outright (2026-09-02: used to fall back to groupNos: [0] "Not in Group" — reported by the user as unwanted, the chip\'s X is expected to make it disappear, not reappear parked under "Not in Group")', () => {
-                renderDashboard({
-                    initialState: makeInitialState({
+                const initialState = makeInitialState({
                         failureGroupState: {
                             groups: [{ no: 1, name: 'Group A' }],
                             models: [{
@@ -937,8 +1019,9 @@ describe('Dashboard', () => {
                                 clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
-                    }),
-                });
+                    });
+                seedDisk(initialState);
+                renderDashboard({ initialState });
                 fireEvent.click(screen.getByText('toggle-group')); // toggles TAG1 out of group 1
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
                     expect(state.failureGroupState.models).toHaveLength(0);
@@ -953,8 +1036,7 @@ describe('Dashboard', () => {
                 // is removed, so the placeholder model is deleted outright
                 // (same as clicking "Remove model" in Build Model),
                 // confirmed with the user rather than assumed.
-                renderDashboard({
-                    initialState: makeInitialState({
+                const initialState = makeInitialState({
                         failureGroupState: {
                             groups: [],
                             models: [{
@@ -965,8 +1047,9 @@ describe('Dashboard', () => {
                                 clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
-                    }),
-                });
+                    });
+                seedDisk(initialState);
+                renderDashboard({ initialState });
                 act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 0, 'individual'); });
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
                     expect(state.failureGroupState.models).toHaveLength(0);
@@ -977,8 +1060,7 @@ describe('Dashboard', () => {
                 // The whole point of this redesign — a sensor can now
                 // carry more than one model KIND at once (not just more
                 // than one group), per explicit user request.
-                renderDashboard({
-                    initialState: makeInitialState({
+                const initialState = makeInitialState({
                         failureGroupState: {
                             groups: [{ no: 1, name: 'Group A' }],
                             models: [{
@@ -989,8 +1071,9 @@ describe('Dashboard', () => {
                                 clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
-                    }),
-                });
+                    });
+                seedDisk(initialState);
+                renderDashboard({ initialState });
                 act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'relationship'); });
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
                     expect(state.failureGroupState.models).toHaveLength(2); // the original individual model, plus a new relationship one

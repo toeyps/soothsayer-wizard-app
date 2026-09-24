@@ -216,7 +216,7 @@ export interface FailureModel extends PredictiveModelStateSlice {
     ySensor: string;
 }
 
-interface FailureGroupStateSlice {
+export interface FailureGroupStateSlice {
     groups: FailureGroup[];
     models: FailureModel[];
     /**
@@ -251,6 +251,15 @@ interface FailureGroupStateSlice {
      *  string (same as `filterTimeStart`'s own convention) = no bound. */
     runningConditionTimeStart?: string;
     runningConditionTimeEnd?: string;
+}
+
+/** Payload of the cross-window 'failure-group-state-changed' event — the whole
+ *  slice plus who sent it. Typed once here so every listener carries every
+ *  field instead of re-listing them (a listener that names only some fields
+ *  is how new slice fields used to get lost — see `withFailureGroupState`). */
+export interface FailureGroupStateChangedPayload extends FailureGroupStateSlice {
+    workspaceId?: string;
+    origin?: string;
 }
 
 type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';

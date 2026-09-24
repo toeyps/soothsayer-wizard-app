@@ -41,10 +41,12 @@ Minor release — ต่อจาก 0.5.0: Running Condition Filter รอง�
 - **Running Condition Filter**: ช่องเลือก sensor ในแต่ละเงื่อนไขกดเลือกไม่ได้เลย (ช่องกว้างเกินจนคลิกไม่ติด)
 - ไอคอนค้นหาในช่องเลือก sensor แบบเลือกทีละตัว หลุดไปอยู่ผิดตำแหน่ง ไกลจากกล่อง
 - ช่องเลือก sensor ในเงื่อนไข Custom ของแต่ละโมเดล ตัดคำเป็น 2 บรรทัดเวลาชื่อ sensor ยาว ดูไม่เรียบร้อย
+- **ช่วงเวลา training ของ workspace (Time start/end ที่หน้า Overview) หายไปเงียบๆ** หลังแก้อะไรที่ Dashboard — หน้าจอยังโชว์ค่าเดิมจนกว่าจะปิดเปิดโปรแกรมถึงจะเห็นว่าหาย ตอนนี้ทุกจุดที่บันทึกข้อมูล Failure Group เก็บฟิลด์ที่ไม่รู้จักไว้ครบ
+- กด sensor เข้า/ออก Failure Group หรือลบ model ที่ Dashboard ตอนที่หน้าต่าง Build Model เพิ่งแก้ model อยู่ อาจย้อนการแก้นั้นกลับ — ตอนนี้คำนวณจากข้อมูลล่าสุดบนดิสก์แทนสำเนาในหน้าต่าง
 
 ### 🧪 Tests
 
-- frontend **1038** เทสต์ + Rust **168** unit tests ผ่านทั้งหมด; `tsc --noEmit` สะอาด
+- frontend **1047** เทสต์ + Rust **168** unit tests ผ่านทั้งหมด; `tsc --noEmit` สะอาด
   (เพิ่ม regression test ยืนยันว่า Running Condition Filter ไม่รั่วเข้าไปกระทบการแสดงผลหลักของ Dashboard)
 
 ---
