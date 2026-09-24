@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup, within, waitFor } from '@testing-library/react';
 
 let listenCallbacks: Record<string, Array<(e: any) => void>> = {};
 const mockListen = vi.fn((event: string, cb: (e: any) => void) => {
@@ -625,7 +625,7 @@ describe('PredictiveModelBuild', () => {
         it('"Edit on Overview" returns to the Overview page via onBack', async () => {
             const { onBack } = await renderHydrated({ runningConditionFilters: [] });
             fireEvent.click(screen.getByText('Edit on Overview →'));
-            expect(onBack).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
         });
 
         it('shows the inherited combine mode next to the condition count', async () => {
@@ -757,6 +757,19 @@ describe('PredictiveModelBuild', () => {
             expect(statsCall[1].filter.timestamp_ranges).toEqual(chartFilter().timestamp_ranges);
         });
 
+        it('an incomplete "between" (no max) is NOT sent to Rust (it would match every row under OR)', async () => {
+            await renderHydrated({
+                runningConditionCombine: 'or',
+                runningConditionFilters: [
+                    { id: 'a', sensor: 'PRED1', operation: 'greater_than', value1: '10', value2: '' },
+                    { id: 'b', sensor: 'PRED1', operation: 'between', value1: '1', value2: '' },
+                ],
+            });
+            const statsCall = mockInvoke.mock.calls.find(c => c[0] === 'compute_sensor_stats')!;
+            expect(statsCall[1].filter.value_filters).toEqual([{ sensor: 'PRED1', operation: 'greater_than', value1: 10, value2: null }]);
+            expect(chartFilter().value_filters).toEqual(statsCall[1].filter.value_filters);
+        });
+
         it('the relationship fit invoke carries the same ranges too', async () => {
             mockInvoke.mockImplementation((cmd: string) => {
                 if (cmd === 'compute_sensor_stats') {
@@ -882,7 +895,28 @@ describe('PredictiveModelBuild', () => {
         it('the Back button calls onBack instead of closing any window', async () => {
             const { onBack } = await renderHydrated();
             fireEvent.click(screen.getByTitle('Back to Build Model overview'));
-            expect(onBack).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
+        });
+    });
+
+    describe('leaving the page flushes a pending debounced persist (2026-09-24)', () => {
+        it('Back and Finish write an edit made < 250ms earlier BEFORE calling onBack/onFinish', async () => {
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            const order: string[] = [];
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => {
+                order.push('write');
+                return patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } });
+            });
+            const { onFinish } = await renderHydrated();
+            await act(async () => { await new Promise(r => setTimeout(r, 300)); }); // hydration's own write settles
+            order.length = 0;
+            (onFinish as any).mockImplementation(() => { order.push('finish'); });
+
+            fireEvent.click(screen.getByLabelText('No condition — use all rows')); // un-confirm ...
+            fireEvent.click(screen.getByLabelText('No condition — use all rows')); // ... and re-confirm: pending write, gate open
+            fireEvent.click(screen.getByText('Finish'));
+            await waitFor(() => expect(order).toEqual(['write', 'finish']));
         });
     });
 
@@ -896,7 +930,7 @@ describe('PredictiveModelBuild', () => {
             const { onFinish } = await renderHydrated({ runningConditionFilters: [...cond] });
             expect(finishBtn().disabled).toBe(false);
             fireEvent.click(screen.getByText('Finish'));
-            expect(onFinish).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(onFinish).toHaveBeenCalledTimes(1));
         });
 
         it('is disabled with the reason (button title + inline text) while the workspace condition is unset, and a click does nothing', async () => {
@@ -940,7 +974,7 @@ describe('PredictiveModelBuild', () => {
             const { onFinish } = await renderHydrated(); // workspace: nothing set
             expect(finishBtn().disabled).toBe(false);
             fireEvent.click(finishBtn());
-            expect(onFinish).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(onFinish).toHaveBeenCalledTimes(1));
         });
 
         it('a Custom model with nothing set stays blocked even if the workspace is configured (workspace None does not help Custom)', async () => {
@@ -958,7 +992,7 @@ describe('PredictiveModelBuild', () => {
             const { onBack } = await renderHydrated();
             const banner = screen.getByTestId('pm-rc-required-banner');
             fireEvent.click(within(banner).getByText('Set on Overview →'));
-            expect(onBack).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
 
             fireEvent.click(within(banner).getByText('Use Custom instead'));
             expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull();

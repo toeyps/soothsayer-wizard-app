@@ -8,7 +8,7 @@ import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
-import { getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { periodChipLabel } from "../../utils/timePeriods";
@@ -196,6 +196,8 @@ export default function BuildModelWindow() {
     // written at hydration) plus a session-only "Remind me later" (never persisted).
     const [rcLegacyNotice, setRcLegacyNotice] = useState<'pending' | null>(null);
     const [legacyRemindLater, setLegacyRemindLater] = useState(false);
+    /** Why the last Finish did not mark the model Complete (shown on the overview). */
+    const [completeBlock, setCompleteBlock] = useState<string | null>(null);
     // Workspace id the panel was last auto-opened for, so "auto-open when the
     // running condition is unconfigured" happens once per hydration, not on
     // every broadcast.
@@ -511,10 +513,18 @@ export default function BuildModelWindow() {
     const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(m, gateFg, gateHeaders);
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
+    /** Badge text for a model the gate blocks, for ANY reason (missing condition,
+     *  missing category, invalid period), else null. Hover text is the reason. */
+    const gateBadge = (m: FailureModel): string | null => {
+        if (gateReasonOf(m) === null) return null;
+        if (needsCondition(m)) return m.status ? 'Legacy · all data' : 'Needs condition';
+        return categoryOf(m) === null ? 'Needs category' : 'Fix periods';
+    };
 
     /** Why Save is disabled (category / required fields), or null. */
     const modelBlockReason = (m: FailureModel): string | null => {
-        if (categoryOf(m) === null) return 'Pick a category on the sensor header';
+        // Same text as `getBuildBlockReason` (single source: one string everywhere).
+        if (categoryOf(m) === null) return CATEGORY_BLOCK_REASON;
         const d = draftOf(m);
         const ok = d.name.trim() !== '' && m.groupNos.length > 0 && (
             m.kind === 'individual' ? (m.targetSensor ?? '') !== '' :
@@ -586,13 +596,27 @@ export default function BuildModelWindow() {
      *  never accidentally flip an already-complete model back to
      *  incomplete. Un-marking a model still goes through the status pill
      *  (`toggleModelStatus`). */
-    const markModelComplete = (modelId: string) => {
-        const target = allModels.find(m => m.id === modelId);
-        if (target && gateReasonOf(target) !== null) return;
-        persist((models, groups) => ({
-            groups,
-            models: models.map(m => m.id === modelId ? { ...m, status: true } : m),
-        }));
+    // The gate is evaluated against what is on DISK inside the write (the PM
+    // page flushes its own edits first), never against this window's possibly
+    // lagging copy — so Finish (which the PM page enabled from its LIVE state)
+    // and the gate can't disagree. If it still blocks, say why (never silent).
+    const markModelComplete = async (modelId: string) => {
+        if (!workspaceId) return;
+        setCompleteBlock(null);
+        const res = { reason: null as string | null };
+        const next = await updateWorkspaceData(workspaceId, prev => {
+            const fg = prev.failureGroupState;
+            const target = fg?.models?.find(m => m.id === modelId);
+            if (!target) return prev;
+            res.reason = getBuildBlockReason(target, fg, gateHeaders);
+            if (res.reason !== null) return prev;
+            return withFailureGroupState(prev, { models: (fg?.models ?? []).map(m => m.id === modelId ? { ...m, status: true } : m) });
+        });
+        if (res.reason !== null) setCompleteBlock(res.reason);
+        if (next?.failureGroupState) {
+            applyFg(next.failureGroupState);
+            if (res.reason === null) await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+        }
     };
 
     const trainModel = (modelId: string) => {
@@ -917,9 +941,9 @@ export default function BuildModelWindow() {
                                     Change in Failure Group view
                                 </button>
                                 {component && <span className="model-chip model-chip--component">{component}</span>}
-                                {needsCondition(model) && (
-                                    <span data-testid={`condition-badge-${model.id}`} className="model-chip" style={CONDITION_BADGE_STYLE}>
-                                        {model.status ? 'Legacy · all data' : 'Needs condition'}
+                                {gateBadge(model) && (
+                                    <span data-testid={`condition-badge-${model.id}`} className="model-chip" style={CONDITION_BADGE_STYLE} title={gateReasonOf(model) ?? undefined}>
+                                        {gateBadge(model)}
                                     </span>
                                 )}
                             </div>
@@ -964,7 +988,7 @@ export default function BuildModelWindow() {
         const ordered = KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k));
         const done = ordered.filter(m => m.status).length;
         const activeModel = ordered.find(m => m.id === activeTab[rowId]) ?? ordered[0];
-        const blocked = ordered.filter(m => !m.status && needsCondition(m)).length;
+        const blocked = ordered.filter(m => !m.status && gateReasonOf(m) !== null).length;
         const accent = FG_ACCENT[getFgGroupColor(groupNo)];
         return (
             <div key={rowId} data-testid={`sensor-row-${rowId}`} style={{ borderTop: '1px solid var(--border)' }}>
@@ -1065,9 +1089,9 @@ export default function BuildModelWindow() {
                                             {KIND_LABEL[m.kind]}
                                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: m.status ? 'var(--success, #3fb950)' : 'var(--text-faint)' }} />
                                             {m.id in drafts && <span style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>edited</span>}
-                                            {needsCondition(m) && (
-                                                <span data-testid={`condition-badge-${m.id}`} style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>
-                                                    {m.status ? 'Legacy · all data' : 'Needs condition'}
+                                            {gateBadge(m) && (
+                                                <span data-testid={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>
+                                                    {gateBadge(m)}
                                                 </span>
                                             )}
                                         </button>
@@ -1116,8 +1140,8 @@ export default function BuildModelWindow() {
                     runningConditionNoneConfirmed={runningConditionNoneConfirmed}
                     category={categoryOf(pmPageModel)}
                     onBack={() => setActivePage('overview')}
-                    onFinish={() => {
-                        markModelComplete(pmPageModel.id);
+                    onFinish={async () => {
+                        await markModelComplete(pmPageModel.id);
                         setActivePage('overview');
                     }}
                 />
@@ -1213,7 +1237,7 @@ export default function BuildModelWindow() {
 
                         {runningConditionNoneConfirmed ? (
                             <div data-testid="rc-none-note" style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                                No condition — use all rows. Models follow this default and train on every row, including idle periods.
+                                No condition — use all rows. Models follow this default and train on all rows within the training periods, including idle periods.
                                 {runningConditionFilters.length > 0 && ' Your saved conditions are kept but not applied.'}
                             </div>
                         ) : (
@@ -1316,6 +1340,17 @@ export default function BuildModelWindow() {
                     </div>
                 )}
             </div>
+
+            {completeBlock && (
+                <div
+                    role="alert"
+                    data-testid="complete-block-reason"
+                    style={{ margin: '12px 20px 0', display: 'flex', gap: '12px', alignItems: 'center', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.74rem' }}
+                >
+                    <div style={{ flex: 1 }}>The model was not marked Complete. {completeBlock}</div>
+                    <button type="button" className="text-btn" onClick={() => setCompleteBlock(null)}>Dismiss</button>
+                </div>
+            )}
 
             {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
                 <div

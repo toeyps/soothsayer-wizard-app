@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup, within, waitFor } from '@testing-library/react';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tauri-apps/api/window', () => ({
@@ -708,9 +708,9 @@ describe('BuildModelWindow', () => {
 
             fireEvent.click(screen.getByText('Mock Finish'));
 
+            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull()); // Finish also navigates back, like Back
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].status).toBe(true);
-            expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // Finish also navigates back, like Back
         });
 
         it('Finish never flips an already-complete model back to Incomplete (one-directional, unlike the overview\'s toggle pill)', async () => {
@@ -720,6 +720,7 @@ describe('BuildModelWindow', () => {
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
 
             fireEvent.click(screen.getByText('Mock Finish'));
+            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
 
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].status).toBe(true);
@@ -1407,20 +1408,58 @@ describe('BuildModelWindow', () => {
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
 
-            // Another window un-confirms the workspace condition meanwhile.
+            // What is on DISK now has the workspace condition un-confirmed (the PM
+            // page flushed its edits first). Finish must re-check THAT, refuse, and say why.
+            let written: any = null;
+            mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
+                const disk = { id, failureGroupState: fgOf([ind()]) };
+                written = patch(disk);
+                return written;
+            });
+            fireEvent.click(screen.getByText('Mock Finish'));
+            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
+            expect(written.failureGroupState.models[0].status).toBe(false);
+            expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/Set a running condition first/);
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // still returns to the overview, with the reason shown
+        });
+
+        it('Finish completes against the DISK copy even when this window own copy is stale (no silent no-op)', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionNoneConfirmed: true });
+            openRow();
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            // A lagging broadcast leaves this window's copy showing the workspace unset.
             await act(async () => {
                 for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
                     cb({ payload: { workspaceId: 'ws1', origin: 'predictive-model', ...fgOf([ind()]) } });
                 }
                 await Promise.resolve();
             });
-            mockUpdateWorkspaceData.mockClear();
+            let written: any = null;
+            mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
+                written = patch({ id, failureGroupState: fgOf([ind()], { runningConditionNoneConfirmed: true }) });
+                return written;
+            });
             fireEvent.click(screen.getByText('Mock Finish'));
-            await flush();
-            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
+            expect(written.failureGroupState.models[0].status).toBe(true);
+            expect(screen.queryByTestId('complete-block-reason')).toBeNull();
         });
 
         describe('badges', () => {
+            it('badges reflect ANY gate reason: missing category and an invalid period, not only a missing condition', async () => {
+                render(<BuildModelWindow />);
+                await deliverGate([ind({ category: null })], { runningConditionNoneConfirmed: true });
+                openRow();
+                expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Needs category');
+                expect(screen.getByTestId('condition-badge-i1').title).toBe('Pick a category on the sensor header.');
+                cleanup();
+                render(<BuildModelWindow />);
+                await deliverGate([ind()], { runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'p', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }] });
+                openRow();
+                expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Fix periods');
+            });
+
             it('an unconfigured sensor row shows "N blocked" and each model tab shows "Needs condition"', async () => {
                 render(<BuildModelWindow />);
                 await deliverGate([ind(), rel()]);
@@ -1734,8 +1773,8 @@ describe('BuildModelWindow', () => {
                 expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
                 const build = screen.getByText('Build Model →') as HTMLButtonElement;
                 expect(build.disabled).toBe(true);
-                expect(build.title).toBe('Pick a category on the sensor header');
-                expect(screen.getAllByText('Pick a category on the sensor header').length).toBeGreaterThan(0);
+                expect(build.title).toBe('Pick a category on the sensor header.');
+                expect(screen.getAllByText('Pick a category on the sensor header.').length).toBeGreaterThan(0);
 
                 fireEvent.click(within(screen.getByTestId('sensor-row-fg:1:tag1')).getByRole('button', { name: 'Performance' }));
                 await flush();

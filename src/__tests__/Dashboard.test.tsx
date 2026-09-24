@@ -296,9 +296,12 @@ describe('Dashboard', () => {
 
     it('skips an autosave whose payload is already on disk — a failure-group toggle costs one write, not two (2026-09-03: persistFailureGroupState writes immediately so a Build Model window opened right after reads fresh data, and the debounced autosave then rewrote the identical payload 250ms later)', async () => {
         vi.useFakeTimers();
-        renderDashboard({
-            initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
-        });
+        const initial = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
+        // Disk keeps what is written, and the autosave's fresh re-read sees it (as in the app).
+        let disk: any = { id: initial.id, failureGroupState: initial.failureGroupState };
+        mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+        mockLoadWorkspaceData.mockImplementation(async () => disk);
+        renderDashboard({ initialState: initial });
         // Let the on-mount autosave land so the "already on disk" payload is primed.
         await act(async () => { vi.advanceTimersByTime(300); });
         mockSaveWorkspaceData.mockClear();
@@ -965,10 +968,31 @@ describe('Dashboard', () => {
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
+        it('creating the FIRST model seeds rcLegacyNotice/categoryNormalisationNotice = null (a new workspace is never "legacy"); a workspace that already had models is left untouched', async () => {
+            const fresh = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
+            seedDisk(fresh);
+            renderDashboard({ initialState: fresh });
+            fireEvent.click(screen.getByText('toggle-group'));
+            let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.models).toHaveLength(1);
+            expect(state.failureGroupState.rcLegacyNotice).toBeNull();
+            expect(state.failureGroupState.categoryNormalisationNotice).toBeNull();
+            cleanup();
+
+            // Pre-existing models (genuinely pre-gate): markers stay unset so flagLegacyGate can still flag it.
+            const model = { id: 'm1', groupNos: [1], name: '', kind: 'individual' as const, category: null, notes: '', status: false, targetSensor: 'TAG2', predictorSensors: [], xSensor: '', ySensor: '', individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace' as const, customRunningConditionFilters: [], customRunningConditionCombine: 'and' as const };
+            const old = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [model] } });
+            seedDisk(old);
+            renderDashboard({ initialState: old });
+            fireEvent.click(screen.getByText('toggle-group'));
+            state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+            expect(state.failureGroupState.rcLegacyNotice).toBeUndefined();
+        });
+
         it('renaming and deleting a group updates fgGroups accordingly', async () => {
-            renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
-            });
+            const initial = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
+            seedDisk(initial); // group edits are computed against what is on DISK
+            renderDashboard({ initialState: initial });
             fireEvent.click(screen.getByText('rename-group'));
             let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.groups[0].name).toBe('Renamed');
@@ -1165,8 +1189,7 @@ describe('Dashboard', () => {
             });
 
             it('deleteGroup only strips that one membership -- a model that also belongs to another group survives untouched there', async () => {
-                renderDashboard({
-                    initialState: makeInitialState({
+                const initial = makeInitialState({
                         failureGroupState: {
                             groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
                             models: [
@@ -1186,8 +1209,9 @@ describe('Dashboard', () => {
                                 },
                             ],
                         },
-                    }),
-                });
+                    });
+                seedDisk(initial);
+                renderDashboard({ initialState: initial });
                 fireEvent.click(screen.getByText('delete-group')); // deletes group 1 (mock always passes 1)
                 const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
                 expect(state.failureGroupState.models).toHaveLength(2); // neither model deleted
@@ -1212,9 +1236,9 @@ describe('Dashboard', () => {
         });
 
         it('updating group details (name/description/recommendation) and deleting from the preview panel itself also round-trip (2026-08-31: this "Edit details" editing moved here from Build Model window entirely, per explicit user request)', async () => {
-            renderDashboard({
-                initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
-            });
+            const initial = makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } });
+            seedDisk(initial);
+            renderDashboard({ initialState: initial });
             fireEvent.click(screen.getByText('Failure Groups'));
 
             fireEvent.click(screen.getByText('update-group-details-fg'));
@@ -1558,8 +1582,7 @@ describe('Dashboard', () => {
         it('"rename-special-sensor" re-keys every dashboard state slice that names the old tag', async () => {
             const renamed = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
             const dependent = { kind: 'formula' as const, tag: 'CALC2', formula: '${CALC1} + 1' };
-            renderDashboard({
-                initialState: makeInitialState({
+            const initial = makeInitialState({
                     selectedSensors: ['CALC1'],
                     visibleSensors: ['CALC1'],
                     specialSensorRecipes: [renamed, dependent],
@@ -1581,8 +1604,9 @@ describe('Dashboard', () => {
                             runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                         }],
                     },
-                }),
-            });
+                });
+            seedDisk(initial); // the tag re-key is computed against DISK
+            renderDashboard({ initialState: initial });
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
             const revisionBefore = last(mockUseChartData.mock.calls)[0]?.revision ?? 0;

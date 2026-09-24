@@ -445,13 +445,13 @@ describe('(3) the PM page sends one filter to chart, stats and every fit path �
         expect(lastChartFilter().timestamp_ranges).toEqual(f.timestamp_ranges);
     });
 
-    // KNOWN BUG (qa 2026-09-24) — flip to `it` once fixed. The gate
+    // FIXED 2026-09-24 (was a known bug). The gate
     // (`isCompleteCondition`) ignores a `between` row whose max is empty, but
     // `dashboardFilterPayload` only drops rows with an empty value1, so the row
     // still goes to Rust as `between(v1, null)` — and Rust's `keeps()` treats
     // `between` with a missing bound as TRUE. Under AND that is harmless; under
     // OR it matches every row, silently disabling every other OR condition.
-    it.fails('only the conditions the gate counts as complete are sent to Rust (an incomplete "between" under OR would match every row)', async () => {
+    it('only the conditions the gate counts as complete are sent to Rust (an incomplete "between" under OR would match every row)', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1' })], {
             runningConditionCombine: 'or',
             runningConditionFilters: [COND, { id: 'rc2', sensor: 'TAG3', operation: 'between', value1: '1', value2: '' }],
@@ -522,7 +522,7 @@ describe('PM page edits made right before leaving the page', () => {
     // Finish/Back call onFinish/onBack synchronously, which unmounts the page
     // and cancels the pending write, so an edit made < 250 ms before (e.g. a
     // period committed by the blur that clicking Finish itself causes) is lost.
-    it.fails('a period edited and committed by clicking Finish is saved together with Complete', async () => {
+    it('a period edited and committed by clicking Finish is saved together with Complete', async () => {
         const P = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P] })])));
         await mountBuildModel();
@@ -544,7 +544,7 @@ describe('PM page edits made right before leaving the page', () => {
     // against the parent's STORED copy, which lags by the same 250 ms debounce.
     // When the edit that satisfied the gate is < 250 ms old, Finish silently
     // returns to the overview without marking Complete (and the edit is lost).
-    it.fails('Finish right after re-confirming Custom "No condition" marks the model Complete', async () => {
+    it('Finish right after re-confirming Custom "No condition" marks the model Complete', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })])));
         await mountBuildModel();
         await openPmFor();
@@ -564,18 +564,21 @@ describe('PM page edits made right before leaving the page', () => {
 });
 
 describe('a brand-new workspace (never opened before Feature 4)', () => {
-    // KNOWN BUG (qa 2026-09-24) — flip to `it` once fixed. Models are only ever
-    // created on the Dashboard, so the Build Model window is always opened for
-    // the first time with models present. Nothing seeds `rcLegacyNotice: null`
-    // for a new workspace, so `flagLegacyGate` flags it 'pending' and the user
-    // is told "Models built so far trained on all rows" about models that were
-    // never built.
-    it.fails('does not show the legacy "models built so far trained on all rows" banner', async () => {
-        // Exactly what Dashboard's autosave writes for a new workspace after two
-        // sensor toggles: no Feature 4 markers at all.
-        writeDisk(wsState({ models: [model({ id: 'i1', category: null }), model({ id: 'i2', targetSensor: 'TAG2', category: null })] }));
+    // FIXED 2026-09-24. Models are only ever created on the Dashboard, so the
+    // Build Model window is always opened for the first time with models
+    // present. Dashboard's first-model creation now seeds `rcLegacyNotice: null`
+    // (see Feature4CrossWindow's end-to-end test), so `flagLegacyGate` leaves it
+    // alone. A workspace WITHOUT the marker is still flagged (real legacy).
+    it('does not show the legacy banner once Dashboard has seeded the markers', async () => {
+        writeDisk(wsState({ models: [model({ id: 'i1', category: null }), model({ id: 'i2', targetSensor: 'TAG2', category: null })], rcLegacyNotice: null, categoryNormalisationNotice: null, runningConditionTimePeriods: [] }));
         await mountBuildModel();
         expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+    });
+
+    it('a workspace with models and NO marker (genuinely pre-gate) is still flagged', async () => {
+        writeDisk(wsState({ models: [model({ id: 'i1', category: null })], runningConditionTimePeriods: [] }));
+        await mountBuildModel();
+        expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
     });
 });
 
@@ -585,7 +588,7 @@ describe('reason text consistency', () => {
     // ("...sensor header", no period) while the status pill, `trainModel`,
     // `markModelComplete` and the PM Finish button use `getBuildBlockReason`
     // ("...sensor header."), so the two surfaces disagree on the same model.
-    it.fails('Overview Build reason and the shared gate reason are the same string for a model without a category', async () => {
+    it('Overview Build reason and the shared gate reason are the same string for a model without a category', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', category: null })], { runningConditionNoneConfirmed: true })));
         await mountBuildModel();
         openFirstRow();

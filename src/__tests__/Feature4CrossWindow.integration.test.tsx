@@ -237,7 +237,7 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
         });
     }
 
-    // KNOWN BUG (qa 2026-09-24) — flip to `it` once fixed. Phase 0 moved the
+    // FIXED 2026-09-24 (was a known bug). Phase 0 moved the
     // toggle / create-group / delete-model writers to "compute on disk", but
     // renameGroup / updateGroupDetails / createEmptyGroup / deleteGroup still
     // call `persistFailureGroupState(groups, fgModels)`, which writes the
@@ -245,7 +245,7 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
     // (lost broadcast) that reverts another window's model edits — here the
     // sensor category. The one-time normalisation will not repair it either:
     // its notice is already set, so it never re-runs.
-    it.fails('renaming a group on the Dashboard with a stale mirror keeps the category Build Model set', async () => {
+    it('renaming a group on the Dashboard with a stale mirror keeps the category Build Model set', async () => {
         writeDisk(start());
         await mountBoth();
         dropBuildModelBroadcasts();
@@ -292,40 +292,33 @@ describe('(4) Dashboard opened on the v1 file, Build Model migrates it underneat
         });
     }
 
-    it('even when a stale-mirror group edit DOES put the old model keys back, the next Build Model open re-migrates to the same periods and drops them (one write)', async () => {
+    it('a stale-mirror group edit (broadcast lost) no longer puts the old model keys back: it renames the group and leaves the migrated models untouched', async () => {
         writeDisk(V1());
         dropBuildModelBroadcasts();
         await mountBoth();
         await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
         await settle(20);
-        // The stale v1 models (old keys, no periods) are now on disk again...
-        const afterRename = h.files.get(WS_FILE)!;
-        expect(afterRename).toContain('"filterTimeStart"');
-        // ...but the workspace-level migration result was preserved by the spread.
-        expect(JSON.parse(afterRename).failureGroupState.runningConditionTimePeriods).toEqual(WS_PERIOD);
-
-        // A fresh Build Model window (next open).
-        cleanup();
-        h.drop = null;
-        const writesBefore = h.writes.length;
-        render(<div data-testid="build-model-window"><BuildModelWindow /></div>);
-        // No Dashboard mounted now: answer the data request directly.
-        const { emit } = await import('@tauri-apps/api/event');
-        await act(async () => {
-            await emit('build-model-data', {
-                workspaceId: 'ws1', sensorHeaders: ['TAG1', 'TAG2'], sensorMetadata,
-                metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 100 },
-            });
-        });
-        await waitFor(() => expect(screen.queryByText('Running Condition Filter')).toBeTruthy());
-        await settle(30);
-
-        expect(h.writes.slice(writesBefore).filter(p => p === WS_FILE)).toHaveLength(1);
+        // FIXED 2026-09-24: rename is computed against DISK, so the mirror's
+        // (v1, old-keys) models are never written over the migrated ones.
         const raw = h.files.get(WS_FILE)!;
         for (const k of LEGACY_KEYS) expect(raw).not.toContain(`"${k}"`);
         const fg = JSON.parse(raw).failureGroupState;
+        expect(fg.groups.find((g: any) => g.no === 1).name).toBe('FG-A renamed');
         expect(fg.runningConditionTimePeriods).toEqual(WS_PERIOD);
         expect(fg.models.find((m: any) => m.id === 'i2').filterTimePeriods).toEqual(I2_PERIOD);
-        expect(fg.groups.find((g: any) => g.no === 1).name).toBe('FG-A renamed');
+    });
+});
+
+describe('a brand-new workspace: the first model is created on the Dashboard', () => {
+    it('Dashboard seeds the legacy markers, so the Build Model window never shows the legacy banner', async () => {
+        writeDisk(wsState({ models: [] }));
+        await mountBoth();
+        await act(async () => { fireEvent.click(screen.getByText('dash-toggle-tag1-individual-fg2')); });
+        await settle(350);
+        const fg = readDisk().failureGroupState;
+        expect(fg.models).toHaveLength(1);
+        expect(fg.rcLegacyNotice).toBeNull();
+        expect(fg.categoryNormalisationNotice).toBeNull();
+        expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
     });
 });

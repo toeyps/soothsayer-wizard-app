@@ -383,10 +383,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         compute: (disk: { groups: FailureGroup[]; models: FailureModel[] }) => { groups: FailureGroup[]; models: FailureModel[] },
     ) => {
         if (!initialState) return;
-        updateWorkspaceData(initialState.id, prev => withFailureGroupState(prev, compute({
-            groups: prev.failureGroupState?.groups ?? [],
-            models: prev.failureGroupState?.models ?? [],
-        })))
+        updateWorkspaceData(initialState.id, prev => {
+            const before = prev.failureGroupState;
+            const result = compute({ groups: before?.groups ?? [], models: before?.models ?? [] });
+            // The FIRST model of a workspace is created here (Dashboard), i.e.
+            // by a workspace that was never pre-gate: mark it as handled so
+            // `flagLegacyGate` (Build Model window) doesn't flag it as a legacy
+            // workspace. A workspace that already had models is left untouched
+            // (an unset marker there means "genuinely pre-gate").
+            const seed = (before?.models ?? []).length === 0 && result.models.length > 0
+                ? {
+                    ...(before?.rcLegacyNotice === undefined ? { rcLegacyNotice: null } : {}),
+                    ...(before?.categoryNormalisationNotice === undefined ? { categoryNormalisationNotice: null } : {}),
+                }
+                : {};
+            return withFailureGroupState(prev, { ...result, ...seed });
+        })
             .then((next) => {
                 // The result may differ from what the click computed from the
                 // mirror (another window wrote first) — adopt what is durable.
@@ -418,15 +430,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             .catch(e => console.error('Failed to persist failure-group assignment from Dashboard:', e));
     }, [initialState]);
 
-    // For callers that already computed the exact arrays to write (rename,
-    // details, delete-group, …). The ones that DERIVE the new models from the
-    // current ones (`toggleSensorGroupKind`, `createGroupForSensor`,
-    // `deleteModel`) use `persistFailureGroupStateFrom` directly so the
-    // derivation runs against disk, not the mirror.
-    const persistFailureGroupState = useCallback(
-        (groups: FailureGroup[], models: FailureModel[]) => persistFailureGroupStateFrom(() => ({ groups, models })),
-        [persistFailureGroupStateFrom],
-    );
+    // NOTE (2026-09-24): the old `persistFailureGroupState(groups, models)`
+    // wrapper (wrote the mirror's arrays over disk) is gone — EVERY FG writer
+    // (toggle, create/rename/edit/delete group, delete model, tag rename) now
+    // derives its result from disk via `persistFailureGroupStateFrom`.
 
     // BuildModelWindow and PredictiveModelBuild persist failureGroupState
     // independently (their own updateWorkspaceData read-modify-write calls)
@@ -605,10 +612,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const renameGroup = useCallback((groupNo: number, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed, groupNo)) return;
-        const newGroups = fgGroups.map(g => g.no === groupNo ? { ...g, name: trimmed } : g);
-        setFgGroups(newGroups);
-        persistFailureGroupState(newGroups, fgModels);
-    }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
+        const apply = (groups: FailureGroup[]) => groups.map(g => g.no === groupNo ? { ...g, name: trimmed } : g);
+        setFgGroups(apply(fgGroups));
+        // Computed against DISK inside the write: only groups change, models stay as on disk.
+        persistFailureGroupStateFrom(disk => ({ groups: apply(disk.groups), models: disk.models }));
+    }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);
 
     // Name + Description + Recommendation together, for the Failure Groups
     // tab's own "Edit details" panel — 2026-08-31: moved here from Build
@@ -620,10 +628,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const updateGroupDetails = useCallback((groupNo: number, name: string, description: string, recommendation: string) => {
         const trimmed = name.trim();
         if (!trimmed) return;
-        const newGroups = fgGroups.map(g => g.no === groupNo ? { ...g, name: trimmed, description, recommendation } : g);
-        setFgGroups(newGroups);
-        persistFailureGroupState(newGroups, fgModels);
-    }, [fgGroups, fgModels, persistFailureGroupState]);
+        const apply = (groups: FailureGroup[]) => groups.map(g => g.no === groupNo ? { ...g, name: trimmed, description, recommendation } : g);
+        setFgGroups(apply(fgGroups));
+        persistFailureGroupStateFrom(disk => ({ groups: apply(disk.groups), models: disk.models }));
+    }, [fgGroups, persistFailureGroupStateFrom]);
 
     // Deleting a group only strips THAT group from every model's
     // `groupNos` (falling back to `[0]`, "Not in Group", if it was a
@@ -634,16 +642,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // callers (FailureGroupsPanel, BuildModelWindow) confirm first.
     const deleteGroup = useCallback((groupNo: number) => {
         if (groupNo === 0) return;
-        const newGroups = fgGroups.filter(g => g.no !== groupNo);
-        const newModels = fgModels.map(m => {
-            if (!m.groupNos.includes(groupNo)) return m;
-            const remaining = m.groupNos.filter(n => n !== groupNo);
-            return { ...m, groupNos: remaining.length > 0 ? remaining : [0] };
+        const apply = (groups: FailureGroup[], models: FailureModel[]) => ({
+            groups: groups.filter(g => g.no !== groupNo),
+            models: models.map(m => {
+                if (!m.groupNos.includes(groupNo)) return m;
+                const remaining = m.groupNos.filter(n => n !== groupNo);
+                return { ...m, groupNos: remaining.length > 0 ? remaining : [0] };
+            }),
         });
-        setFgGroups(newGroups);
-        setFgModels(newModels);
-        persistFailureGroupState(newGroups, newModels);
-    }, [fgGroups, fgModels, persistFailureGroupState]);
+        const optimistic = apply(fgGroups, fgModels);
+        setFgGroups(optimistic.groups);
+        setFgModels(optimistic.models);
+        persistFailureGroupStateFrom(disk => apply(disk.groups, disk.models));
+    }, [fgGroups, fgModels, persistFailureGroupStateFrom]);
 
     // ── Failure Groups tab (group-centric preview) ───────────────────────
     // Supports FailureGroupsPanel.tsx. Reuses fgGroups/fgModels/
@@ -657,11 +668,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const createEmptyGroup = useCallback((name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
-        const maxNo = Math.max(...fgGroups.map(g => g.no), 0);
-        const newGroups = [...fgGroups, { no: maxNo + 1, name: trimmed }];
-        setFgGroups(newGroups);
-        persistFailureGroupState(newGroups, fgModels);
-    }, [fgGroups, fgModels, isDuplicateGroupName, persistFailureGroupState]);
+        const add = (groups: FailureGroup[]) => [...groups, { no: Math.max(...groups.map(g => g.no), 0) + 1, name: trimmed }];
+        setFgGroups(add(fgGroups));
+        persistFailureGroupStateFrom(disk => ({ groups: add(disk.groups), models: disk.models }));
+    }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);
 
     // "Quick add" a model straight from the Failure Groups tab's card,
     // right after creating the group it belongs to, without opening Build
@@ -1388,7 +1398,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
                 const renamedModels = renameTagInModels(stateRef.current.fgModels, oldTag, newTag);
                 setFgModels(renamedModels);
-                persistFailureGroupState(stateRef.current.fgGroups, renamedModels);
+                persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: renameTagInModels(disk.models, oldTag, newTag) }));
 
                 setDataRevision(n => n + 1);
             });
@@ -1403,7 +1413,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             if (unlistenRename) unlistenRename();
             if (unlistenUpdate) unlistenUpdate();
         };
-        // `persistFailureGroupState` is a `useCallback` keyed only on
+        // `persistFailureGroupStateFrom` is a `useCallback` keyed only on
         // `initialState`, which never changes after this component mounts --
         // capturing it once here (rather than re-subscribing every Tauri
         // listener whenever its identity is recomputed) is the same

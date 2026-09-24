@@ -71,6 +71,9 @@ export function isRunningConditionConfigured(model: FailureModel, fg: RunningCon
     return isConfigured(eff.filters, eff.noneConfirmed, headers);
 }
 
+/** Single source for the missing-category reason (Overview footer, pill, Finish). */
+export const CATEGORY_BLOCK_REASON = 'Pick a category on the sensor header.';
+
 /**
  * The ONE gate for Build Model, Finish and re-train. Returns the first blocking
  * reason as user-facing text, else null. Order: category -> running condition
@@ -78,7 +81,7 @@ export function isRunningConditionConfigured(model: FailureModel, fg: RunningCon
  */
 export function getBuildBlockReason(model: FailureModel, fg: RunningConditionFg, headers?: string[] | null): string | null {
     const category = model.category ?? sensorCategory(fg?.models ?? [], modelSensorKey(model));
-    if (category == null) return 'Pick a category on the sensor header.';
+    if (category == null) return CATEGORY_BLOCK_REASON;
     if (!isRunningConditionConfigured(model, fg, headers)) {
         return 'Set a running condition first, or choose "No condition — use all rows".';
     }

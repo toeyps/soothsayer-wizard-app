@@ -12,7 +12,7 @@ import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } f
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { migratePeriods } from "../../utils/workspaceMigrations";
-import { getBuildBlockReason, isRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
+import { getBuildBlockReason, isCompleteCondition, isRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { newPeriodId, toFilterRanges, validatePeriods } from "../../utils/timePeriods";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import TimePeriodsEditor, { TimePeriodChips } from "./TimePeriodsEditor";
@@ -501,7 +501,7 @@ interface PredictiveModelBuildProps {
      *  design: re-clicking Finish on an already-complete model must not
      *  flip it back to Incomplete (that's what the overview's own status
      *  pill is for). */
-    onFinish: () => void;
+    onFinish: () => void | Promise<void>;
 }
 
 /**
@@ -692,7 +692,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
 
     const dashboardFilterPayload = useMemo(() => {
         const valueFilters = activeRunningConditionFilters
-            .filter(sf => sf.value1 !== '')
+            // Only conditions the gate counts as complete: Rust treats e.g. a
+            // `between` with no max as TRUE for every row, which under OR would
+            // silently disable every other condition.
+            .filter(sf => isCompleteCondition(sf, sensorHeaders.length ? sensorHeaders : null))
             .map(sf => ({
                 sensor: sf.sensor,
                 operation: sf.operation,
@@ -706,7 +709,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             value_filters: valueFilters,
             combine: activeRunningConditionCombine,
         };
-    }, [activeRunningConditionFilters, activeRunningConditionCombine, filterRanges]);
+    }, [activeRunningConditionFilters, activeRunningConditionCombine, filterRanges, sensorHeaders]);
 
     // The shared Build gate (Feature 4-B) evaluated against THIS page's live
     // state - Custom-mode edits here are debounce-persisted, so the parent's
@@ -872,6 +875,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     useEffect(() => {
         let cancelled = false;
         hydratedRef.current = false;
+        persistBaselineRef.current = false;
+        persistPendingRef.current = false;
         setLoading(true);
 
         (async () => {
@@ -980,41 +985,76 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // forces the user to click Apply again. Broadcasts
     // `failure-group-state-changed` afterward so Dashboard/BuildModelWindow
     // (separate OS windows) never see stale data.
+    // The latest config + a pending flag live in refs so `flushPersist` (called
+    // by Back / Finish BEFORE they unmount this page) can write immediately
+    // instead of losing an edit made < 250 ms earlier to the cleanup below.
+    const persistSliceRef = useRef<PredictiveModelStateSlice | null>(null);
+    const persistPendingRef = useRef(false);
+    const persistBaselineRef = useRef(false);
+    const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const writeSliceNow = async () => {
+        const slice = persistSliceRef.current;
+        if (!slice || !workspaceId || !pmModelId) return;
+        persistPendingRef.current = false;
+        try {
+            // `withFailureGroupState` carries every field this page does not own
+            // (the workspace running condition incl. its time range, and anything
+            // added later) — never list them by hand (2026-09-23).
+            const next = await updateWorkspaceData(workspaceId, (prev) => withFailureGroupState(prev, {
+                models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
+            }));
+            if (next?.failureGroupState) {
+                // origin differs from BuildModelWindow's own so that window (this
+                // page's parent) still applies it and refreshes the overview.
+                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'predictive-model' });
+            }
+        } catch (e) {
+            console.error('Failed to persist predictive-model state:', e);
+        }
+    };
+    /** Cancel the debounce and write any pending edit now (awaitable). */
+    const flushPersist = async () => {
+        if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
+        if (persistPendingRef.current) await writeSliceNow();
+    };
+    // Nothing pending -> leave synchronously; otherwise write first, then leave.
+    const handleBack = async () => {
+        if (persistPendingRef.current) await flushPersist();
+        onBack();
+    };
+    const handleFinish = async () => {
+        if (finishBlockReason !== null) return;
+        if (persistPendingRef.current) await flushPersist();
+        await onFinish();
+    };
+
     useEffect(() => {
         if (!workspaceId || !hydratedRef.current || !pmModelId) return;
-        const timer = setTimeout(() => {
-            const slice: PredictiveModelStateSlice = {
-                targetSensor,
-                predictorSensors,
-                individualChecked,
-                rcMode,
-                scatterXSensor,
-                relModelName,
-                relStiffness,
-                clusterModelName,
-                numClusters,
-                criteriaSensor,
-                clusterRanges,
-                filterTimePeriods,
-                runningConditionMode,
-                customRunningConditionFilters,
-                customRunningConditionCombine,
-                customRunningConditionNoneConfirmed,
-            };
-            (async () => {
-                // `withFailureGroupState` carries every field this page does not own
-                // (the workspace running condition incl. its time range, and anything
-                // added later) — never list them by hand (2026-09-23).
-                const next = await updateWorkspaceData(workspaceId, (prev) => withFailureGroupState(prev, {
-                    models: (prev.failureGroupState?.models ?? []).map(m => m.id === pmModelId ? { ...m, ...slice } : m),
-                }));
-                if (next?.failureGroupState) {
-                    // origin differs from BuildModelWindow's own so that window (this
-                    // page's parent) still applies it and refreshes the overview.
-                    await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'predictive-model' });
-                }
-            })().catch(e => console.error('Failed to persist predictive-model state:', e));
-        }, 250);
+        persistSliceRef.current = {
+            targetSensor,
+            predictorSensors,
+            individualChecked,
+            rcMode,
+            scatterXSensor,
+            relModelName,
+            relStiffness,
+            clusterModelName,
+            numClusters,
+            criteriaSensor,
+            clusterRanges,
+            filterTimePeriods,
+            runningConditionMode,
+            customRunningConditionFilters,
+            customRunningConditionCombine,
+            customRunningConditionNoneConfirmed,
+        };
+        // The first run after hydration only mirrors what was just loaded from
+        // disk: not a user edit, so leaving the page right then must not write
+        // (it would overwrite a fresher copy another window just saved).
+        persistPendingRef.current = persistBaselineRef.current;
+        persistBaselineRef.current = true;
+        const timer = setTimeout(() => { persistTimerRef.current = null; void writeSliceNow(); }, 250);
+        persistTimerRef.current = timer;
         return () => clearTimeout(timer);
     }, [
         workspaceId, pmModelId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
@@ -1891,7 +1931,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 own OS window, so that's BuildModelWindow's own titlebar's
                 job. "Closing" this page just means going back to it. */}
             <div className="pm-commandbar">
-                <button className="pm-btn pm-btn-secondary" onClick={onBack} title="Back to Build Model overview">
+                <button className="pm-btn pm-btn-secondary" onClick={() => { void handleBack(); }} title="Back to Build Model overview">
                     <ArrowLeft size={13} />
                     <span>Back</span>
                 </button>
@@ -1911,7 +1951,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 )}
                 <button
                     className="pm-btn pm-btn-primary"
-                    onClick={() => { if (finishBlockReason === null) onFinish(); }}
+                    onClick={() => { void handleFinish(); }}
                     disabled={finishBlockReason !== null}
                     title={finishBlockReason ?? 'Mark this model Complete and return to the overview'}
                 >
@@ -2088,7 +2128,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         </span>
                                         <button
                                             type="button"
-                                            onClick={onBack}
+                                            onClick={() => { void handleBack(); }}
                                             title="Edit the workspace-wide running-condition filter on the Overview page"
                                             style={{
                                                 display: 'flex',
@@ -2119,7 +2159,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                                 The workspace has no running condition, so this model cannot be finished yet.
                                             </div>
                                             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                                                <button type="button" className="text-btn" onClick={onBack}>Set on Overview →</button>
+                                                <button type="button" className="text-btn" onClick={() => { void handleBack(); }}>Set on Overview →</button>
                                                 <button type="button" className="text-btn" onClick={() => handleRunningConditionModeChange('custom')}>Use Custom instead</button>
                                             </div>
                                         </div>
@@ -2133,7 +2173,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                             padding: '0.3rem 0 0',
                                             fontStyle: 'italic',
                                         }}>
-                                            No condition — using all rows, including idle periods.
+                                            No condition — using all rows within the training periods, including idle periods.
                                         </div>
                                     ) : runningConditionFilters.length === 0 ? (
                                         <div style={{
@@ -2143,7 +2183,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                             padding: '0.3rem 0 0',
                                             fontStyle: 'italic',
                                         }}>
-                                            No running-condition filter set — training on the full dataset, including idle periods.
+                                            No running-condition filter set — training on all rows within the training periods, including idle periods.
                                         </div>
                                     ) : (
                                         <div style={{
@@ -2187,7 +2227,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     </label>
                                     {customRunningConditionNoneConfirmed && (
                                         <div data-testid="pm-custom-none-warning" style={{ fontSize: '0.62rem', color: 'var(--warn, #d9a441)', lineHeight: 1.4 }}>
-                                            This model will train on every row, including idle periods. Saved conditions are kept but not applied.
+                                            This model will train on all rows within its training periods, including idle periods. Saved conditions are kept but not applied.
                                         </div>
                                     )}
                                     {!customRunningConditionNoneConfirmed && (
