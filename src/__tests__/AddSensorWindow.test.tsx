@@ -411,7 +411,7 @@ describe('AddSensorWindow', () => {
                 notes: '', status: false, targetSensor: 'special A', predictorSensors: [], xSensor: '', ySensor: '',
                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
                 clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
-                filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                filterTimePeriods: [], pmSensorFilters: [],
             }],
         });
         expect((screen.getByLabelText('Delete special A') as HTMLButtonElement).disabled).toBe(true);

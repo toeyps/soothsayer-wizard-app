@@ -134,28 +134,20 @@ export interface PredictiveModelStateSlice {
     /** One entry per cluster, length === numClusters. Replaces the
      *  pre-multi-cluster `clusterRangeMin` / `clusterRangeMax` fields. */
     clusterRanges: PredictiveClusterRange[];
-    /** Only read when `runningConditionMode === 'custom'` (see below) — in
-     *  'workspace' mode the effective time range is
-     *  `FailureGroupStateSlice.runningConditionTimeStart`/`runningConditionTimeEnd`
-     *  instead. Reused rather than replaced by a new field when time range
-     *  joined the Workspace/Custom split (2026-09-23) — no schema migration
-     *  needed, since these already existed as "this model's own time range"
-     *  before the split existed (it just used to apply unconditionally). */
-    /** @deprecated replaced by `filterTimePeriods`, removed after UI-C. */
-    filterTimeStart: string;
-    /** @deprecated replaced by `filterTimePeriods`, removed after UI-C. */
-    filterTimeEnd: string;
-    /** This model's own training periods (Custom mode only). Optional until the
-     *  UI-C phase makes it required; `undefined` = not migrated yet. */
-    filterTimePeriods?: TimePeriod[];
+    /** This model's own training periods — only read when
+     *  `runningConditionMode === 'custom'` (in 'workspace' mode the effective
+     *  periods are `FailureGroupStateSlice.runningConditionTimePeriods`).
+     *  Empty = no time limit. Replaced the old single `filterTimeStart`/
+     *  `filterTimeEnd` pair (migrated by `migratePeriods`, Feature 4-C). */
+    filterTimePeriods: TimePeriod[];
     /** Custom mode: user explicitly chose "No condition — use all rows". */
     customRunningConditionNoneConfirmed?: boolean;
     /** 'workspace' (default): this model's training window AND running
      *  condition are whatever's set on BuildModelWindow's Overview page
-     *  (`FailureGroupStateSlice.runningConditionTimeStart`/`runningConditionTimeEnd`/
+     *  (`FailureGroupStateSlice.runningConditionTimePeriods`/
      *  `runningConditionFilters`/`runningConditionCombine`). 'custom': this
      *  model ignores the workspace default entirely and uses its own
-     *  `filterTimeStart`/`filterTimeEnd` + `customRunningConditionFilters`/
+     *  `filterTimePeriods` + `customRunningConditionFilters`/
      *  `customRunningConditionCombine` instead — set from this model's own
      *  Build page (2026-09-23 redesign, replacing an earlier "which models
      *  does the workspace filter apply to" idea with a per-model override
@@ -247,20 +239,9 @@ export interface FailureGroupStateSlice {
      *  older workspace without it reads as 'and' (`?? 'and'`) — see
      *  BuildModelWindow's "Running Condition Filter" panel (2026-09-23). */
     runningConditionCombine?: 'and' | 'or';
-    /** Workspace-default training time range — sibling to `runningConditionFilters`,
-     *  same optionality/`?? ''` convention. A model in `runningConditionMode:
-     *  'workspace'` uses THIS range (not its own `filterTimeStart`/`filterTimeEnd`,
-     *  which only apply in `'custom'` mode) — see `PredictiveModelStateSlice`'s
-     *  own doc comment for the full workspace/custom split (2026-09-23: merged
-     *  time range into the same Workspace/Custom mechanism as the value
-     *  conditions, per explicit user correction — time range used to be
-     *  unconditionally per-model with no workspace default at all). Empty
-     *  string (same as `filterTimeStart`'s own convention) = no bound. */
-    /** @deprecated replaced by `runningConditionTimePeriods`, removed after UI-C. */
-    runningConditionTimeStart?: string;
-    /** @deprecated replaced by `runningConditionTimePeriods`, removed after UI-C. */
-    runningConditionTimeEnd?: string;
-    /** Workspace-default training periods. `undefined` = not migrated yet. */
+    /** Workspace-default training periods (sibling to `runningConditionFilters`).
+     *  A model in `runningConditionMode: 'workspace'` uses THIS list; 'custom'
+     *  uses its own `filterTimePeriods`. Empty/undefined = no time limit. */
     runningConditionTimePeriods?: TimePeriod[];
     /** Workspace: user explicitly chose "No condition — use all rows". */
     runningConditionNoneConfirmed?: boolean;

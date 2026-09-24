@@ -5,7 +5,7 @@ export function mk(over: Partial<FailureModel> & { id: string }): FailureModel {
         groupNos: [1], name: over.id, kind: 'individual', category: null, notes: '', status: false,
         xSensor: '', ySensor: '', targetSensor: '', predictorSensors: [], individualChecked: false,
         rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 0, clusterModelName: '',
-        numClusters: 1, criteriaSensor: '', clusterRanges: [], filterTimeStart: '', filterTimeEnd: '',
+        numClusters: 1, criteriaSensor: '', clusterRanges: [], filterTimePeriods: [],
         runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
         ...over,
     };

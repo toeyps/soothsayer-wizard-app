@@ -7,27 +7,27 @@ describe('withFailureGroupState', () => {
             id: 'ws1', name: 'A',
             failureGroupState: {
                 groups: [{ no: 1, name: 'G' }], models: [{ id: 'm1' }],
-                runningConditionTimeStart: '2026-01-01T00:00', someFutureField: 'keep-me',
+                runningConditionTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }], someFutureField: 'keep-me',
             },
         };
         const next: any = withFailureGroupState(prev, { runningConditionCombine: 'or' });
         expect(next.failureGroupState.runningConditionCombine).toBe('or');
-        expect(next.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
+        expect(next.failureGroupState.runningConditionTimePeriods).toEqual([{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]);
         expect(next.failureGroupState.someFutureField).toBe('keep-me');
         expect(next.failureGroupState.groups).toEqual([{ no: 1, name: 'G' }]);
         expect(next.name).toBe('A');
     });
 
     it('creates a valid slice when the workspace has none yet', () => {
-                const next: any = withFailureGroupState({ id: 'ws1' } as any, { runningConditionTimeStart: 'x' });
-        expect(next.failureGroupState).toEqual({ groups: [], models: [], runningConditionTimeStart: 'x' });
+                const next: any = withFailureGroupState({ id: 'ws1' } as any, { runningConditionCombine: 'or' });
+        expect(next.failureGroupState).toEqual({ groups: [], models: [], runningConditionCombine: 'or' });
     });
 
     it('a patched field wins over the existing value', () => {
                 const next: any = withFailureGroupState(
-            { id: 'ws1', failureGroupState: { groups: [], models: [], runningConditionTimeStart: 'old' } } as any,
-            { runningConditionTimeStart: 'new' },
+            { id: 'ws1', failureGroupState: { groups: [], models: [], runningConditionCombine: 'and' } } as any,
+            { runningConditionCombine: 'or' },
         );
-        expect(next.failureGroupState.runningConditionTimeStart).toBe('new');
+        expect(next.failureGroupState.runningConditionCombine).toBe('or');
     });
 });

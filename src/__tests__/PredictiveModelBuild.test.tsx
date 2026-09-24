@@ -61,7 +61,7 @@ function makeStoredModel(overrides: Record<string, any> = {}) {
         targetSensor: 'TARGET1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '',
+        clusterRanges: [], filterTimePeriods: [],
         ...overrides,
     };
 }
@@ -75,8 +75,7 @@ function pmProps(overrides: Partial<PMProps> = {}): PMProps {
         sensorMetadata,
         runningConditionFilters: [],
         runningConditionCombine: 'and',
-        runningConditionTimeStart: '',
-        runningConditionTimeEnd: '',
+        runningConditionTimePeriods: [],
         onBack: vi.fn(),
         onFinish: vi.fn(),
         ...overrides,
@@ -724,145 +723,158 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
-    describe('Time start/end filter actually affects training data (regression — used to be a hardcoded no-op)', () => {
-        // 2026-09-23: Time start/end joined the same Workspace/Custom split as
-        // the value conditions (see the "running condition — Workspace/Custom
-        // override" describe block below) — the editable inputs these tests
-        // exercise now only render in Custom mode. `runningConditionMode:
-        // 'custom'` on the stored model is what makes that model's own
-        // filterTimeStart/filterTimeEnd authoritative in the first place.
-        it('a saved Time start/end carries into the target chart query when this model uses Custom mode', async () => {
+    describe('training periods actually affect training data (Feature 4-C; replaced the single Time start/end pair)', () => {
+        // Time periods follow the same Workspace/Custom split as the value
+        // conditions: the editable list only renders in Custom mode, and
+        // `runningConditionMode: 'custom'` on the stored model is what makes
+        // that model's own `filterTimePeriods` authoritative.
+        const P1 = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+        const P2 = { id: 'p2', start: '2026-03-01T00:00', end: '2026-03-31T23:59' };
+        const R1 = { start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+        const R2 = { start: '2026-03-01T00:00', end: '2026-03-31T23:59' };
+        const seedCustom = (periods: unknown[], extra: Record<string, unknown> = {}) =>
             mockLoadWorkspaceData.mockResolvedValue({
                 name: 'WS',
-                failureGroupState: {
-                    groups: [], models: [makeStoredModel({
-                        runningConditionMode: 'custom',
-                        filterTimeStart: '2026-01-01T00:00',
-                        filterTimeEnd: '2026-02-01T00:00',
-                    })],
-                },
+                failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: periods, ...extra })] },
             });
-            await renderHydrated();
+        const chartFilter = () => (last(mockUseChartData.mock.calls)[0] as any).filter;
 
-            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
-            expect(lastQuery.filter.timestamp_start).toBe('2026-01-01T00:00');
-            expect(lastQuery.filter.timestamp_end).toBe('2026-02-01T00:00');
+        it("a Custom model's periods go into the target chart query as timestamp_ranges (and never with the legacy pair)", async () => {
+            seedCustom([P1, P2]);
+            await renderHydrated();
+            const f = chartFilter();
+            expect(f.timestamp_ranges).toEqual([R1, R2]);
+            expect(f.timestamp_start).toBeNull();
+            expect(f.timestamp_end).toBeNull();
         });
 
-        it('typing into the Time start field persists it and updates the query filter', async () => {
-            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom' });
+        it('compute_sensor_stats gets the SAME ranges as the chart (no display/training mismatch)', async () => {
+            seedCustom([P1, P2]);
+            await renderHydrated();
+            const statsCall = mockInvoke.mock.calls.find(c => c[0] === 'compute_sensor_stats')!;
+            expect(statsCall[1].filter.timestamp_ranges).toEqual([R1, R2]);
+            expect(statsCall[1].filter).not.toHaveProperty('timestamp_start');
+            expect(statsCall[1].filter.timestamp_ranges).toEqual(chartFilter().timestamp_ranges);
+        });
+
+        it('the relationship fit invoke carries the same ranges too', async () => {
+            mockInvoke.mockImplementation((cmd: string) => {
+                if (cmd === 'compute_sensor_stats') {
+                    return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+                }
+                if (cmd === 'preview_relationship_model') {
+                    return Promise.resolve({
+                        request: 'req-1', error: undefined, predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                        r2_per_step: [0.9], rmse2_per_step: [0.4], target_raw: [1.1, 1.9, 3.05], predictor_raw: [[1], [2], [3]],
+                    });
+                }
+                return Promise.resolve({});
+            });
+            seedCustom([P1, P2], { kind: 'relationship', rcMode: 'relationship', predictorSensors: ['PRED1'], individualChecked: false });
+            await renderHydrated({ kind: 'relationship' });
+            await act(async () => {
+                clickApply('Relationship Model');
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            const call = mockInvoke.mock.calls.find(c => c[0] === 'preview_relationship_model')!;
+            expect(call[1].filter.timestamp_ranges).toEqual([R1, R2]);
+        });
+
+        it("in Workspace mode (the default) the model's own periods are ignored and the workspace list is used, shown read-only as chips", async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ filterTimePeriods: [P1] })] },
+            });
+            await renderHydrated({ runningConditionTimePeriods: [P2] });
+            expect(chartFilter().timestamp_ranges).toEqual([R2]);
+            expect(screen.getByTestId('period-chip').textContent).toBe('2026-03-01 – 2026-03-31'); // whole days -> date only
+            expect(screen.queryByTestId('time-periods-editor')).toBeNull();
+        });
+
+        it('Workspace mode with no periods reads "no limit" and sends no range gate', async () => {
+            await renderHydrated();
+            expect(screen.getByTestId('period-chips-empty')).toBeTruthy();
+            expect(chartFilter().timestamp_ranges).toEqual([]);
+        });
+
+        it("switching to Custom copies the workspace periods (fresh ids) once, and never overwrites a model's own list", async () => {
+            await renderHydrated({ runningConditionTimePeriods: [P1, P2] });
+            fireEvent.click(screen.getByText('Custom'));
+            expect((screen.getByLabelText('Period 1 start') as HTMLInputElement).value).toBe(P1.start);
+            expect((screen.getByLabelText('Period 2 end') as HTMLInputElement).value).toBe(P2.end);
+            expect(chartFilter().timestamp_ranges).toEqual([R1, R2]);
+            cleanup();
+
+            seedCustom([P2], { runningConditionMode: 'workspace' });
+            await renderHydrated({ runningConditionTimePeriods: [P1] });
+            fireEvent.click(screen.getByText('Custom'));
+            expect(screen.queryByLabelText('Period 2 start')).toBeNull();
+            expect((screen.getByLabelText('Period 1 start') as HTMLInputElement).value).toBe(P2.start);
+        });
+
+        it('editing a Custom period commits on blur: persists filterTimePeriods and updates the query', async () => {
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: [P1] });
             mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
             vi.useFakeTimers();
             await renderHydrated();
 
-            // datetime-local inputs aren't `role=textbox`; locate by preceding label text instead.
-            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-            fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
+            const end = screen.getByLabelText('Period 1 end');
+            fireEvent.change(end, { target: { value: '2026-02-15T12:00' } });
+            // Not committed while typing.
+            expect(chartFilter().timestamp_ranges).toEqual([R1]);
+            fireEvent.blur(end);
 
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').filterTimeStart).toBe('2026-03-01T00:00');
-
-            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
-            expect(lastQuery.filter.timestamp_start).toBe('2026-03-01T00:00');
+            const saved = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+            expect(saved.filterTimePeriods).toEqual([{ ...P1, end: '2026-02-15T12:00' }]);
+            expect(saved).not.toHaveProperty('filterTimeStart');
+            expect(chartFilter().timestamp_ranges).toEqual([{ start: P1.start, end: '2026-02-15T12:00' }]);
             vi.useRealTimers();
         });
 
-        it('clicking the Calendar icon next to Time start/end opens the native picker (regression: the browser-drawn picker-indicator icon was hard to see on this page -- the Calendar icon is a reliable, always-visible way to open it instead)', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom' })] },
+        it('a period whose end is before its start blocks the chart, stats and Finish (never sent as [] = whole dataset)', async () => {
+            seedCustom([{ id: 'bad', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }], {
+                customRunningConditionNoneConfirmed: true,
             });
+            const { onFinish } = await renderHydrated();
+            expect(last(mockUseChartData.mock.calls)[0]).toBeNull();
+            expect(mockInvoke.mock.calls.some(c => c[0] === 'compute_sensor_stats')).toBe(false);
+            expect(screen.getByTestId('pm-periods-blocked')).toBeTruthy();
+            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/ends before it starts/);
+            const finish = screen.getByText('Finish').closest('button') as HTMLButtonElement;
+            expect(finish.disabled).toBe(true);
+            expect(finish.title).toMatch(/ends before it starts/);
+            fireEvent.click(finish);
+            expect(onFinish).not.toHaveBeenCalled();
+        });
+
+        it('overlapping periods only warn: "Merge into one" collapses them and the query still runs', async () => {
+            seedCustom([P1, { id: 'p2', start: '2026-01-20T00:00', end: '2026-02-20T00:00' }]);
             await renderHydrated();
-
-            const startRow = screen.getByText('Time start').closest('.filter-row')!;
-            const startInput = startRow.querySelector('input') as HTMLInputElement;
-            const startIcon = startRow.querySelector('svg') as SVGElement;
-            const showPickerStart = vi.fn();
-            (startInput as any).showPicker = showPickerStart;
-            fireEvent.click(startIcon);
-            expect(showPickerStart).toHaveBeenCalledTimes(1);
-
-            const endRow = screen.getByText('Time end').closest('.filter-row')!;
-            const endInput = endRow.querySelector('input') as HTMLInputElement;
-            const endIcon = endRow.querySelector('svg') as SVGElement;
-            const showPickerEnd = vi.fn();
-            (endInput as any).showPicker = showPickerEnd;
-            fireEvent.click(endIcon);
-            expect(showPickerEnd).toHaveBeenCalledTimes(1);
+            expect(screen.getByTestId('period-overlap-2')).toBeTruthy();
+            expect(chartFilter().timestamp_ranges).toHaveLength(2); // not blocked
+            fireEvent.click(screen.getByTestId('period-merge-2'));
+            expect(screen.queryByTestId('period-row-2')).toBeNull();
+            expect(chartFilter().timestamp_ranges).toEqual([{ start: P1.start, end: '2026-02-20T00:00' }]);
         });
 
-        it('clicking the Calendar icon does not throw when showPicker() is unsupported (older WebView2/browser)', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom' })] },
-            });
+        it('a blank-both period means "every row" and is sent as no range gate ([]), not as a blank range', async () => {
+            seedCustom([{ id: 'open', start: '', end: '' }]);
             await renderHydrated();
-            const startIcon = screen.getByText('Time start').closest('.filter-row')!.querySelector('svg') as SVGElement;
-            // jsdom (and some real engines) simply don't implement showPicker --
-            // the `?.()` call must no-op rather than throw.
-            expect(() => fireEvent.click(startIcon)).not.toThrow();
+            expect(chartFilter().timestamp_ranges).toEqual([]);
         });
 
-        it('the Calendar icon is explicit white and sits after the input (flush to the box\'s own right edge via marginLeft: auto) -- regression: it used to render before the input on the left, and the native picker-indicator it was meant to replace was reported unreadably dim even after trying to recolor it, so this icon needs to be unambiguously visible on its own', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom' })] },
-            });
+        it('an un-migrated model with the old single Time start/end reads as one period', async () => {
+            const legacy: Record<string, unknown> = makeStoredModel({ runningConditionMode: 'custom', filterTimeStart: '2026-01-01T00:00', filterTimeEnd: '2026-02-01T00:00' });
+            delete legacy.filterTimePeriods;
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [legacy] } });
             await renderHydrated();
-            const startRow = screen.getByText('Time start').closest('.filter-row')!;
-            const children = Array.from(startRow.querySelector('.date-input-wrapper')!.children);
-            expect(children[0].tagName).toBe('INPUT');
-            const icon = children[1] as HTMLElement;
-            expect(icon.tagName.toLowerCase()).toBe('svg');
-            expect(icon.style.color).toBe('rgb(255, 255, 255)'); // jsdom normalizes '#fff'
-            expect(icon.style.marginLeft).toBe('auto');
-        });
-
-        it('in Workspace mode (the default), the model\'s own filterTimeStart/filterTimeEnd are ignored — the workspace default time range is used instead', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: {
-                    groups: [], models: [makeStoredModel({
-                        // Left over from before this model ever touched Custom
-                        // mode, or from before this feature existed at all --
-                        // must NOT leak into the query while mode is 'workspace'.
-                        filterTimeStart: '2020-01-01T00:00',
-                        filterTimeEnd: '2020-02-01T00:00',
-                    })],
-                },
-            });
-            await renderHydrated({
-                runningConditionTimeStart: '2026-05-01T00:00',
-                runningConditionTimeEnd: '2026-06-01T00:00',
-            });
-
-            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
-            expect(lastQuery.filter.timestamp_start).toBe('2026-05-01T00:00');
-            expect(lastQuery.filter.timestamp_end).toBe('2026-06-01T00:00');
-            // The old always-visible Time start/end fields are gone from
-            // Workspace mode -- there's nothing here to type into any more.
-            expect(screen.queryByText('Time start')).toBeNull();
-        });
-
-        it('switching to Custom seeds this model\'s time fields from the workspace default the first time, matching the value-condition seed behavior', async () => {
-            mockLoadWorkspaceData.mockResolvedValue({
-                name: 'WS',
-                failureGroupState: { groups: [], models: [makeStoredModel()] },
-            });
-            await renderHydrated({
-                runningConditionTimeStart: '2026-05-01T00:00',
-                runningConditionTimeEnd: '2026-06-01T00:00',
-            });
-
-            fireEvent.click(screen.getByText('Custom'));
-
-            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-            const endInput = screen.getByText('Time end').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-            expect(startInput.value).toBe('2026-05-01T00:00');
-            expect(endInput.value).toBe('2026-06-01T00:00');
+            expect(chartFilter().timestamp_ranges).toEqual([{ start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]);
         });
     });
 
@@ -896,8 +908,8 @@ describe('PredictiveModelBuild', () => {
             expect(onFinish).not.toHaveBeenCalled();
         });
 
-        it('a time range alone does not unlock Finish', async () => {
-            await renderHydrated({ runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00' });
+        it('a time period alone does not unlock Finish', async () => {
+            await renderHydrated({ runningConditionTimePeriods: [{ id: 'w1', start: '2026-05-01T00:00', end: '2026-06-01T00:00' }] });
             expect(finishBtn().disabled).toBe(true);
         });
 
@@ -1006,7 +1018,7 @@ describe('PredictiveModelBuild', () => {
 
     describe('persistence', () => {
         it('debounces a write into this model\'s own FailureModel record (not a global slot) after a field change', async () => {
-            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom' });
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }] });
             mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
@@ -1017,17 +1029,18 @@ describe('PredictiveModelBuild', () => {
 
             // Plot mode is locked now (not user-toggleable), and the old
             // per-model sensor-value filter is gone (2026-09-15 -- see the
-            // "running condition" describe block above), so type into Time
-            // start instead to produce a real config change to debounce.
-            // Custom mode (set on the stored model above) so the Time
-            // start/end inputs actually render (2026-09-23).
-            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-            fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
+            // "running condition" describe block above), so edit a training
+            // period instead to produce a real config change to debounce.
+            // Custom mode (set on the stored model above) so the period
+            // editor actually renders (2026-09-23; periods since Feature 4-C).
+            const startInput = screen.getByLabelText('Period 1 start');
+            fireEvent.change(startInput, { target: { value: '2026-01-05T00:00' } });
+            fireEvent.blur(startInput);
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').filterTimeStart).toBe('2026-03-01T00:00');
+            expect(state.failureGroupState.models.find((m: any) => m.id === 'm1').filterTimePeriods[0].start).toBe('2026-01-05T00:00');
             // Broadcast so Dashboard/BuildModelWindow (separate OS windows) refresh too.
             await act(async () => { await Promise.resolve(); });
             expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', { ...state.failureGroupState, workspaceId: 'ws1', origin: 'predictive-model' });
@@ -1036,7 +1049,7 @@ describe('PredictiveModelBuild', () => {
 
         it('does not touch another model in the same group when this one changes', async () => {
             const sibling = makeStoredModel({ id: 'm2', targetSensor: 'PRED1', relModelName: 'Untouched' });
-            const thisModel = makeStoredModel({ runningConditionMode: 'custom' });
+            const thisModel = makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }] });
             mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [thisModel, sibling] } });
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [thisModel, sibling] } }));
@@ -1046,8 +1059,9 @@ describe('PredictiveModelBuild', () => {
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [thisModel, sibling] } }));
 
-            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-            fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
+            const startInput = screen.getByLabelText('Period 1 start');
+            fireEvent.change(startInput, { target: { value: '2026-01-05T00:00' } });
+            fireEvent.blur(startInput);
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
@@ -1057,15 +1071,15 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
-    it('a per-model config autosave keeps the workspace-level failureGroupState fields it does not own, e.g. the workspace time range (regression 2026-09-23: it rebuilt the slice from an explicit field list and dropped them)', async () => {
-        const thisModel = makeStoredModel({ runningConditionMode: 'custom' });
+    it('a per-model config autosave keeps the workspace-level failureGroupState fields it does not own, e.g. the workspace time periods (regression 2026-09-23: it rebuilt the slice from an explicit field list and dropped them)', async () => {
+        const thisModel = makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }] });
+        const wsPeriods = [{ id: 'w1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }];
         mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [thisModel] } });
         mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
             id,
             failureGroupState: {
                 groups: [], models: [thisModel],
-                runningConditionTimeStart: '2026-01-01T00:00',
-                runningConditionTimeEnd: '2026-02-01T00:00',
+                runningConditionTimePeriods: wsPeriods,
                 someFutureField: 'keep-me',
             },
         }));
@@ -1076,19 +1090,18 @@ describe('PredictiveModelBuild', () => {
             id,
             failureGroupState: {
                 groups: [], models: [thisModel],
-                runningConditionTimeStart: '2026-01-01T00:00',
-                runningConditionTimeEnd: '2026-02-01T00:00',
+                runningConditionTimePeriods: wsPeriods,
                 someFutureField: 'keep-me',
             },
         }));
 
-        const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-        fireEvent.change(startInput, { target: { value: '2026-03-01T00:00' } });
+        const startInput = screen.getByLabelText('Period 1 start');
+        fireEvent.change(startInput, { target: { value: '2026-01-05T00:00' } });
+        fireEvent.blur(startInput);
         await act(async () => { await vi.advanceTimersByTimeAsync(250); });
 
         const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-        expect(state.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
-        expect(state.failureGroupState.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+        expect(state.failureGroupState.runningConditionTimePeriods).toEqual(wsPeriods);
         expect(state.failureGroupState.someFutureField).toBe('keep-me');
         vi.useRealTimers();
     });

@@ -1,7 +1,7 @@
 import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
-import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter } from './types';
+import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
 
 const STORE_FILE = 'settings.json';
@@ -189,8 +189,7 @@ const DEFAULT_PM_SLICE = {
         { min: 33, max: 66 },
         { min: 66, max: 100 },
     ],
-    filterTimeStart: '',
-    filterTimeEnd: '',
+    filterTimePeriods: [] as TimePeriod[],
     runningConditionMode: 'workspace' as 'workspace' | 'custom',
     customRunningConditionFilters: [] as WorkspaceSensorFilter[],
     customRunningConditionCombine: 'and' as 'and' | 'or',
@@ -296,8 +295,13 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
                         numClusters: pm!.numClusters,
                         criteriaSensor: pm!.criteriaSensor,
                         clusterRanges: pm!.clusterRanges,
-                        filterTimeStart: pm!.filterTimeStart,
-                        filterTimeEnd: pm!.filterTimeEnd,
+                        // The legacy global PM slice's single time range becomes one period.
+                        filterTimePeriods: (() => {
+                            const old = pm as unknown as { filterTimeStart?: string; filterTimeEnd?: string };
+                            return old.filterTimeStart || old.filterTimeEnd
+                                ? [{ id: 'legacy-1', start: old.filterTimeStart ?? '', end: old.filterTimeEnd ?? '' }]
+                                : [];
+                        })(),
                         // The legacy global PM slice predates this feature
                         // entirely — nothing to inherit, same as every other
                         // migrated model.

@@ -44,14 +44,12 @@ describe('effectiveRunningCondition', () => {
         expect(e.noneConfirmed).toBe(true);
         expect(e.periods).toHaveLength(1);
     });
-    it('falls back to legacy start/end while periods are not migrated (workspace and custom)', () => {
-        expect(effectiveRunningCondition(mk({ id: 'a' }), fg({ runningConditionTimeStart: '2025-01-01T00:00' })).periods)
-            .toEqual([{ id: 'legacy-1', start: '2025-01-01T00:00', end: '' }]);
-        expect(effectiveRunningCondition(mk({ id: 'a', runningConditionMode: 'custom', filterTimeEnd: '2025-02-01T00:00' }), fg()).periods)
-            .toEqual([{ id: 'legacy-1', start: '', end: '2025-02-01T00:00' }]);
-    });
-    it('defined periods (even []) beat the legacy keys', () => {
-        expect(effectiveRunningCondition(mk({ id: 'a' }), fg({ runningConditionTimeStart: 'x', runningConditionTimePeriods: [] })).periods).toEqual([]);
+    it('reads the workspace periods in workspace mode and the model own periods in custom mode; a missing list means no limit', () => {
+        const ws = [{ id: 'w', start: '2025-01-01T00:00', end: '2025-01-31T23:59' }];
+        const own = [{ id: 'c', start: '2025-03-01T00:00', end: '2025-03-31T23:59' }];
+        expect(effectiveRunningCondition(mk({ id: 'a', filterTimePeriods: own }), fg({ runningConditionTimePeriods: ws })).periods).toEqual(ws);
+        expect(effectiveRunningCondition(mk({ id: 'a', runningConditionMode: 'custom', filterTimePeriods: own }), fg({ runningConditionTimePeriods: ws })).periods).toEqual(own);
+        expect(effectiveRunningCondition(mk({ id: 'a' }), fg()).periods).toEqual([]);
     });
 });
 

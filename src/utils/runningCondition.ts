@@ -15,16 +15,11 @@ export interface EffectiveRunningCondition {
     periods: TimePeriod[];
 }
 
-/** Old single range -> one period (`[]` if both empty). Deterministic id. */
-function legacyPeriods(start?: string, end?: string): TimePeriod[] {
-    return start || end ? [{ id: 'legacy-1', start: start ?? '', end: end ?? '' }] : [];
-}
-
 /**
  * The running condition (value conditions + periods) a model actually trains
  * with: the workspace default in 'workspace' mode, the model's own in
- * 'custom'. Periods fall back to the legacy start/end pair until the periods
- * migration has run.
+ * 'custom'. Periods are always lists (`migratePeriods` turns old start/end
+ * pairs into them at load; a missing list reads as "no time limit").
  */
 export function effectiveRunningCondition(model: FailureModel, fg: RunningConditionFg): EffectiveRunningCondition {
     if (model.runningConditionMode === 'custom') {
@@ -33,7 +28,7 @@ export function effectiveRunningCondition(model: FailureModel, fg: RunningCondit
             filters: model.customRunningConditionFilters ?? [],
             combine: model.customRunningConditionCombine ?? 'and',
             noneConfirmed: model.customRunningConditionNoneConfirmed ?? false,
-            periods: model.filterTimePeriods ?? legacyPeriods(model.filterTimeStart, model.filterTimeEnd),
+            periods: model.filterTimePeriods ?? [],
         };
     }
     return {
@@ -41,7 +36,7 @@ export function effectiveRunningCondition(model: FailureModel, fg: RunningCondit
         filters: fg?.runningConditionFilters ?? [],
         combine: fg?.runningConditionCombine ?? 'and',
         noneConfirmed: fg?.runningConditionNoneConfirmed ?? false,
-        periods: fg?.runningConditionTimePeriods ?? legacyPeriods(fg?.runningConditionTimeStart, fg?.runningConditionTimeEnd),
+        periods: fg?.runningConditionTimePeriods ?? [],
     };
 }
 

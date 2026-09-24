@@ -312,15 +312,13 @@ describe('loadWorkspaceData', () => {
                     groups: [], models: [{ id: 'm1', groupNo: 1, kind: 'individual' }],
                     runningConditionFilters: [{ id: 'f1', sensor: 'S', operation: 'greater_than', value1: '1', value2: '' }],
                     runningConditionCombine: 'or',
-                    runningConditionTimeStart: '2026-01-01T00:00',
-                    runningConditionTimeEnd: '2026-02-01T00:00',
+                    runningConditionTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }],
                     someFutureField: { keep: 'me' },
                 },
             }));
             const { loadWorkspaceData } = await freshModule();
             const fg = (await loadWorkspaceData('ws1'))?.failureGroupState as unknown as Record<string, unknown>;
-            expect(fg.runningConditionTimeStart).toBe('2026-01-01T00:00');
-            expect(fg.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+            expect(fg.runningConditionTimePeriods).toEqual([{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]);
             expect(fg.runningConditionCombine).toBe('or');
             expect(fg.someFutureField).toEqual({ keep: 'me' });
         });
@@ -408,7 +406,7 @@ describe('loadWorkspaceData', () => {
                     targetSensor: 'TAG1', predictorSensors: ['TAG9'], individualChecked: false,
                     rcMode: 'relationship', scatterXSensor: 'TAG9', relModelName: 'My Model',
                     relStiffness: 500, clusterModelName: '', numClusters: 5, criteriaSensor: '',
-                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+                    clusterRanges: [], filterTimePeriods: [], pmSensorFilters: [],
                 },
                 failureGroupState: {
                     groups: [{ no: 1, name: 'Group A' }],

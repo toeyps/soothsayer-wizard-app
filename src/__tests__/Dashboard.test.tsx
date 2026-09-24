@@ -356,8 +356,7 @@ describe('Dashboard', () => {
             failureGroupState: {
                 groups: [{ no: 1, name: 'Group A' }], models: [],
                 runningConditionFilters: [], runningConditionCombine: 'and',
-                runningConditionTimeStart: '2026-01-01T00:00',
-                runningConditionTimeEnd: '2026-02-01T00:00',
+                runningConditionTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }],
                 someFutureField: 'keep-me',
             },
         });
@@ -365,8 +364,7 @@ describe('Dashboard', () => {
         await act(async () => { vi.advanceTimersByTime(300); });
 
         const saved = last(mockSaveWorkspaceData.mock.calls)[0];
-        expect(saved.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
-        expect(saved.failureGroupState.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+        expect(saved.failureGroupState.runningConditionTimePeriods).toEqual([{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]);
         expect(saved.failureGroupState.someFutureField).toBe('keep-me');
     });
 
@@ -905,8 +903,7 @@ describe('Dashboard', () => {
                 id,
                 failureGroupState: {
                     groups: [{ no: 1, name: 'Group A' }], models: [],
-                    runningConditionTimeStart: '2026-01-01T00:00',
-                    runningConditionTimeEnd: '2026-02-01T00:00',
+                    runningConditionTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }],
                     someFutureField: 'keep-me',
                 },
             }));
@@ -915,8 +912,7 @@ describe('Dashboard', () => {
             });
             fireEvent.click(screen.getByText('toggle-group'));
             const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
-            expect(state.failureGroupState.runningConditionTimeStart).toBe('2026-01-01T00:00');
-            expect(state.failureGroupState.runningConditionTimeEnd).toBe('2026-02-01T00:00');
+            expect(state.failureGroupState.runningConditionTimePeriods).toEqual([{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]);
             expect(state.failureGroupState.someFutureField).toBe('keep-me');
         });
 
@@ -992,7 +988,7 @@ describe('Dashboard', () => {
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                 relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
                     });
@@ -1013,7 +1009,7 @@ describe('Dashboard', () => {
                     targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                     individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                     relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                    clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                     ...o,
                 });
                 const stateWith = (models: any[]) => makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models } });
@@ -1077,7 +1073,7 @@ describe('Dashboard', () => {
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                 relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
                     });
@@ -1105,7 +1101,7 @@ describe('Dashboard', () => {
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                 relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
                     });
@@ -1129,7 +1125,7 @@ describe('Dashboard', () => {
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                 relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
                     });
@@ -1156,7 +1152,7 @@ describe('Dashboard', () => {
                                 targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                 relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                             }],
                         },
                     }),
@@ -1179,14 +1175,14 @@ describe('Dashboard', () => {
                                     targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                                     individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                     relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                    clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                                 },
                                 {
                                     id: 'm2', groupNos: [1], name: 'OnlyInA', kind: 'individual', category: null, notes: '', status: false,
                                     targetSensor: 'TAG2', predictorSensors: [], xSensor: '', ySensor: '',
                                     individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                                     relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                                    clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                                 },
                             ],
                         },
@@ -1242,7 +1238,7 @@ describe('Dashboard', () => {
                             targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
                             individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                             relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                            clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                            clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                         }],
                     },
                 }),
@@ -1447,7 +1443,7 @@ describe('Dashboard', () => {
                 targetSensor: 'CALC1', predictorSensors: [], xSensor: '', ySensor: '',
                 individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
                 relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-                clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace' as const, customRunningConditionFilters: [], customRunningConditionCombine: 'and' as const,
+                clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace' as const, customRunningConditionFilters: [], customRunningConditionCombine: 'and' as const,
             };
             renderDashboard({
                 initialState: makeInitialState({
@@ -1581,7 +1577,7 @@ describe('Dashboard', () => {
                             notes: '', status: false, targetSensor: 'CALC1', predictorSensors: [], xSensor: '', ySensor: '',
                             individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
                             clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
-                            filterTimeStart: '', filterTimeEnd: '',
+                            filterTimePeriods: [],
                             runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
                         }],
                     },

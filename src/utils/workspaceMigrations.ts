@@ -12,6 +12,10 @@ import { isWorkspaceRunningConditionConfigured } from './runningCondition';
  * nothing to do returns the SAME state object.
  */
 
+/** Pre-periods shape: the type no longer declares these keys, but old files carry them. */
+type LegacyModelTime = { filterTimeStart?: string; filterTimeEnd?: string };
+type LegacyFgTime = { runningConditionTimeStart?: string; runningConditionTimeEnd?: string };
+
 function legacyPeriods(start: string | undefined, end: string | undefined): TimePeriod[] {
     return start || end ? [{ id: 'legacy-1', start: start ?? '', end: end ?? '' }] : [];
 }
@@ -29,11 +33,12 @@ export function migratePeriods(state: WorkspaceState, opts: { dropLegacyKeys?: b
 
     const models = fg.models.map((m) => {
         const patch: Partial<FailureModel> = {};
-        if (m.filterTimePeriods === undefined) patch.filterTimePeriods = legacyPeriods(m.filterTimeStart, m.filterTimeEnd);
+        const old = m as FailureModel & LegacyModelTime;
+        if (m.filterTimePeriods === undefined) patch.filterTimePeriods = legacyPeriods(old.filterTimeStart, old.filterTimeEnd);
         if (m.customRunningConditionNoneConfirmed === undefined) patch.customRunningConditionNoneConfirmed = false;
         let next: FailureModel = Object.keys(patch).length ? { ...m, ...patch } : m;
         if (drop && ('filterTimeStart' in next || 'filterTimeEnd' in next)) {
-            const { filterTimeStart: _s, filterTimeEnd: _e, ...rest } = next;
+            const { filterTimeStart: _s, filterTimeEnd: _e, ...rest } = next as FailureModel & LegacyModelTime;
             next = rest as FailureModel;
         }
         if (next !== m) changed = true;
@@ -42,7 +47,8 @@ export function migratePeriods(state: WorkspaceState, opts: { dropLegacyKeys?: b
 
     const patch: Partial<FailureGroupStateSlice> = {};
     if (fg.runningConditionTimePeriods === undefined) {
-        patch.runningConditionTimePeriods = legacyPeriods(fg.runningConditionTimeStart, fg.runningConditionTimeEnd);
+        const oldFg = fg as FailureGroupStateSlice & LegacyFgTime;
+        patch.runningConditionTimePeriods = legacyPeriods(oldFg.runningConditionTimeStart, oldFg.runningConditionTimeEnd);
     }
     if (changed) patch.models = models;
 
@@ -50,7 +56,7 @@ export function migratePeriods(state: WorkspaceState, opts: { dropLegacyKeys?: b
     if (Object.keys(patch).length) out = withFailureGroupState(state, patch);
 
     if (drop && ('runningConditionTimeStart' in fg || 'runningConditionTimeEnd' in fg)) {
-        const { runningConditionTimeStart: _s, runningConditionTimeEnd: _e, ...rest } = out.failureGroupState as FailureGroupStateSlice;
+        const { runningConditionTimeStart: _s, runningConditionTimeEnd: _e, ...rest } = out.failureGroupState as FailureGroupStateSlice & LegacyFgTime;
         out = { ...out, failureGroupState: rest };
     }
     return out;

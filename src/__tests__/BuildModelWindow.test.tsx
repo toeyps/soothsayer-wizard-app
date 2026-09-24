@@ -94,7 +94,7 @@ function makeModel(overrides: Record<string, any> = {}) {
         targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
         individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
         relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
-        clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', pmSensorFilters: [],
+        clusterRanges: [], filterTimePeriods: [], customRunningConditionNoneConfirmed: false, pmSensorFilters: [],
         ...overrides,
     };
 }
@@ -124,6 +124,9 @@ async function deliverData(overrides: Record<string, any> = {}) {
         ws.failureGroupState = {
             ...(!('runningConditionNoneConfirmed' in fg) ? { runningConditionNoneConfirmed: true } : {}),
             ...(!('rcLegacyNotice' in fg) ? { rcLegacyNotice: null } : {}),
+            // Feature 4-C: already-migrated periods, so the periods migration's
+            // write-back doesn't fire in tests about something else.
+            ...(!('runningConditionTimePeriods' in fg) ? { runningConditionTimePeriods: [] } : {}),
             ...fg,
         };
     }
@@ -144,7 +147,7 @@ beforeEach(() => {
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
-        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null } };
+        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] } };
         return patch(prev);
     });
     mockLoadWorkspaceData.mockReset();
@@ -327,7 +330,7 @@ describe('BuildModelWindow', () => {
 
             mockLoadWorkspaceData.mockResolvedValue({
                 id: 'ws2',
-                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null },
+                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] },
             });
             await fire('build-model-data', {
                 workspaceId: 'ws2',
@@ -356,7 +359,7 @@ describe('BuildModelWindow', () => {
             mockLoadWorkspaceData.mockReturnValueOnce(new Promise(res => { resolveFirst = res; }));
             mockLoadWorkspaceData.mockResolvedValueOnce({
                 id: 'ws1',
-                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null },
+                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] },
             });
             const payload = {
                 workspaceId: 'ws1', sensorHeaders: ['TAG1'], sensorMetadata: [],
@@ -367,7 +370,7 @@ describe('BuildModelWindow', () => {
             expect(screen.getByText('TAG2')).toBeTruthy();
 
             await act(async () => {
-                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null } });
+                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] } });
                 await Promise.resolve();
                 await Promise.resolve();
             });
@@ -981,9 +984,9 @@ describe('BuildModelWindow', () => {
             expect(written.runningConditionFilters).toHaveLength(1);
         });
 
-        it('a time range alone does NOT configure the workspace', async () => {
+        it('a time period alone does NOT configure the workspace', async () => {
             render(<BuildModelWindow />);
-            await deliverUnconfigured({ runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00' });
+            await deliverUnconfigured({ runningConditionTimePeriods: [{ id: 'p1', start: '2026-05-01T00:00', end: '2026-06-01T00:00' }] });
             expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         });
 
@@ -1062,49 +1065,137 @@ describe('BuildModelWindow', () => {
             expect(state.failureGroupState.runningConditionCombine).toBe('or');
         });
 
-        it('typing into the workspace Time start/end fields persists runningConditionTimeStart/-End (debounced) — 2026-09-23: time range merged into this same panel', async () => {
-            vi.useFakeTimers();
+        // ---- Feature 4-C: training periods (replaced the single Time start/end pair) ----
+        const PA = { id: 'pa', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+        const PB = { id: 'pb', start: '2026-03-01T00:00', end: '2026-03-31T23:59' };
+        const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        const lastWritten = async () =>
+            (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+
+        it('an empty workspace period list reads as "no time limit" and shows the Add period button', async () => {
             render(<BuildModelWindow />);
             await deliverUnconfigured();
-
-            const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
-            fireEvent.change(startInput, { target: { value: '2026-05-01T00:00' } });
-            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-
-            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.runningConditionTimeStart).toBe('2026-05-01T00:00');
-            vi.useRealTimers();
+            expect(screen.getByTestId('periods-empty')).toBeTruthy();
+            expect(screen.getByTestId('period-add')).toBeTruthy();
+            expect(screen.queryByText('Time start')).toBeNull(); // the old single pair is gone
         });
 
-        it('passes the current workspace time range down to the PM page', async () => {
+        it('Add period persists runningConditionTimePeriods (first one is fully open when the dataset bounds are unknown)', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured();
+            fireEvent.click(screen.getByTestId('period-add'));
+            await flush();
+            const written = await lastWritten();
+            expect(written.runningConditionTimePeriods).toHaveLength(1);
+            expect(written.runningConditionTimePeriods[0]).toMatchObject({ start: '', end: '' });
+        });
+
+        it('a second Add starts the day after the last end and runs to 23:59 of that month end', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimePeriods: [PA] });
+            fireEvent.click(screen.getByTestId('period-add'));
+            await flush();
+            const written = await lastWritten();
+            expect(written.runningConditionTimePeriods).toHaveLength(2);
+            expect(written.runningConditionTimePeriods[1]).toMatchObject({ start: '2026-02-01T00:00', end: '2026-02-28T23:59' });
+        });
+
+        it('edits stay local until blur, then commit SORTED (rows never jump while typing)', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimePeriods: [PB, PA] });
+            mockUpdateWorkspaceData.mockClear();
+            const start1 = screen.getByLabelText('Period 1 start');
+            fireEvent.change(start1, { target: { value: '2026-03-05T00:00' } });
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled(); // typing alone never writes
+            fireEvent.blur(start1);
+            await flush();
+            const written = await lastWritten();
+            expect(written.runningConditionTimePeriods.map((p: any) => p.id)).toEqual(['pa', 'pb']);
+            expect(written.runningConditionTimePeriods[1].start).toBe('2026-03-05T00:00');
+        });
+
+        it('overlapping periods warn, and "Merge into one" writes a single period; nothing blocks', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimePeriods: [PA, { id: 'pc', start: '2026-01-20T00:00', end: '2026-02-10T00:00' }] });
+            expect(screen.getByTestId('period-overlap-2').textContent).toMatch(/overlaps period 1/);
+            fireEvent.click(screen.getByTestId('period-merge-2'));
+            await flush();
+            const written = await lastWritten();
+            expect(written.runningConditionTimePeriods).toEqual([{ id: 'pa', start: PA.start, end: '2026-02-10T00:00' }]);
+        });
+
+        it('an end before its start is flagged inline', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimePeriods: [{ id: 'bad', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }] });
+            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/ends before it starts/);
+        });
+
+        it('open ends read "Start of data" / "End of data"; a blank start on a later period is invalid', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimePeriods: [{ id: 'a', start: '', end: '2026-01-31T23:59' }, { id: 'b', start: '', end: '' }] });
+            expect(screen.getAllByText('Start of data').length).toBeGreaterThan(0);
+            expect(screen.getAllByText('End of data').length).toBeGreaterThan(0);
+            expect(screen.getByTestId('period-invalid-2').textContent).toMatch(/needs a start date/);
+        });
+
+        it('removing the last period persists an empty list', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimePeriods: [PA] });
+            fireEvent.click(screen.getByLabelText('Remove period 1'));
+            await flush();
+            expect((await lastWritten()).runningConditionTimePeriods).toEqual([]);
+        });
+
+        it('passes the workspace periods down to the PM page as runningConditionTimePeriods', async () => {
             const modelWithGroup = makeModel();
             render(<BuildModelWindow />);
-            await deliverData({
-                failureGroupState: {
-                    groups: [makeGroup()],
-                    models: [modelWithGroup],
-                    runningConditionTimeStart: '2026-05-01T00:00',
-                    runningConditionTimeEnd: '2026-06-01T00:00',
-                },
-            });
-            // Same round-trip concern as the runningConditionFilters test
-            // below -- commitForm's persist() resyncs local state from
-            // whatever updateWorkspaceData's mock returns.
-            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => {
-                const prev = {
-                    id,
-                    failureGroupState: {
-                        groups: [makeGroup()], models: [modelWithGroup],
-                        runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00',
-                    },
-                };
-                return patch(prev);
-            });
+            const fgDisk = {
+                groups: [makeGroup()], models: [modelWithGroup],
+                runningConditionTimePeriods: [PA, PB],
+            };
+            await deliverData({ failureGroupState: fgDisk });
+            // Same round-trip concern as the runningConditionFilters test below --
+            // commitForm's persist() resyncs local state from whatever
+            // updateWorkspaceData's mock returns.
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { ...fgDisk, runningConditionNoneConfirmed: true, rcLegacyNotice: null } }));
             fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
-            expect(lastProps.runningConditionTimeStart).toBe('2026-05-01T00:00');
-            expect(lastProps.runningConditionTimeEnd).toBe('2026-06-01T00:00');
+            expect(lastProps.runningConditionTimePeriods).toEqual([PA, PB]);
+            expect(lastProps).not.toHaveProperty('runningConditionTimeStart');
+        });
+
+        it('opening a pre-periods workspace migrates the old single range to one period and writes it back (old keys dropped), once', async () => {
+            render(<BuildModelWindow />);
+            const legacyModel: Record<string, any> = makeModel({ filterTimeStart: '2026-01-01T00:00', filterTimeEnd: '' });
+            delete legacyModel.filterTimePeriods;
+            let disk: any = {
+                id: 'ws1',
+                failureGroupState: {
+                    groups: [makeGroup()], models: [legacyModel], runningConditionNoneConfirmed: true, rcLegacyNotice: null,
+                    runningConditionTimeStart: '2026-01-01T00:00', runningConditionTimeEnd: '2026-02-01T00:00',
+                },
+            };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+            await deliverData({ failureGroupState: disk.failureGroupState });
+            await flush();
+
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+            const fg = disk.failureGroupState;
+            expect(fg.runningConditionTimePeriods).toEqual([{ id: 'legacy-1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }]);
+            expect('runningConditionTimeStart' in fg).toBe(false);
+            expect(fg.models[0].filterTimePeriods).toEqual([{ id: 'legacy-1', start: '2026-01-01T00:00', end: '' }]);
+            expect('filterTimeStart' in fg.models[0]).toBe(false);
+            // The migrated period is what the panel shows (configured workspace: panel starts collapsed).
+            fireEvent.click(screen.getByText('Running Condition Filter'));
+            expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe('2026-02-01T00:00');
+
+            // Re-opening the (now migrated) file does not write again.
+            mockUpdateWorkspaceData.mockClear();
+            await deliverData({ failureGroupState: disk.failureGroupState });
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
         it('passes the current filter down to the PM page as runningConditionFilters', async () => {
@@ -1224,9 +1315,9 @@ describe('BuildModelWindow', () => {
             expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
         });
 
-        it('a time range alone does NOT unlock Build Model', async () => {
+        it('a time period alone does NOT unlock Build Model', async () => {
             render(<BuildModelWindow />);
-            await deliverGate([ind()], { runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00' });
+            await deliverGate([ind()], { runningConditionTimePeriods: [{ id: 'p1', start: '2026-05-01T00:00', end: '2026-06-01T00:00' }] });
             openRow();
             expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
         });

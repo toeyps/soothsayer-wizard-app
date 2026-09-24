@@ -2,14 +2,17 @@ import { useState, useEffect, useCallback, useRef, type CSSProperties } from "re
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, Plus, ChevronDown, ChevronRight, Gauge, Calendar } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
+import { X, Plus, ChevronDown, ChevronRight, Gauge } from "lucide-react";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
-import { normalizeCategories, flagLegacyGate } from "../../utils/workspaceMigrations";
+import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
+import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
+import { periodChipLabel } from "../../utils/timePeriods";
+import TimePeriodsEditor from "./TimePeriodsEditor";
 import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 
 interface BuildModelData {
@@ -180,16 +183,11 @@ export default function BuildModelWindow() {
     // workspace's behavior before this existed) or 'or'. Same panel, same
     // persist path as runningConditionFilters (2026-09-23).
     const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>('and');
-    // Workspace-default training time range — merged into this same panel
-    // 2026-09-23 (was a structurally separate, always-per-model-only field
-    // on PredictiveModelBuild.tsx with no workspace default at all, per
-    // explicit user correction: "เงื่อนไขการ filter มันไม่ใช่แค่ value of
-    // sensor แต่ต้องมีการ filter timestamp ด้วย"). A model in Workspace mode
-    // uses THIS; Custom mode uses its own filterTimeStart/filterTimeEnd.
-    const [runningConditionTimeStart, setRunningConditionTimeStart] = useState('');
-    const [runningConditionTimeEnd, setRunningConditionTimeEnd] = useState('');
-    const rcTimeStartRef = useRef<HTMLInputElement>(null);
-    const rcTimeEndRef = useRef<HTMLInputElement>(null);
+    // Workspace-default training PERIODS (Feature 4-C; replaced the single
+    // start/end pair). Empty = no time limit. A model in Workspace mode uses
+    // THIS list; Custom mode uses its own `filterTimePeriods`.
+    const [runningConditionTimePeriods, setRunningConditionTimePeriods] = useState<TimePeriod[]>([]);
+    const { bounds: datasetBounds } = useDatasetTimeBounds();
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
     // "No condition - use all rows" was explicitly confirmed for the workspace
     // (Feature 4, soft gate A). Mirrors failureGroupState.runningConditionNoneConfirmed.
@@ -288,8 +286,7 @@ export default function BuildModelWindow() {
         setAllModels(fg?.models ?? []);
         setRunningConditionFilters(fg?.runningConditionFilters ?? []);
         setRunningConditionCombine(fg?.runningConditionCombine ?? 'and');
-        setRunningConditionTimeStart(fg?.runningConditionTimeStart ?? '');
-        setRunningConditionTimeEnd(fg?.runningConditionTimeEnd ?? '');
+        setRunningConditionTimePeriods(fg?.runningConditionTimePeriods ?? []);
         setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
         setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
@@ -331,8 +328,7 @@ export default function BuildModelWindow() {
                 setAllModels([]);
                 setRunningConditionFilters([]);
                 setRunningConditionCombine('and');
-                setRunningConditionTimeStart('');
-                setRunningConditionTimeEnd('');
+                setRunningConditionTimePeriods([]);
                 setRunningConditionNoneConfirmed(false);
                 setRcLegacyNotice(null);
                 setLegacyRemindLater(false);
@@ -353,15 +349,19 @@ export default function BuildModelWindow() {
                 // that already has models but nothing configured is flagged
                 // `rcLegacyNotice: 'pending'` and written back, so the banner is
                 // stored data rather than something recomputed per render.
-                const migrated = ws ? flagLegacyGate(normalizeCategories(ws)) : ws;
+                // Feature 4-C: old single time ranges become periods and the old
+                // keys are dropped; written back only when that changed something.
+                const periodsMigrated = ws ? migratePeriods(ws, { dropLegacyKeys: true }) : ws;
+                const periodsChanged = periodsMigrated !== ws;
+                const migrated = periodsMigrated ? flagLegacyGate(normalizeCategories(periodsMigrated)) : periodsMigrated;
                 applyFg(migrated?.failureGroupState);
                 if (migrated && rcAutoOpenedFor.current !== d.workspaceId) {
                     rcAutoOpenedFor.current = d.workspaceId;
                     const headers = d.sensorHeaders.length ? d.sensorHeaders : null;
                     if (!isWorkspaceRunningConditionConfigured(migrated.failureGroupState, headers)) setRcFilterOpen(true);
                 }
-                if (migrated !== ws && (migrated?.failureGroupState?.categoryNormalisationNotice?.length || migrated?.failureGroupState?.rcLegacyNotice === 'pending')) {
-                    const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(prev)));
+                if (periodsChanged || (migrated !== ws && (migrated?.failureGroupState?.categoryNormalisationNotice?.length || migrated?.failureGroupState?.rcLegacyNotice === 'pending'))) {
+                    const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(migratePeriods(prev, { dropLegacyKeys: true }))));
                     if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                     if (written?.failureGroupState) {
                         applyFg(written.failureGroupState);
@@ -426,8 +426,7 @@ export default function BuildModelWindow() {
     const persistRunningCondition = useCallback(async (patch: {
         filters?: WorkspaceSensorFilter[];
         combine?: 'and' | 'or';
-        timeStart?: string;
-        timeEnd?: string;
+        periods?: TimePeriod[];
         noneConfirmed?: boolean;
     }) => {
         if (!workspaceId) return;
@@ -436,8 +435,7 @@ export default function BuildModelWindow() {
                 // Only the fields this call was given; everything else stays as it is.
                 ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
                 ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
-                ...(patch.timeStart !== undefined ? { runningConditionTimeStart: patch.timeStart } : {}),
-                ...(patch.timeEnd !== undefined ? { runningConditionTimeEnd: patch.timeEnd } : {}),
+                ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
                 ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
             });
             // Any edit made through this panel settles the legacy notice: it stays
@@ -479,17 +477,11 @@ export default function BuildModelWindow() {
         persistRunningCondition({ filters: next });
     }, [runningConditionFilters, persistRunningCondition]);
 
-    // Debounced (matches every other free-text field in this app) — commits
-    // 250ms after the user stops typing/picking rather than on every
-    // keystroke.
-    const rcTimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const updateRunningConditionTimeRange = useCallback((patch: { timeStart?: string; timeEnd?: string }) => {
-        if (patch.timeStart !== undefined) setRunningConditionTimeStart(patch.timeStart);
-        if (patch.timeEnd !== undefined) setRunningConditionTimeEnd(patch.timeEnd);
-        if (rcTimeDebounceRef.current) clearTimeout(rcTimeDebounceRef.current);
-        rcTimeDebounceRef.current = setTimeout(() => {
-            persistRunningCondition(patch);
-        }, 250);
+    // Periods are committed by the editor itself on blur / Enter (sorted), so
+    // no debounce is needed here.
+    const updateRunningConditionPeriods = useCallback((periods: TimePeriod[]) => {
+        setRunningConditionTimePeriods(periods);
+        persistRunningCondition({ periods });
     }, [persistRunningCondition]);
 
     // ---- Model editing (Feature 4-A, 2026-09-24) ----
@@ -513,7 +505,7 @@ export default function BuildModelWindow() {
     //      path below asks it; Save is deliberately NOT gated by it. ----
     const gateFg: RunningConditionFg = {
         models: allModels, runningConditionFilters, runningConditionCombine,
-        runningConditionTimeStart, runningConditionTimeEnd, runningConditionNoneConfirmed,
+        runningConditionTimePeriods, runningConditionNoneConfirmed,
     };
     const gateHeaders = allSensors.length ? allSensors : null;
     const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(m, gateFg, gateHeaders);
@@ -1120,8 +1112,7 @@ export default function BuildModelWindow() {
                     sensorMetadata={sensorMetadata}
                     runningConditionFilters={runningConditionFilters}
                     runningConditionCombine={runningConditionCombine}
-                    runningConditionTimeStart={runningConditionTimeStart}
-                    runningConditionTimeEnd={runningConditionTimeEnd}
+                    runningConditionTimePeriods={runningConditionTimePeriods}
                     runningConditionNoneConfirmed={runningConditionNoneConfirmed}
                     category={categoryOf(pmPageModel)}
                     onBack={() => setActivePage('overview')}
@@ -1142,7 +1133,7 @@ export default function BuildModelWindow() {
                 workspace default at all until the user pointed out the
                 filter concept isn't just sensor value, it needs a time
                 range too, same as this panel's value conditions. */}
-            <div data-testid="rc-panel" style={{ margin: '12px 20px 0', border: `1px solid ${!rcConfigured ? 'rgba(245,158,11,0.6)' : (runningConditionFilters.length > 0 || runningConditionTimeStart || runningConditionTimeEnd) ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
+            <div data-testid="rc-panel" style={{ margin: '12px 20px 0', border: `1px solid ${!rcConfigured ? 'rgba(245,158,11,0.6)' : (runningConditionFilters.length > 0 || runningConditionTimePeriods.length > 0) ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
                 <div
                     onClick={() => setRcFilterOpen(o => !o)}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 14px', cursor: 'pointer', userSelect: 'none' }}
@@ -1159,8 +1150,8 @@ export default function BuildModelWindow() {
                                 )}
                             </div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {runningConditionTimeStart || runningConditionTimeEnd
-                                    ? `${runningConditionTimeStart || '…'} – ${runningConditionTimeEnd || '…'}${runningConditionFilters.length > 0 ? ' · ' : ''}`
+                                {runningConditionTimePeriods.length > 0
+                                    ? `${runningConditionTimePeriods.length === 1 ? periodChipLabel(runningConditionTimePeriods[0]) : `${runningConditionTimePeriods.length} periods`} · `
                                     : ''}
                                 {runningConditionNoneConfirmed
                                     ? 'No condition — use all rows'
@@ -1178,42 +1169,16 @@ export default function BuildModelWindow() {
                 {rcFilterOpen && (
                     <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
                         <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
-                            Workspace default training time range + value conditions. A model follows this automatically, or can override either — set per model on its own Build page.
+                            Workspace default training periods + value conditions. A model follows this automatically, or can override either — set per model on its own Build page.
                         </p>
 
-                        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                            <div className="filter-row" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
-                                <label>Time start</label>
-                                <div className="date-input-wrapper">
-                                    <input
-                                        ref={rcTimeStartRef}
-                                        type="datetime-local"
-                                        value={runningConditionTimeStart}
-                                        onChange={e => updateRunningConditionTimeRange({ timeStart: e.target.value })}
-                                    />
-                                    <Calendar
-                                        size={14}
-                                        style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                        onClick={() => rcTimeStartRef.current?.showPicker?.()}
-                                    />
-                                </div>
-                            </div>
-                            <div className="filter-row" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
-                                <label>Time end</label>
-                                <div className="date-input-wrapper">
-                                    <input
-                                        ref={rcTimeEndRef}
-                                        type="datetime-local"
-                                        value={runningConditionTimeEnd}
-                                        onChange={e => updateRunningConditionTimeRange({ timeEnd: e.target.value })}
-                                    />
-                                    <Calendar
-                                        size={14}
-                                        style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                        onClick={() => rcTimeEndRef.current?.showPicker?.()}
-                                    />
-                                </div>
-                            </div>
+                        <div style={{ marginBottom: '12px' }} data-testid="rc-periods">
+                            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>Training periods</div>
+                            <TimePeriodsEditor
+                                periods={runningConditionTimePeriods}
+                                onChange={updateRunningConditionPeriods}
+                                bounds={datasetBounds}
+                            />
                         </div>
 
                         {/* Value conditions vs. an explicit "No condition" — exactly one

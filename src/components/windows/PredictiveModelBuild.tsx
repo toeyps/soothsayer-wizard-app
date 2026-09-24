@@ -2,16 +2,20 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
 import { invoke } from "@tauri-apps/api/core";
-import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter, ModelCategory } from "../../types";
+import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter, ModelCategory, TimePeriod } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
 } from "../../types/commands";
-import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, ChevronRight, ChevronDown, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
+import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, ChevronRight, ChevronDown, Thermometer, Loader2, Maximize2, LayoutGrid, ArrowLeft } from "lucide-react";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
+import { migratePeriods } from "../../utils/workspaceMigrations";
 import { getBuildBlockReason, isRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
+import { newPeriodId, toFilterRanges, validatePeriods } from "../../utils/timePeriods";
+import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
+import TimePeriodsEditor, { TimePeriodChips } from "./TimePeriodsEditor";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
@@ -475,14 +479,11 @@ interface PredictiveModelBuildProps {
      *  Overview page, read-only display here unless this model's own
      *  `runningConditionMode` is 'custom' (2026-09-23). */
     runningConditionCombine: 'and' | 'or';
-    /** Workspace-default training time range — same ownership/read-only
-     *  rule as `runningConditionFilters` above. In 'workspace' mode this
-     *  page's effective time range is THIS, not the model's own
-     *  `filterTimeStart`/`filterTimeEnd` (which apply only in 'custom' mode
-     *  — see `runningConditionMode` state's own doc comment). Empty string
-     *  = no bound, same convention as `filterTimeStart` itself. */
-    runningConditionTimeStart: string;
-    runningConditionTimeEnd: string;
+    /** Workspace-default training periods — same ownership/read-only rule as
+     *  `runningConditionFilters` above. In 'workspace' mode this page's
+     *  effective time gate is THIS list, not the model's own `filterTimePeriods`
+     *  (which apply only in 'custom' mode). Empty = no time limit. */
+    runningConditionTimePeriods: TimePeriod[];
     /** Workspace: user confirmed "No condition — use all rows" on the Overview
      *  panel. Optional (default false) — part of the running-condition gate. */
     runningConditionNoneConfirmed?: boolean;
@@ -522,7 +523,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimeStart, runningConditionTimeEnd, runningConditionNoneConfirmed = false, category = 'performance', onBack, onFinish }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed = false, category = 'performance', onBack, onFinish }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -581,27 +582,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         ],
     );
 
-    // Data Filter — Time start/end stays per-model (the training *period*
-    // legitimately differs per model); the value-filter half moved to the
-    // workspace-wide `runningConditionFilters` prop (2026-09-15 — see
-    // BuildModelWindow's "Running Condition Filter" panel and this prop's
-    // own doc comment on `PredictiveModelBuildProps`).
-    const [filterTimeStart, setFilterTimeStart] = useState("");
-    const [filterTimeEnd, setFilterTimeEnd] = useState("");
-    // Lets the Calendar icon (rendered next to each input, see the "Data
-    // filter" JSX below) open the native picker directly on click —
-    // `<input type="datetime-local">`'s own browser-drawn picker-indicator
-    // icon is a `::-webkit-calendar-picker-indicator` pseudo-element this
-    // app already tries to recolor for dark mode (`filter: invert(1)` in
-    // App.css), but how visible that ends up is entirely up to the
-    // WebView2 engine's own rendering of it — reported hard to see/find on
-    // this page (2026-09-16). `showPicker()` sidesteps that uncertainty
-    // instead of trying to fix a browser-native pseudo-element's styling
-    // further: the lucide icon is an ordinary SVG this app already renders
-    // reliably everywhere else, so making IT the trigger guarantees a
-    // visible, clickable way to open the picker regardless.
-    const filterTimeStartRef = useRef<HTMLInputElement>(null);
-    const filterTimeEndRef = useRef<HTMLInputElement>(null);
+    // Custom-mode training periods (this model's own; Workspace mode reads the
+    // `runningConditionTimePeriods` prop instead). See TimePeriodsEditor.
+    const [filterTimePeriods, setFilterTimePeriods] = useState<TimePeriod[]>([]);
+    // True dataset extent — drives the period editor's defaults and min/max.
+    const { bounds: datasetBounds } = useDatasetTimeBounds();
 
     // Running condition source — 'workspace' (default) follows the
     // BuildModelWindow-owned `runningConditionFilters`/`runningConditionCombine`
@@ -621,18 +606,18 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // from a previous switch is never silently overwritten). Switching back
     // to Workspace leaves the custom values untouched so toggling back and
     // forth doesn't lose edits. Time range seeds independently of value
-    // conditions (e.g. a model that already had its own filterTimeStart set
-    // — from before this merge existed — keeps it even if it has no custom
-    // conditions to seed).
+    // conditions (a model that already has its own periods keeps them even if
+    // it has no custom conditions to seed).
     const handleRunningConditionModeChange = (mode: 'workspace' | 'custom') => {
         if (mode === 'custom') {
             if (customRunningConditionFilters.length === 0 && runningConditionFilters.length > 0) {
                 setCustomRunningConditionFilters(runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })));
                 setCustomRunningConditionCombine(runningConditionCombine);
             }
-            if (!filterTimeStart && !filterTimeEnd && (runningConditionTimeStart || runningConditionTimeEnd)) {
-                setFilterTimeStart(runningConditionTimeStart);
-                setFilterTimeEnd(runningConditionTimeEnd);
+            // Same non-destructive once-only rule: copy the workspace periods (fresh
+            // ids) only while this model has none of its own.
+            if (filterTimePeriods.length === 0 && runningConditionTimePeriods.length > 0) {
+                setFilterTimePeriods(runningConditionTimePeriods.map(p => ({ ...p, id: newPeriodId() })));
             }
         }
         setRunningConditionMode(mode);
@@ -693,8 +678,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // conditions (2026-09-23 — was unconditionally `filterTimeStart`/
     // `filterTimeEnd` before, per explicit user correction that the filter
     // concept isn't just sensor value, it needs a time range too).
-    const activeTimeStart = runningConditionMode === 'custom' ? filterTimeStart : runningConditionTimeStart;
-    const activeTimeEnd = runningConditionMode === 'custom' ? filterTimeEnd : runningConditionTimeEnd;
+    const activePeriods = runningConditionMode === 'custom' ? filterTimePeriods : runningConditionTimePeriods;
+    // Wire ranges: invalid periods are dropped by `toFilterRanges`, so an
+    // unusable list must NOT be sent as `[]` (that would silently mean "whole
+    // dataset") — `filterBlocked` stops every query instead. A blank-both
+    // period means "every row with a timestamp", i.e. no restriction: send [].
+    const periodStatuses = useMemo(() => validatePeriods(activePeriods), [activePeriods]);
+    const filterRanges = useMemo(() => {
+        const ranges = toFilterRanges(activePeriods);
+        return ranges.some(rg => rg.start === null && rg.end === null) ? [] : ranges;
+    }, [activePeriods]);
+    const filterBlocked = activePeriods.length > 0 && periodStatuses.every(st => st.invalid);
 
     const dashboardFilterPayload = useMemo(() => {
         const valueFilters = activeRunningConditionFilters
@@ -706,14 +700,13 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
             }));
 
-        if (valueFilters.length === 0 && !activeTimeStart && !activeTimeEnd) return null;
+        if (valueFilters.length === 0 && filterRanges.length === 0) return null;
         return {
-            timestamp_start: activeTimeStart || null,
-            timestamp_end: activeTimeEnd || null,
+            timestamp_ranges: filterRanges,
             value_filters: valueFilters,
             combine: activeRunningConditionCombine,
         };
-    }, [activeRunningConditionFilters, activeRunningConditionCombine, activeTimeStart, activeTimeEnd]);
+    }, [activeRunningConditionFilters, activeRunningConditionCombine, filterRanges]);
 
     // The shared Build gate (Feature 4-B) evaluated against THIS page's live
     // state - Custom-mode edits here are debounce-persisted, so the parent's
@@ -722,10 +715,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const gateModel = {
         id: modelId, kind, category,
         runningConditionMode, customRunningConditionFilters, customRunningConditionCombine,
-        customRunningConditionNoneConfirmed, filterTimeStart, filterTimeEnd,
-    } as FailureModel;
+        customRunningConditionNoneConfirmed, filterTimePeriods,
+    } as unknown as FailureModel;
     const gateFg: RunningConditionFg = {
-        runningConditionFilters, runningConditionCombine, runningConditionTimeStart, runningConditionTimeEnd,
+        runningConditionFilters, runningConditionCombine, runningConditionTimePeriods,
         runningConditionNoneConfirmed,
     };
     const gateHeaders = sensorHeaders.length ? sensorHeaders : null;
@@ -735,8 +728,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
     const dashboardFilterKey = useMemo(
-        () => JSON.stringify(dashboardFilterPayload),
-        [dashboardFilterPayload],
+        () => (filterBlocked ? 'blocked' : JSON.stringify(dashboardFilterPayload)),
+        [dashboardFilterPayload, filterBlocked],
     );
 
     // Model Stats — computed on Rust side over ALL rows of the target sensor.
@@ -815,12 +808,15 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // most TARGET_CHART_MAX_POINTS positions instead of the full row stream
     // the old `get_data` accumulation copied into the JS heap.
     const targetChartQuery = useMemo(() => {
-        if (!targetSensor) return null;
+        if (!targetSensor || filterBlocked) return null;
         return {
             filter: {
                 sensors: [targetSensor],
-                timestamp_start: dashboardFilterPayload?.timestamp_start ?? null,
-                timestamp_end: dashboardFilterPayload?.timestamp_end ?? null,
+                // Periods go out as `timestamp_ranges` ONLY (never with the legacy
+                // pair) — and the SAME list the stats/train invokes get.
+                timestamp_start: null,
+                timestamp_end: null,
+                timestamp_ranges: dashboardFilterPayload?.timestamp_ranges ?? [],
                 value_filters: dashboardFilterPayload?.value_filters ?? [],
                 combine: dashboardFilterPayload?.combine ?? 'and',
             },
@@ -828,7 +824,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             operation: null,
             maxPoints: TARGET_CHART_MAX_POINTS,
         };
-    }, [targetSensor, dashboardFilterPayload]);
+    }, [targetSensor, dashboardFilterPayload, filterBlocked]);
 
     const { view: targetChartView, loading: targetChartLoading } = useChartData(targetChartQuery);
 
@@ -890,7 +886,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 const ws = await loadWorkspaceData(workspaceId);
                 if (cancelled) return;
                 if (ws?.name) setWorkspaceName(ws.name);
-                found = ws?.failureGroupState?.models.find(m => m.id === modelId);
+                // Old single start/end -> periods, in memory (the Overview window persists it).
+                found = (ws ? migratePeriods(ws, { dropLegacyKeys: true }) : ws)?.failureGroupState?.models.find(m => m.id === modelId);
             } catch (e) {
                 console.warn('Failed to hydrate predictive-model state from workspace:', e);
             }
@@ -942,8 +939,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         })),
                     );
                 }
-                setFilterTimeStart(slice.filterTimeStart);
-                setFilterTimeEnd(slice.filterTimeEnd);
+                setFilterTimePeriods(slice.filterTimePeriods ?? []);
                 // `?? ` fallbacks: a model saved before this 2026-09-23
                 // feature existed (or migrated through the legacy shim in
                 // workspaceManager.ts) simply has no opinion yet — default to
@@ -999,8 +995,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 numClusters,
                 criteriaSensor,
                 clusterRanges,
-                filterTimeStart,
-                filterTimeEnd,
+                filterTimePeriods,
                 runningConditionMode,
                 customRunningConditionFilters,
                 customRunningConditionCombine,
@@ -1024,7 +1019,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     }, [
         workspaceId, pmModelId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
-        clusterRanges, filterTimeStart, filterTimeEnd,
+        clusterRanges, filterTimePeriods,
         runningConditionMode, customRunningConditionFilters, customRunningConditionCombine, customRunningConditionNoneConfirmed,
     ]);
 
@@ -1078,6 +1073,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             setStatsError(null);
             return;
         }
+        if (filterBlocked) {
+            setTargetStats(null);
+            return;
+        }
         let cancelled = false;
         invoke<SensorStats>("compute_sensor_stats", {
             sensor: targetSensor,
@@ -1109,6 +1108,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             setCriteriaStats(null);
             return;
         }
+        if (filterBlocked) {
+            setCriteriaStats(null);
+            return;
+        }
         let cancelled = false;
         invoke<SensorStats>("compute_sensor_stats", {
             sensor: criteriaSensor,
@@ -1136,40 +1139,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         { sensor: targetSensor, y: targetStats.upper3, label: '+3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
         { sensor: targetSensor, y: targetStats.lower3, label: '−3σ',  color: '#f43f5e',                 lineStyle: 'dashed' },
     ] : [];
-
-    // Convert an ISO-ish timestamp to the `YYYY-MM-DDTHH:mm` format expected
-    // by `<input type="datetime-local">` (in the user's local timezone).
-    const formatTimestampForInput = useCallback((dateStr: string | null) => {
-        if (!dateStr) return '';
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return '';
-            const offset = date.getTimezoneOffset() * 60000;
-            return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-        } catch {
-            return '';
-        }
-    }, []);
-
-    // Min / max timestamp of the target-sensor series (computed backend-side
-    // over the full filtered population, not the decimated sample). Used as
-    // the default value (and as the picker's `min` / `max` constraint) for
-    // the Data-filter date pickers, so the user starts on a valid range.
-    const targetDataRange = useMemo<{ min: string; max: string } | null>(() => {
-        if (targetChartView?.ts_min && targetChartView?.ts_max) {
-            return { min: targetChartView.ts_min, max: targetChartView.ts_max };
-        }
-        return null;
-    }, [targetChartView]);
-
-    const targetMinForInput = useMemo(
-        () => targetDataRange ? formatTimestampForInput(targetDataRange.min) : '',
-        [targetDataRange, formatTimestampForInput]
-    );
-    const targetMaxForInput = useMemo(
-        () => targetDataRange ? formatTimestampForInput(targetDataRange.max) : '',
-        [targetDataRange, formatTimestampForInput]
-    );
 
     // X-axis predictor for the scatter. Prefer whatever the user explicitly
     // picked, but only honor it when that predictor is in the cached fit —
@@ -1589,6 +1558,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // is a pure column lookup against the matrix the model was trained on.
     const runRelationshipFit = useCallback(async () => {
         if (!targetSensor || predictorSensors.length === 0) return;
+        if (filterBlocked) { setRelError("Fix the period dates before fitting."); return; }
 
         const predictorsForFit = [...predictorSensors];
         setRelLoading(true);
@@ -1618,7 +1588,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             setRelLoading(false);
             setRelFitProgress(null);
         }
-    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload]);
+    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload, filterBlocked]);
 
     const handleRelationshipApply = async () => {
         if (!targetSensor) {
@@ -1659,7 +1629,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
      * anyway, and serial execution gives us cheap progress reporting.
      */
     const runSubModelFits = useCallback(async () => {
-        if (!targetSensor || predictorSensors.length === 0) return;
+        if (!targetSensor || predictorSensors.length === 0 || filterBlocked) return;
         const subsetPredictors = [...predictorSensors];
         const total = subsetPredictors.length;
         // Claim a generation. Late-finishing older calls will see their
@@ -1718,7 +1688,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 setSubModelsLoading(false);
             }
         }
-    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload, relPreview, fitIsStale]);
+    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload, filterBlocked, relPreview, fitIsStale]);
 
     /** Open the sub-models modal; lazy-fits when no/stale cache. */
     const handleOpenSubModels = () => {
@@ -1852,6 +1822,10 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     }, [targetSensor]);
 
     const handleClusteringApply = async () => {
+        if (filterBlocked) {
+            setClusteringError("Fix the period dates before fitting.");
+            return;
+        }
         if (!targetSensor) {
             setClusteringError("Target sensor is required.");
             return;
@@ -2049,6 +2023,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                         <div className="pm-section-hint">
                             Feeds the model and the chart preview — the chart's own 🔍 zoom is view-only and doesn't change this.
                         </div>
+                        {filterBlocked && (
+                            <div role="alert" data-testid="pm-periods-blocked" style={{ fontSize: '0.68rem', color: 'var(--danger, #f43f5e)', marginBottom: '0.4rem' }}>
+                                Fix the period dates — no chart or fit runs until at least one period is valid.
+                            </div>
+                        )}
                         {/* Training time range + Running condition — 'workspace'
                             (default) shows BuildModelWindow's Overview-owned
                             time range and value conditions read-only; 'custom'
@@ -2096,9 +2075,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                             {runningConditionMode === 'workspace' ? (
                                 <>
                                     <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                                        {runningConditionTimeStart || runningConditionTimeEnd
-                                            ? <>Time: {runningConditionTimeStart || '…'} – {runningConditionTimeEnd || '…'}</>
-                                            : <span style={{ opacity: 0.65, fontStyle: 'italic' }}>Time: no limit set — full dataset</span>}
+                                        <TimePeriodChips periods={runningConditionTimePeriods} />
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
                                         <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
@@ -2191,49 +2168,14 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 </>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                        <div className="filter-row" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}>
-                                            <label>Time start</label>
-                                            <div className="date-input-wrapper">
-                                                <input
-                                                    ref={filterTimeStartRef}
-                                                    type="datetime-local"
-                                                    value={filterTimeStart || targetMinForInput}
-                                                    min={targetMinForInput || undefined}
-                                                    max={targetMaxForInput || undefined}
-                                                    onChange={e => setFilterTimeStart(e.target.value)}
-                                                />
-                                                {/* Flush against the box's own
-                                                    right edge (`marginLeft:
-                                                    auto`) and white — explicit
-                                                    color so it reads clearly
-                                                    against the dark input
-                                                    background. */}
-                                                <Calendar
-                                                    size={14}
-                                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                                    onClick={() => filterTimeStartRef.current?.showPicker?.()}
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="filter-row" style={{ flex: 1, minWidth: '140px', marginBottom: 0 }}>
-                                            <label>Time end</label>
-                                            <div className="date-input-wrapper">
-                                                <input
-                                                    ref={filterTimeEndRef}
-                                                    type="datetime-local"
-                                                    value={filterTimeEnd || targetMaxForInput}
-                                                    min={targetMinForInput || undefined}
-                                                    max={targetMaxForInput || undefined}
-                                                    onChange={e => setFilterTimeEnd(e.target.value)}
-                                                />
-                                                <Calendar
-                                                    size={14}
-                                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                                    onClick={() => filterTimeEndRef.current?.showPicker?.()}
-                                                />
-                                            </div>
-                                        </div>
+                                    <div data-testid="pm-custom-periods">
+                                        <div style={{ fontSize: '0.66rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>Training periods</div>
+                                        <TimePeriodsEditor
+                                            compact
+                                            periods={filterTimePeriods}
+                                            onChange={setFilterTimePeriods}
+                                            bounds={datasetBounds}
+                                        />
                                     </div>
                                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.66rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                                         <input

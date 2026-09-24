@@ -1,7 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import type { FailureGroupStateSlice, WorkspaceState } from '../types';
+import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
 import { migratePeriods, normalizeCategories, flagLegacyGate, migrateToLatest } from '../utils/workspaceMigrations';
-import { mk } from './helpers/failureModelFixture';
+import { mk as baseMk } from './helpers/failureModelFixture';
+
+/** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
+ *  (unless given) and free to carry the old `filterTimeStart`/`filterTimeEnd` keys. */
+function mk(over: Partial<FailureModel> & { id: string } & Record<string, unknown>): FailureModel {
+    const m = baseMk(over as never) as unknown as Record<string, unknown>;
+    if (!('filterTimePeriods' in over)) delete m.filterTimePeriods;
+    return m as unknown as FailureModel;
+}
+
+type Old = Record<string, unknown>;
 
 function ws(fg?: Partial<FailureGroupStateSlice> & Record<string, unknown>): WorkspaceState {
     return {
@@ -26,8 +36,8 @@ describe('migratePeriods', () => {
         expect(out.models[0].filterTimePeriods).toEqual([{ id: 'legacy-1', start: '2025-03-01T00:00', end: '' }]);
         expect(out.models[1].filterTimePeriods).toEqual([]);
         expect(out.models[0].customRunningConditionNoneConfirmed).toBe(false);
-        expect(out.runningConditionTimeStart).toBe('2025-01-01T00:00');
-        expect(out.models[0].filterTimeStart).toBe('2025-03-01T00:00');
+        expect((out as unknown as Old).runningConditionTimeStart).toBe('2025-01-01T00:00');
+        expect((out.models[0] as unknown as Old).filterTimeStart).toBe('2025-03-01T00:00');
     });
     it('both empty -> [] (not one blank period)', () => {
         expect(migratePeriods(ws({ models: [] })).failureGroupState!.runningConditionTimePeriods).toEqual([]);
@@ -171,7 +181,7 @@ describe('migrateToLatest', () => {
         expect(out.runningConditionTimePeriods).toHaveLength(1);
         expect(out.categoryNormalisationNotice).toHaveLength(1);
         expect(out.rcLegacyNotice).toBe('pending');
-        expect(out.runningConditionTimeStart).toBe('2025-01-01T00:00');
+        expect((out as unknown as Old).runningConditionTimeStart).toBe('2025-01-01T00:00');
         expect(out.models).toHaveLength(2);
     });
     it('is idempotent across the whole pipeline (running twice equals once)', () => {
