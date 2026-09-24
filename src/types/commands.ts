@@ -122,6 +122,9 @@ export interface DashboardDataFilter {
   sensors: string[];
   timestamp_start: string | null;
   timestamp_end: string | null;
+  /** Multiple training periods (Feature 4-C): a row is kept if it falls in ANY
+   *  range. `null` = open end. Send this OR the legacy start/end pair, never both. */
+  timestamp_ranges?: { start: string | null; end: string | null }[];
   value_filters: {
     sensor: string;
     operation: string;

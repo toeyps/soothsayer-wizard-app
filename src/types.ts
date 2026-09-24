@@ -141,8 +141,15 @@ export interface PredictiveModelStateSlice {
      *  joined the Workspace/Custom split (2026-09-23) — no schema migration
      *  needed, since these already existed as "this model's own time range"
      *  before the split existed (it just used to apply unconditionally). */
+    /** @deprecated replaced by `filterTimePeriods`, removed after UI-C. */
     filterTimeStart: string;
+    /** @deprecated replaced by `filterTimePeriods`, removed after UI-C. */
     filterTimeEnd: string;
+    /** This model's own training periods (Custom mode only). Optional until the
+     *  UI-C phase makes it required; `undefined` = not migrated yet. */
+    filterTimePeriods?: TimePeriod[];
+    /** Custom mode: user explicitly chose "No condition — use all rows". */
+    customRunningConditionNoneConfirmed?: boolean;
     /** 'workspace' (default): this model's training window AND running
      *  condition are whatever's set on BuildModelWindow's Overview page
      *  (`FailureGroupStateSlice.runningConditionTimeStart`/`runningConditionTimeEnd`/
@@ -249,8 +256,38 @@ export interface FailureGroupStateSlice {
      *  conditions, per explicit user correction — time range used to be
      *  unconditionally per-model with no workspace default at all). Empty
      *  string (same as `filterTimeStart`'s own convention) = no bound. */
+    /** @deprecated replaced by `runningConditionTimePeriods`, removed after UI-C. */
     runningConditionTimeStart?: string;
+    /** @deprecated replaced by `runningConditionTimePeriods`, removed after UI-C. */
     runningConditionTimeEnd?: string;
+    /** Workspace-default training periods. `undefined` = not migrated yet. */
+    runningConditionTimePeriods?: TimePeriod[];
+    /** Workspace: user explicitly chose "No condition — use all rows". */
+    runningConditionNoneConfirmed?: boolean;
+    /** Category changes made by the one-time normalisation. `undefined` =
+     *  step not run yet; `null` = nothing to show / dismissed. */
+    categoryNormalisationNotice?: CategoryChange[] | null;
+    /** `'pending'` = legacy workspace with models but no configured running
+     *  condition, user hasn't answered yet. `undefined` = step not run; `null` = handled. */
+    rcLegacyNotice?: 'pending' | null;
+}
+
+/** One training period. `''` = open end (only valid on the first period's
+ *  start and the last period's end). Times are `datetime-local` strings. */
+export interface TimePeriod {
+    id: string;
+    start: string;
+    end: string;
+}
+
+/** One category change made by `normalizeSensorCategories`. */
+export interface CategoryChange {
+    modelId: string;
+    kind: ModelKind;
+    /** Sensor grouping key (normalised tag). */
+    sensorKey: string;
+    from: ModelCategory | null;
+    to: ModelCategory | null;
 }
 
 /** Payload of the cross-window 'failure-group-state-changed' event — the whole

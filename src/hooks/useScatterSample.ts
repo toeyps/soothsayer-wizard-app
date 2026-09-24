@@ -11,6 +11,8 @@ export interface ScatterSampleFilter {
     sensors: string[];
     timestamp_start: string | null;
     timestamp_end: string | null;
+    /** Multiple periods (Feature 4-C); see `DashboardDataFilter`. */
+    timestamp_ranges?: { start: string | null; end: string | null }[];
     value_filters: {
         sensor: string;
         operation: string;

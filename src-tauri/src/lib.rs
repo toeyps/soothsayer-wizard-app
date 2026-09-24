@@ -508,7 +508,7 @@ fn compute_sensor_stats(
         .position(|h| h == &sensor)
         .ok_or_else(|| format!("Sensor not found: {}", sensor))?;
 
-    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
     // Parallel collect of all finite values for the target column (NaN =
     // missing, so `is_finite` drops missing and ±inf alike) — restricted to
@@ -634,6 +634,32 @@ struct PreviewFilter {
     /// opt into "or".
     #[serde(default)]
     combine: Option<String>,
+    /// Multiple training time periods (Feature 4). Kept if the row falls in ANY
+    /// period. Mutually exclusive with the legacy `timestamp_start/_end` pair —
+    /// sending both is a wiring bug and `ResolvedFilter::resolve` rejects it.
+    #[serde(default)]
+    timestamp_ranges: Vec<TimeRangeArg>,
+}
+
+/// One time period as sent by the frontend. `None` / blank = open bound.
+#[derive(Debug, Deserialize, Default, Clone)]
+struct TimeRangeArg {
+    #[serde(default)]
+    start: Option<String>,
+    #[serde(default)]
+    end: Option<String>,
+}
+
+/// Parse one optional bound to epoch micros. Blank/whitespace/None = open
+/// (`Ok(None)`); anything else that fails to parse is an error rather than a
+/// silently unbounded side.
+fn parse_time_bound(raw: Option<&str>, label: &str) -> Result<Option<i64>, String> {
+    match raw.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(t) => parse_timestamp(t)
+            .map(|dt| Some(ts_to_micros(dt)))
+            .ok_or_else(|| format!("{label}: cannot parse timestamp '{t}'")),
+    }
 }
 
 /// One pre-resolved value filter: sensor name → header index (resolved once
@@ -654,34 +680,81 @@ struct ResolvedValueFilter {
 /// refactor — included for symmetry but most call sites short-circuit when
 /// noop to preserve the parallel-rayon fast paths.
 struct ResolvedFilter {
-    ts_start: Option<i64>,
-    ts_end: Option<i64>,
+    /// Sorted, merged time periods (epoch micros, inclusive). Empty = no time
+    /// gate. `None` on a side = open bound.
+    ts_ranges: Vec<(Option<i64>, Option<i64>)>,
     value_filters: Vec<ResolvedValueFilter>,
     /// true = OR (any value filter passing keeps the row), false = AND (all
     /// must pass) — the pre-existing, still-default behavior.
     or_combine: bool,
 }
 
+/// Sort ranges by start (open start first) and merge overlapping/touching ones.
+fn merge_ranges(mut r: Vec<(Option<i64>, Option<i64>)>) -> Vec<(Option<i64>, Option<i64>)> {
+    r.sort_by_key(|(s, _)| s.unwrap_or(i64::MIN));
+    let mut out: Vec<(Option<i64>, Option<i64>)> = Vec::with_capacity(r.len());
+    for (s, e) in r {
+        if let Some(last) = out.last_mut() {
+            // last.1 == None means open end: swallows everything after it.
+            let overlaps = match (last.1, s) {
+                (None, _) => true,
+                (_, None) => true,
+                (Some(le), Some(s)) => s <= le,
+            };
+            if overlaps {
+                last.1 = match (last.1, e) {
+                    (None, _) | (_, None) => None,
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                };
+                continue;
+            }
+        }
+        out.push((s, e));
+    }
+    out
+}
+
 impl ResolvedFilter {
-    fn resolve(filter: Option<&PreviewFilter>, headers: &[String]) -> Self {
+    fn resolve(filter: Option<&PreviewFilter>, headers: &[String]) -> Result<Self, String> {
         let Some(f) = filter else {
-            return Self {
-                ts_start: None,
-                ts_end: None,
+            return Ok(Self {
+                ts_ranges: Vec::new(),
                 value_filters: Vec::new(),
                 or_combine: false,
-            };
+            });
         };
-        let ts_start = f
-            .timestamp_start
-            .as_deref()
-            .and_then(parse_timestamp)
-            .map(ts_to_micros);
-        let ts_end = f
-            .timestamp_end
-            .as_deref()
-            .and_then(parse_timestamp)
-            .map(ts_to_micros);
+        let legacy_start = parse_time_bound(f.timestamp_start.as_deref(), "timestamp_start")?;
+        let legacy_end = parse_time_bound(f.timestamp_end.as_deref(), "timestamp_end")?;
+        let legacy_given = legacy_start.is_some() || legacy_end.is_some();
+        if legacy_given && !f.timestamp_ranges.is_empty() {
+            return Err(
+                "filter sets both timestamp_start/timestamp_end and timestamp_ranges; send only one"
+                    .to_string(),
+            );
+        }
+        let mut ranges: Vec<(Option<i64>, Option<i64>)> = Vec::new();
+        if legacy_given {
+            if let (Some(s), Some(e)) = (legacy_start, legacy_end) {
+                if s > e {
+                    return Err("time period 1 ends before it starts".to_string());
+                }
+            }
+            ranges.push((legacy_start, legacy_end));
+        }
+        for (i, r) in f.timestamp_ranges.iter().enumerate() {
+            let n = i + 1;
+            let s = parse_time_bound(r.start.as_deref(), &format!("time period {n} start"))?;
+            let e = parse_time_bound(r.end.as_deref(), &format!("time period {n} end"))?;
+            if let (Some(s), Some(e)) = (s, e) {
+                if s > e {
+                    return Err(format!("time period {n} ends before it starts"));
+                }
+            }
+            // A fully blank period is (None, None): a gate that keeps every row
+            // with a parseable timestamp.
+            ranges.push((s, e));
+        }
+        let ts_ranges = merge_ranges(ranges);
         let value_filters = f
             .value_filters
             .iter()
@@ -697,17 +770,16 @@ impl ResolvedFilter {
                     })
             })
             .collect();
-        Self {
-            ts_start,
-            ts_end,
+        Ok(Self {
+            ts_ranges,
             value_filters,
             or_combine: f.combine.as_deref() == Some("or"),
-        }
+        })
     }
 
     #[inline]
     fn is_noop(&self) -> bool {
-        self.ts_start.is_none() && self.ts_end.is_none() && self.value_filters.is_empty()
+        self.ts_ranges.is_empty() && self.value_filters.is_empty()
     }
 
     /// True if row `row` falls inside the dashboard filter window (timestamp
@@ -716,20 +788,17 @@ impl ResolvedFilter {
     /// — matches the legacy per-query parse behavior.
     #[inline]
     fn keeps(&self, data: &ColumnarData, row: usize) -> bool {
-        if self.ts_start.is_some() || self.ts_end.is_some() {
+        if !self.ts_ranges.is_empty() {
             let ts = data.ts_parsed[row];
             if ts == TS_MISSING {
                 return false;
             }
-            if let Some(s) = self.ts_start {
-                if ts < s {
-                    return false;
-                }
-            }
-            if let Some(e) = self.ts_end {
-                if ts > e {
-                    return false;
-                }
+            let inside = self
+                .ts_ranges
+                .iter()
+                .any(|&(s, e)| s.is_none_or(|s| ts >= s) && e.is_none_or(|e| ts <= e));
+            if !inside {
+                return false;
             }
         }
         if self.value_filters.is_empty() {
@@ -794,13 +863,13 @@ mod resolved_filter_tests {
 
     #[test]
     fn none_filter_resolves_to_a_noop() {
-        let resolved = ResolvedFilter::resolve(None, &dataset().headers);
+        let resolved = ResolvedFilter::resolve(None, &dataset().headers).unwrap();
         assert!(resolved.is_noop());
     }
 
     #[test]
     fn empty_filter_resolves_to_a_noop() {
-        let resolved = ResolvedFilter::resolve(Some(&PreviewFilter::default()), &dataset().headers);
+        let resolved = ResolvedFilter::resolve(Some(&PreviewFilter::default()), &dataset().headers).unwrap();
         assert!(resolved.is_noop());
     }
 
@@ -813,7 +882,7 @@ mod resolved_filter_tests {
             value_filters: vec![],
             ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(!resolved.is_noop());
         assert!(!resolved.keeps(&data, 0)); // before start
         assert!(resolved.keeps(&data, 1)); // exactly at start
@@ -829,7 +898,7 @@ mod resolved_filter_tests {
             value_filters: vec![],
             ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(!resolved.keeps(&data, 3)); // row 3 has no timestamp
     }
 
@@ -847,7 +916,7 @@ mod resolved_filter_tests {
             }],
             ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(resolved.keeps(&data, 3)); // A=4.0 > 0, no timestamp gate active
     }
 
@@ -865,7 +934,7 @@ mod resolved_filter_tests {
             }],
             ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         // Unknown sensor -> filtered out during resolve -> effectively a noop.
         assert!(resolved.is_noop());
     }
@@ -888,6 +957,7 @@ mod resolved_filter_tests {
                 }),
                 &data.headers,
             )
+            .unwrap()
         };
 
         let gt = make("greater_than", Some(2.0), None);
@@ -919,7 +989,8 @@ mod resolved_filter_tests {
                 ..Default::default()
             }),
             &data.headers,
-        );
+        )
+        .unwrap();
         assert_eq!((0..4).filter(|&r| resolved.keeps(&data, r)).count(), 4);
     }
 
@@ -944,8 +1015,9 @@ mod resolved_filter_tests {
                 },
             ],
             combine: Some("or".into()),
+            ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(resolved.keeps(&data, 0)); // A=1 < 1.5
         assert!(!resolved.keeps(&data, 1)); // A=2 matches neither
         assert!(!resolved.keeps(&data, 2)); // A=3 matches neither
@@ -973,8 +1045,9 @@ mod resolved_filter_tests {
                 },
             ],
             combine: Some("and".into()),
+            ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(!resolved.keeps(&data, 0)); // A=1 fails > 1
         assert!(resolved.keeps(&data, 1)); // A=2 passes both
         assert!(resolved.keeps(&data, 2)); // A=3 passes both
@@ -994,9 +1067,211 @@ mod resolved_filter_tests {
                 value2: None,
             }],
             combine: Some("banana".into()),
+            ..Default::default()
         };
-        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers);
+        let resolved = ResolvedFilter::resolve(Some(&filter), &data.headers).unwrap();
         assert!(!resolved.or_combine);
+    }
+
+    // ---- Feature 4: multiple time periods ----
+
+    fn ts_dataset() -> ColumnarData {
+        // Rows at minute 0..=9 on 2020-01-01, plus a TS_MISSING row. A = row index.
+        let mut ts: Vec<Option<String>> = (0..10)
+            .map(|i| Some(format!("2020-01-01T00:{:02}", i)))
+            .collect();
+        ts.push(None);
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into()],
+            ts,
+            vec![vec![f64::NAN; 11], (0..11).map(|i| i as f64).collect()],
+        )
+    }
+
+    fn range(s: Option<&str>, e: Option<&str>) -> TimeRangeArg {
+        TimeRangeArg {
+            start: s.map(String::from),
+            end: e.map(String::from),
+        }
+    }
+
+    fn kept(f: &PreviewFilter, d: &ColumnarData) -> Vec<usize> {
+        let r = ResolvedFilter::resolve(Some(f), &d.headers).unwrap();
+        (0..d.n_rows()).filter(|&i| r.keeps(d, i)).collect()
+    }
+
+    #[test]
+    fn or_across_two_disjoint_ranges() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_ranges: vec![
+                range(Some("2020-01-01T00:01"), Some("2020-01-01T00:02")),
+                range(Some("2020-01-01T00:06"), Some("2020-01-01T00:07")),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(kept(&f, &d), vec![1, 2, 6, 7]);
+        let r = ResolvedFilter::resolve(Some(&f), &d.headers).unwrap();
+        assert_eq!(r.ts_ranges.len(), 2);
+    }
+
+    #[test]
+    fn overlapping_ranges_are_merged() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_ranges: vec![
+                range(Some("2020-01-01T00:04"), Some("2020-01-01T00:07")),
+                range(Some("2020-01-01T00:01"), Some("2020-01-01T00:05")),
+            ],
+            ..Default::default()
+        };
+        let r = ResolvedFilter::resolve(Some(&f), &d.headers).unwrap();
+        assert_eq!(r.ts_ranges.len(), 1);
+        assert_eq!(kept(&f, &d), vec![1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn open_first_start_and_open_last_end() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_ranges: vec![
+                range(None, Some("2020-01-01T00:01")),
+                range(Some("2020-01-01T00:08"), Some("")),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(kept(&f, &d), vec![0, 1, 8, 9]);
+    }
+
+    #[test]
+    fn ranges_combine_with_value_filters_under_and_and_or() {
+        let d = ts_dataset();
+        let vf = |op: &str, v: f64| PreviewValueFilter {
+            sensor: "A".into(),
+            operation: op.into(),
+            value1: Some(v),
+            value2: None,
+        };
+        let mut f = PreviewFilter {
+            timestamp_ranges: vec![range(Some("2020-01-01T00:02"), Some("2020-01-01T00:06"))],
+            value_filters: vec![vf("greater_than", 3.0), vf("less_than", 5.0)],
+            ..Default::default()
+        };
+        // AND: in range AND 3<A<5 -> only A=4
+        assert_eq!(kept(&f, &d), vec![4]);
+        // OR: in range AND (A>3 OR A<5) -> every in-range row
+        f.combine = Some("or".into());
+        assert_eq!(kept(&f, &d), vec![2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn legacy_pair_alone_still_works_as_one_range() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_start: Some("2020-01-01T00:03".into()),
+            timestamp_end: Some("2020-01-01T00:05".into()),
+            ..Default::default()
+        };
+        assert_eq!(kept(&f, &d), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn legacy_and_ranges_together_is_an_error() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_start: Some("2020-01-01T00:03".into()),
+            timestamp_ranges: vec![range(Some("2020-01-01T00:05"), None)],
+            ..Default::default()
+        };
+        assert!(ResolvedFilter::resolve(Some(&f), &d.headers).is_err());
+    }
+
+    #[test]
+    fn unparseable_bound_is_an_error_in_both_shapes() {
+        let d = ts_dataset();
+        let legacy = PreviewFilter {
+            timestamp_start: Some("not a date".into()),
+            ..Default::default()
+        };
+        assert!(ResolvedFilter::resolve(Some(&legacy), &d.headers).is_err());
+        let ranged = PreviewFilter {
+            timestamp_ranges: vec![range(None, Some("2020-13-45"))],
+            ..Default::default()
+        };
+        assert!(ResolvedFilter::resolve(Some(&ranged), &d.headers).is_err());
+    }
+
+    #[test]
+    fn blank_bounds_mean_no_bound() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_start: Some("".into()),
+            timestamp_end: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(ResolvedFilter::resolve(Some(&f), &d.headers).unwrap().is_noop());
+    }
+
+    #[test]
+    fn start_after_end_is_an_error_with_one_based_period_number() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_ranges: vec![
+                range(Some("2020-01-01T00:01"), Some("2020-01-01T00:02")),
+                range(Some("2020-01-01T00:08"), Some("2020-01-01T00:03")),
+            ],
+            ..Default::default()
+        };
+        let err = ResolvedFilter::resolve(Some(&f), &d.headers).err().unwrap();
+        assert_eq!(err, "time period 2 ends before it starts");
+    }
+
+    #[test]
+    fn is_noop_is_false_with_ranges_and_true_with_empty_list() {
+        let d = ts_dataset();
+        let with = PreviewFilter {
+            timestamp_ranges: vec![range(Some("2020-01-01T00:01"), None)],
+            ..Default::default()
+        };
+        assert!(!ResolvedFilter::resolve(Some(&with), &d.headers).unwrap().is_noop());
+        let empty = PreviewFilter {
+            timestamp_ranges: vec![],
+            ..Default::default()
+        };
+        assert!(ResolvedFilter::resolve(Some(&empty), &d.headers).unwrap().is_noop());
+    }
+
+    #[test]
+    fn ts_missing_row_is_excluded_when_a_range_exists() {
+        let d = ts_dataset();
+        let f = PreviewFilter {
+            timestamp_ranges: vec![range(Some("2020-01-01T00:00"), None)],
+            ..Default::default()
+        };
+        let k = kept(&f, &d);
+        assert!(!k.contains(&10)); // TS_MISSING row
+        assert_eq!(k.len(), 10);
+    }
+
+    #[test]
+    fn data_filter_passes_ranges_through_to_preview() {
+        let df = DataFilter {
+            timestamp_ranges: vec![range(Some("2020-01-01T00:01"), None)],
+            ..Default::default()
+        };
+        assert_eq!(df.to_preview().timestamp_ranges.len(), 1);
+    }
+
+    #[test]
+    fn timestamp_ranges_deserializes_from_frontend_json() {
+        let f: PreviewFilter = serde_json::from_str(
+            r#"{"timestamp_ranges":[{"start":"2020-01-01T00:01","end":null},{"start":null,"end":"2020-01-01T00:09"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(f.timestamp_ranges.len(), 2);
+        assert!(f.timestamp_ranges[0].end.is_none());
+        let g: PreviewFilter = serde_json::from_str("{}").unwrap();
+        assert!(g.timestamp_ranges.is_empty());
     }
 }
 
@@ -1056,7 +1331,7 @@ async fn preview_relationship_model(
         // Dashboard filter (timestamp + value gates) — same resolution used
         // by every other data-reading command; row timestamps were parsed
         // once at load, so the gate below is pure integer compares.
-        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
         // Drop rows with any null/non-finite across the (predictors + target) set,
         // and rows that fall outside the dashboard filter (when present).
@@ -1260,7 +1535,7 @@ fn train_individual_model(
         .position(|h| h == &target)
         .ok_or_else(|| format!("Sensor not found: {}", target))?;
 
-    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
     // Finite values for the target column (NaN = missing), gated by the
     // dashboard filter when one is set.
@@ -1455,7 +1730,7 @@ fn compute_clustering_preview(
         .position(|h| h == &second_sensor)
         .ok_or_else(|| format!("Sensor not found: {}", second_sensor))?;
 
-    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+    let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
     // ── Single-cluster path ──────────────────────────────────────
     if n_clusters == 1 {
@@ -1649,7 +1924,7 @@ fn train_clustering_model(
         let i1 = data.headers.iter().position(|h| h == &first_sensor).unwrap();
         let i2 = data.headers.iter().position(|h| h == &second_sensor).unwrap();
 
-        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
         let c1 = &data.columns[i1];
         let c2 = &data.columns[i2];
         let mut min_us: Option<i64> = None;
@@ -1845,7 +2120,7 @@ async fn train_relationship_model(
             .position(|h| h == &target)
             .ok_or_else(|| format!("Target not found: {}", target))?;
 
-        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers);
+        let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
         let pred_cols: Vec<&[f64]> = predictor_indices
             .iter()
@@ -3001,7 +3276,7 @@ fn apply_sensor_mapping(
     csv_processor::apply_mapping(&key_column, &mapping_data, &dataset_headers)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct ValueFilter {
     sensor: String,
     operation: String, // "greater_than" | "less_than" | "between" | "equals"
@@ -3009,7 +3284,7 @@ struct ValueFilter {
     value2: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default, Clone)]
 struct DataFilter {
     sensors: Vec<String>,
     timestamp_start: Option<String>,
@@ -3024,6 +3299,10 @@ struct DataFilter {
     /// type has to accept the field faithfully rather than hardcoding it.
     #[serde(default)]
     combine: Option<String>,
+    /// Multiple training periods — passed straight through to
+    /// `PreviewFilter.timestamp_ranges` (the PM target chart uses this type).
+    #[serde(default)]
+    timestamp_ranges: Vec<TimeRangeArg>,
 }
 
 impl DataFilter {
@@ -3045,6 +3324,7 @@ impl DataFilter {
                 })
                 .collect(),
             combine: self.combine.clone(),
+            timestamp_ranges: self.timestamp_ranges.clone(),
         }
     }
 }
@@ -3069,13 +3349,13 @@ fn get_chart_data(
 ) -> Result<chart_query::ChartView, String> {
     let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
-    Ok(chart_query::build_chart_view(
+    chart_query::build_chart_view(
         &session.data,
         &filter,
         operation.as_ref(),
         &sampling,
         max_points,
-    ))
+    )
 }
 
 /// True first/last timestamp across the WHOLE loaded dataset, ignoring any
@@ -3166,13 +3446,17 @@ fn get_scatter_sample(
 ) -> Result<ScatterSample, String> {
     let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
-    Ok(sample_dataset(&session.data, &filter, max_points))
+    sample_dataset(&session.data, &filter, max_points)
 }
 
 /// Pure core of [`get_scatter_sample`] (no Tauri state) so it's unit-testable.
 /// Reservoir-samples up to `max_points` rows from `data`, projected to
 /// `filter.sensors` and respecting the timestamp / value filters.
-fn sample_dataset(data: &ColumnarData, filter: &DataFilter, max_points: usize) -> ScatterSample {
+fn sample_dataset(
+    data: &ColumnarData,
+    filter: &DataFilter,
+    max_points: usize,
+) -> Result<ScatterSample, String> {
     // Clamp to a sane band: at least 1, and a hard ceiling so a bad caller
     // can't ask for a 100M-row "sample" and reintroduce the OOM we're fixing.
     let cap = max_points.clamp(1, 2_000_000);
@@ -3192,7 +3476,7 @@ fn sample_dataset(data: &ColumnarData, filter: &DataFilter, max_points: usize) -
     // Same gate semantics as get_filtered_data — one shared implementation,
     // comparing load-time-parsed timestamps (no per-row parsing).
     let preview = filter.to_preview();
-    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers);
+    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers)?;
 
     // The reservoir holds ROW INDICES; rows are materialized to the wire
     // shape only once at the end, so evicted candidates never pay a
@@ -3222,12 +3506,12 @@ fn sample_dataset(data: &ColumnarData, filter: &DataFilter, max_points: usize) -
         .map(|&r| data.wire_record(r, &sensor_indices))
         .collect();
     let sampled = rows.len();
-    ScatterSample {
+    Ok(ScatterSample {
         headers: resolved_headers,
         rows,
         total: seen,
         sampled,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -3255,13 +3539,13 @@ mod scatter_sample_tests {
             timestamp_start: None,
             timestamp_end: None,
             value_filters: vec![],
-            combine: None,
+            ..Default::default()
         }
     }
 
     #[test]
     fn returns_all_rows_projected_when_under_cap() {
-        let s = sample_dataset(&dataset(), &filter(&["A", "B"]), 1000);
+        let s = sample_dataset(&dataset(), &filter(&["A", "B"]), 1000).unwrap();
         assert_eq!(s.headers, vec!["A", "B"]);
         assert_eq!(s.total, 10);
         assert_eq!(s.sampled, 10);
@@ -3272,7 +3556,7 @@ mod scatter_sample_tests {
 
     #[test]
     fn caps_row_count_at_max_points() {
-        let s = sample_dataset(&dataset(), &filter(&["A"]), 3);
+        let s = sample_dataset(&dataset(), &filter(&["A"]), 3).unwrap();
         assert_eq!(s.total, 10); // population unchanged
         assert_eq!(s.sampled, 3); // sample bounded
         assert_eq!(s.rows.len(), 3);
@@ -3282,7 +3566,7 @@ mod scatter_sample_tests {
 
     #[test]
     fn drops_unknown_sensors_from_headers_and_values() {
-        let s = sample_dataset(&dataset(), &filter(&["A", "DOES_NOT_EXIST"]), 100);
+        let s = sample_dataset(&dataset(), &filter(&["A", "DOES_NOT_EXIST"]), 100).unwrap();
         assert_eq!(s.headers, vec!["A"]); // unknown sensor dropped
         assert!(s.rows.iter().all(|r| r.values.len() == 1));
     }
@@ -3296,7 +3580,7 @@ mod scatter_sample_tests {
             value1: Some(5.0),
             value2: None,
         }];
-        let s = sample_dataset(&dataset(), &f, 100);
+        let s = sample_dataset(&dataset(), &f, 100).unwrap();
         // A > 5 → i ∈ {6,7,8,9} → 4 rows.
         assert_eq!(s.total, 4);
         assert_eq!(s.sampled, 4);
@@ -3309,7 +3593,7 @@ mod scatter_sample_tests {
             vec![],
             vec![vec![], vec![]],
         );
-        let s = sample_dataset(&empty, &filter(&["A"]), 100);
+        let s = sample_dataset(&empty, &filter(&["A"]), 100).unwrap();
         assert_eq!(s.total, 0);
         assert_eq!(s.sampled, 0);
         assert!(s.rows.is_empty());
@@ -3319,7 +3603,7 @@ mod scatter_sample_tests {
     fn timestamp_filter_gates_population_via_ts_parsed() {
         let mut f = filter(&["A"]);
         f.timestamp_start = Some("2020-01-01T00:05".into());
-        let s = sample_dataset(&dataset(), &f, 100);
+        let s = sample_dataset(&dataset(), &f, 100).unwrap();
         // Minutes 05..09 pass the parsed-timestamp gate → 5 rows.
         assert_eq!(s.total, 5);
         assert_eq!(s.rows[0].values, vec![Some(5.0)]);

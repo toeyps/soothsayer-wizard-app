@@ -122,7 +122,7 @@ fn resolve_ctx<'a>(
     data: &'a ColumnarData,
     filter: &DataFilter,
     operation: Option<&OperationConfig>,
-) -> QueryCtx<'a> {
+) -> Result<QueryCtx<'a>, String> {
     let mut cols: Vec<usize> = Vec::new();
     let mut sensor_headers: Vec<String> = Vec::new();
     for s in &filter.sensors {
@@ -133,7 +133,7 @@ fn resolve_ctx<'a>(
     }
 
     let preview = filter.to_preview();
-    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers);
+    let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers)?;
     let idx: Vec<u32> = if resolved.is_noop() {
         (0..data.n_rows() as u32).collect()
     } else {
@@ -178,13 +178,13 @@ fn resolve_ctx<'a>(
         _ => sensor_headers.clone(),
     };
 
-    QueryCtx {
+    Ok(QueryCtx {
         data,
         idx,
         cols,
         op,
         out_headers,
-    }
+    })
 }
 
 #[inline]
@@ -507,8 +507,8 @@ pub fn build_chart_view(
     operation: Option<&OperationConfig>,
     sampling: &str,
     max_points: usize,
-) -> ChartView {
-    let ctx = resolve_ctx(data, filter, operation);
+) -> Result<ChartView, String> {
+    let ctx = resolve_ctx(data, filter, operation)?;
     let headers = ctx.out_headers.clone();
 
     let ts_min = ctx
@@ -539,14 +539,14 @@ pub fn build_chart_view(
         (t, s, n)
     };
 
-    ChartView {
+    Ok(ChartView {
         headers,
         timestamps,
         series,
         total_rows,
         ts_min,
         ts_max,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +586,7 @@ mod tests {
             timestamp_start: None,
             timestamp_end: None,
             value_filters: vec![],
-            combine: None,
+            ..Default::default()
         }
     }
 
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn raw_passthrough_under_cap() {
         let d = dataset();
-        let v = build_chart_view(&d, &filter(&["A", "B"]), None, "raw", 1000);
+        let v = build_chart_view(&d, &filter(&["A", "B"]), None, "raw", 1000).unwrap();
         assert_eq!(v.headers, vec!["A", "B"]);
         assert_eq!(v.total_rows, 6);
         assert_eq!(v.timestamps.len(), 6);
@@ -639,7 +639,7 @@ mod tests {
             ts,
             vec![vec![f64::NAN; n], a],
         );
-        let v = build_chart_view(&d, &filter(&["A"]), None, "raw", 200);
+        let v = build_chart_view(&d, &filter(&["A"]), None, "raw", 200).unwrap();
         assert!(v.timestamps.len() <= 200, "bounded output");
         assert_eq!(v.total_rows, n);
         let vals: Vec<f64> = v.series[0].iter().filter_map(|x| *x).collect();
@@ -656,7 +656,7 @@ mod tests {
         let d = dataset();
         let mut f = filter(&["A"]);
         f.timestamp_start = Some("2020-01-01T01:00:00".into());
-        let v = build_chart_view(&d, &f, None, "raw", 1000);
+        let v = build_chart_view(&d, &f, None, "raw", 1000).unwrap();
         assert_eq!(v.total_rows, 3);
         assert_eq!(v.ts_min.as_deref(), Some("2020-01-01T01:00:00"));
         assert_eq!(v.series[0], vec![Some(4.0), Some(5.0), Some(6.0)]);
@@ -665,26 +665,26 @@ mod tests {
     #[test]
     fn single_op_add_and_divide_by_zero() {
         let d = dataset();
-        let v = build_chart_view(&d, &filter(&["A"]), Some(&single_op("add", 5.0)), "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A"]), Some(&single_op("add", 5.0)), "raw", 100).unwrap();
         assert_eq!(v.series[0][0], Some(6.0));
         assert_eq!(v.series[0][2], None); // null stays null
 
         // Legacy JS behavior: divide by zero returns the value unchanged.
-        let v = build_chart_view(&d, &filter(&["A"]), Some(&single_op("divide", 0.0)), "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A"]), Some(&single_op("divide", 0.0)), "raw", 100).unwrap();
         assert_eq!(v.series[0][0], Some(1.0));
     }
 
     #[test]
     fn multi_op_mean_and_median() {
         let d = dataset();
-        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("mean")), "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("mean")), "raw", 100).unwrap();
         assert_eq!(v.headers, vec!["Result (mean)"]);
         assert_eq!(v.series.len(), 1);
         assert_eq!(v.series[0][0], Some(5.5)); // (1+10)/2
         assert_eq!(v.series[0][2], Some(30.0)); // A null → mean of [30]
         assert_eq!(v.series[0][4], Some(5.0)); // B null → mean of [5]
 
-        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("median")), "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A", "B"]), Some(&multi_op("median")), "raw", 100).unwrap();
         assert_eq!(v.series[0][0], Some(5.5)); // even count → midpoint
         assert_eq!(v.series[0][2], Some(30.0)); // odd count → middle
     }
@@ -693,7 +693,7 @@ mod tests {
     fn hourly_aggregation_methods() {
         let d = dataset();
         // avg: hour0 A = (1+2)/2 = 1.5, hour1 A = (4+5+6)/3 = 5
-        let v = build_chart_view(&d, &filter(&["A", "B"]), None, "avg", 100);
+        let v = build_chart_view(&d, &filter(&["A", "B"]), None, "avg", 100).unwrap();
         assert_eq!(v.total_rows, 2);
         assert_eq!(
             v.timestamps,
@@ -702,13 +702,13 @@ mod tests {
         assert_eq!(v.series[0], vec![Some(1.5), Some(5.0)]);
         assert_eq!(v.series[1], vec![Some(20.0), Some(50.0)]);
 
-        let v = build_chart_view(&d, &filter(&["A"]), None, "max", 100);
+        let v = build_chart_view(&d, &filter(&["A"]), None, "max", 100).unwrap();
         assert_eq!(v.series[0], vec![Some(2.0), Some(6.0)]);
-        let v = build_chart_view(&d, &filter(&["A"]), None, "min", 100);
+        let v = build_chart_view(&d, &filter(&["A"]), None, "min", 100).unwrap();
         assert_eq!(v.series[0], vec![Some(1.0), Some(4.0)]);
-        let v = build_chart_view(&d, &filter(&["B"]), None, "first", 100);
+        let v = build_chart_view(&d, &filter(&["B"]), None, "first", 100).unwrap();
         assert_eq!(v.series[0], vec![Some(10.0), Some(40.0)]);
-        let v = build_chart_view(&d, &filter(&["B"]), None, "last", 100);
+        let v = build_chart_view(&d, &filter(&["B"]), None, "last", 100).unwrap();
         assert_eq!(v.series[0], vec![Some(30.0), Some(60.0)]);
     }
 
@@ -753,7 +753,7 @@ mod tests {
     #[test]
     fn unknown_sensors_are_dropped() {
         let d = dataset();
-        let v = build_chart_view(&d, &filter(&["A", "NOPE"]), None, "raw", 100);
+        let v = build_chart_view(&d, &filter(&["A", "NOPE"]), None, "raw", 100).unwrap();
         assert_eq!(v.headers, vec!["A"]);
         assert_eq!(v.series.len(), 1);
     }
@@ -790,14 +790,47 @@ mod tests {
         let f = filter(&["A", "B", "C", "D"]);
 
         let t = Instant::now();
-        let v = build_chart_view(&d, &f, None, "raw", 4000);
+        let v = build_chart_view(&d, &f, None, "raw", 4000).unwrap();
         println!("chart raw 2M rows x4 sensors: {:?}", t.elapsed());
         assert!(v.timestamps.len() <= 4000);
         assert_eq!(v.total_rows, n);
 
         let t = Instant::now();
-        let v = build_chart_view(&d, &f, None, "avg", 4000);
+        let v = build_chart_view(&d, &f, None, "avg", 4000).unwrap();
         println!("chart hourly-avg 2M rows: {:?}", t.elapsed());
         assert!(v.timestamps.len() <= 4000);
+    }
+
+    #[test]
+    fn two_disjoint_timestamp_ranges_keep_only_rows_inside_them() {
+        let d = dataset(); // rows at 00:00, 00:10, 00:20, 01:00, 01:10, 01:20
+        let mut f = filter(&["A"]);
+        f.timestamp_ranges = vec![
+            crate::TimeRangeArg {
+                start: Some("2020-01-01T00:00:00".into()),
+                end: Some("2020-01-01T00:10:00".into()),
+            },
+            crate::TimeRangeArg {
+                start: Some("2020-01-01T01:10:00".into()),
+                end: None,
+            },
+        ];
+        let v = build_chart_view(&d, &f, None, "raw", 1000).unwrap();
+        assert_eq!(v.total_rows, 4); // 00:00, 00:10, 01:10, 01:20
+        assert_eq!(
+            v.series[0],
+            vec![Some(1.0), Some(2.0), Some(5.0), Some(6.0)]
+        );
+    }
+
+    #[test]
+    fn bad_timestamp_range_surfaces_as_error() {
+        let d = dataset();
+        let mut f = filter(&["A"]);
+        f.timestamp_ranges = vec![crate::TimeRangeArg {
+            start: Some("garbage".into()),
+            end: None,
+        }];
+        assert!(build_chart_view(&d, &f, None, "raw", 1000).is_err());
     }
 }
