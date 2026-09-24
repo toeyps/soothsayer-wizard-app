@@ -1162,6 +1162,11 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - สร้าง workspace ใหม่ นำเข้าข้อมูล สร้าง Failure Group และสร้างโมเดลจาก Dashboard แล้วเปิด Build Model
   - **คาดหวัง:** ไม่มีแบนเนอร์ "Models built so far trained on all rows" (แบนเนอร์นี้ต้องขึ้นเฉพาะ workspace เก่าที่มีโมเดลก่อนมีด่านบังคับ) — ยังเห็นป้าย "Required" ที่แผง Running Condition ตามปกติ
 
+- [ ] **BMW-27 — ชื่อ model ห้ามซ้ำกับ model อื่นของ sensor เดียวกัน (ชื่อ default ยังเป็นชื่อ sensor)** 🆕
+  - เปิด Build Model → Overview เลือก sensor ที่มีหลายชนิด (เช่น Individual + Relationship) เปิดแท็บ Relationship ให้ช่อง Model name เป็นชื่อเดียวกับโมเดล Individual ของ sensor นั้น (พิมพ์เอง — ตัวพิมพ์เล็กใหญ่/เว้นวรรคหน้าหลังไม่มีผล)
+  - กดปุ่ม "Use '…'" แล้วลองพิมพ์ชื่อนั้นใน sensor อื่นด้วย
+  - **คาดหวัง:** ชื่อ default ตอนสร้างโมเดลยังเป็นชื่อ sensor เหมือนเดิม · เมื่อชื่อซ้ำขึ้นข้อความสีเหลืองใต้ช่อง "Same name as this sensor's Individual model — give it a different name…" + ปุ่ม "Use 'ชื่อ (Relationship)'" · **Save changes และ Build Model กดไม่ได้** พร้อมเหตุผล · กดปุ่มแล้วชื่อเปลี่ยนตามที่เสนอ ข้อความหาย ปุ่มกลับมากดได้ · ชื่อเดียวกันใน sensor อื่นไม่ถูกเตือน · โมเดลเก่าที่ชื่อซ้ำอยู่แล้วและไม่ได้แก้ชื่อ ไม่ถูกบล็อกหรือเปลี่ยนชื่อ · ช่องชื่อว่างยังขึ้นเหตุผลเดิม (Fill in the required fields)
+
 ---
 
 ## PM

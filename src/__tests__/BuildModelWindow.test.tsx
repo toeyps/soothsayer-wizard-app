@@ -1674,6 +1674,65 @@ describe('BuildModelWindow', () => {
             expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Ind renamed');
         });
 
+        describe('duplicate model name within one sensor (2026-09-24)', () => {
+            const nameInput = () => screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement;
+            const saveBtn = () => screen.getByText('Save changes').closest('button') as HTMLButtonElement;
+            const buildBtn = () => screen.getByText(/Build Model →/).closest('button') as HTMLButtonElement;
+
+            it('a draft name equal (trimmed, case-insensitive) to another model of the same sensor shows the warning + blocks Save and Build', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ name: 'TAG1' }), rel({ name: 'TAG1x' })] } });
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+                fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+                expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+                expect(saveBtn().disabled).toBe(false);
+
+                fireEvent.change(nameInput(), { target: { value: '  tag1 ' } });
+                expect(screen.getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Individual model");
+                expect(saveBtn().disabled).toBe(true);
+                expect(buildBtn().disabled).toBe(true);
+                expect(screen.getByTestId('build-block-reason').textContent).toContain('already used by another model of this sensor');
+            });
+
+            it('the suggestion button renames the draft to "<name> (<Kind>)" and clears the block', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ name: 'TAG1' }), rel({ name: 'Rel' })] } });
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+                fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+                fireEvent.change(nameInput(), { target: { value: 'TAG1' } });
+                fireEvent.click(screen.getByTestId('use-suggested-name'));
+                expect(nameInput().value).toBe('TAG1 (Relationship)');
+                expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+                expect(saveBtn().disabled).toBe(false);
+            });
+
+            it('the same name on a different sensor is not flagged', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ name: 'Shared' }), rel({ id: 'r2', targetSensor: 'TAG2', predictorSensors: ['TAG3'], name: 'Other' })] } });
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[1]);
+                fireEvent.change(nameInput(), { target: { value: 'Shared' } });
+                expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+                expect(saveBtn().disabled).toBe(false);
+            });
+
+            it('an already-saved duplicate is not retroactively blocked (untouched draft), and a lone model is never flagged', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ name: 'TAG1' }), rel({ name: 'TAG1' })] } });
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+                expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+                expect(saveBtn().disabled).toBe(false);
+            });
+
+            it('an empty name keeps its own validation, not the duplicate message', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ name: 'TAG1' }), rel({ name: 'Rel' })] } });
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+                fireEvent.change(nameInput(), { target: { value: '' } });
+                expect(screen.queryByTestId('duplicate-name-warning')).toBeNull();
+                expect(saveBtn().disabled).toBe(true);
+            });
+        });
+
         it('Save changes only touches the active tab model, and never writes category', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups, models: [ind(), rel()] } });

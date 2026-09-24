@@ -8,6 +8,7 @@ import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
+import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
 import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
@@ -102,6 +103,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
 // an open-ended list like components, so it reads better presented in the
 // same order the kind toggles/badges use everywhere else in the app.
 const KIND_ORDER: ModelKind[] = ['individual', 'relationship', 'clustering'];
+const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model of this sensor';
 const KIND_LABEL: Record<ModelKind, string> = {
     individual: 'Individual',
     relationship: 'Relationship',
@@ -521,6 +523,15 @@ export default function BuildModelWindow() {
         return categoryOf(m) === null ? 'Needs category' : 'Fix periods';
     };
 
+    /** Another model of the same sensor already using the name being saved.
+     *  Only the model being edited is gated: an untouched draft (or one reverted
+     *  to its saved name) is never blocked, so already-saved duplicates stay. */
+    const nameConflictOf = (m: FailureModel): FailureModel | null => {
+        const d = drafts[m.id];
+        if (!d || d.name.trim() === (m.name ?? '').trim()) return null;
+        return findSameSensorNameConflict(allModels, m, d.name);
+    };
+
     /** Why Save is disabled (category / required fields), or null. */
     const modelBlockReason = (m: FailureModel): string | null => {
         // Same text as `getBuildBlockReason` (single source: one string everywhere).
@@ -531,7 +542,8 @@ export default function BuildModelWindow() {
             m.kind === 'relationship' ? (m.targetSensor ?? '') !== '' && d.predictors.length >= 1 :
             (m.xSensor ?? '') !== '' && d.y !== '' && (!d.criteria || d.ranges.every(r => r.min !== null && r.max !== null))
         );
-        return ok ? null : 'Fill in the required fields above first';
+        if (!ok) return 'Fill in the required fields above first';
+        return nameConflictOf(m) ? DUPLICATE_NAME_BLOCK_REASON : null;
     };
 
     /** Why Build Model is disabled: everything Save needs, then the gate. */
@@ -706,6 +718,24 @@ export default function BuildModelWindow() {
                     placeholder="e.g. Bearing vibration model"
                     onChange={e => patchDraft(m, { name: e.target.value })}
                 />
+                {(() => {
+                    const conflict = nameConflictOf(m);
+                    if (!conflict) return null;
+                    const suggestion = suggestDistinctModelName(allModels, m, d.name);
+                    return (
+                        <div data-testid="duplicate-name-warning" style={{ marginTop: '4px', fontSize: '0.68rem', color: 'var(--warn, #d9a441)' }}>
+                            Same name as this sensor's {KIND_LABEL[conflict.kind]} model — give it a different name so they can be told apart
+                            <button
+                                type="button"
+                                data-testid="use-suggested-name"
+                                style={{ marginLeft: '8px', textDecoration: 'underline', color: 'inherit', cursor: 'pointer', background: 'none', border: 'none', padding: 0, fontSize: 'inherit' }}
+                                onClick={() => patchDraft(m, { name: suggestion })}
+                            >
+                                Use '{suggestion}'
+                            </button>
+                        </div>
+                    );
+                })()}
             </div>
 
             {m.kind === 'relationship' && (
