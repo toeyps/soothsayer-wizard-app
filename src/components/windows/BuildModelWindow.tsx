@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type CSSProperties } from "re
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, Plus, ChevronDown, ChevronRight, Gauge } from "lucide-react";
+import { X, ChevronRight, Lock, Link2, TriangleAlert, CircleAlert } from "lucide-react";
 import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
@@ -12,8 +12,7 @@ import { findSameSensorNameConflict, suggestDistinctModelName } from "../../util
 import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
-import { periodChipLabel } from "../../utils/timePeriods";
-import TimePeriodsEditor from "./TimePeriodsEditor";
+import RunningConditionPanel from "./RunningConditionPanel";
 import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 
 interface BuildModelData {
@@ -76,8 +75,24 @@ function sensorSummary(model: FailureModel, label: (tag: string) => string): str
 
 type GroupBy = 'fg' | 'component' | 'kind';
 
-const CONDITION_BADGE_STYLE: CSSProperties = {
-    color: 'var(--warn, #d9a441)', background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.45)',
+const LEGACY_BADGE = 'Legacy · all data';
+
+/** Gate badge (approved mockup rc-gate.html): "Legacy · all data" is a neutral
+ *  grey pill (the model stays Complete, nothing is wrong); every blocking
+ *  reason ("Needs condition" ...) is the amber warn pill. */
+function GateBadgePill({ text, title, testId }: { text: string; title?: string; testId?: string }) {
+    return (
+        <span data-testid={testId} title={title} className={`f4-pill ${text === LEGACY_BADGE ? 'f4-pill--grey' : 'f4-pill--warn'}`}>
+            {text}
+        </span>
+    );
+}
+
+/** Kind identity colour used for the active tab underline. */
+const KIND_COLOR: Record<ModelKind, string> = {
+    individual: 'var(--accent-hi)',
+    relationship: 'var(--warn)',
+    clustering: 'var(--kind-clu)',
 };
 
 /** Unsaved edits to ONE model (kept per model id so switching a sensor row's
@@ -515,11 +530,13 @@ export default function BuildModelWindow() {
     const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(m, gateFg, gateHeaders);
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
+    const legacyCompleteCount = allModels.filter(m => m.status).length;
+    const blockedByCondition = allModels.filter(m => !m.status && needsCondition(m)).length;
     /** Badge text for a model the gate blocks, for ANY reason (missing condition,
      *  missing category, invalid period), else null. Hover text is the reason. */
     const gateBadge = (m: FailureModel): string | null => {
         if (gateReasonOf(m) === null) return null;
-        if (needsCondition(m)) return m.status ? 'Legacy · all data' : 'Needs condition';
+        if (needsCondition(m)) return m.status ? LEGACY_BADGE : 'Needs condition';
         return categoryOf(m) === null ? 'Needs category' : 'Fix periods';
     };
 
@@ -658,6 +675,8 @@ export default function BuildModelWindow() {
     // The fields shared by every model of one sensor: the locked key sensor,
     // its component, and the (read-only) failure groups. Shown once per
     // sensor row, or once per model in the Component / Model Type views.
+    // Layout/copy: approved mockup merged-fg-opus.html (3-column grid that
+    // collapses with the card's container width).
     const renderSharedFields = (models: FailureModel[]) => {
         const first = models[0];
         const keyTag = (first.kind === 'clustering' ? first.xSensor : first.targetSensor) ?? '';
@@ -665,39 +684,42 @@ export default function BuildModelWindow() {
         const component = keyTag ? getComponent(keyTag) : '';
         const groupNos = [...new Set(models.flatMap(m => m.groupNos))].sort((a, b) => a - b);
         return (
-            <div data-testid="sensor-shared-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px 14px' }}>
-                <div className="fg-inspector-field">
-                    <div className="fg-inspector-field-label-row"><label>{clusteringOnly ? 'X sensor' : 'Target sensor'}</label></div>
-                    <div className="model-component-readout">{keyTag ? sensorLabel(keyTag) : '—'}</div>
-                    <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created, to prevent picking the wrong sensor by mistake.</div>
-                </div>
-                <div className="fg-inspector-field">
-                    <div className="fg-inspector-field-label-row"><label>Component</label></div>
-                    <div className={`model-component-readout${component ? '' : ' model-component-readout--placeholder'}`}>
-                        {component || 'Auto-filled from the sensor'}
+            <div data-testid="sensor-shared-fields" className="f4-shared">
+                <div className="f4-fld">
+                    <label>{clusteringOnly ? 'X sensor' : 'Target sensor'}</label>
+                    <div className="f4-readout" title={keyTag ? sensorLabel(keyTag) : undefined}>
+                        <Lock size={12} aria-hidden="true" />
+                        <span>{keyTag ? sensorLabel(keyTag) : '—'}</span>
                     </div>
+                    <div className="f4-hint">Locked. Set when the {models.length > 1 ? 'models were' : 'model was'} created.</div>
+                </div>
+                <div className="f4-fld">
+                    <label>Component</label>
+                    <div className={`f4-readout${component ? '' : ' model-component-readout--placeholder'}`}>
+                        <span>{component || 'Auto-filled from the sensor'}</span>
+                    </div>
+                    <div className="f4-hint">From the target sensor.</div>
                 </div>
                 {/* Read-only: group membership is changed exclusively via the
                     Dashboard's Sensor tab per-kind toggle (2026-09-01). */}
-                <div>
-                    <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                <div className="f4-fld f4-fld-fg">
+                    <label>Failure groups</label>
+                    <div className="f4-fgchips">
                         {groupNos.map(no => {
                             const g = realGroups.find(x => x.no === no);
                             const inGroup = models.filter(m => m.groupNos.includes(no));
                             const partial = models.length > 1 && inGroup.length < models.length
-                                ? ` (${inGroup.map(m => KIND_ABBREV[m.kind]).join(' ')} only)` : '';
+                                ? inGroup.map(m => KIND_ABBREV[m.kind]).join(' ') : '';
                             return (
-                                <span key={no} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', padding: '3px 8px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
-                                    <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(no)], flexShrink: 0 }} />
-                                    {no === 0 ? 'Not in Group' : `FG-${no} · ${g?.name ?? ''}`}{partial}
+                                <span key={no} className="f4-fgchip">
+                                    <i style={{ background: FG_ACCENT[getFgGroupColor(no)] }} />
+                                    <span>{no === 0 ? 'Not in Group' : `FG-${no} · ${g?.name ?? ''}`}</span>
+                                    {partial && <em>{partial} only</em>}
                                 </span>
                             );
                         })}
                     </div>
-                    <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '4px' }}>
-                        Managed from the Dashboard's Sensor tab.
-                    </div>
+                    <div className="f4-hint">Managed from the Dashboard's Sensor tab.</div>
                 </div>
             </div>
         );
@@ -709,13 +731,14 @@ export default function BuildModelWindow() {
     const renderKindFields = (m: FailureModel) => {
         const d = draftOf(m);
         return (
-        <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
-            <div className="fg-inspector-field">
-                <div className="fg-inspector-field-label-row"><label>Model name</label></div>
+        <div data-testid="add-model-form-fields" className="f4-panel" style={{ maxHeight: '48vh', overflowY: 'auto' }}>
+            <div className="f4-fld">
+                <label>Model name</label>
                 <input
                     className="fg-inspector-input"
                     value={d.name}
                     placeholder="e.g. Bearing vibration model"
+                    style={d.name.trim() ? undefined : { borderColor: 'var(--warn-line)' }}
                     onChange={e => patchDraft(m, { name: e.target.value })}
                 />
                 {(() => {
@@ -723,7 +746,7 @@ export default function BuildModelWindow() {
                     if (!conflict) return null;
                     const suggestion = suggestDistinctModelName(allModels, m, d.name);
                     return (
-                        <div data-testid="duplicate-name-warning" style={{ marginTop: '4px', fontSize: '0.68rem', color: 'var(--warn, #d9a441)' }}>
+                        <div data-testid="duplicate-name-warning" className="f4-req-note" style={{ marginTop: '4px' }}>
                             Same name as this sensor's {KIND_LABEL[conflict.kind]} model — give it a different name so they can be told apart
                             <button
                                 type="button"
@@ -738,9 +761,13 @@ export default function BuildModelWindow() {
                 })()}
             </div>
 
+            {m.kind === 'individual' && (
+                <div className="f4-kind-note">Individual has no other settings here. Everything else is set on its Build page.</div>
+            )}
+
             {m.kind === 'relationship' && (
-                <div className="fg-inspector-field">
-                    <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
+                <div className="f4-fld">
+                    <span className="f4-lbl">Predictor sensors (≥ 1)</span>
                     <SensorPickerModal
                         sensors={allSensors}
                         getDesc={getDesc}
@@ -749,32 +776,39 @@ export default function BuildModelWindow() {
                         excluded={[m.targetSensor ?? '']}
                         onConfirm={predictors => patchDraft(m, { predictors })}
                         noun="predictors"
+                        triggerText={d.predictors.length ? `${d.predictors.length} selected. Edit predictors…` : undefined}
+                        invalid={d.predictors.length === 0}
                     />
-                    {d.predictors.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                    {d.predictors.length > 0 ? (
+                        <div className="f4-pchips">
                             {d.predictors.map(p => (
-                                <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', padding: '2px 6px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
-                                    {sensorLabel(p)}
-                                    <button onClick={() => patchDraft(m, { predictors: d.predictors.filter(x => x !== p) })} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                                        <X size={9} />
+                                <span key={p} className="f4-ppill" title={sensorLabel(p)}>
+                                    <span>{sensorLabel(p)}</span>
+                                    <button type="button" aria-label={`Remove ${p}`} onClick={() => patchDraft(m, { predictors: d.predictors.filter(x => x !== p) })}>
+                                        <X size={10} />
                                     </button>
                                 </span>
                             ))}
                         </div>
+                    ) : (
+                        <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
                     )}
                 </div>
             )}
 
             {m.kind === 'clustering' && (
                 <>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <div className="fg-inspector-field" style={{ flex: 1, minWidth: 0 }}>
-                            <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
-                            <div className="model-component-readout" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.xSensor ? sensorLabel(m.xSensor) : '—'}</div>
-                            <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created.</div>
+                    <div className="f4-two">
+                        <div className="f4-fld">
+                            <span className="f4-lbl">X sensor</span>
+                            <div className="f4-readout" title={m.xSensor ? sensorLabel(m.xSensor) : undefined}>
+                                <Lock size={12} aria-hidden="true" />
+                                <span>{m.xSensor ? sensorLabel(m.xSensor) : '—'}</span>
+                            </div>
+                            <div className="f4-hint">Locked. Set when the model was created.</div>
                         </div>
-                        <div className="fg-inspector-field" style={{ flex: 1, minWidth: 0 }}>
-                            <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
+                        <div className="f4-fld">
+                            <span className="f4-lbl">Y sensor (target)</span>
                             <SensorPickerModal
                                 sensors={allSensors}
                                 getDesc={getDesc}
@@ -783,11 +817,14 @@ export default function BuildModelWindow() {
                                 value={d.y}
                                 onSelect={y => patchDraft(m, { y })}
                                 noun="Y sensor"
+                                placeholder="None selected"
+                                invalid={!d.y}
                             />
+                            {!d.y && <div className="f4-req-note">Required</div>}
                         </div>
                     </div>
-                    <div className="fg-inspector-field">
-                        <div className="fg-inspector-field-label-row"><label>Criteria sensor (optional)</label></div>
+                    <div className="f4-fld">
+                        <span className="f4-lbl">Criteria sensor (optional)</span>
                         <SensorPickerModal
                             sensors={allSensors}
                             getDesc={getDesc}
@@ -797,30 +834,35 @@ export default function BuildModelWindow() {
                             value={d.criteria}
                             onSelect={criteria => patchDraft(m, { criteria })}
                             noun="criteria sensor"
+                            placeholder="None"
                         />
                     </div>
                     {d.criteria && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div className="fg-inspector-field-label-row"><label>Cluster ranges</label></div>
-                            {d.ranges.map((r, i) => (
-                                <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', width: '16px' }}>{i + 1}</span>
-                                    <input
-                                        type="number"
-                                        className="fg-inspector-input"
-                                        value={r.min ?? ''}
-                                        placeholder="min"
-                                        onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row) })}
-                                    />
-                                    <input
-                                        type="number"
-                                        className="fg-inspector-input"
-                                        value={r.max ?? ''}
-                                        placeholder="max"
-                                        onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row) })}
-                                    />
-                                </div>
-                            ))}
+                        <div className="f4-fld">
+                            <span className="f4-lbl">Cluster ranges</span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {d.ranges.map((r, i) => (
+                                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '16px minmax(0,1fr) minmax(0,1fr)', gap: '6px', alignItems: 'center' }}>
+                                        <b style={{ fontSize: '0.68rem', color: 'var(--text-faint)', fontWeight: 500 }}>{i + 1}</b>
+                                        <input
+                                            type="number"
+                                            className="fg-inspector-input"
+                                            value={r.min ?? ''}
+                                            placeholder="min"
+                                            aria-label={`Cluster ${i + 1} min`}
+                                            onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row) })}
+                                        />
+                                        <input
+                                            type="number"
+                                            className="fg-inspector-input"
+                                            value={r.max ?? ''}
+                                            placeholder="max"
+                                            aria-label={`Cluster ${i + 1} max`}
+                                            onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row) })}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </>
@@ -829,36 +871,36 @@ export default function BuildModelWindow() {
         );
     };
 
-    // Save changes + Build Model → (+ the status pill when `withStatus`, i.e.
-    // inside a sensor row's tab, where no row header carries one). Each model
-    // keeps its OWN status / Save / Build. `position: sticky, bottom: 0` pins
-    // it to the bottom of the visible area however tall the fields above are
-    // (requires no `overflow: hidden` on any ancestor up to the page scroller).
-    // Bottom corners are rounded to match the card's own 10px radius, or this
-    // flat opaque footer paints over the parent's rounded corners.
-    const renderModelFooter = (m: FailureModel, withStatus: boolean) => {
+    // Save changes + Build Model →. Each model keeps its OWN Save / Build; the
+    // status pill lives in the sensor row's tab bar (mockup merged-fg-opus.html),
+    // or on the row header in the Component / Model Type views. `position:
+    // sticky, bottom: 0` pins it to the bottom of the visible area however tall
+    // the fields above are (requires no `overflow: hidden` on any ancestor up
+    // to the page scroller). Bottom corners are rounded to match the card's own
+    // 10px radius, or this flat opaque footer paints over the parent's corners.
+    // Left text: the blocking reason (warn), else "Unsaved changes ...", else
+    // "<Kind> · <Category>".
+    const renderModelFooter = (m: FailureModel) => {
         const saveReason = modelBlockReason(m);
         const reason = buildBlockReason(m);
-        const statusBlock = !m.status ? gateReasonOf(m) : null;
+        const cat = categoryOf(m);
         return (
-        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px', flexWrap: 'wrap' }}>
-            {withStatus && (
-                <button
-                    className={`model-status-pill model-status-pill--${m.status ? 'complete' : 'incomplete'}`}
-                    style={{ marginRight: 'auto' }}
-                    disabled={statusBlock !== null}
-                    title={statusBlock ?? undefined}
-                    onClick={() => toggleModelStatus(m.id)}
-                >
-                    {m.status ? 'Complete' : 'Incomplete'}
-                </button>
+        <div className="f4-foot">
+            {reason ? (
+                <span data-testid="build-block-reason" className="f4-foot-reason f4-foot-reason--block">
+                    <CircleAlert size={11} aria-hidden="true" />
+                    {reason}
+                </span>
+            ) : m.id in drafts ? (
+                <span data-testid="footer-status" className="f4-foot-reason">Unsaved changes to the {KIND_LABEL[m.kind]} model</span>
+            ) : (
+                <span data-testid="footer-status" className="f4-foot-reason">{KIND_LABEL[m.kind]}{cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}</span>
             )}
-            {reason && <span data-testid="build-block-reason" style={{ fontSize: '0.68rem', color: 'var(--text-faint)' }}>{reason}</span>}
-            <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={saveReason !== null} onClick={() => commitModel(m)}>
+            <button className="f4-btn-save" disabled={saveReason !== null} onClick={() => commitModel(m)}>
                 Save changes
             </button>
             <button
-                className="model-open-pm"
+                className="f4-btn-pm"
                 disabled={reason !== null}
                 title={reason ?? undefined}
                 onClick={() => buildModel(m)}
@@ -874,7 +916,7 @@ export default function BuildModelWindow() {
         <div data-testid="add-model-form">
             {renderSharedFields([m])}
             {renderKindFields(m)}
-            {renderModelFooter(m, false)}
+            {renderModelFooter(m)}
         </div>
     );
 
@@ -884,6 +926,7 @@ export default function BuildModelWindow() {
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModels = allModels.length;
+    const sensorCount = new Set(allModels.map(m => modelSensorKey(m))).size;
     const componentSections = (() => {
         const byComp = new Map<string, FailureModel[]>();
         for (const m of allModels) {
@@ -972,9 +1015,7 @@ export default function BuildModelWindow() {
                                 </button>
                                 {component && <span className="model-chip model-chip--component">{component}</span>}
                                 {gateBadge(model) && (
-                                    <span data-testid={`condition-badge-${model.id}`} className="model-chip" style={CONDITION_BADGE_STYLE} title={gateReasonOf(model) ?? undefined}>
-                                        {gateBadge(model)}
-                                    </span>
+                                    <GateBadgePill text={gateBadge(model)!} testId={`condition-badge-${model.id}`} title={gateReasonOf(model) ?? undefined} />
                                 )}
                             </div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1004,13 +1045,17 @@ export default function BuildModelWindow() {
     // kinds that actually exist are shown. Shared fields once, then a tab per
     // model (each keeps its own status / Save / Build Model). The category
     // control lives on this header because category belongs to the sensor.
-    // Long text is single-line ellipsis everywhere in the header.
+    // Long text is single-line ellipsis everywhere in the header. Layout: the
+    // approved mockup merged-fg-opus.html (header grid = chevron | title + meta
+    // | kind badges + category; collapses to two rows in a narrow card).
     const sensorRow = (groupNo: number, sg: SensorModelGroup) => {
         const rowId = `fg:${groupNo}:${sg.key}`;
         const isOpen = openRow === rowId;
         const first = sg.models[0];
         const keyTag = (first.kind === 'clustering' ? first.xSensor : first.targetSensor) ?? '';
         const label = keyTag ? sensorLabel(keyTag) : modelDisplayLabel(first);
+        const title = keyTag ? (getDesc(keyTag) || keyTag) : modelDisplayLabel(first);
+        const showTag = !!keyTag && !!getDesc(keyTag);
         const component = keyTag ? getComponent(keyTag) : '';
         const category = sensorCategory(allModels, sg.key);
         const otherGroups = [...new Set(allModels.filter(m => modelSensorKey(m) === sg.key).flatMap(m => m.groupNos))]
@@ -1020,117 +1065,151 @@ export default function BuildModelWindow() {
         const activeModel = ordered.find(m => m.id === activeTab[rowId]) ?? ordered[0];
         const blocked = ordered.filter(m => !m.status && gateReasonOf(m) !== null).length;
         const accent = FG_ACCENT[getFgGroupColor(groupNo)];
+        const toggle = () => setOpenRow(isOpen ? null : rowId);
         return (
-            <div key={rowId} data-testid={`sensor-row-${rowId}`} style={{ borderTop: '1px solid var(--border)' }}>
-                <div style={isOpen ? { border: `1.5px solid ${accent}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
+            <div
+                key={rowId}
+                data-testid={`sensor-row-${rowId}`}
+                className={`f4-srow${isOpen ? ' f4-srow--open' : ''}`}
+                style={{ '--fgc': accent } as CSSProperties}
+            >
+                <div className="f4-srow-box">
                     <div
-                        onClick={() => setOpenRow(isOpen ? null : rowId)}
-                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px 10px 14px', flexWrap: 'nowrap', minWidth: 0 }}
+                        className="f4-srow-head"
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isOpen}
+                        onClick={toggle}
+                        onKeyDown={e => {
+                            if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); }
+                        }}
                     >
-                        <ChevronRight size={13} color="var(--text-faint)" style={{ flexShrink: 0, transform: isOpen ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }} />
-                        <span
-                            data-testid="sensor-row-label"
-                            title={label}
-                            style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        >
-                            {label}
-                        </span>
-                        {component && <span className="model-chip model-chip--component" style={{ flexShrink: 1, minWidth: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{component}</span>}
-                        {otherGroups.map(n => (
-                            <span key={n} className="model-chip model-chip--component" style={{ flexShrink: 0, fontFamily: 'var(--mono)' }}>also in FG-{n}</span>
-                        ))}
-                        {blocked > 0 && (
-                            <span data-testid={`sensor-blocked-${rowId}`} className="model-chip" style={{ ...CONDITION_BADGE_STYLE, flexShrink: 0, whiteSpace: 'nowrap' }} title="Set a running condition on the Overview panel to unlock Build Model">
-                                {blocked} blocked
-                            </span>
-                        )}
-                        <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', flexShrink: 0, whiteSpace: 'nowrap' }}>{done} of {ordered.length} complete</span>
-                        {ordered.map(m => (
-                            <span
-                                key={m.id}
-                                className={`model-kind-icon model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : 'Incomplete'}`}
-                                data-testid={`sensor-kind-chip-${m.id}`}
-                                style={{ position: 'relative', width: '22px', height: '22px', fontSize: '0.6rem', flexShrink: 0 }}
-                            >
-                                {KIND_ABBREV[m.kind]}
-                                <span style={{ position: 'absolute', right: '-2px', top: '-2px', width: '7px', height: '7px', borderRadius: '50%', border: '1px solid var(--card-bg)', background: m.status ? 'var(--success, #3fb950)' : 'var(--text-faint)' }} />
-                            </span>
-                        ))}
-                        {/* Category — per SENSOR, saves instantly, no "Mixed" state. */}
-                        <div
-                            role="group"
-                            aria-label="Category"
-                            onClick={e => e.stopPropagation()}
-                            style={{ display: 'inline-flex', flexShrink: 0, background: 'var(--input-bg)', border: `1px solid ${category ? 'var(--border-strong)' : 'rgba(245,158,11,0.6)'}`, borderRadius: '7px', padding: '2px', gap: '2px' }}
-                        >
-                            {(['performance', 'condition'] as ModelCategory[]).map(c => {
-                                const active = category === c;
-                                const activeColor = c === 'condition' ? 'var(--cond)' : 'var(--accent-color)';
-                                const activeBg = c === 'condition' ? 'var(--cond-muted)' : 'var(--accent-muted)';
-                                return (
+                        <ChevronRight size={14} className="f4-chev" />
+                        <div className="f4-sr-main">
+                            <div data-testid="sensor-row-label" className="f4-sr-title" title={label}>{title}</div>
+                            <div className="f4-sr-meta">
+                                {showTag && <span className="f4-sr-tag">{keyTag}</span>}
+                                {component && <span className="model-chip model-chip--component" style={{ flexShrink: 1, minWidth: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{component}</span>}
+                                {otherGroups.map(n => {
+                                    const g = realGroups.find(x => x.no === n);
+                                    return (
+                                        <span
+                                            key={n}
+                                            className="model-chip f4-chip-also"
+                                            title={`Same model records. A category change here also shows in FG-${n}${g ? ` · ${g.name}` : ''}`}
+                                        >
+                                            <Link2 size={10} aria-hidden="true" /> also in FG-{n}
+                                        </span>
+                                    );
+                                })}
+                                {blocked > 0 && (
+                                    <span data-testid={`sensor-blocked-${rowId}`} className="f4-pill f4-pill--warn" title={`${blocked} model${blocked === 1 ? '' : 's'} blocked — set a running condition on the Overview panel to unlock Build Model`}>
+                                        {blocked} blocked
+                                    </span>
+                                )}
+                                <span className="f4-sr-prog">{done} of {ordered.length} complete</span>
+                            </div>
+                        </div>
+                        <div className="f4-sr-side">
+                            <div className="f4-kinds">
+                                {ordered.map(m => (
                                     <button
-                                        key={c}
+                                        key={m.id}
                                         type="button"
-                                        aria-pressed={active}
-                                        onClick={() => changeCategory(sg.key, c)}
-                                        style={{
-                                            padding: '3px 9px', borderRadius: '5px', fontSize: '0.68rem', cursor: 'pointer', border: 'none',
-                                            background: active ? activeBg : 'none',
-                                            color: active ? activeColor : 'var(--text-secondary)',
-                                            fontWeight: active ? 600 : 400,
+                                        className={`f4-kb model-kind-icon--${m.kind}`}
+                                        style={{ border: 0, padding: 0, cursor: 'pointer' }}
+                                        title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : 'Incomplete'}`}
+                                        aria-label={`Open ${KIND_LABEL[m.kind]} model`}
+                                        data-testid={`sensor-kind-chip-${m.id}`}
+                                        onClick={e => {
+                                            e.stopPropagation();
+                                            setOpenRow(rowId);
+                                            setActiveTab(prev => ({ ...prev, [rowId]: m.id }));
                                         }}
                                     >
-                                        {CATEGORY_LABELS[c]}
+                                        {KIND_ABBREV[m.kind]}
+                                        <span className={`f4-kb-st${m.status ? ' f4-kb-st--done' : ''}`} />
                                     </button>
-                                );
-                            })}
+                                ))}
+                            </div>
+                            {/* Category — per SENSOR, saves instantly, no "Mixed" state. */}
+                            <div
+                                role="group"
+                                aria-label="Category"
+                                className={`f4-catseg${category ? '' : ' f4-catseg--unset'}`}
+                                title={category ? undefined : 'Pick a category — it is set once for this sensor and applies to all of its models.'}
+                                onClick={e => e.stopPropagation()}
+                            >
+                                {category === null && (
+                                    <span className="f4-cat-flag"><CircleAlert size={11} aria-hidden="true" /> Set category</span>
+                                )}
+                                {(['performance', 'condition'] as ModelCategory[]).map(c => {
+                                    const active = category === c;
+                                    return (
+                                        <button
+                                            key={c}
+                                            type="button"
+                                            aria-pressed={active}
+                                            className={active ? (c === 'condition' ? 'on-cond' : 'on-perf') : undefined}
+                                            onClick={() => changeCategory(sg.key, c)}
+                                        >
+                                            {CATEGORY_LABELS[c]}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
-                    {category === null && (
-                        <div style={{ padding: '0 14px 8px 35px', fontSize: '0.68rem', color: 'var(--warn, #d9a441)' }}>
-                            Pick a category — it is set once for this sensor and applies to all of its models.
-                        </div>
-                    )}
                     {categoryWarn?.key === sg.key && (
-                        <div role="status" style={{ padding: '0 14px 8px 35px', fontSize: '0.68rem', color: 'var(--warn, #d9a441)' }}>
+                        <div role="status" className="f4-req-note" style={{ padding: '0 14px 8px 42px' }}>
                             {categoryWarn.text}
                         </div>
                     )}
                     {isOpen && activeModel && (
-                        <div data-testid="add-model-form" style={{ borderTop: '1px solid var(--border)' }}>
+                        <div data-testid="add-model-form" className="f4-sr-body">
                             {renderSharedFields(ordered)}
-                            <div role="tablist" style={{ display: 'flex', gap: '2px', padding: '0 14px', borderBottom: '1px solid var(--border)' }}>
+                            <div role="tablist" className="f4-tabs">
                                 {ordered.map(m => {
                                     const selected = m.id === activeModel.id;
+                                    const dupKind = ordered.filter(x => x.kind === m.kind).length > 1;
+                                    const extra = dupKind && m.kind === 'clustering' && m.xSensor ? ` · X ${m.xSensor}` : '';
+                                    const badge = gateBadge(m);
                                     return (
                                         <button
                                             key={m.id}
                                             type="button"
                                             role="tab"
                                             aria-selected={selected}
+                                            className={`f4-tab${selected ? ' f4-tab--on' : ''}`}
+                                            style={{ '--kc': KIND_COLOR[m.kind] } as CSSProperties}
+                                            title={`${KIND_LABEL[m.kind]}${extra} · ${m.status ? 'Complete' : 'Incomplete'}`}
                                             onClick={() => setActiveTab(prev => ({ ...prev, [rowId]: m.id }))}
-                                            style={{
-                                                display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px', fontSize: '0.74rem', cursor: 'pointer',
-                                                background: 'none', border: 'none', borderBottom: `2px solid ${selected ? 'var(--accent-color)' : 'transparent'}`,
-                                                color: selected ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: selected ? 600 : 400,
-                                            }}
                                         >
-                                            {KIND_LABEL[m.kind]}
-                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: m.status ? 'var(--success, #3fb950)' : 'var(--text-faint)' }} />
-                                            {m.id in drafts && <span style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>edited</span>}
-                                            {gateBadge(m) && (
-                                                <span data-testid={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>
-                                                    {gateBadge(m)}
-                                                </span>
-                                            )}
+                                            <span className={`f4-kmini model-kind-icon--${m.kind}`} aria-hidden="true">{KIND_ABBREV[m.kind]}</span>
+                                            <span className="f4-tab-l">{KIND_LABEL[m.kind]}{extra}</span>
+                                            <span className={`f4-sdot${m.status ? ' f4-sdot--done' : ''}`} />
+                                            {m.id in drafts && <span className="f4-dirty" title="Unsaved changes">edited</span>}
+                                            {badge && <GateBadgePill text={badge} testId={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} />}
                                         </button>
                                     );
                                 })}
+                                <span className="f4-tabs-spacer" />
+                                <span className="f4-st-wrap">
+                                    <span className="f4-hint f4-st-lbl">Status</span>
+                                    <button
+                                        type="button"
+                                        className={`model-status-pill model-status-pill--${activeModel.status ? 'complete' : 'incomplete'}`}
+                                        disabled={!activeModel.status && gateReasonOf(activeModel) !== null}
+                                        title={!activeModel.status ? (gateReasonOf(activeModel) ?? 'Click to toggle') : 'Click to toggle'}
+                                        onClick={() => toggleModelStatus(activeModel.id)}
+                                    >
+                                        {activeModel.status ? 'Complete' : 'Incomplete'}
+                                    </button>
+                                </span>
                             </div>
                             <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`}>
                                 {renderKindFields(activeModel)}
-                                {renderModelFooter(activeModel, true)}
+                                {renderModelFooter(activeModel)}
                             </div>
                         </div>
                     )}
@@ -1177,228 +1256,25 @@ export default function BuildModelWindow() {
                 />
             ) : (
             <>
-            {/* Running Condition Filter — workspace-wide, set once here so
-                every model of every kind picks it up automatically at train
-                time instead of each needing its own "is the machine
-                running" filter (2026-09-15 — replaces the old per-model
-                Sensor value filter on PredictiveModelBuild.tsx). Also the
-                workspace-default TRAINING TIME RANGE since 2026-09-23 — was
-                a structurally separate, always-per-model-only field with no
-                workspace default at all until the user pointed out the
-                filter concept isn't just sensor value, it needs a time
-                range too, same as this panel's value conditions. */}
-            <div data-testid="rc-panel" style={{ margin: '12px 20px 0', border: `1px solid ${!rcConfigured ? 'rgba(245,158,11,0.6)' : (runningConditionFilters.length > 0 || runningConditionTimePeriods.length > 0) ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
-                <div
-                    onClick={() => setRcFilterOpen(o => !o)}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 14px', cursor: 'pointer', userSelect: 'none' }}
-                >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                        <div style={{ width: 26, height: 26, borderRadius: 7, background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <Gauge size={15} color="var(--accent-color)" />
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                Running Condition Filter
-                                {!rcConfigured && (
-                                    <span data-testid="rc-required-pill" className="model-chip" style={{ ...CONDITION_BADGE_STYLE, fontSize: '0.62rem', fontWeight: 700 }}>Required</span>
-                                )}
-                            </div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {runningConditionTimePeriods.length > 0
-                                    ? `${runningConditionTimePeriods.length === 1 ? periodChipLabel(runningConditionTimePeriods[0]) : `${runningConditionTimePeriods.length} periods`} · `
-                                    : ''}
-                                {runningConditionNoneConfirmed
-                                    ? 'No condition — use all rows'
-                                    : runningConditionFilters.length === 0
-                                    ? 'Required — add a condition, or choose "No condition — use all rows" to build models.'
-                                    : runningConditionFilters.map(f => `${getDesc(f.sensor) || f.sensor} ${f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`).join(runningConditionCombine === 'or' ? ' OR ' : ' AND ')}
-                            </div>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                        <ChevronDown size={14} color="var(--text-faint)" style={{ transform: rcFilterOpen ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
-                    </div>
-                </div>
-
-                {rcFilterOpen && (
-                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
-                        <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
-                            Workspace default training periods + value conditions. A model follows this automatically, or can override either — set per model on its own Build page.
-                        </p>
-
-                        <div style={{ marginBottom: '12px' }} data-testid="rc-periods">
-                            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>Training periods</div>
-                            <TimePeriodsEditor
-                                periods={runningConditionTimePeriods}
-                                onChange={updateRunningConditionPeriods}
-                                bounds={datasetBounds}
-                            />
-                        </div>
-
-                        {/* Value conditions vs. an explicit "No condition" — exactly one
-                            is active; a running condition is REQUIRED before any model
-                            can be built (soft gate A). Choosing "No condition" clears
-                            nothing stored, it just stops the saved conditions applying. */}
-                        <div role="group" aria-label="Condition mode" style={{ display: 'inline-flex', background: 'var(--card-bg, var(--bg-secondary))', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px', marginBottom: '12px' }}>
-                            {([['condition', 'Filter by condition'], ['none', 'No condition']] as const).map(([mode, label]) => {
-                                const active = (mode === 'none') === runningConditionNoneConfirmed;
-                                return (
-                                    <button
-                                        key={mode}
-                                        type="button"
-                                        aria-pressed={active}
-                                        onClick={() => {
-                                            const none = mode === 'none';
-                                            if (none === runningConditionNoneConfirmed) return;
-                                            setRunningConditionNoneConfirmed(none);
-                                            persistRunningCondition({ noneConfirmed: none });
-                                        }}
-                                        style={{
-                                            fontSize: '0.68rem', fontWeight: 600, padding: '4px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer',
-                                            background: active ? 'var(--accent-color)' : 'none',
-                                            color: active ? '#06111f' : 'var(--text-secondary)',
-                                        }}
-                                    >
-                                        {label}
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        {runningConditionNoneConfirmed ? (
-                            <div data-testid="rc-none-note" style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                                No condition — use all rows. Models follow this default and train on all rows within the training periods, including idle periods.
-                                {runningConditionFilters.length > 0 && ' Your saved conditions are kept but not applied.'}
-                            </div>
-                        ) : (
-                        <>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match</span>
-                            <div style={{ display: 'inline-flex', background: 'var(--card-bg, var(--bg-secondary))', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px' }}>
-                                {(['and', 'or'] as const).map(mode => (
-                                    <button
-                                        key={mode}
-                                        type="button"
-                                        onClick={() => {
-                                            setRunningConditionCombine(mode);
-                                            persistRunningCondition({ combine: mode });
-                                        }}
-                                        style={{
-                                            fontSize: '0.68rem', fontWeight: 700, padding: '4px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer',
-                                            background: runningConditionCombine === mode ? 'var(--accent-color)' : 'none',
-                                            color: runningConditionCombine === mode ? '#06111f' : 'var(--text-secondary)',
-                                            letterSpacing: '0.03em',
-                                        }}
-                                    >
-                                        {mode.toUpperCase()}
-                                    </button>
-                                ))}
-                            </div>
-                            <span style={{ fontSize: '0.64rem', color: 'var(--text-faint)' }}>
-                                {runningConditionCombine === 'or' ? '— a row passes if any condition below is true' : '— a row must pass every condition below'}
-                            </span>
-                        </div>
-
-                        {runningConditionFilters.map(f => (
-                            <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', marginBottom: '6px', background: 'var(--chip-bg)', border: '1px solid var(--border)', borderRadius: '6px' }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <SensorPickerModal
-                                        sensors={allSensors}
-                                        getDesc={getDesc}
-                                        getComponent={getComponent}
-                                        single
-                                        value={f.sensor}
-                                        onSelect={sensor => updateRunningConditionFilter(f.id, { sensor })}
-                                        noun="sensor"
-                                    />
-                                </div>
-                                <select
-                                    value={f.operation}
-                                    onChange={e => updateRunningConditionFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
-                                    style={{ padding: '4px 6px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '4px', color: 'var(--accent-color)', fontSize: '0.7rem', fontWeight: 600, outline: 'none', flexShrink: 0 }}
-                                >
-                                    <option value="greater_than">&gt;</option>
-                                    <option value="less_than">&lt;</option>
-                                    <option value="between">between</option>
-                                    <option value="equals">=</option>
-                                </select>
-                                <input
-                                    type="number"
-                                    value={f.value1}
-                                    onChange={e => updateRunningConditionFilter(f.id, { value1: e.target.value })}
-                                    placeholder="val"
-                                    style={{ width: '68px', padding: '4px 6px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.72rem', outline: 'none', flexShrink: 0 }}
-                                />
-                                {f.operation === 'between' && (
-                                    <input
-                                        type="number"
-                                        value={f.value2}
-                                        onChange={e => updateRunningConditionFilter(f.id, { value2: e.target.value })}
-                                        placeholder="max"
-                                        style={{ width: '68px', padding: '4px 6px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.72rem', outline: 'none', flexShrink: 0 }}
-                                    />
-                                )}
-                                <button
-                                    type="button"
-                                    onClick={() => removeRunningConditionFilter(f.id)}
-                                    title="Remove condition"
-                                    style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '3px', display: 'flex', flexShrink: 0 }}
-                                >
-                                    <X size={12} />
-                                </button>
-                            </div>
-                        ))}
-                        <button
-                            type="button"
-                            onClick={addRunningConditionFilter}
-                            disabled={allSensors.length === 0}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 9px',
-                                background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '4px',
-                                color: 'var(--accent-color)', fontSize: '0.68rem', fontWeight: 600,
-                                cursor: allSensors.length === 0 ? 'not-allowed' : 'pointer', opacity: allSensors.length === 0 ? 0.5 : 1,
-                            }}
-                        >
-                            <Plus size={11} /> Add condition
-                        </button>
-                        </>
-                        )}
-
-                        <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
-                            Default for every model — override per model on its own Build page.
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {completeBlock && (
-                <div
-                    role="alert"
-                    data-testid="complete-block-reason"
-                    style={{ margin: '12px 20px 0', display: 'flex', gap: '12px', alignItems: 'center', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.74rem' }}
-                >
-                    <div style={{ flex: 1 }}>The model was not marked Complete. {completeBlock}</div>
-                    <button type="button" className="text-btn" onClick={() => setCompleteBlock(null)}>Dismiss</button>
-                </div>
-            )}
-
             {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
                 <div
                     role="status"
                     data-testid="rc-legacy-banner"
-                    style={{ margin: '12px 20px 0', display: 'flex', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.74rem', lineHeight: 1.5 }}
+                    className="f4-callout f4-callout--info"
+                    style={{ margin: '12px 20px 0' }}
                 >
-                    <div style={{ flex: 1, minWidth: '220px' }}>
-                        <div style={{ fontWeight: 600, marginBottom: '2px' }}>This workspace has models but no running condition</div>
-                        <div style={{ color: 'var(--text-secondary)' }}>
-                            Models built so far trained on all rows. A running condition is now required to build or finish a model: set one, or confirm that using all data is intended.
-                        </div>
+                    <div>
+                        <b>New: running condition is now required for every model.</b>{' '}
+                        {legacyCompleteCount > 0
+                            ? `${legacyCompleteCount} model${legacyCompleteCount === 1 ? '' : 's'} in this workspace ${legacyCompleteCount === 1 ? 'was' : 'were'} trained on the full dataset. They stay `
+                            : 'Models in this workspace were set up without one. They stay '}
+                        <b>Complete</b> and nothing is changed. Set a condition before you build or re-train a model.
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0, flexWrap: 'wrap' }}>
-                        <button type="button" className="text-btn" onClick={() => setRcFilterOpen(true)}>Set a condition</button>
+                    <div className="f4-acts">
+                        <button type="button" className="f4-btn f4-btn--small" onClick={() => setRcFilterOpen(true)}>Set a condition</button>
                         <button
                             type="button"
-                            className="text-btn"
+                            className="f4-btn f4-btn--plain f4-btn--small"
                             onClick={() => {
                                 setRunningConditionNoneConfirmed(true);
                                 persistRunningCondition({ noneConfirmed: true });
@@ -1406,13 +1282,62 @@ export default function BuildModelWindow() {
                         >
                             Keep using all data
                         </button>
-                        <button type="button" className="text-btn" onClick={() => setLegacyRemindLater(true)}>Remind me later</button>
+                        <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setLegacyRemindLater(true)}>Remind me later</button>
                     </div>
+                </div>
+            )}
+
+            {/* Running Condition Filter — workspace-wide, set once here so
+                every model of every kind picks it up automatically at train
+                time (2026-09-15). Also the workspace-default TRAINING TIME
+                PERIODS since 2026-09-23. Presentation lives in
+                RunningConditionPanel.tsx (approved mockup time-ranges.html). */}
+            <RunningConditionPanel
+                open={rcFilterOpen}
+                onToggle={() => setRcFilterOpen(o => !o)}
+                configured={rcConfigured}
+                periods={runningConditionTimePeriods}
+                onPeriodsChange={updateRunningConditionPeriods}
+                bounds={datasetBounds}
+                filters={runningConditionFilters}
+                combine={runningConditionCombine}
+                noneConfirmed={runningConditionNoneConfirmed}
+                onNoneChange={none => {
+                    setRunningConditionNoneConfirmed(none);
+                    persistRunningCondition({ noneConfirmed: none });
+                }}
+                onCombineChange={mode => {
+                    setRunningConditionCombine(mode);
+                    persistRunningCondition({ combine: mode });
+                }}
+                onAddFilter={addRunningConditionFilter}
+                onUpdateFilter={updateRunningConditionFilter}
+                onRemoveFilter={removeRunningConditionFilter}
+                sensors={allSensors}
+                getDesc={getDesc}
+                getComponent={getComponent}
+            />
+            {!rcConfigured && blockedByCondition > 0 && (
+                <div data-testid="rc-blocked-summary" className="f4-reason" style={{ margin: '8px 20px 0' }}>
+                    ⚠ {blockedByCondition} of {totalModels} model{totalModels === 1 ? '' : 's'} can't be built yet — they follow the workspace or have no condition of their own.
+                </div>
+            )}
+
+            {completeBlock && (
+                <div
+                    role="alert"
+                    data-testid="complete-block-reason"
+                    className="f4-callout"
+                    style={{ margin: '12px 20px 0', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center' }}
+                >
+                    <div>The model was not marked Complete. {completeBlock}</div>
+                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setCompleteBlock(null)}>Dismiss</button>
                 </div>
             )}
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-faint)', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <b style={{ color: 'var(--text-primary)' }}>{sensorCount}</b> {sensorCount === 1 ? 'sensor' : 'sensors'} ·
                     <b style={{ color: 'var(--text-primary)' }}>{totalModels}</b> models ·
                     <b style={{ color: 'var(--text-primary)' }}>{realGroups.length}</b> groups ·
                     <b style={{ color: 'var(--text-primary)' }}>{componentSections.length}</b> components
@@ -1443,30 +1368,51 @@ export default function BuildModelWindow() {
                 scroll-container bug). This was the real cause of the button
                 row repeatedly looking "cut off" — not a width issue. */}
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {categoryNotice && categoryNotice.length > 0 && (
-                    <div
-                        role="status"
-                        data-testid="category-normalisation-notice"
-                        style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.74rem', lineHeight: 1.5 }}
-                    >
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 600, marginBottom: '2px' }}>
-                                Categories were made consistent — {categoryNotice.length} model{categoryNotice.length === 1 ? '' : 's'} updated
+                {categoryNotice && categoryNotice.length > 0 && (() => {
+                    // One entry per sensor (the change list is per model). The
+                    // "taken from" model is the first one, in Individual ->
+                    // Relationship -> Clustering order, that was NOT changed.
+                    const bySensor = new Map<string, CategoryChange[]>();
+                    for (const c of categoryNotice) bySensor.set(c.sensorKey, [...(bySensor.get(c.sensorKey) ?? []), c]);
+                    const changedIds = new Set(categoryNotice.map(c => c.modelId));
+                    return (
+                        <div role="status" data-testid="category-normalisation-notice" className="f4-notice">
+                            <span className="f4-notice-ico"><TriangleAlert size={16} aria-hidden="true" /></span>
+                            <div style={{ minWidth: 0 }}>
+                                <div className="f4-notice-title">
+                                    Category made consistent for {bySensor.size} sensor{bySensor.size === 1 ? '' : 's'}
+                                </div>
+                                All models of one sensor now share one category. These models were changed when this workspace loaded:
+                                <ul>
+                                    {[...bySensor.entries()].map(([key, changes]) => {
+                                        const to = changes[0].to;
+                                        const source = KIND_ORDER
+                                            .flatMap(k => allModels.filter(m => modelSensorKey(m) === key && m.kind === k))
+                                            .find(m => !changedIds.has(m.id) && m.category != null);
+                                        // Show the tag with its ORIGINAL casing (the key is normalised).
+                                        const any = allModels.find(m => modelSensorKey(m) === key);
+                                        const tag = (any && (any.kind === 'clustering' ? any.xSensor : any.targetSensor)) || key;
+                                        return (
+                                            <li key={key} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                <b>{sensorLabel(tag)}</b> → {to ? CATEGORY_LABELS[to] : 'not set'}
+                                                {source ? `, taken from its ${KIND_LABEL[source.kind]} model` : ''}. Changed:{' '}
+                                                {changes.map((c, i) => (
+                                                    <span key={c.modelId}>
+                                                        {i > 0 && ' · '}
+                                                        {KIND_LABEL[c.kind]}{' '}
+                                                        {c.from ? <span className="f4-strike">{CATEGORY_LABELS[c.from]}</span> : '(not set)'} → {c.to ? CATEGORY_LABELS[c.to] : 'not set'}
+                                                    </span>
+                                                ))}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                                <div style={{ marginTop: '4px' }}>If that's wrong, change it on the sensor's header.</div>
                             </div>
-                            <div style={{ color: 'var(--text-secondary)' }}>
-                                A sensor now has ONE category for all of its models. Where they disagreed, Individual wins over Relationship over Clustering.
-                            </div>
-                            <ul style={{ margin: '4px 0 0', paddingLeft: '16px', color: 'var(--text-secondary)' }}>
-                                {categoryNotice.map(c => (
-                                    <li key={c.modelId} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {sensorLabel(c.sensorKey)} · {KIND_LABEL[c.kind]}: {c.from ? CATEGORY_LABELS[c.from] : 'not set'} → {c.to ? CATEGORY_LABELS[c.to] : 'not set'}
-                                    </li>
-                                ))}
-                            </ul>
+                            <button type="button" className="f4-notice-x" onClick={dismissCategoryNotice}>Dismiss</button>
                         </div>
-                        <button type="button" className="text-btn" style={{ flexShrink: 0 }} onClick={dismissCategoryNotice}>Dismiss</button>
-                    </div>
-                )}
+                    );
+                })()}
 
                 {groupBy === 'fg' ? (
                     realGroups.length === 0 ? (
@@ -1478,18 +1424,19 @@ export default function BuildModelWindow() {
                         // corners) — it would clip the sticky Save footer instead
                         // of letting it stick to the viewport; nothing inside this card
                         // actually needs edge-to-edge clipping to look right without it.
+                        const rows = groupModelsBySensor(allModels, g.no);
                         return (
-                            <div key={g.no} className={`fg-group-color-${color}`} style={{ border: '1px solid var(--border)', borderRadius: '10px' }}>
+                            <div key={g.no} className={`f4-fg fg-group-color-${color}`}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                     <span className="fg-group-dot" />
-                                    <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1 }}>{g.name}</span>
-                                    <span style={{ fontFamily: 'var(--mono)', fontSize: '0.68rem', color: 'var(--text-faint)' }}>FG-{g.no}</span>
-                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{models.length} model{models.length === 1 ? '' : 's'}</span>
+                                    <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</span>
+                                    <span style={{ fontFamily: 'var(--mono)', fontSize: '0.68rem', color: 'var(--text-faint)', flexShrink: 0 }}>FG-{g.no}</span>
+                                    <span className="f4-fg-count" data-testid={`fg-count-${g.no}`}>{rows.length} sensor{rows.length === 1 ? '' : 's'} · {models.length} model{models.length === 1 ? '' : 's'}</span>
                                 </div>
 
                                 {models.length === 0 ? (
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
-                                ) : groupModelsBySensor(allModels, g.no).map(sg => sensorRow(g.no, sg))}
+                                ) : rows.map(sg => sensorRow(g.no, sg))}
                             </div>
                         );
                     })
@@ -1504,11 +1451,11 @@ export default function BuildModelWindow() {
                     // no name/description/recommendation to edit.
                     const ungroupedModels = allModels.filter(m => m.groupNos.includes(0));
                     return (
-                        <div className="fg-group-color-slate" style={{ border: '1px dashed var(--border)', borderRadius: '10px' }}>
+                        <div className="f4-fg f4-fg--dashed fg-group-color-slate">
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                 <span className="fg-group-dot" />
                                 <span style={{ fontSize: '0.88rem', fontWeight: 600, flex: 1, color: 'var(--text-secondary)' }}>Not in Group</span>
-                                <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}</span>
+                                <span className="f4-fg-count" data-testid="fg-count-0">{groupModelsBySensor(allModels, 0).length} sensor{groupModelsBySensor(allModels, 0).length === 1 ? '' : 's'} · {ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}</span>
                             </div>
 
                             {ungroupedModels.length === 0 ? (
@@ -1524,7 +1471,7 @@ export default function BuildModelWindow() {
                     ) : componentSections.map(([comp, models]) => {
                         const initials = comp.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase();
                         return (
-                            <div key={comp} style={{ border: '1px solid var(--border)', borderRadius: '10px' }}>
+                            <div key={comp} className="f4-fg">
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                     <span style={{ width: '26px', height: '26px', borderRadius: '7px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
                                         {initials}
@@ -1542,7 +1489,7 @@ export default function BuildModelWindow() {
                     kindSections.length === 0 ? (
                         <div className="no-results">No models yet</div>
                     ) : kindSections.map(([kind, models]) => (
-                        <div key={kind} style={{ border: '1px solid var(--border)', borderRadius: '10px' }}>
+                        <div key={kind} className="f4-fg">
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 14px' }}>
                                 <div className={`model-kind-icon model-kind-icon--${kind}`} style={{ width: '26px', height: '26px', fontSize: '0.68rem', flexShrink: 0 }}>
                                     {KIND_ABBREV[kind]}

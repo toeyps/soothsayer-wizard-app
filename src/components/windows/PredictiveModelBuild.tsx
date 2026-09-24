@@ -15,7 +15,9 @@ import { migratePeriods } from "../../utils/workspaceMigrations";
 import { getBuildBlockReason, isCompleteCondition, isRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { newPeriodId, toFilterRanges, validatePeriods } from "../../utils/timePeriods";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
-import TimePeriodsEditor, { TimePeriodChips } from "./TimePeriodsEditor";
+import TimePeriodsEditor, { PeriodReadOnlyList } from "./TimePeriodsEditor";
+import { RuleFormula } from "./RunningConditionParts";
+import { conditionSymbol } from "./periodDisplay";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
@@ -239,13 +241,23 @@ export interface SensorPickerModalProps {
     /** Overrides the trigger's empty-state text (default: "Pick {noun}...")
      *  — e.g. to explain WHY it's disabled ("No predictors selected"). */
     placeholder?: string;
+    /** Single mode: render the tag muted after the description ("desc (TAG)")
+     *  - the condition-row look from the approved mockup. Text content is the
+     *  same either way. */
+    mutedTag?: boolean;
+    /** Multi mode: trigger text override (default "Add {noun}..."), e.g.
+     *  "3 selected. Edit predictors...". */
+    triggerText?: string;
+    /** Marks the field as required-and-empty (amber border), as in the
+     *  approved mockup. Presentation only. */
+    invalid?: boolean;
 }
 
 const UNCATEGORIZED_GROUP = 'Uncategorized';
 
 export function SensorPickerModal({
     sensors, getDesc, getComponent, excluded = [], noun, disabled = false, single = false,
-    selected = [], onConfirm, value = '', onSelect, allowNone = false, placeholder,
+    selected = [], onConfirm, value = '', onSelect, allowNone = false, placeholder, mutedTag = false, triggerText, invalid = false,
 }: SensorPickerModalProps) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
@@ -324,7 +336,7 @@ export function SensorPickerModal({
             {single ? (
                 <button
                     type="button"
-                    className="sensor-picker-trigger-single"
+                    className={`sensor-picker-trigger-single${invalid ? ' sensor-picker-trigger--req' : ''}`}
                     onClick={openPicker}
                     disabled={disabled}
                 >
@@ -338,18 +350,20 @@ export function SensorPickerModal({
                         same day). A flex child needs no positioning trick. */}
                     <Search size={12} className="sensor-picker-trigger-icon" />
                     <span className={`sensor-picker-trigger-label${selectedLabel ? '' : ' sensor-picker-trigger-placeholder'}`}>
-                        {selectedLabel || placeholder || `Pick ${noun}...`}
+                        {mutedTag && value && getDesc(value)
+                            ? <>{getDesc(value)} <i className="sensor-picker-tag">({value})</i></>
+                            : selectedLabel || placeholder || `Pick ${noun}...`}
                     </span>
                 </button>
             ) : (
                 <button
                     type="button"
-                    className="predictor-picker-trigger"
+                    className={`predictor-picker-trigger${invalid ? ' sensor-picker-trigger--req' : ''}`}
                     onClick={openPicker}
                     disabled={disabled}
                 >
                     <Search size={12} />
-                    <span>Add {noun}…</span>
+                    <span>{triggerText ?? `Add ${noun}…`}</span>
                 </button>
             )}
             {open && (
@@ -598,6 +612,9 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const [customRunningConditionCombine, setCustomRunningConditionCombine] = useState<'and' | 'or'>('and');
     // Custom mode: "No condition — use all rows" explicitly confirmed (soft gate A).
     const [customRunningConditionNoneConfirmed, setCustomRunningConditionNoneConfirmed] = useState(false);
+    // "Copied N periods and M conditions from Workspace" note shown once after a
+    // first switch to Custom seeded this model (dismissible, not persisted).
+    const [seedNote, setSeedNote] = useState<{ periods: number; conditions: number } | null>(null);
 
     // Switching to Custom seeds from the workspace's current conditions AND
     // time range — a sensible starting point to edit from rather than an
@@ -609,16 +626,22 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // conditions (a model that already has its own periods keeps them even if
     // it has no custom conditions to seed).
     const handleRunningConditionModeChange = (mode: 'workspace' | 'custom') => {
+        if (mode === 'workspace') setSeedNote(null);
         if (mode === 'custom') {
+            let copiedConditions = 0;
+            let copiedPeriods = 0;
             if (customRunningConditionFilters.length === 0 && runningConditionFilters.length > 0) {
+                copiedConditions = runningConditionFilters.length;
                 setCustomRunningConditionFilters(runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })));
                 setCustomRunningConditionCombine(runningConditionCombine);
             }
             // Same non-destructive once-only rule: copy the workspace periods (fresh
             // ids) only while this model has none of its own.
             if (filterTimePeriods.length === 0 && runningConditionTimePeriods.length > 0) {
+                copiedPeriods = runningConditionTimePeriods.length;
                 setFilterTimePeriods(runningConditionTimePeriods.map(p => ({ ...p, id: newPeriodId() })));
             }
+            if (copiedConditions > 0 || copiedPeriods > 0) setSeedNote({ periods: copiedPeriods, conditions: copiedConditions });
         }
         setRunningConditionMode(mode);
     };
@@ -727,6 +750,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const gateHeaders = sensorHeaders.length ? sensorHeaders : null;
     const finishBlockReason = getBuildBlockReason(gateModel, gateFg, gateHeaders);
     const workspaceUnset = !isRunningConditionConfigured({ ...gateModel, runningConditionMode: 'workspace' } as FailureModel, gateFg, gateHeaders);
+    const effectiveUnset = !isRunningConditionConfigured(gateModel, gateFg, gateHeaders);
+    const anyBadPeriod = periodStatuses.some(st => st.invalid);
+    const wsPeriodStatuses = validatePeriods(runningConditionTimePeriods);
+    const wsBadPeriodIdx = wsPeriodStatuses.findIndex(st => st.invalid);
+    const wsValidPeriodCount = wsPeriodStatuses.filter(st => !st.invalid).length;
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -2079,34 +2107,29 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                             workspace default at all, per explicit user
                             correction — see runningConditionMode's own doc
                             comment). */}
-                        <div className="filter-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-                            <label style={{ marginBottom: '0.35rem' }}>Training conditions</label>
+                        <div data-testid="pm-training-conditions" style={{ display: 'grid', gap: '12px', marginTop: '0.4rem' }}>
+                            <div className="f4-slabel">
+                                <span>Training conditions</span>
+                                {anyBadPeriod
+                                    ? <span data-testid="pm-condition-chip" className="f4-pill f4-pill--bad">Fix period</span>
+                                    : effectiveUnset
+                                    ? <span data-testid="pm-condition-chip" className="f4-pill f4-pill--warn">Needs condition</span>
+                                    : <span data-testid="pm-condition-chip" className="f4-pill f4-pill--ok">Condition set</span>}
+                            </div>
 
-                            <div style={{ display: 'flex', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px', marginBottom: '0.5rem' }}>
+                            <div className="f4-seg f4-seg--two" role="group" aria-label="Running condition source">
                                 {(['workspace', 'custom'] as const).map(mode => (
                                     <button
                                         key={mode}
                                         type="button"
+                                        className={runningConditionMode === mode ? 'on' : undefined}
+                                        aria-pressed={runningConditionMode === mode}
                                         onClick={() => handleRunningConditionModeChange(mode)}
-                                        title={mode === 'workspace' ? 'Use the Overview page\'s workspace-wide setting' : 'Set a running condition for only this model'}
-                                        style={{
-                                            flex: 1,
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            alignItems: 'flex-start',
-                                            gap: '1px',
-                                            padding: '0.3rem 0.5rem',
-                                            borderRadius: '5px',
-                                            border: runningConditionMode === mode ? '1px solid rgba(59,130,246,0.4)' : '1px solid transparent',
-                                            background: runningConditionMode === mode ? 'rgba(59,130,246,0.12)' : 'none',
-                                            cursor: 'pointer',
-                                        }}
+                                        title={mode === 'workspace' ? "Use the Overview page's workspace-wide setting" : 'Set a running condition for only this model'}
                                     >
-                                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: runningConditionMode === mode ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
-                                            {mode === 'workspace' ? 'Workspace' : 'Custom'}
-                                        </span>
-                                        <span style={{ fontSize: '0.58rem', color: 'var(--text-faint)' }}>
-                                            {mode === 'workspace' ? 'use Overview setting' : 'only this model'}
+                                        <span className="f4-wsw">
+                                            <span className="f4-wsw-t">{mode === 'workspace' ? 'Workspace' : 'Custom'}</span>
+                                            <span className="f4-wsw-s">{mode === 'workspace' ? 'use Overview setting' : 'only this model'}</span>
                                         </span>
                                     </button>
                                 ))}
@@ -2114,213 +2137,182 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
 
                             {runningConditionMode === 'workspace' ? (
                                 <>
-                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                                        <TimePeriodChips periods={runningConditionTimePeriods} />
+                                    <div className="f4-side-blk">
+                                        <div className="f4-slabel">
+                                            <span>Training periods <span className="f4-count">{wsValidPeriodCount}</span></span>
+                                            <button
+                                                type="button"
+                                                className="f4-btn f4-btn--small"
+                                                onClick={() => { void handleBack(); }}
+                                                title="Edit the workspace-wide running-condition filter on the Overview page"
+                                            >
+                                                Edit on Overview →
+                                            </button>
+                                        </div>
+                                        <PeriodReadOnlyList periods={runningConditionTimePeriods} bounds={datasetBounds} />
+                                        {wsBadPeriodIdx >= 0 && (
+                                            <div data-testid="pm-ws-period-invalid" className="f4-reason f4-reason--bad" style={{ fontSize: '10.5px' }}>
+                                                ⚠ Period {wsBadPeriodIdx + 1} on Overview is invalid.
+                                            </div>
+                                        )}
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
-                                        <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                                            {runningConditionFilters.length > 0 && (
-                                                <>
-                                                    <span className="pm-count-pill">{runningConditionFilters.length}</span>
-                                                    condition{runningConditionFilters.length !== 1 ? 's' : ''} · {runningConditionCombine.toUpperCase()}
-                                                </>
-                                            )}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => { void handleBack(); }}
-                                            title="Edit the workspace-wide running-condition filter on the Overview page"
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.2rem',
-                                                padding: '0.2rem 0.45rem',
-                                                background: 'rgba(59,130,246,0.12)',
-                                                border: '1px solid rgba(59,130,246,0.3)',
-                                                borderRadius: '4px',
-                                                color: 'var(--accent-color)',
-                                                fontSize: '0.65rem',
-                                                fontWeight: 600,
-                                                cursor: 'pointer',
-                                            }}
-                                        >
-                                            Edit on Overview →
-                                        </button>
+
+                                    <div className="f4-side-blk">
+                                        <div className="f4-slabel">
+                                            <span>Running condition</span>
+                                            {runningConditionNoneConfirmed
+                                                ? <span className="f4-pill f4-pill--grey">No condition</span>
+                                                : runningConditionFilters.length > 0 && (
+                                                    <span className="f4-note" style={{ fontSize: '10.5px' }}>
+                                                        <span className="f4-count">{runningConditionFilters.length}</span> · {runningConditionCombine.toUpperCase()}
+                                                    </span>
+                                                )}
+                                        </div>
+                                        {runningConditionNoneConfirmed ? (
+                                            <div className="f4-note" style={{ fontSize: '11px' }}>Every row inside the periods.</div>
+                                        ) : runningConditionFilters.length === 0 ? null : (
+                                            runningConditionFilters.map(f => (
+                                                <div key={f.id} data-testid="pm-ws-condition" className="f4-roline f4-roline--sans">
+                                                    <span className="f4-dot f4-dot--faint" />
+                                                    <span title={`${getDesc(f.sensor) || f.sensor} (${f.sensor})`}>{getDesc(f.sensor) || f.sensor}</span>
+                                                    <span className="f4-roline-d" style={{ fontFamily: 'var(--mono)' }}>
+                                                        {conditionSymbol(f.operation)} {f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}
+                                                    </span>
+                                                </div>
+                                            ))
+                                        )}
                                     </div>
 
                                     {workspaceUnset && (
-                                        <div
-                                            role="alert"
-                                            data-testid="pm-rc-required-banner"
-                                            style={{ marginTop: '0.4rem', padding: '0.4rem 0.5rem', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.68rem', lineHeight: 1.45 }}
-                                        >
-                                            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Running condition required</div>
-                                            <div style={{ color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                                                The workspace has no running condition, so this model cannot be finished yet.
+                                        <div role="alert" data-testid="pm-rc-required-banner" className="f4-callout f4-callout--compact">
+                                            <div><b>Required.</b> The workspace has no running condition yet, so this model can't be built.</div>
+                                            <div className="f4-acts">
+                                                <button type="button" className="f4-btn f4-btn--small" onClick={() => { void handleBack(); }}>Set on Overview →</button>
+                                                <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => handleRunningConditionModeChange('custom')}>Use Custom instead</button>
                                             </div>
-                                            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                                                <button type="button" className="text-btn" onClick={() => { void handleBack(); }}>Set on Overview →</button>
-                                                <button type="button" className="text-btn" onClick={() => handleRunningConditionModeChange('custom')}>Use Custom instead</button>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {runningConditionNoneConfirmed ? (
-                                        <div style={{
-                                            fontSize: '0.7rem',
-                                            color: 'var(--text-secondary)',
-                                            opacity: 0.65,
-                                            padding: '0.3rem 0 0',
-                                            fontStyle: 'italic',
-                                        }}>
-                                            No condition — using all rows within the training periods, including idle periods.
-                                        </div>
-                                    ) : runningConditionFilters.length === 0 ? (
-                                        <div style={{
-                                            fontSize: '0.7rem',
-                                            color: 'var(--text-secondary)',
-                                            opacity: 0.65,
-                                            padding: '0.3rem 0 0',
-                                            fontStyle: 'italic',
-                                        }}>
-                                            No running-condition filter set — training on all rows within the training periods, including idle periods.
-                                        </div>
-                                    ) : (
-                                        <div style={{
-                                            display: 'flex',
-                                            flexWrap: 'wrap',
-                                            gap: '0.3rem',
-                                            marginTop: '0.3rem',
-                                        }}>
-                                            {runningConditionFilters.map(f => (
-                                                <span key={f.id} className="pm-count-pill" style={{
-                                                    padding: '0.25rem 0.5rem',
-                                                    fontSize: '0.68rem',
-                                                    fontWeight: 500,
-                                                }}>
-                                                    {getDesc(f.sensor) || f.sensor}{' '}
-                                                    {f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='}{' '}
-                                                    {f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}
-                                                </span>
-                                            ))}
                                         </div>
                                     )}
                                 </>
                             ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                    <div data-testid="pm-custom-periods">
-                                        <div style={{ fontSize: '0.66rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>Training periods</div>
-                                        <TimePeriodsEditor
-                                            compact
-                                            periods={filterTimePeriods}
-                                            onChange={setFilterTimePeriods}
-                                            bounds={datasetBounds}
-                                        />
-                                    </div>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.66rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                                        <input
-                                            type="checkbox"
-                                            checked={customRunningConditionNoneConfirmed}
-                                            onChange={e => setCustomRunningConditionNoneConfirmed(e.target.checked)}
-                                        />
-                                        No condition — use all rows
-                                    </label>
-                                    {customRunningConditionNoneConfirmed && (
-                                        <div data-testid="pm-custom-none-warning" style={{ fontSize: '0.62rem', color: 'var(--warn, #d9a441)', lineHeight: 1.4 }}>
-                                            This model will train on all rows within its training periods, including idle periods. Saved conditions are kept but not applied.
+                                <>
+                                    {seedNote && (
+                                        <div data-testid="pm-seed-note" className="f4-seed">
+                                            <span>
+                                                Copied <b>{seedNote.periods} period{seedNote.periods === 1 ? '' : 's'}</b> and {seedNote.conditions} condition{seedNote.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
+                                            </span>
+                                            <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNote(null)}><X size={12} /></button>
                                         </div>
                                     )}
-                                    {!customRunningConditionNoneConfirmed && (
-                                    <>
-                                    <div style={{ display: 'inline-flex', alignSelf: 'flex-start', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '6px', padding: '2px', gap: '2px' }}>
-                                        {(['and', 'or'] as const).map(mode => (
-                                            <button
-                                                key={mode}
-                                                type="button"
-                                                onClick={() => setCustomRunningConditionCombine(mode)}
-                                                style={{
-                                                    fontSize: '0.62rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '4px', border: 'none', cursor: 'pointer',
-                                                    background: customRunningConditionCombine === mode ? 'var(--accent-color)' : 'none',
-                                                    color: customRunningConditionCombine === mode ? '#06111f' : 'var(--text-secondary)',
-                                                }}
-                                            >
-                                                {mode.toUpperCase()}
-                                            </button>
-                                        ))}
+                                    <div className="f4-side-blk" data-testid="pm-custom-periods">
+                                        <div className="f4-slabel">
+                                            <span>Training periods <span className="f4-count">{filterTimePeriods.length}</span></span>
+                                            <span className="f4-note f4-note--faint" style={{ fontSize: '10px' }}>any period</span>
+                                        </div>
+                                        <TimePeriodsEditor compact periods={filterTimePeriods} onChange={setFilterTimePeriods} bounds={datasetBounds} />
                                     </div>
 
-                                    {customRunningConditionFilters.map(f => (
-                                        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 5px', background: 'var(--chip-bg)', border: '1px solid var(--border)', borderRadius: '5px' }}>
-                                            <div style={{ flex: 1, minWidth: 0 }}>
-                                                <SensorPickerModal
-                                                    sensors={allSensors}
-                                                    getDesc={getDesc}
-                                                    getComponent={getComponent}
-                                                    single
-                                                    value={f.sensor}
-                                                    onSelect={sensor => updateCustomRunningCondition(f.id, { sensor })}
-                                                    noun="sensor"
-                                                />
-                                            </div>
-                                            <select
-                                                value={f.operation}
-                                                onChange={e => updateCustomRunningCondition(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
-                                                style={{ padding: '3px 5px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '4px', color: 'var(--accent-color)', fontSize: '0.62rem', fontWeight: 600, outline: 'none', flexShrink: 0 }}
-                                            >
-                                                <option value="greater_than">&gt;</option>
-                                                <option value="less_than">&lt;</option>
-                                                <option value="between">between</option>
-                                                <option value="equals">=</option>
-                                            </select>
-                                            <input
-                                                type="number"
-                                                value={f.value1}
-                                                onChange={e => updateCustomRunningCondition(f.id, { value1: e.target.value })}
-                                                placeholder="val"
-                                                style={{ width: '44px', padding: '3px 4px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.62rem', outline: 'none', flexShrink: 0 }}
-                                            />
-                                            {f.operation === 'between' && (
-                                                <input
-                                                    type="number"
-                                                    value={f.value2}
-                                                    onChange={e => updateCustomRunningCondition(f.id, { value2: e.target.value })}
-                                                    placeholder="max"
-                                                    style={{ width: '44px', padding: '3px 4px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.62rem', outline: 'none', flexShrink: 0 }}
-                                                />
+                                    <div className="f4-side-blk">
+                                        <div className="f4-slabel">
+                                            <span>Running condition</span>
+                                            {!customRunningConditionNoneConfirmed && (
+                                                <div className="f4-seg f4-seg--andor" role="group" aria-label="Match">
+                                                    {(['and', 'or'] as const).map(mode => (
+                                                        <button
+                                                            key={mode}
+                                                            type="button"
+                                                            className={customRunningConditionCombine === mode ? 'on' : undefined}
+                                                            aria-pressed={customRunningConditionCombine === mode}
+                                                            onClick={() => setCustomRunningConditionCombine(mode)}
+                                                        >
+                                                            {mode.toUpperCase()}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             )}
-                                            <button
-                                                type="button"
-                                                onClick={() => removeCustomRunningCondition(f.id)}
-                                                title="Remove condition"
-                                                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex', flexShrink: 0 }}
-                                            >
-                                                <X size={11} />
-                                            </button>
                                         </div>
-                                    ))}
 
-                                    <button
-                                        type="button"
-                                        onClick={addCustomRunningCondition}
-                                        disabled={allSensors.length === 0}
-                                        style={{
-                                            display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px',
-                                            background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '4px',
-                                            color: 'var(--accent-color)', fontSize: '0.62rem', fontWeight: 600,
-                                            cursor: allSensors.length === 0 ? 'not-allowed' : 'pointer', opacity: allSensors.length === 0 ? 0.5 : 1,
-                                            width: 'fit-content',
-                                        }}
-                                    >
-                                        + Add condition
-                                    </button>
-                                    </>
-                                    )}
-
-                                    <div style={{ fontSize: '0.6rem', color: 'var(--text-faint)' }}>
-                                        Only this model · the workspace default is untouched.
+                                        {customRunningConditionNoneConfirmed ? (
+                                            <div className="f4-nofilter">
+                                                <span className="f4-pill f4-pill--ok">✓ No condition — all rows</span>
+                                                <div data-testid="pm-custom-none-warning" className="f4-note" style={{ fontSize: '11px' }}>
+                                                    Idle periods stay in training.{customRunningConditionFilters.length > 0 && ' Saved conditions are kept but not applied.'}
+                                                </div>
+                                                <div className="f4-acts">
+                                                    <button type="button" className="f4-btn f4-btn--small" onClick={() => setCustomRunningConditionNoneConfirmed(false)}>Switch to conditions</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                {customRunningConditionFilters.length === 0 && (
+                                                    <div role="alert" data-testid="pm-custom-required" className="f4-callout f4-callout--compact">
+                                                        <div><b>Required.</b> Add at least one condition, or confirm that this machine always runs.</div>
+                                                    </div>
+                                                )}
+                                                {customRunningConditionFilters.map(f => (
+                                                    <div key={f.id} className="f4-cond f4-cond--compact">
+                                                        <div className="f4-cond-s">
+                                                            <SensorPickerModal
+                                                                sensors={allSensors}
+                                                                getDesc={getDesc}
+                                                                getComponent={getComponent}
+                                                                single
+                                                                mutedTag
+                                                                value={f.sensor}
+                                                                onSelect={sensor => updateCustomRunningCondition(f.id, { sensor })}
+                                                                noun="sensor"
+                                                            />
+                                                        </div>
+                                                        <select
+                                                            className="f4-cond-o"
+                                                            aria-label="Operator"
+                                                            value={f.operation}
+                                                            onChange={e => updateCustomRunningCondition(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
+                                                            style={{ fontSize: '10.5px' }}
+                                                        >
+                                                            <option value="greater_than">&gt;</option>
+                                                            <option value="less_than">&lt;</option>
+                                                            <option value="between">between</option>
+                                                            <option value="equals">=</option>
+                                                        </select>
+                                                        <input
+                                                            type="number"
+                                                            className="f4-cond-v"
+                                                            value={f.value1}
+                                                            onChange={e => updateCustomRunningCondition(f.id, { value1: e.target.value })}
+                                                            placeholder="val"
+                                                        />
+                                                        {f.operation === 'between' && (
+                                                            <input
+                                                                type="number"
+                                                                className="f4-cond-v"
+                                                                value={f.value2}
+                                                                onChange={e => updateCustomRunningCondition(f.id, { value2: e.target.value })}
+                                                                placeholder="max"
+                                                            />
+                                                        )}
+                                                        <button type="button" className="f4-x" onClick={() => removeCustomRunningCondition(f.id)} title="Remove condition" aria-label="Remove condition">
+                                                            <X size={11} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                <div className="f4-acts">
+                                                    <button type="button" className="f4-btn f4-btn--small" onClick={addCustomRunningCondition} disabled={allSensors.length === 0}>+ Add condition</button>
+                                                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setCustomRunningConditionNoneConfirmed(true)}>No condition — use all rows</button>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
-                                </div>
+                                    <div className="f4-foot-note">Only this model · the workspace default is untouched.</div>
+                                </>
                             )}
+
+                            <RuleFormula
+                                compact
+                                periods={activePeriods}
+                                filters={runningConditionMode === 'custom' ? customRunningConditionFilters : runningConditionFilters}
+                                combine={activeRunningConditionCombine}
+                                none={activeNoneConfirmed}
+                            />
                         </div>
                     </div>
 

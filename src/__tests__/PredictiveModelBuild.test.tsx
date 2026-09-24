@@ -128,6 +128,13 @@ afterEach(() => {
     cleanup();
 });
 
+/** Compact (sidebar) period rows start collapsed and open one at a time - open the first so its date inputs exist. */
+const expandAllPeriods = () => {
+    screen.queryAllByTestId(/^period-toggle-/).forEach(b => {
+        if (b.getAttribute('aria-expanded') === 'false') fireEvent.click(b);
+    });
+};
+
 describe('PredictiveModelBuild', () => {
     it('shows a loading state until workspace data resolves', async () => {
         let resolveLoad!: (v: any) => void;
@@ -284,7 +291,7 @@ describe('PredictiveModelBuild', () => {
 
             fireEvent.click(screen.getByText('Cancel'));
             expect(screen.queryByText('Predictor One')).toBeNull(); // nothing committed
-            expect(screen.getByText('0')).toBeTruthy(); // predictor count pill back to 0
+            expect(screen.getAllByText('0').some(e => e.classList.contains('pm-count-pill'))).toBe(true); // predictor count pill back to 0
         });
 
         it('Escape also closes the popup without committing (same convention as the chart expand modal)', async () => {
@@ -300,7 +307,7 @@ describe('PredictiveModelBuild', () => {
             fireEvent.keyDown(window, { key: 'Escape' });
 
             expect(screen.queryByText('1 selected')).toBeNull(); // popup gone
-            expect(screen.getByText('0')).toBeTruthy(); // nothing committed
+            expect(screen.getAllByText('0').some(e => e.classList.contains('pm-count-pill'))).toBe(true); // nothing committed
         });
 
         it('removing a predictor chip drops it from the selection', async () => {
@@ -603,7 +610,8 @@ describe('PredictiveModelBuild', () => {
     describe('running condition (read-only, inherited from Overview)', () => {
         it('shows "not set" with no editable controls when the workspace has no filter', async () => {
             await renderHydrated({ runningConditionFilters: [] });
-            expect(screen.getByText(/No running-condition filter set/)).toBeTruthy();
+            expect(screen.getByTestId('pm-rc-required-banner')).toBeTruthy(); // unset -> "Required." callout
+            expect(screen.queryByTestId('pm-ws-condition')).toBeNull();
             expect(screen.queryByTitle('Add a sensor value filter')).toBeNull();
             expect(screen.queryByPlaceholderText('Search sensor...')).toBeNull();
         });
@@ -614,8 +622,9 @@ describe('PredictiveModelBuild', () => {
                     { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' },
                 ],
             });
-            expect(screen.getByText(/Predictor One/)).toBeTruthy();
-            expect(screen.getByText(/1200/)).toBeTruthy();
+            const line = screen.getByTestId('pm-ws-condition');
+            expect(line.textContent).toMatch(/Predictor One/);
+            expect(line.textContent).toMatch(/> 1200/);
             // Read-only: no input to type a new value into, no select to
             // change the operator, no remove button.
             expect(screen.queryByPlaceholderText('Search sensor...')).toBeNull();
@@ -802,7 +811,7 @@ describe('PredictiveModelBuild', () => {
             });
             await renderHydrated({ runningConditionTimePeriods: [P2] });
             expect(chartFilter().timestamp_ranges).toEqual([R2]);
-            expect(screen.getByTestId('period-chip').textContent).toBe('2026-03-01 – 2026-03-31'); // whole days -> date only
+            expect(screen.getByTestId('period-chip').textContent).toContain('1 Mar – 31 Mar 2026'); // whole days -> date only, year once
             expect(screen.queryByTestId('time-periods-editor')).toBeNull();
         });
 
@@ -815,7 +824,11 @@ describe('PredictiveModelBuild', () => {
         it("switching to Custom copies the workspace periods (fresh ids) once, and never overwrites a model's own list", async () => {
             await renderHydrated({ runningConditionTimePeriods: [P1, P2] });
             fireEvent.click(screen.getByText('Custom'));
+            expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 2 periods/); // seeded from Workspace
+            fireEvent.click(screen.getByTestId('period-toggle-1')); // accordion: one row open at a time
             expect((screen.getByLabelText('Period 1 start') as HTMLInputElement).value).toBe(P1.start);
+            fireEvent.click(screen.getByTestId('period-toggle-2'));
+            expect(screen.queryByLabelText('Period 1 start')).toBeNull();
             expect((screen.getByLabelText('Period 2 end') as HTMLInputElement).value).toBe(P2.end);
             expect(chartFilter().timestamp_ranges).toEqual([R1, R2]);
             cleanup();
@@ -823,8 +836,10 @@ describe('PredictiveModelBuild', () => {
             seedCustom([P2], { runningConditionMode: 'workspace' });
             await renderHydrated({ runningConditionTimePeriods: [P1] });
             fireEvent.click(screen.getByText('Custom'));
+            expandAllPeriods();
             expect(screen.queryByLabelText('Period 2 start')).toBeNull();
             expect((screen.getByLabelText('Period 1 start') as HTMLInputElement).value).toBe(P2.start);
+            expect(screen.queryByTestId('pm-seed-note')).toBeNull(); // nothing was copied
         });
 
         it('editing a Custom period commits on blur: persists filterTimePeriods and updates the query', async () => {
@@ -834,6 +849,7 @@ describe('PredictiveModelBuild', () => {
                 patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
             vi.useFakeTimers();
             await renderHydrated();
+            expandAllPeriods();
 
             const end = screen.getByLabelText('Period 1 end');
             fireEvent.change(end, { target: { value: '2026-02-15T12:00' } });
@@ -858,7 +874,7 @@ describe('PredictiveModelBuild', () => {
             expect(last(mockUseChartData.mock.calls)[0]).toBeNull();
             expect(mockInvoke.mock.calls.some(c => c[0] === 'compute_sensor_stats')).toBe(false);
             expect(screen.getByTestId('pm-periods-blocked')).toBeTruthy();
-            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/ends before it starts/);
+            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/End is before start/);
             const finish = screen.getByText('Finish').closest('button') as HTMLButtonElement;
             expect(finish.disabled).toBe(true);
             expect(finish.title).toMatch(/ends before it starts/);
@@ -913,8 +929,8 @@ describe('PredictiveModelBuild', () => {
             order.length = 0;
             (onFinish as any).mockImplementation(() => { order.push('finish'); });
 
-            fireEvent.click(screen.getByLabelText('No condition — use all rows')); // un-confirm ...
-            fireEvent.click(screen.getByLabelText('No condition — use all rows')); // ... and re-confirm: pending write, gate open
+            fireEvent.click(screen.getByText('Switch to conditions')); // un-confirm ...
+            fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' })); // ... and re-confirm: pending write, gate open
             fireEvent.click(screen.getByText('Finish'));
             await waitFor(() => expect(order).toEqual(['write', 'finish']));
         });
@@ -996,13 +1012,13 @@ describe('PredictiveModelBuild', () => {
 
             fireEvent.click(within(banner).getByText('Use Custom instead'));
             expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull();
-            expect(screen.getByLabelText('No condition — use all rows')).toBeTruthy(); // Custom's own confirm control
+            expect(screen.getByRole('button', { name: 'No condition — use all rows' })).toBeTruthy(); // Custom's own confirm control
         });
 
         it('no banner once the workspace is configured (condition or confirmed None)', async () => {
             await renderHydrated({ runningConditionNoneConfirmed: true });
             expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull();
-            expect(screen.getByText(/No condition — using all rows/)).toBeTruthy();
+            expect(screen.getByText('Every row inside the periods.')).toBeTruthy();
         });
 
         it('Custom "No condition — use all rows" shows a warning, unlocks Finish and persists customRunningConditionNoneConfirmed', async () => {
@@ -1016,7 +1032,7 @@ describe('PredictiveModelBuild', () => {
             expect(finish().disabled).toBe(true);
             expect(screen.queryByTestId('pm-custom-none-warning')).toBeNull();
 
-            fireEvent.click(screen.getByLabelText('No condition — use all rows'));
+            fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
             expect(screen.getByTestId('pm-custom-none-warning')).toBeTruthy();
             expect(finish().disabled).toBe(false);
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
@@ -1032,11 +1048,10 @@ describe('PredictiveModelBuild', () => {
                 failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })] },
             });
             await renderHydrated();
-            const box = screen.getByLabelText('No condition — use all rows') as HTMLInputElement;
-            expect(box.checked).toBe(true);
-            fireEvent.click(box); // un-confirm to reach the list
+            expect(screen.getByTestId('pm-custom-none-warning')).toBeTruthy(); // confirmed
+            fireEvent.click(screen.getByText('Switch to conditions')); // un-confirm to reach the list
             fireEvent.click(screen.getByText('+ Add condition'));
-            expect((screen.getByLabelText('No condition — use all rows') as HTMLInputElement).checked).toBe(false);
+            expect(screen.queryByTestId('pm-custom-none-warning')).toBeNull();
             expect(screen.getByPlaceholderText('val')).toBeTruthy();
         });
 
@@ -1058,6 +1073,7 @@ describe('PredictiveModelBuild', () => {
                 patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
             vi.useFakeTimers();
             await renderHydrated();
+            expandAllPeriods();
             mockUpdateWorkspaceData.mockClear();
             mockEmit.mockClear();
 
@@ -1089,6 +1105,7 @@ describe('PredictiveModelBuild', () => {
                 patch({ id, failureGroupState: { groups: [], models: [thisModel, sibling] } }));
             vi.useFakeTimers();
             await renderHydrated();
+            expandAllPeriods();
             mockUpdateWorkspaceData.mockClear();
             mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
                 patch({ id, failureGroupState: { groups: [], models: [thisModel, sibling] } }));
@@ -1119,6 +1136,7 @@ describe('PredictiveModelBuild', () => {
         }));
         vi.useFakeTimers();
         await renderHydrated();
+        expandAllPeriods();
         mockUpdateWorkspaceData.mockClear();
         mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({
             id,
@@ -1209,5 +1227,151 @@ describe('SensorAutocomplete', () => {
         fireEvent.click(screen.getByText('TAG3')); // Uncategorized group, bare tag (no description)
         expect(onSelect).toHaveBeenCalledWith('TAG3');
         expect(screen.queryByText('Uncategorized')).toBeNull(); // dropdown closed
+    });
+});
+
+describe('PredictiveModelBuild - Training conditions sidebar (approved mockups time-ranges.html / rc-gate.html)', () => {
+    const P1 = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+    const P2 = { id: 'p2', start: '2026-02-15T00:00', end: '2026-03-10T23:59' };
+    const cond = { id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' } as const;
+    const withBounds = () => mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'get_dataset_time_bounds') return Promise.resolve({ min: '2026-01-01 00:00:00', max: '2026-03-31 23:50:00' });
+        if (cmd === 'compute_sensor_stats') return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+        return Promise.resolve({});
+    });
+    const seed = (extra: Record<string, unknown>) => mockLoadWorkspaceData.mockResolvedValue({
+        name: 'WS', failureGroupState: { groups: [], models: [makeStoredModel(extra)] },
+    });
+
+    it('headline chip: "Needs condition" (amber) while the effective condition is unset, "Condition set" (green) once configured, "Fix period" (red) when a period is invalid', async () => {
+        await renderHydrated();
+        expect(screen.getByTestId('pm-condition-chip').textContent).toBe('Needs condition');
+        expect(screen.getByTestId('pm-condition-chip').className).toContain('f4-pill--warn');
+        cleanup();
+
+        await renderHydrated({ runningConditionFilters: [cond] });
+        expect(screen.getByTestId('pm-condition-chip').textContent).toBe('Condition set');
+        expect(screen.getByTestId('pm-condition-chip').className).toContain('f4-pill--ok');
+        cleanup();
+
+        seed({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] });
+        await renderHydrated();
+        expect(screen.getByTestId('pm-condition-chip').textContent).toBe('Fix period');
+        expect(screen.getByTestId('pm-condition-chip').className).toContain('f4-pill--bad');
+    });
+
+    it('the Workspace/Custom switch is the two-line segmented control ("use Overview setting" / "only this model") with the active side marked', async () => {
+        await renderHydrated();
+        const seg = screen.getByRole('group', { name: 'Running condition source' });
+        expect(seg.className).toContain('f4-seg--two');
+        const [ws, custom] = within(seg).getAllByRole('button');
+        expect(ws.textContent).toBe('Workspaceuse Overview setting');
+        expect(custom.textContent).toBe('Customonly this model');
+        expect(ws.className).toBe('on');
+        expect(ws.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('Workspace mode is READ-ONLY: count badge, "Edit on Overview →", coverage bar, one dot line per period with its duration', async () => {
+        withBounds();
+        const { onBack } = await renderHydrated({ runningConditionTimePeriods: [P1, P2], runningConditionFilters: [cond], runningConditionNoneConfirmed: false });
+        const box = screen.getByTestId('pm-training-conditions');
+        expect(within(box).getByText('Training periods').parentElement!.querySelector('.f4-count')!.textContent).toBe('2');
+        expect(screen.getByTestId('period-coverage')).toBeTruthy();
+        expect(screen.getAllByTestId('period-chip').map(c => c.textContent)).toEqual(['1 Jan – 31 Jan 2026' + '31 d', '15 Feb – 10 Mar 2026' + '24 d']);
+        expect(screen.queryByTestId('time-periods-editor')).toBeNull();
+        fireEvent.click(screen.getByText('Edit on Overview →'));
+        await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
+    });
+
+    it('Workspace mode: the conditions block shows "N · AND", one line per condition (label + operator/value), and the compact rule line', async () => {
+        await renderHydrated({ runningConditionTimePeriods: [P1], runningConditionFilters: [cond, { ...cond, id: 'rcf2', sensor: 'PRED2', operation: 'less_than', value1: '5' }] });
+        const box = screen.getByTestId('pm-training-conditions');
+        expect(within(box).getByText('Running condition').parentElement!.textContent).toContain('2 · AND');
+        const lines = screen.getAllByTestId('pm-ws-condition');
+        expect(lines).toHaveLength(2);
+        expect(lines[0].textContent).toContain('> 1200');
+        expect(lines[1].textContent).toContain('< 5');
+        const rule = screen.getByTestId('rule-formula');
+        expect(rule.className).toContain('f4-formula--compact');
+        expect(rule.textContent).toContain('PRED1 > 1200');
+    });
+
+    it('Workspace mode with the workspace on "No condition": grey pill + "Every row inside the periods."', async () => {
+        await renderHydrated({ runningConditionNoneConfirmed: true });
+        expect(screen.getByText('Every row inside the periods.')).toBeTruthy();
+        expect(screen.getByTestId('pm-training-conditions').querySelector('.f4-pill--grey')!.textContent).toBe('No condition');
+    });
+
+    it('an invalid WORKSPACE period is called out on the Build page too', async () => {
+        await renderHydrated({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [P1, { id: 'x', start: '2026-03-01T00:00', end: '2026-02-01T00:00' }] });
+        expect(screen.getByTestId('pm-ws-period-invalid').textContent).toContain('Period 2 on Overview is invalid.');
+    });
+
+    it('the unset-workspace banner is the amber "Required." callout with both actions', async () => {
+        await renderHydrated();
+        const banner = screen.getByTestId('pm-rc-required-banner');
+        expect(banner.className).toContain('f4-callout');
+        expect(banner.textContent).toContain("Required. The workspace has no running condition yet, so this model can't be built.");
+    });
+
+    it('switching to Custom the first time shows the blue "Copied N periods and M conditions" note, which can be dismissed', async () => {
+        await renderHydrated({ runningConditionTimePeriods: [P1, P2], runningConditionFilters: [cond] });
+        fireEvent.click(screen.getByText('Custom'));
+        const note = screen.getByTestId('pm-seed-note');
+        expect(note.className).toBe('f4-seed');
+        expect(note.textContent).toContain('Copied 2 periods and 1 condition from Workspace. Edits here affect only this model.');
+        fireEvent.click(within(note).getByLabelText('Dismiss'));
+        expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+    });
+
+    it('switching back to Workspace drops the seed note', async () => {
+        await renderHydrated({ runningConditionTimePeriods: [P1] });
+        fireEvent.click(screen.getByText('Custom'));
+        expect(screen.getByTestId('pm-seed-note').textContent).toContain('Copied 1 period and 0 conditions');
+        fireEvent.click(screen.getByText('Workspace'));
+        expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+    });
+
+    it('Custom mode: periods block ("any period"), collapsible period rows, Match AND/OR, condition cards, "+ Add condition" and "No condition — use all rows" side by side', async () => {
+        withBounds();
+        seed({ runningConditionMode: 'custom', filterTimePeriods: [P1], customRunningConditionFilters: [cond] });
+        await renderHydrated();
+        const periods = screen.getByTestId('pm-custom-periods');
+        expect(periods.textContent).toContain('any period');
+        expect(periods.querySelector('.f4-crow')).not.toBeNull(); // compact, collapsible
+        expect(screen.getByRole('group', { name: 'Match' }).className).toContain('f4-seg--andor');
+        expect(document.querySelectorAll('.f4-cond--compact')).toHaveLength(1);
+        expect(screen.getByText('+ Add condition')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'No condition — use all rows' }).className).toContain('f4-btn--plain');
+        expect(screen.getByTestId('rule-formula').textContent).toContain('PRED1 > 1200');
+        expect(screen.getByText('Only this model · the workspace default is untouched.')).toBeTruthy();
+    });
+
+    it('Custom mode with nothing set: the amber "Required." callout, no condition cards, chip "Needs condition"', async () => {
+        seed({ runningConditionMode: 'custom' });
+        await renderHydrated({ runningConditionNoneConfirmed: true }); // workspace configured, Custom is not
+        expect(screen.getByTestId('pm-custom-required').textContent).toContain('Required. Add at least one condition, or confirm that this machine always runs.');
+        expect(screen.getByTestId('pm-condition-chip').textContent).toBe('Needs condition');
+        expect(document.querySelectorAll('.f4-cond--compact')).toHaveLength(0);
+    });
+
+    it('Custom "No condition": dashed box with the green "✓ No condition — all rows" pill, the idle-periods note and "Switch to conditions"; the AND/OR switch is hidden', async () => {
+        seed({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, customRunningConditionFilters: [cond] });
+        await renderHydrated();
+        const box = document.querySelector('.f4-nofilter')!;
+        expect(box.querySelector('.f4-pill--ok')!.textContent).toBe('✓ No condition — all rows');
+        expect(screen.getByTestId('pm-custom-none-warning').textContent).toBe('Idle periods stay in training. Saved conditions are kept but not applied.');
+        expect(screen.queryByRole('group', { name: 'Match' })).toBeNull();
+        expect(screen.getByTestId('rule-formula').textContent).toContain('no condition (every row)');
+    });
+
+    it('Custom conditions are cards with a muted-tag sensor field, an operator, a value and a remove button; between adds a second value', async () => {
+        seed({ runningConditionMode: 'custom', customRunningConditionFilters: [{ ...cond, operation: 'between', value2: '2000' }] });
+        await renderHydrated();
+        expect(screen.getByLabelText('Operator')).toBeTruthy();
+        expect(screen.getByPlaceholderText('val')).toBeTruthy();
+        expect(screen.getByPlaceholderText('max')).toBeTruthy();
+        fireEvent.click(screen.getByLabelText('Remove condition'));
+        expect(document.querySelectorAll('.f4-cond--compact')).toHaveLength(0);
     });
 });

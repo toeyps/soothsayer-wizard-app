@@ -527,6 +527,7 @@ describe('PM page edits made right before leaving the page', () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P] })])));
         await mountBuildModel();
         await openPmFor();
+        fireEvent.click(screen.getByTestId('period-toggle-1')); // sidebar period rows start collapsed
 
         const end = screen.getByLabelText('Period 1 end');
         fireEvent.change(end, { target: { value: '2026-02-15T12:00' } });
@@ -548,11 +549,10 @@ describe('PM page edits made right before leaving the page', () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })])));
         await mountBuildModel();
         await openPmFor();
-        const box = screen.getByLabelText('No condition — use all rows') as HTMLInputElement;
-        fireEvent.click(box); // un-confirm -> blocked
+        fireEvent.click(screen.getByText('Switch to conditions')); // un-confirm -> blocked
         await settle(400); // persisted + broadcast: the parent now stores "unset"
         expect(finishBtn().disabled).toBe(true);
-        fireEvent.click(screen.getByLabelText('No condition — use all rows')); // confirm again
+        fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' })); // confirm again
         expect(finishBtn().disabled).toBe(false);
         fireEvent.click(finishBtn());
         await settle(400);

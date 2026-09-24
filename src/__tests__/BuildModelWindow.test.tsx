@@ -83,6 +83,18 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
 }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
+// @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
+import { readFileSync } from 'node:fs';
+
+// jsdom does not load App.css (vitest also stubs `?raw` CSS imports to ''; cwd is the repo root), so layout
+// rules that used to be inline styles are asserted against the stylesheet source itself.
+const APP_CSS: string = readFileSync('src/App.css', 'utf-8');
+const cssBlock = (selector: string): string => {
+    const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = new RegExp(`(?:^|\\n)${esc} \\{([^}]*)\\}`).exec(APP_CSS);
+    if (!m) throw new Error(`no CSS rule for ${selector}`);
+    return m[1];
+};
 
 function makeGroup(overrides: Record<string, any> = {}) {
     return { no: 1, name: 'Group A', description: '', recommendation: '', ...overrides };
@@ -185,13 +197,13 @@ describe('BuildModelWindow', () => {
         expect(screen.getByText('Build Model — Overview')).toBeTruthy();
         expect(screen.getByText('Group A')).toBeTruthy();
         expect(screen.getByText('FG-1')).toBeTruthy();
-        expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy(); // one row per sensor, labelled by the sensor
+        expect(screen.getByText('Pump Pressure')).toBeTruthy(); // one row per sensor, labelled by the sensor
     });
 
     it('shows exactly one line per sensor — no duplicate description/description(tag) lines', async () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '', targetSensor: 'TAG1' })] } });
-        expect(screen.getAllByText('Pump Pressure (TAG1)')).toHaveLength(1);
+        expect(screen.getAllByText('Pump Pressure')).toHaveLength(1);
     });
 
     it('switches to grouping by Component and shows an FG chip only in that view', async () => {
@@ -257,14 +269,14 @@ describe('BuildModelWindow', () => {
     it('stays in sync with a failure-group-state-changed broadcast from another window', async () => {
         render(<BuildModelWindow />);
         await deliverData();
-        expect(screen.queryByText('Pump Temp (TAG2)')).toBeNull();
+        expect(screen.queryByText('Pump Temp')).toBeNull();
 
         await act(async () => {
             for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
                 cb({ payload: { workspaceId: 'ws1', origin: 'dashboard', groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model', targetSensor: 'TAG2' })] } });
             }
         });
-        expect(screen.getByText('Pump Temp (TAG2)')).toBeTruthy();
+        expect(screen.getByText('Pump Temp')).toBeTruthy();
     });
 
     // 2026-09-21: multi-project isolation. This window is a singleton that
@@ -289,9 +301,9 @@ describe('BuildModelWindow', () => {
             await fire('failure-group-state-changed', {
                 groups: [makeGroup()], models: [makeModel({ id: 'y', name: 'Unscoped Model', targetSensor: 'TAG3' })],
             });
-            expect(screen.queryByText('Pump Temp (TAG2)')).toBeNull(); // foreign model's sensor
+            expect(screen.queryByText('Pump Temp')).toBeNull(); // foreign model's sensor
             expect(screen.queryByText('TAG3')).toBeNull(); // unscoped model's sensor
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure')).toBeTruthy();
         });
 
         it('skips its own echo but still applies the Predictive Model page\'s broadcast (that page lives inside this window)', async () => {
@@ -301,12 +313,12 @@ describe('BuildModelWindow', () => {
                 workspaceId: 'ws1', origin: 'build-model',
                 groups: [makeGroup()], models: [makeModel({ id: 'e', name: 'Echoed Model', targetSensor: 'TAG2' })],
             });
-            expect(screen.queryByText('Pump Temp (TAG2)')).toBeNull();
+            expect(screen.queryByText('Pump Temp')).toBeNull();
             await fire('failure-group-state-changed', {
                 workspaceId: 'ws1', origin: 'predictive-model',
                 groups: [makeGroup()], models: [makeModel({ id: 'p', name: 'PM Edit', targetSensor: 'TAG2' })],
             });
-            expect(screen.getByText('Pump Temp (TAG2)')).toBeTruthy();
+            expect(screen.getByText('Pump Temp')).toBeTruthy();
         });
 
         it('stamps every failure-group broadcast it sends with its workspace id', async () => {
@@ -341,7 +353,7 @@ describe('BuildModelWindow', () => {
 
             expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // model 'm1' does not exist in ws2
             expect(screen.getByText('OTHER1')).toBeTruthy();
-            expect(screen.queryByText('Pump Pressure (TAG1)')).toBeNull();
+            expect(screen.queryByText('Pump Pressure')).toBeNull();
         });
 
         it('re-delivery for the SAME workspace keeps the open PM page', async () => {
@@ -461,28 +473,33 @@ describe('BuildModelWindow', () => {
 
             const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
             const footer = saveBtn.parentElement as HTMLElement;
-            expect(footer.style.position).toBe('sticky');
-            expect(footer.style.bottom).toBe('0px');
+            expect(footer.classList.contains('f4-foot')).toBe(true);
+            expect(cssBlock('.f4-foot')).toMatch(/position:\s*sticky/);
+            expect(cssBlock('.f4-foot')).toMatch(/bottom:\s*0/);
         });
 
         it('no group card in either grouping view clips its content with overflow:hidden (regression: that broke the footer\'s sticky positioning entirely)', async () => {
             const { container } = render(<BuildModelWindow />);
             await deliverData();
-            const cards = container.querySelectorAll('[style*="border-radius: 10px"]');
+            const cards = container.querySelectorAll('.f4-fg');
             expect(cards.length).toBeGreaterThan(0);
             cards.forEach(card => {
                 expect((card as HTMLElement).style.overflow).not.toBe('hidden');
             });
+            for (const sel of ['.f4-fg', '.f4-srow', '.f4-srow-box']) {
+                expect(cssBlock(sel)).not.toMatch(/overflow:\s*hidden/);
+            }
         });
 
         it('the sticky footer\'s own bottom corners are rounded to match the editing card\'s border-radius (regression: no overflow:hidden on the card -- the previous item -- means the footer\'s flat, opaque (--card-bg) background paints straight over the card\'s rounded bottom corners once it settles at the bottom of the scroll, reading as the accent border simply not connecting there; reported 2026-09-17)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
-            const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
-            const footer = saveBtn.parentElement as HTMLElement;
-            expect(footer.style.borderBottomLeftRadius).toBe('10px');
-            expect(footer.style.borderBottomRightRadius).toBe('10px');
+            expect(screen.getByText('Save changes').closest('.f4-foot')).not.toBeNull();
+            // 10px card radius minus its 1.5px border = 9px inner radius.
+            expect(cssBlock('.f4-foot')).toMatch(/border-bottom-left-radius:\s*9px/);
+            expect(cssBlock('.f4-foot')).toMatch(/border-bottom-right-radius:\s*9px/);
+            expect(cssBlock('.f4-srow-box')).toMatch(/border-radius:\s*10px/);
         });
 
         it('the opened form\'s boundary is a real border wrapping the whole card (header + footer), not just a left accent bar (regression: an absolutely-positioned bar was anchored to the row\'s un-scrolled flow position and visually detached from the sticky footer once the page scrolled)', async () => {
@@ -491,10 +508,11 @@ describe('BuildModelWindow', () => {
             fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
             const saveBtn = screen.getByText('Save changes');
-            let boundary: HTMLElement | null = screen.getAllByTestId('sensor-row-label')[0].parentElement;
-            while (boundary && !boundary.style.border) boundary = boundary.parentElement;
+            const boundary = saveBtn.closest('.f4-srow-box');
             expect(boundary).not.toBeNull();
-            expect(boundary!.contains(saveBtn)).toBe(true);
+            expect(boundary!.contains(screen.getAllByTestId('sensor-row-label')[0])).toBe(true); // header AND footer
+            expect(cssBlock('.f4-srow-box')).toMatch(/border:\s*1\.5px solid transparent/); // a real border, not an absolute bar
+            expect(cssBlock('.f4-srow--open .f4-srow-box')).toMatch(/border-color:\s*var\(--fgc\)/);
         });
 
         it('clicking the same row again closes its form (toggle)', async () => {
@@ -601,7 +619,7 @@ describe('BuildModelWindow', () => {
                         models: [makeModel({ id: 'm-ng', name: 'Orphan Model', groupNos: [0] })],
                     },
                 });
-                expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy(); // sensor row inside the Not in Group card
+                expect(screen.getByText('Pump Pressure')).toBeTruthy(); // sensor row inside the Not in Group card
             });
 
         });
@@ -729,7 +747,7 @@ describe('BuildModelWindow', () => {
         it('treats a name identical to its own target tag as unset (legacy-migrated models) and falls back to "description (tag)"', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] } });
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure')).toBeTruthy();
         });
 
         it('shows sensors as "description (tag)" in the summary line, predictor chips, and the locked Target readout', async () => {
@@ -749,7 +767,7 @@ describe('BuildModelWindow', () => {
             // Target select's own unrelated option list).
             expect(form.getAllByText('Pump Temp (TAG2)').length).toBe(1);
             expect(form.getAllByText('TAG3').length).toBe(1);
-            expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked Target readout (shared, once)
+            expect(form.getByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' })).toBeTruthy(); // locked Target readout (shared, once)
         });
 
         it('gives each model kind a distinct single-letter icon and color', async () => {
@@ -805,9 +823,9 @@ describe('BuildModelWindow', () => {
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
                 expect(save.disabled).toBe(true); // Y still unset
-                expect(form.getAllByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).length).toBeGreaterThan(0); // locked X readout
+                expect(form.getAllByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' }).length).toBeGreaterThan(0); // locked X readout
 
-                fireEvent.change(form.getByPlaceholderText('Pick Y sensor...'), { target: { value: 'TAG2' } });
+                fireEvent.change(form.getByPlaceholderText('None selected'), { target: { value: 'TAG2' } });
                 expect(save.disabled).toBe(false);
             });
 
@@ -831,8 +849,8 @@ describe('BuildModelWindow', () => {
                 await deliverData();
                 fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy();
-                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).closest('select')).toBeNull();
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' })).toBeTruthy();
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' }).closest('select')).toBeNull();
             });
 
             it('Relationship\'s Target sensor is locked too, but its Predictors stay a normal editable multi-select', async () => {
@@ -841,7 +859,7 @@ describe('BuildModelWindow', () => {
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
                 fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).closest('select')).toBeNull(); // Target: locked
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' }).closest('select')).toBeNull(); // Target: locked
 
                 fireEvent.change(form.getByPlaceholderText('Add predictors…'), { target: { value: 'TAG3' } });
                 expect(form.getByText('TAG3')).toBeTruthy(); // Predictors: still freely editable (now the chip)
@@ -866,7 +884,7 @@ describe('BuildModelWindow', () => {
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
                 fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getAllByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).length).toBeGreaterThan(0); // X: locked
+                expect(form.getAllByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' }).length).toBeGreaterThan(0); // X: locked
 
                 const yPicker = form.getByDisplayValue('TAG2') as HTMLInputElement; // Y: still freely editable
                 fireEvent.change(yPicker, { target: { value: 'TAG3' } });
@@ -897,7 +915,7 @@ describe('BuildModelWindow', () => {
                 fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
-                fireEvent.change(form.getByPlaceholderText('Pick criteria sensor...'), { target: { value: 'TAG3' } });
+                fireEvent.change(form.getByPlaceholderText('None'), { target: { value: 'TAG3' } });
                 expect(form.getByDisplayValue('TAG3')).toBeTruthy();
             });
 
@@ -929,8 +947,8 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverUnconfigured();
             expect(screen.getByTestId('rc-required-pill').textContent).toBe('Required');
-            expect(screen.getByText(/Required — add a condition, or choose "No condition — use all rows"/)).toBeTruthy();
-            expect((screen.getByTestId('rc-panel') as HTMLElement).style.border).toContain('245, 158, 11');
+            expect(screen.getByText(/Not set — add a condition that tells running from idle/)).toBeTruthy();
+            expect(screen.getByTestId('rc-panel').classList.contains('f4-rc--req')).toBe(true); // amber (warn) border state
             expect(screen.getByText('Add condition')).toBeTruthy(); // auto-opened, not collapsed
             expect(screen.queryByText(/applies to/)).toBeNull();
         });
@@ -939,7 +957,8 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData(); // fixtures default to "No condition" confirmed
             expect(screen.queryByTestId('rc-required-pill')).toBeNull();
-            expect(screen.getByText('No condition — use all rows')).toBeTruthy();
+            expect(screen.getByText('No condition — every row in the periods')).toBeTruthy();
+            expect(screen.getByTestId('rc-panel').classList.contains('f4-rc--set')).toBe(true);
             expect(screen.queryByText('Add condition')).toBeNull();
         });
 
@@ -958,7 +977,7 @@ describe('BuildModelWindow', () => {
             await deliverUnconfigured({ runningConditionFilters: filters });
             expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
 
-            fireEvent.click(screen.getByRole('button', { name: 'No condition' }));
+            fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
             await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
             const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
@@ -1049,7 +1068,7 @@ describe('BuildModelWindow', () => {
 
             fireEvent.click(screen.getByTitle('Remove condition'));
             await act(async () => { await Promise.resolve(); });
-            expect(screen.getByText(/Required — add a condition/)).toBeTruthy();
+            expect(screen.getByText(/Not set — add a condition/)).toBeTruthy();
         });
 
         it('the Match AND/OR toggle persists runningConditionCombine and switches the summary joiner', async () => {
@@ -1118,7 +1137,7 @@ describe('BuildModelWindow', () => {
         it('overlapping periods warn, and "Merge into one" writes a single period; nothing blocks', async () => {
             render(<BuildModelWindow />);
             await deliverUnconfigured({ runningConditionTimePeriods: [PA, { id: 'pc', start: '2026-01-20T00:00', end: '2026-02-10T00:00' }] });
-            expect(screen.getByTestId('period-overlap-2').textContent).toMatch(/overlaps period 1/);
+            expect(screen.getByTestId('period-overlap-2').textContent).toMatch(/Overlaps period 1 by 12 d/);
             fireEvent.click(screen.getByTestId('period-merge-2'));
             await flush();
             const written = await lastWritten();
@@ -1128,14 +1147,14 @@ describe('BuildModelWindow', () => {
         it('an end before its start is flagged inline', async () => {
             render(<BuildModelWindow />);
             await deliverUnconfigured({ runningConditionTimePeriods: [{ id: 'bad', start: '2026-02-01T00:00', end: '2026-01-01T00:00' }] });
-            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/ends before it starts/);
+            expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/End is before start — pick an end after 1 Feb 2026/);
         });
 
         it('open ends read "Start of data" / "End of data"; a blank start on a later period is invalid', async () => {
             render(<BuildModelWindow />);
             await deliverUnconfigured({ runningConditionTimePeriods: [{ id: 'a', start: '', end: '2026-01-31T23:59' }, { id: 'b', start: '', end: '' }] });
-            expect(screen.getAllByText('Start of data').length).toBeGreaterThan(0);
-            expect(screen.getAllByText('End of data').length).toBeGreaterThan(0);
+            expect(screen.getAllByText(/Start of data/).length).toBeGreaterThan(0);
+            expect(screen.getAllByText(/End of data/).length).toBeGreaterThan(0);
             expect(screen.getByTestId('period-invalid-2').textContent).toMatch(/needs a start date/);
         });
 
@@ -1328,7 +1347,7 @@ describe('BuildModelWindow', () => {
             await deliverGate([ind()]);
             openRow();
             expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
-            fireEvent.click(screen.getByRole('button', { name: 'No condition' }));
+            fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
             await flush();
             expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(false);
             fireEvent.click(screen.getByText('Build Model →'));
@@ -1656,7 +1675,8 @@ describe('BuildModelWindow', () => {
             fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]); // FG-1 row: both kinds
             const shared = within(screen.getByTestId('sensor-shared-fields'));
             expect(shared.getByText('FG-1 · Group A')).toBeTruthy();
-            expect(shared.getByText(/FG-2 · Group B \(I only\)/)).toBeTruthy();
+            expect(shared.getByText('FG-2 · Group B')).toBeTruthy();
+            expect(shared.getByText('I only')).toBeTruthy(); // the partial-membership marker is its own mono tag
             expect(shared.queryByRole('checkbox')).toBeNull();
             expect(screen.getAllByText('also in FG-2').length).toBeGreaterThan(0); // header says the sensor is elsewhere too
         });
@@ -1762,9 +1782,11 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups, models: [ind()] } });
             const label = screen.getAllByTestId('sensor-row-label')[0];
-            expect(label.style.whiteSpace).toBe('nowrap');
-            expect(label.style.textOverflow).toBe('ellipsis');
-            expect(label.style.overflow).toBe('hidden');
+            expect(label.classList.contains('f4-sr-title')).toBe(true);
+            const rule = cssBlock('.f4-sr-title');
+            expect(rule).toMatch(/white-space:\s*nowrap/);
+            expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+            expect(rule).toMatch(/overflow:\s*hidden/);
         });
 
         describe('category is set once, on the sensor header', () => {
@@ -1899,6 +1921,286 @@ describe('BuildModelWindow', () => {
                 await flush();
                 expect((await lastWrite()).categoryNormalisationNotice).toBeNull();
                 expect(screen.queryByTestId('category-normalisation-notice')).toBeNull();
+            });
+        });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Visual/behavioural fidelity to the APPROVED mockups (2026-09-24 audit):
+    // merged-fg-opus.html (sensor rows), rc-gate.html (gate badges, banner).
+    // ─────────────────────────────────────────────────────────────────────
+    describe('approved-mockup fidelity (merged-fg-opus.html / rc-gate.html)', () => {
+        const ind = (o: Record<string, any> = {}) => makeModel({ id: 'i1', name: 'Ind', kind: 'individual', targetSensor: 'TAG1', ...o });
+        const rel = (o: Record<string, any> = {}) => makeModel({ id: 'r1', name: 'Rel', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], ...o });
+        const clu = (o: Record<string, any> = {}) => makeModel({ id: 'c1', name: 'Clu', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', ...o });
+        const groups = [makeGroup({ no: 1, name: 'Group A' }), makeGroup({ no: 2, name: 'Group B' })];
+        const openRow = () => fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+        const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        /** Configured workspace by default ("No condition" confirmed) so only the thing under test shows. */
+        async function deliver(models: any[], extra: Record<string, any> = {}) {
+            let disk: any = { id: 'ws1', failureGroupState: { groups, models, runningConditionNoneConfirmed: true, rcLegacyNotice: null, ...extra } };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+            await deliverData({ failureGroupState: disk.failureGroupState });
+        }
+
+        describe('sensor row header', () => {
+            it('is a grid: title = description, the tag in mono under it, then the component chip and "N of M complete"', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind(), rel()]);
+                const title = screen.getByTestId('sensor-row-label');
+                expect(title.textContent).toBe('Pump Pressure');
+                expect(title.title).toBe('Pump Pressure (TAG1)'); // full label on hover
+                const meta = title.parentElement!.querySelector('.f4-sr-meta')!;
+                expect(meta.querySelector('.f4-sr-tag')!.textContent).toBe('TAG1');
+                expect(meta.querySelector('.model-chip--component')!.textContent).toBe('Pump');
+                expect(meta.querySelector('.f4-sr-prog')!.textContent).toBe('0 of 2 complete');
+            });
+
+            it('the header is a keyboard-operable button: Enter / Space toggle the row, aria-expanded follows', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind()]);
+                const head = screen.getByTestId('sensor-row-fg:1:tag1').querySelector('.f4-srow-head') as HTMLElement;
+                expect(head.getAttribute('role')).toBe('button');
+                expect(head.getAttribute('aria-expanded')).toBe('false');
+                fireEvent.keyDown(head, { key: 'Enter' });
+                expect(head.getAttribute('aria-expanded')).toBe('true');
+                expect(screen.getByTestId('sensor-row-fg:1:tag1').classList.contains('f4-srow--open')).toBe(true);
+                fireEvent.keyDown(head, { key: ' ' });
+                expect(head.getAttribute('aria-expanded')).toBe('false');
+            });
+
+            it('kind badges are buttons: clicking one opens the row on THAT model\'s tab; a Complete model has the green status dot', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ status: true }), rel()]);
+                const relBadge = screen.getByTestId('sensor-kind-chip-r1');
+                expect(relBadge.tagName).toBe('BUTTON');
+                expect(relBadge.getAttribute('aria-label')).toBe('Open Relationship model');
+                expect(screen.getByTestId('sensor-kind-chip-i1').querySelector('.f4-kb-st--done')).not.toBeNull();
+                expect(relBadge.querySelector('.f4-kb-st--done')).toBeNull();
+                fireEvent.click(relBadge);
+                expect(screen.getByRole('tab', { name: /Relationship/ }).getAttribute('aria-selected')).toBe('true');
+                expect(screen.getByTestId('add-model-form')).toBeTruthy();
+            });
+
+            it('an "also in FG-N" chip carries the link explanation as its tooltip', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ groupNos: [1, 2] })]);
+                const chip = screen.getAllByText(/also in FG-2/)[0];
+                expect(chip.className).toContain('f4-chip-also');
+                expect(chip.title).toBe('Same model records. A category change here also shows in FG-2 · Group B');
+            });
+
+            it('the FG card counts sensors AND models; the toolbar counts sensors too', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind(), rel(), ind({ id: 'i2', targetSensor: 'TAG2', name: 'Other' })]);
+                expect(screen.getByTestId('fg-count-1').textContent).toBe('2 sensors · 3 models');
+                expect(screen.getByTestId('fg-count-0').textContent).toBe('0 sensors · 0 models');
+                expect(document.body.textContent).toMatch(/2\s*sensors/); // toolbar stats
+            });
+        });
+
+        describe('category segmented control', () => {
+            it('unset: amber glow class, an inline "Set category" flag inside the control and NO extra hint line below the header', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ category: null })]);
+                const seg = screen.getByRole('group', { name: 'Category' });
+                expect(seg.className).toContain('f4-catseg--unset');
+                expect(within(seg).getByText('Set category')).toBeTruthy();
+                expect(screen.queryByText(/Pick a category — it is set once/)).toBeNull();
+            });
+
+            it('Performance is green (on-perf), Condition purple (on-cond); the flag disappears once set', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ category: 'performance' })]);
+                const seg = screen.getByRole('group', { name: 'Category' });
+                expect(seg.className).not.toContain('f4-catseg--unset');
+                expect(within(seg).queryByText('Set category')).toBeNull();
+                expect(within(seg).getByRole('button', { name: 'Performance' }).className).toBe('on-perf');
+                expect(within(seg).getByRole('button', { name: 'Condition' }).className).toBe('');
+                cleanup();
+                render(<BuildModelWindow />);
+                await deliver([ind({ category: 'condition' })]);
+                expect(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'Condition' }).className).toBe('on-cond');
+            });
+
+        });
+
+        describe('expanded row', () => {
+            it('shared fields are a 3-field grid: locked readout with a lock icon + hint, component, failure-group chips', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ groupNos: [1, 2] }), rel({ groupNos: [1] })]);
+                openRow();
+                const shared = screen.getByTestId('sensor-shared-fields');
+                expect(shared.className).toBe('f4-shared');
+                const readout = shared.querySelector('.f4-readout')!;
+                expect(readout.querySelector('svg')).not.toBeNull(); // lock icon
+                expect(readout.textContent).toBe('Pump Pressure (TAG1)');
+                expect(within(shared).getByText('Locked. Set when the models were created.')).toBeTruthy();
+                expect(within(shared).getByText('From the target sensor.')).toBeTruthy();
+                expect(shared.querySelectorAll('.f4-fgchip')).toHaveLength(2);
+                expect(shared.querySelector('.f4-fgchip em')!.textContent).toBe('I only'); // partial membership as a mono tag
+                expect(within(shared).getByText("Managed from the Dashboard's Sensor tab.")).toBeTruthy();
+            });
+
+            it('tab bar: kind badge + label + status dot per tab, the active tab underlines in its kind colour, the status pill sits at the RIGHT of the bar', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ status: true }), rel()]);
+                openRow();
+                const bar = screen.getByRole('tablist');
+                expect(bar.className).toBe('f4-tabs');
+                const tabs = within(bar).getAllByRole('tab');
+                expect(tabs).toHaveLength(2);
+                expect(tabs[0].className).toContain('f4-tab--on');
+                expect(tabs[0].style.getPropertyValue('--kc')).toBe('var(--accent-hi)');
+                expect(tabs[0].querySelector('.f4-kmini')!.textContent).toBe('I');
+                expect(tabs[0].querySelector('.f4-sdot--done')).not.toBeNull();
+                expect(tabs[1].querySelector('.f4-sdot--done')).toBeNull();
+                fireEvent.click(tabs[1]);
+                expect(within(bar).getAllByRole('tab')[1].style.getPropertyValue('--kc')).toBe('var(--warn)');
+                // Status pill: in the tab bar (for the ACTIVE tab), no longer in the footer.
+                expect(within(bar).getByText('Status')).toBeTruthy();
+                expect(within(bar).getByRole('button', { name: 'Incomplete' })).toBeTruthy();
+                expect(within(screen.getByTestId(`model-tab-panel-r1`)).queryByRole('button', { name: 'Incomplete' })).toBeNull();
+            });
+
+            it('the tab status pill toggles the ACTIVE model (Complete <-> Incomplete)', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ status: true })]);
+                openRow();
+                mockUpdateWorkspaceData.mockClear();
+                fireEvent.click(within(screen.getByRole('tablist')).getByRole('button', { name: 'Complete' }));
+                await flush();
+                const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+                expect(written.models[0].status).toBe(false);
+            });
+
+            it('an edited tab shows the blue "edited" tag', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind()]);
+                openRow();
+                fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
+                expect(within(screen.getByRole('tablist')).getByText('edited').className).toBe('f4-dirty');
+            });
+
+            it('Individual: the "no other settings" note; Relationship: a required-and-empty predictors picker + note, then "N selected" + removable pills', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind(), rel({ predictorSensors: [] })]);
+                openRow();
+                expect(screen.getByText('Individual has no other settings here. Everything else is set on its Build page.')).toBeTruthy();
+                fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+                expect(screen.getByText('No predictors yet. A Relation model needs at least one.').className).toBe('f4-req-note');
+                const multi = () => sensorPickerModalProps.filter(p => p.noun === 'predictors');
+                expect(multi()[multi().length - 1].invalid).toBe(true);
+                expect(multi()[multi().length - 1].triggerText).toBeUndefined();
+                // pick one
+                fireEvent.change(screen.getByPlaceholderText('Add predictors…'), { target: { value: 'TAG2' } });
+                expect(multi()[multi().length - 1].invalid).toBe(false);
+                expect(multi()[multi().length - 1].triggerText).toBe('1 selected. Edit predictors…');
+                const pill = document.querySelector('.f4-ppill')!;
+                expect(pill.textContent).toContain('Pump Temp (TAG2)');
+                fireEvent.click(within(pill as HTMLElement).getByRole('button'));
+                expect(document.querySelector('.f4-ppill')).toBeNull();
+            });
+
+            it('Clustering: locked X readout, Y picker marked required with a "Required" note until filled', async () => {
+                render(<BuildModelWindow />);
+                await deliver([clu({ ySensor: '' })]);
+                openRow();
+                expect(document.querySelector('.f4-two .f4-readout')!.textContent).toBe('Pump Pressure (TAG1)');
+                expect(screen.getByText('Required').className).toBe('f4-req-note');
+                const y = sensorPickerModalProps.filter(p => p.noun === 'Y sensor');
+                expect(y[y.length - 1].invalid).toBe(true);
+                expect(y[y.length - 1].placeholder).toBe('None selected');
+                fireEvent.change(screen.getByPlaceholderText('None selected'), { target: { value: 'TAG2' } });
+                expect(screen.queryByText('Required')).toBeNull();
+            });
+
+            it('footer: neutral "Kind · Category" -> "Unsaved changes ..." once edited -> the warn reason when blocked; Save/Build use the mockup button classes', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ category: 'performance' })]);
+                openRow();
+                expect(screen.getByTestId('footer-status').textContent).toBe('Individual · Performance');
+                fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Edited name' } });
+                expect(screen.getByTestId('footer-status').textContent).toBe('Unsaved changes to the Individual model');
+                expect(screen.getByText('Save changes').className).toBe('f4-btn-save');
+                expect(screen.getByText('Build Model →').className).toBe('f4-btn-pm');
+                fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: '' } });
+                expect(screen.getByTestId('build-block-reason').className).toContain('f4-foot-reason--block');
+                expect(screen.getByTestId('build-block-reason').querySelector('svg')).not.toBeNull(); // alert icon
+            });
+        });
+
+        describe('one-time category notice (grouped per sensor)', () => {
+            it('titles by sensor count, says which model the category was taken from, strikes the old value, and ends with the header hint', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ category: 'performance' }), rel({ category: 'performance' })], {
+                    categoryNormalisationNotice: [{ modelId: 'r1', kind: 'relationship', sensorKey: 'tag1', from: 'condition', to: 'performance' }],
+                });
+                const notice = screen.getByTestId('category-normalisation-notice');
+                expect(notice.className).toBe('f4-notice');
+                expect(notice.querySelector('.f4-notice-title')!.textContent).toBe('Category made consistent for 1 sensor');
+                const li = notice.querySelector('li')!;
+                expect(li.textContent).toContain('Pump Pressure (TAG1) → Performance, taken from its Individual model. Changed:');
+                expect(li.textContent).toContain('Relationship Condition → Performance');
+                expect(li.querySelector('.f4-strike')!.textContent).toBe('Condition');
+                expect(notice.textContent).toContain("If that's wrong, change it on the sensor's header.");
+                expect(within(notice).getByRole('button', { name: 'Dismiss' }).className).toBe('f4-notice-x');
+            });
+
+            it('several models of one sensor share ONE list item; "(not set)" is shown for a missing old value', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ category: 'performance' }), rel({ category: 'performance' }), clu({ category: 'performance' })], {
+                    categoryNormalisationNotice: [
+                        { modelId: 'r1', kind: 'relationship', sensorKey: 'tag1', from: 'condition', to: 'performance' },
+                        { modelId: 'c1', kind: 'clustering', sensorKey: 'tag1', from: null, to: 'performance' },
+                    ],
+                });
+                const notice = screen.getByTestId('category-normalisation-notice');
+                expect(notice.querySelectorAll('li')).toHaveLength(1);
+                expect(notice.querySelector('li')!.textContent).toContain('Relationship Condition → Performance · Clustering (not set) → Performance');
+            });
+        });
+
+        describe('gate badges, banner and summary', () => {
+            it('"Legacy · all data" is a neutral grey pill; "Needs condition" is the amber warn pill; the row count is a warn pill with an explanatory tooltip', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ status: true }), rel({ status: false })], { runningConditionNoneConfirmed: false });
+                const blocked = screen.getByText('1 blocked');
+                expect(blocked.className).toContain('f4-pill--warn');
+                expect(blocked.title).toBe('1 model blocked — set a running condition on the Overview panel to unlock Build Model');
+                openRow();
+                expect(screen.getByTestId('condition-badge-i1').className).toContain('f4-pill--grey');
+                expect(screen.getByTestId('condition-badge-r1').className).toContain('f4-pill--warn');
+            });
+
+            it('the Overview says how many models cannot be built yet while the workspace is unset, and nothing once it is configured', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind(), rel()], { runningConditionNoneConfirmed: false });
+                expect(screen.getByTestId('rc-blocked-summary').textContent).toContain("2 of 2 models can't be built yet — they follow the workspace or have no condition of their own.");
+                cleanup();
+                render(<BuildModelWindow />);
+                await deliver([ind(), rel()]);
+                expect(screen.queryByTestId('rc-blocked-summary')).toBeNull();
+            });
+
+            it('the legacy banner is the blue info callout with the mockup copy and the count of Complete models', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ status: true }), rel({ status: true })], { runningConditionNoneConfirmed: false, rcLegacyNotice: 'pending' });
+                const banner = screen.getByTestId('rc-legacy-banner');
+                expect(banner.className).toContain('f4-callout--info');
+                expect(banner.textContent).toContain('New: running condition is now required for every model.');
+                expect(banner.textContent).toContain('2 models in this workspace were trained on the full dataset. They stay Complete and nothing is changed.');
+                expect(banner.textContent).toContain('Set a condition before you build or re-train a model.');
+                expect(within(banner).getByText('Set a condition').className).toContain('f4-btn');
+                expect(within(banner).getByText('Keep using all data').className).toContain('f4-btn--plain');
+            });
+
+            it('the banner sits ABOVE the Running Condition panel (rc-gate.html order)', async () => {
+                render(<BuildModelWindow />);
+                await deliver([ind({ status: true })], { runningConditionNoneConfirmed: false, rcLegacyNotice: 'pending' });
+                const banner = screen.getByTestId('rc-legacy-banner');
+                const panel = screen.getByTestId('rc-panel');
+                expect(banner.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
             });
         });
     });
