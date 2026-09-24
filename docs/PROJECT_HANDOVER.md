@@ -2295,3 +2295,14 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **Verified**: `tsc --noEmit` สะอาด, vitest 1137/1137 (50 ไฟล์), cargo test 183 + 8 ผ่าน · **ยังไม่ได้ทดสอบบนแอปจริง** (ไม่มีพฤติกรรมที่ผู้ใช้เห็นเปลี่ยน)
   - ไฟล์: `src-tauri/src/{lib,chart_query}.rs`, `src/types.ts`, `src/types/commands.ts`, `src/hooks/useScatterSample.ts`, `src/utils/{modelGrouping,runningCondition,timePeriods,workspaceMigrations}.ts`, `src/__tests__/*` ที่เกี่ยวข้อง + `helpers/failureModelFixture.ts`
   - ถัดไป: Phase 2 UI-A (แถว sensor รวม + category ที่หัว sensor)
+
+- **🆕 2026-09-24 — ✨ Feature 4 Phase 2 (UI-A): 1 แถวต่อ sensor ต่อ FG + category ตั้งที่หัว sensor**: fe-ui-agent (Sonnet) ทำตามดีไซน์ที่ผู้ใช้อนุมัติ (mockup opus) — ถูกตัดกลางคันด้วย rate limit ครั้งหนึ่ง แล้ว resume ต่อจนจบ (ผมรัน tsc/vitest ซ้ำเอง)
+  - **Build Model → Group by FG**: 1 แถวต่อ sensor (Clustering จัดตาม X); header มี label ellipsis, chip component, "also in FG-n", "k of n complete", chip I/R/C เฉพาะ kind ที่มีจริง, ตัวเลือก Performance/Condition; ขยายแล้วเห็นฟิลด์ร่วม (sensor ล็อก, component, FG แบบอ่านอย่างเดียว) + แท็บต่อ model (แต่ละตัวมี status/Save/Build Model และ draft แยก) · ข้อมูลที่เก็บยังเป็น 3 record
+  - **Category**: ตั้งครั้งเดียวที่หัว sensor เขียนลงทุก model ของ sensor นั้นทั้ง workspace ทันที มีคำเตือนถ้ากระทบ FG อื่น; ลบฟิลด์/chip category รายโมเดล; ไม่มี "Mixed"; ยังไม่เลือก category = Save/Build ปิดพร้อมข้อความ "Pick a category on the sensor header" · หน้า Component/Model Type แสดง chip category อ่านอย่างเดียว + ลิงก์
+  - **Normalization ข้อมูลเก่า**: `normalizeCategories` ทำตอน `BuildModelWindow` hydrate (เขียนกลับผ่าน `updateWorkspaceData` + broadcast + เก็บ `categoryNormalisationNotice`, ปุ่ม Dismiss เก็บ `null`); workspace ที่ consistent อยู่แล้วไม่ถูกเขียน
+  - **Dashboard**: FG tab จัดเป็นบรรทัดต่อ sensor + mini chip I/R/C (ลบ model รายตัวในส่วนขยาย, ไม่มีตัวตั้ง category); `findKindIn` ใช้ `modelSensorKey`; model ใหม่สืบทอด category ของ sensor (คำนวณจากดิสก์ในตัว write)
+  - **Deviations**: normalization อยู่ที่ hydrate ของ BuildModelWindow ไม่ใช่ `loadWorkspaceData` (ถ้า Dashboard autosave ก่อนเปิด Build Model ก็ normalize ตอนเปิดครั้งแรก) · แถวไม่ปิดหลัง Save · คำเตือน category เป็นข้อความชั่วคราว · label หัวแถว = ชื่อ sensor (ชื่อโมเดลอยู่ในช่อง Name ของแท็บ)
+  - **Manual test plan**: BMW-3→15, BMW-7→17, BMW-12→16, FG-3→8 (id ใหม่), เพิ่ม BMW-19–22, FG-9 → รวม 233 ข้อ
+  - **Verified**: tsc สะอาด, vitest 1166/1166 · **ยังไม่ได้ทดสอบบนแอปจริง** (ต้องดู: การเปลี่ยน category ข้าม window, workspace เก่าที่ category ปนกัน)
+  - ไฟล์: `BuildModelWindow.tsx`, `FailureGroupsPanel.tsx`, `Dashboard.tsx`, เทสต์ 3 ไฟล์, `MANUAL_TEST_PLAN.md`/html
+  - ถัดไป: Phase 3 UI-B (gate running condition)

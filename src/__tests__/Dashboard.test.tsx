@@ -1007,6 +1007,67 @@ describe('Dashboard', () => {
                 });
             });
 
+            describe('Feature 4-A (2026-09-24) — category is per SENSOR, so a new model inherits it', () => {
+                const baseModel = (o: Record<string, unknown>) => ({
+                    id: 'm1', groupNos: [1], name: '', kind: 'individual', category: null, notes: '', status: false,
+                    targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                    individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '',
+                    relStiffness: 100_000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+                    clusterRanges: [], filterTimeStart: '', filterTimeEnd: '', runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                    ...o,
+                });
+                const stateWith = (models: any[]) => makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models } });
+
+                it('a new Relationship model for a sensor that already has a category starts with that category, not null', async () => {
+                    const initialState = stateWith([baseModel({ category: 'condition' })]);
+                    seedDisk(initialState);
+                    renderDashboard({ initialState });
+                    act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'relationship'); });
+                    const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                    const created = state.failureGroupState.models.find((m: any) => m.kind === 'relationship');
+                    expect(created.category).toBe('condition');
+                });
+
+                it('a new Clustering model (seeded with the sensor as X) inherits the category of that sensor\'s other models', async () => {
+                    const initialState = stateWith([baseModel({ category: 'performance' })]);
+                    seedDisk(initialState);
+                    renderDashboard({ initialState });
+                    act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'clustering'); });
+                    const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                    const created = state.failureGroupState.models.find((m: any) => m.kind === 'clustering');
+                    expect(created.xSensor).toBe('TAG1');
+                    expect(created.category).toBe('performance');
+                });
+
+                it('inherits from what is on DISK inside the write, not from a stale mirror', async () => {
+                    const initialState = stateWith([baseModel({ category: null })]); // what this window loaded
+                    renderDashboard({ initialState });
+                    // ...but another window set the category since:
+                    seedDisk(stateWith([baseModel({ category: 'condition' })]));
+                    act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'relationship'); });
+                    const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                    expect(state.failureGroupState.models.find((m: any) => m.kind === 'relationship').category).toBe('condition');
+                });
+
+                it('a sensor with no category anywhere still yields a null-category model (the user picks it on the sensor header)', async () => {
+                    const initialState = stateWith([baseModel({ category: null })]);
+                    seedDisk(initialState);
+                    renderDashboard({ initialState });
+                    act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'relationship'); });
+                    const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                    expect(state.failureGroupState.models.find((m: any) => m.kind === 'relationship').category).toBeNull();
+                });
+
+                it('finds the existing model of a kind case- and whitespace-insensitively (shared modelSensorKey), so a toggle never duplicates it', async () => {
+                    const initialState = stateWith([baseModel({ targetSensor: ' tag1 ' })]);
+                    seedDisk(initialState);
+                    renderDashboard({ initialState });
+                    act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 1, 'individual'); }); // already a member of group 1 -> toggles it OFF
+                    const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                    expect(state.failureGroupState.models).toHaveLength(0);
+                });
+            });
+
             it('toggling a sensor OUT of its last group deletes the model outright (2026-09-02: used to fall back to groupNos: [0] "Not in Group" — reported by the user as unwanted, the chip\'s X is expected to make it disappear, not reappear parked under "Not in Group")', () => {
                 const initialState = makeInitialState({
                         failureGroupState: {

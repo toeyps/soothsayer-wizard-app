@@ -39,6 +39,13 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
     };
 }
 
+/** Sensor lines are collapsed by default (Feature 4-A) -- opens them all. */
+const expandAll = () => {
+    document.querySelectorAll('[aria-expanded="false"]').forEach(b => fireEvent.click(b));
+};
+/** The per-model labels inside the expanded sensor sub-lists (each sits right before its delete button). */
+const modelLabels = () => screen.queryAllByTitle('Delete model').map(b => b.previousElementSibling!.textContent);
+
 describe('FailureGroupsPanel', () => {
     it('shows the empty state when there are no real groups', () => {
         render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup], fgModels: [] })} />);
@@ -62,7 +69,9 @@ describe('FailureGroupsPanel', () => {
             const fgModels = [makeModel({ id: 'm1' }), makeModel({ id: 'm2', groupNos: [0], name: '', targetSensor: 'TAG1' })];
             render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
             expect(screen.getByText('Not in Group')).toBeTruthy();
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            // one sensor line in Group A and one in Not in Group -- same sensor, listed per group
+            expect(screen.getAllByText('Pump Pressure (TAG1)')).toHaveLength(2);
+            expect(screen.getByTestId('fg-sensor-row-0:tag1')).toBeTruthy();
         });
 
         it('has no rename/delete controls (it is a permanent, non-editable bucket)', () => {
@@ -76,15 +85,15 @@ describe('FailureGroupsPanel', () => {
             const fgModels = [makeModel({ id: 'm1', groupNos: [0] })];
             const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
             const statBolds = container.querySelectorAll('b');
-            expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '0']);
+            expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '1', '0']); // sensors, models, groups
         });
     });
 
-    it('computes header stats: model count, group count (no completion % anymore — status lives only in Build Model)', () => {
+    it('computes header stats: sensor count, model count, group count (no completion % anymore — status lives only in Build Model)', () => {
         const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
         const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
         const statBolds = container.querySelectorAll('b');
-        expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['2', '1']);
+        expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '2', '1']); // both models are the same sensor -> 1 sensor, 2 models
     });
 
     it('lists every model in the group by name, without any Complete/Incomplete status (removed per user request)', () => {
@@ -93,8 +102,9 @@ describe('FailureGroupsPanel', () => {
         // "name (tag)" rather than the bare name.
         const fgModels = [makeModel({ id: 'm1', name: 'Bearing model', status: true }), makeModel({ id: 'm2', name: 'Temp model', status: false })];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
-        expect(screen.getByText('Bearing model (TAG1)')).toBeTruthy();
-        expect(screen.getByText('Temp model (TAG1)')).toBeTruthy();
+        expect(modelLabels()).toEqual([]); // collapsed: the sensor shows once, not its models
+        expandAll();
+        expect(modelLabels()).toEqual(['Bearing model (TAG1)', 'Temp model (TAG1)']);
         expect(screen.queryByText('Complete')).toBeNull();
         expect(screen.queryByText('Incomplete')).toBeNull();
     });
@@ -105,8 +115,10 @@ describe('FailureGroupsPanel', () => {
             makeModel({ id: 'm2', kind: 'relationship', predictorSensors: ['TAG2'] }),
         ];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+        // The collapsed sensor line already carries one chip per kind that exists.
         const individualBadge = screen.getByText('I', { selector: '.model-kind-icon' });
         const relationshipBadge = screen.getByText('R', { selector: '.model-kind-icon' });
+        expect(screen.queryByText('C', { selector: '.model-kind-icon' })).toBeNull(); // no Clustering model -> no chip
         expect(individualBadge.className).toContain('model-kind-icon--individual');
         expect(relationshipBadge.className).toContain('model-kind-icon--relationship');
     });
@@ -114,6 +126,8 @@ describe('FailureGroupsPanel', () => {
     it('a trash icon per model row calls onDeleteModel immediately, with no confirmation dialog (2026-08-31: model deletion now lives entirely on Dashboard, per explicit user request)', () => {
         const onDeleteModel = vi.fn();
         render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ id: 'm1' })], onDeleteModel })} />);
+        expect(screen.queryByTitle('Delete model')).toBeNull(); // per-model delete lives inside the expanded sensor line
+        expandAll();
         fireEvent.click(screen.getByTitle('Delete model'));
         expect(onDeleteModel).toHaveBeenCalledWith('m1');
     });
@@ -121,41 +135,98 @@ describe('FailureGroupsPanel', () => {
     describe('model display label fallback chain', () => {
         it('shows the model name with its target tag appended (2026-08-31: matches Build Model\'s own overview, which always shows the tag too — the user flagged the FG tab as inconsistent for omitting it)', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'Bearing model', targetSensor: 'TAG1' })] })} />);
-            expect(screen.getByText('Bearing model (TAG1)')).toBeTruthy();
-            expect(screen.queryByText('Pump Pressure (TAG1)')).toBeNull();
+            expandAll();
+            expect(modelLabels()).toEqual(['Bearing model (TAG1)']);
         });
 
         it('falls back to "description (tag)" for the target sensor when the model has no name', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG1' })] })} />);
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expandAll();
+            expect(modelLabels()).toEqual(['Pump Pressure (TAG1)']);
         });
 
         it('treats a name identical to its own target tag as unset (legacy-migrated models default name to the tag) and falls back to "description (tag)"', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] })} />);
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expandAll();
+            expect(modelLabels()).toEqual(['Pump Pressure (TAG1)']);
             expect(screen.queryByText('TAG1')).toBeNull();
         });
 
         it('falls back to the raw sensor tag when no name and no metadata description is available', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG9' })] })} />);
-            expect(screen.getByText('TAG9')).toBeTruthy();
+            expandAll();
+            expect(modelLabels()).toEqual(['TAG9']);
         });
 
         it('uses the Y sensor (not the target) for a clustering model, matching component derivation elsewhere', () => {
             const model = makeModel({ name: '', kind: 'clustering', targetSensor: '', xSensor: 'TAG9', ySensor: 'TAG1' });
             render(<FailureGroupsPanel {...makeProps({ fgModels: [model] })} />);
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expandAll();
+            expect(modelLabels()).toEqual(['Pump Pressure (TAG1)']); // model row labelled by Y; the sensor LINE is X (TAG9)
+            expect(screen.getByTestId('fg-sensor-row-1:tag9')).toBeTruthy();
         });
 
         it('falls back to the X sensor\'s "description (tag)" for a fresh clustering model whose Y is still unset (2026-09-01 fix — the row used to show the bare name with no tag at all here, unlike Individual/Relationship, reported by the user: "i/r เหมือนกัน แต่ c ไม่เหมือนกัน")', () => {
             const model = makeModel({ name: '', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '' });
             render(<FailureGroupsPanel {...makeProps({ fgModels: [model] })} />);
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expandAll();
+            expect(modelLabels()).toEqual(['Pump Pressure (TAG1)']);
         });
 
         it('falls back to "Untitled model" for a model with no name and no sensor picked yet', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: '' })] })} />);
-            expect(screen.getByText('Untitled model')).toBeTruthy();
+            expandAll();
+            expect(modelLabels()).toEqual(['Untitled model']);
+        });
+    });
+
+    describe('one collapsible line per sensor (Feature 4-A, 2026-09-24)', () => {
+        it('Individual + Relationship + Clustering of the same sensor are ONE line with a mini chip per existing kind', () => {
+            const fgModels = [
+                makeModel({ id: 'i', kind: 'individual' }),
+                makeModel({ id: 'r', kind: 'relationship', predictorSensors: ['TAG2'] }),
+                makeModel({ id: 'c', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' }), // keyed by X
+            ];
+            render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+            expect(screen.getAllByTestId(/^fg-sensor-row-/)).toHaveLength(1);
+            expect(screen.getByText('I', { selector: '.model-kind-icon' })).toBeTruthy();
+            expect(screen.getByText('R', { selector: '.model-kind-icon' })).toBeTruthy();
+            expect(screen.getByText('C', { selector: '.model-kind-icon' })).toBeTruthy();
+        });
+
+        it('different sensors are different lines; a sensor in two groups appears in each', () => {
+            const fgModels = [
+                makeModel({ id: 'a', targetSensor: 'TAG1', groupNos: [1, 2] }),
+                makeModel({ id: 'b', targetSensor: 'TAG2', groupNos: [1] }),
+            ];
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels })} />);
+            expect(screen.getByTestId('fg-sensor-row-1:tag1')).toBeTruthy();
+            expect(screen.getByTestId('fg-sensor-row-1:tag2')).toBeTruthy();
+            expect(screen.getByTestId('fg-sensor-row-2:tag1')).toBeTruthy();
+        });
+
+        it('deleting one model of a sensor removes only that model, leaving its siblings', () => {
+            const onDeleteModel = vi.fn();
+            const fgModels = [makeModel({ id: 'i', kind: 'individual' }), makeModel({ id: 'r', kind: 'relationship', predictorSensors: ['TAG2'] })];
+            render(<FailureGroupsPanel {...makeProps({ fgModels, onDeleteModel })} />);
+            expandAll();
+            fireEvent.click(screen.getAllByTitle('Delete model')[1]);
+            expect(onDeleteModel).toHaveBeenCalledTimes(1);
+            expect(onDeleteModel).toHaveBeenCalledWith('r');
+        });
+
+        it('has NO category control (category is set on the Build Model sensor header)', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ category: 'performance' })] })} />);
+            expandAll();
+            expect(screen.queryByText('Performance')).toBeNull();
+            expect(screen.queryByText('Condition')).toBeNull();
+        });
+
+        it('a long sensor label is a single-line ellipsis', () => {
+            render(<FailureGroupsPanel {...makeProps()} />);
+            const line = screen.getByText('Pump Pressure (TAG1)');
+            expect(line.style.whiteSpace).toBe('nowrap');
+            expect(line.style.textOverflow).toBe('ellipsis');
         });
     });
 

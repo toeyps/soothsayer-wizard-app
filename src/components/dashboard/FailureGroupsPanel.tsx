@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Play } from 'lucide-react';
+import { Plus, Trash2, Play, ChevronRight } from 'lucide-react';
 import { FailureGroup, FailureModel, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { groupModelsBySensor, modelSensorKey, type SensorModelGroup } from '../../utils/modelGrouping';
 
 // Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
 // for the model-kind badge's tooltip (see renderModelRow below).
@@ -78,6 +79,14 @@ export default function FailureGroupsPanel({
     const [groupNameError, setGroupNameError] = useState('');
     const [groupDescDraft, setGroupDescDraft] = useState('');
     const [groupRecDraft, setGroupRecDraft] = useState('');
+    // Which sensor lines are expanded, keyed `${groupNo}:${sensorKey}` — the
+    // per-model rows (with their delete buttons) live inside the expansion.
+    const [expandedSensors, setExpandedSensors] = useState<Set<string>>(new Set());
+    const toggleSensor = (id: string) => setExpandedSensors(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
     const [showNewGroup, setShowNewGroup] = useState(false);
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
@@ -151,8 +160,58 @@ export default function FailureGroupsPanel({
         </div>
     );
 
+    // One collapsible line per SENSOR per group (Feature 4-A, 2026-09-24):
+    // Individual/Relationship/Clustering models of the same sensor used to be
+    // separate rows that looked identical apart from a tiny badge. The header
+    // shows the sensor once plus a mini chip per kind that exists; the
+    // per-model rows (and their delete buttons) sit inside the expansion.
+    // No category control here — category is set on Build Model's sensor header.
+    const renderSensorRow = (groupNo: number, sg: SensorModelGroup) => {
+        const id = `${groupNo}:${sg.key}`;
+        const open = expandedSensors.has(id);
+        const first = sg.models[0];
+        const keyTag = first.kind === 'clustering' ? first.xSensor : first.targetSensor;
+        const desc = keyTag ? sensorMetaMap.get(normalizeSensorTag(keyTag))?.description : undefined;
+        const label = keyTag ? (desc ? `${desc} (${keyTag})` : keyTag) : modelDisplayLabel(first);
+        const kinds = (['individual', 'relationship', 'clustering'] as ModelKind[]).filter(k => sg.models.some(m => m.kind === k));
+        return (
+            <div key={id} data-testid={`fg-sensor-row-${id}`}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                        type="button"
+                        onClick={() => toggleSensor(id)}
+                        aria-expanded={open}
+                        title={label}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1, minWidth: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', textAlign: 'left' }}
+                    >
+                        <ChevronRight size={11} style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }} />
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                            {label}
+                        </span>
+                    </button>
+                    {kinds.map(k => (
+                        <span
+                            key={k}
+                            className={`model-kind-icon model-kind-icon--${k}`}
+                            title={KIND_LABEL[k]}
+                            style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.56rem', flexShrink: 0 }}
+                        >
+                            {k.charAt(0).toUpperCase()}
+                        </span>
+                    ))}
+                </div>
+                {open && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', margin: '4px 0 2px 15px', paddingLeft: '8px', borderLeft: '1px solid var(--border)' }}>
+                        {sg.models.map(m => renderModelRow(m))}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModels = fgModels.length;
+    const totalSensors = new Set(fgModels.map(m => modelSensorKey(m))).size;
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
     // for models built against a sensor that isn't part of any failure
     // mode. Always rendered as its own card now (2026-08-31 fix — it used
@@ -211,6 +270,8 @@ export default function FailureGroupsPanel({
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                <span><b style={{ color: 'var(--text-primary)' }}>{totalSensors}</b> sensors</span>
+                <span style={{ color: 'var(--border)' }}>·</span>
                 <span><b style={{ color: 'var(--text-primary)' }}>{totalModels}</b> models</span>
                 <span style={{ color: 'var(--border)' }}>·</span>
                 <span><b style={{ color: 'var(--text-primary)' }}>{realGroups.length}</b> groups</span>
@@ -290,7 +351,7 @@ export default function FailureGroupsPanel({
                                     <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                        {groupModels.map(model => renderModelRow(model))}
+                                        {groupModelsBySensor(fgModels, group.no).map(sg => renderSensorRow(group.no, sg))}
                                     </div>
                                 )}
                             </div>
@@ -322,7 +383,7 @@ export default function FailureGroupsPanel({
                             <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                {ungroupedModels.map(model => renderModelRow(model))}
+                                {groupModelsBySensor(fgModels, 0).map(sg => renderSensorRow(0, sg))}
                             </div>
                         )}
                         <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>

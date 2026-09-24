@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, Plus, ChevronDown, Gauge, Calendar } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter } from "../../types";
+import { X, Plus, ChevronDown, ChevronRight, Gauge, Calendar } from "lucide-react";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
+import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
+import { normalizeCategories } from "../../utils/workspaceMigrations";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 
@@ -68,6 +70,25 @@ function sensorSummary(model: FailureModel, label: (tag: string) => string): str
 }
 
 type GroupBy = 'fg' | 'component' | 'kind';
+
+/** Unsaved edits to ONE model (kept per model id so switching a sensor row's
+ *  tabs never loses them). Only fields the user can edit here; `category` is
+ *  deliberately absent (per-sensor, saved instantly from the sensor header). */
+interface ModelDraft {
+    name: string;
+    predictors: string[];
+    y: string;
+    criteria: string;
+    ranges: { min: number | null; max: number | null }[];
+}
+
+const draftFromModel = (m: FailureModel): ModelDraft => ({
+    name: m.name,
+    predictors: m.predictorSensors ?? [],
+    y: m.ySensor ?? '',
+    criteria: m.criteriaSensor ?? '',
+    ranges: m.clusterRanges?.length ? m.clusterRanges : DEFAULT_CLUSTER_RANGES,
+});
 
 // Fixed order (not alphabetical) -- I/R/C is a small, natural taxonomy, not
 // an open-ended list like components, so it reads better presented in the
@@ -182,23 +203,19 @@ export default function BuildModelWindow() {
     const [pmPageModelId, setPmPageModelId] = useState<string | null>(null);
 
 
-    // ---- Model edit accordion: one form active at a time, shown
-    //      directly under the row that opened it ----
-    const [showForm, setShowForm] = useState(false);
-    const [editingModelId, setEditingModelId] = useState<string | null>(null);
-    /** Which group(s) the form's model will belong to — a checkbox
-     *  multi-select (2026-08-25: one model can belong to several Failure
-     *  Groups at once, per explicit user request). */
-    const [formGroupNos, setFormGroupNos] = useState<number[]>([]);
-    const [formName, setFormName] = useState('');
-    const [formKind, setFormKind] = useState<ModelKind | null>(null);
-    const [formCategory, setFormCategory] = useState<ModelCategory | null>(null);
-    const [formTarget, setFormTarget] = useState('');
-    const [formPredictors, setFormPredictors] = useState<string[]>([]);
-    const [formX, setFormX] = useState('');
-    const [formY, setFormY] = useState('');
-    const [formCriteria, setFormCriteria] = useState('');
-    const [formClusterRanges, setFormClusterRanges] = useState<{ min: number | null; max: number | null }[]>([]);
+    // ---- Model edit accordion: one row open at a time. FG view rows are one
+    //      per SENSOR (id `fg:{groupNo}:{sensorKey}`); Component / Model Type
+    //      view rows are one per MODEL (id `m:{modelId}`). ----
+    const [openRow, setOpenRow] = useState<string | null>(null);
+    /** Which model tab is showing inside each sensor row (row id -> model id). */
+    const [activeTab, setActiveTab] = useState<Record<string, string>>({});
+    /** Unsaved edits, keyed by model id. */
+    const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
+    /** One-time "categories were made consistent" notice — STORED in the
+     *  workspace (failureGroupState.categoryNormalisationNotice), not computed
+     *  per render, so it survives whichever window writes the file first. */
+    const [categoryNotice, setCategoryNotice] = useState<CategoryChange[] | null>(null);
+    const [categoryWarn, setCategoryWarn] = useState<{ key: string; text: string } | null>(null);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
@@ -248,6 +265,31 @@ export default function BuildModelWindow() {
     const workspaceIdRef = useRef<string | null>(null);
     const loadSeq = useRef(0);
 
+    // Mirrors the whole slice into local state — used by every path that
+    // receives a fresh copy (hydration, broadcasts, our own writes).
+    const applyFg = useCallback((fg: FailureGroupStateSlice | undefined | null) => {
+        setAllGroups(fg?.groups ?? []);
+        setAllModels(fg?.models ?? []);
+        setRunningConditionFilters(fg?.runningConditionFilters ?? []);
+        setRunningConditionCombine(fg?.runningConditionCombine ?? 'and');
+        setRunningConditionTimeStart(fg?.runningConditionTimeStart ?? '');
+        setRunningConditionTimeEnd(fg?.runningConditionTimeEnd ?? '');
+        setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
+    }, []);
+
+    // A draft for a model that no longer exists (deleted on the Dashboard
+    // meanwhile) must not linger.
+    useEffect(() => {
+        setDrafts(prev => {
+            const ids = new Set(allModels.map(m => m.id));
+            const stale = Object.keys(prev).filter(id => !ids.has(id));
+            if (stale.length === 0) return prev;
+            const rest = { ...prev };
+            for (const id of stale) delete rest[id];
+            return rest;
+        });
+    }, [allModels]);
+
     useEffect(() => {
         const offData = subscribe<BuildModelData>('build-model-data', async (event) => {
             const d = event.payload;
@@ -262,8 +304,11 @@ export default function BuildModelWindow() {
             if (switched) {
                 setActivePage('overview');
                 setPmPageModelId(null);
-                setEditingModelId(null);
-                setShowForm(false);
+                setOpenRow(null);
+                setActiveTab({});
+                setDrafts({});
+                setCategoryNotice(null);
+                setCategoryWarn(null);
                 setAllGroups([]);
                 setAllModels([]);
                 setRunningConditionFilters([]);
@@ -277,12 +322,21 @@ export default function BuildModelWindow() {
             try {
                 const ws = await loadWorkspaceData(d.workspaceId);
                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
-                setAllGroups(ws?.failureGroupState?.groups ?? []);
-                setAllModels(ws?.failureGroupState?.models ?? []);
-                setRunningConditionFilters(ws?.failureGroupState?.runningConditionFilters ?? []);
-                setRunningConditionCombine(ws?.failureGroupState?.runningConditionCombine ?? 'and');
-                setRunningConditionTimeStart(ws?.failureGroupState?.runningConditionTimeStart ?? '');
-                setRunningConditionTimeEnd(ws?.failureGroupState?.runningConditionTimeEnd ?? '');
+                // One-time legacy cleanup (Feature 4-A): a sensor whose models
+                // disagree on category is made consistent. When that changed
+                // something, the result + notice are WRITTEN BACK here so the
+                // notice is stored data (Dashboard's autosave can't lose it,
+                // and it never re-fires once dismissed).
+                const migrated = ws ? normalizeCategories(ws) : ws;
+                applyFg(migrated?.failureGroupState);
+                if (migrated !== ws && migrated?.failureGroupState?.categoryNormalisationNotice?.length) {
+                    const written = await updateWorkspaceData(d.workspaceId, prev => normalizeCategories(prev));
+                    if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
+                    if (written?.failureGroupState) {
+                        applyFg(written.failureGroupState);
+                        await emit('failure-group-state-changed', { ...written.failureGroupState, workspaceId: d.workspaceId, origin: 'build-model' });
+                    }
+                }
             } catch (e) {
                 console.warn('Failed to hydrate failure-group state:', e);
             }
@@ -294,17 +348,12 @@ export default function BuildModelWindow() {
         // persists failureGroupState broadcasts this so our copy never
         // goes stale. Ignores another workspace's broadcast (events are
         // global) and this window's own echo.
-        const offChanged = subscribe<{ groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or'; runningConditionTimeStart?: string; runningConditionTimeEnd?: string; workspaceId?: string; origin?: string }>('failure-group-state-changed', (event) => {
+        const offChanged = subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
             if (event.payload.workspaceId !== workspaceIdRef.current) return;
             if (event.payload.origin === 'build-model') return;
             // A load already in flight is now older than this broadcast.
             loadSeq.current++;
-            setAllGroups(event.payload.groups);
-            setAllModels(event.payload.models);
-            setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
-            setRunningConditionCombine(event.payload.runningConditionCombine ?? 'and');
-            setRunningConditionTimeStart(event.payload.runningConditionTimeStart ?? '');
-            setRunningConditionTimeEnd(event.payload.runningConditionTimeEnd ?? '');
+            applyFg(event.payload);
         });
 
         // Register both before asking, so the reply can't be missed.
@@ -314,7 +363,7 @@ export default function BuildModelWindow() {
             offData();
             offChanged();
         };
-    }, []);
+    }, [applyFg]);
 
     const persist = useCallback(async (
         updater: (models: FailureModel[], groups: FailureGroup[]) => { models: FailureModel[]; groups: FailureGroup[] },
@@ -329,15 +378,10 @@ export default function BuildModelWindow() {
             return withFailureGroupState(prev, { groups: result.groups, models: result.models });
         });
         if (next?.failureGroupState) {
-            setAllGroups(next.failureGroupState.groups);
-            setAllModels(next.failureGroupState.models);
-            setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
-            setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
-            setRunningConditionTimeStart(next.failureGroupState.runningConditionTimeStart ?? '');
-            setRunningConditionTimeEnd(next.failureGroupState.runningConditionTimeEnd ?? '');
+            applyFg(next.failureGroupState);
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
-    }, [workspaceId]);
+    }, [workspaceId, applyFg]);
 
     // The one path that actually changes the workspace-wide running
     // condition — edited entirely from this window's own "Running Condition
@@ -363,15 +407,10 @@ export default function BuildModelWindow() {
             ...(patch.timeEnd !== undefined ? { runningConditionTimeEnd: patch.timeEnd } : {}),
         }));
         if (next?.failureGroupState) {
-            setAllGroups(next.failureGroupState.groups);
-            setAllModels(next.failureGroupState.models);
-            setRunningConditionFilters(next.failureGroupState.runningConditionFilters ?? []);
-            setRunningConditionCombine(next.failureGroupState.runningConditionCombine ?? 'and');
-            setRunningConditionTimeStart(next.failureGroupState.runningConditionTimeStart ?? '');
-            setRunningConditionTimeEnd(next.failureGroupState.runningConditionTimeEnd ?? '');
+            applyFg(next.failureGroupState);
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
         }
-    }, [workspaceId]);
+    }, [workspaceId, applyFg]);
 
     const addRunningConditionFilter = useCallback(() => {
         const next = [...runningConditionFilters, {
@@ -410,80 +449,75 @@ export default function BuildModelWindow() {
         }, 250);
     }, [persistRunningCondition]);
 
-    // ---- Model edit accordion — 2026-08-31: "add" removed entirely per
-    //      explicit user request; toggling a sensor into a group (Sensor
-    //      tab) is now the sole way a model comes into existence, always
-    //      as kind 'individual'. This form only ever edits an existing
-    //      model afterward — including changing its kind to relationship/
-    //      clustering, which stays fully supported here. ----
-    const resetForm = () => {
-        setEditingModelId(null);
-        setFormGroupNos([]);
-        setFormName('');
-        setFormKind(null);
-        setFormCategory(null);
-        setFormTarget('');
-        setFormPredictors([]);
-        setFormX('');
-        setFormY('');
-        setFormCriteria('');
-        setFormClusterRanges([]);
-        setShowForm(false);
+    // ---- Model editing (Feature 4-A, 2026-09-24) ----
+    // Edits are kept as one DRAFT PER MODEL ID (not one global form), so
+    // switching between a sensor's Individual / Relationship / Clustering tabs
+    // never loses an unsaved edit. Identity fields (target sensor / X sensor,
+    // kind, failure groups) are read straight from the stored model: they are
+    // locked/read-only, so a draft can never carry a stale copy of them. A
+    // draft also never carries `category`: category is per SENSOR and saves
+    // instantly from the sensor header (see `changeCategory`), so a leftover
+    // draft can't overwrite a newer sensor-level change.
+    const draftOf = (m: FailureModel): ModelDraft => drafts[m.id] ?? draftFromModel(m);
+    const patchDraft = (m: FailureModel, patch: Partial<ModelDraft>) =>
+        setDrafts(prev => ({ ...prev, [m.id]: { ...(prev[m.id] ?? draftFromModel(m)), ...patch } }));
+
+    /** Category of the model's sensor across every FG (never per-model any more). */
+    const categoryOf = (m: FailureModel): ModelCategory | null => sensorCategory(allModels, modelSensorKey(m));
+
+    /** Why Save / Build Model is disabled, or null when the model is ready. */
+    const modelBlockReason = (m: FailureModel): string | null => {
+        if (categoryOf(m) === null) return 'Pick a category on the sensor header';
+        const d = draftOf(m);
+        const ok = d.name.trim() !== '' && m.groupNos.length > 0 && (
+            m.kind === 'individual' ? (m.targetSensor ?? '') !== '' :
+            m.kind === 'relationship' ? (m.targetSensor ?? '') !== '' && d.predictors.length >= 1 :
+            (m.xSensor ?? '') !== '' && d.y !== '' && (!d.criteria || d.ranges.every(r => r.min !== null && r.max !== null))
+        );
+        return ok ? null : 'Fill in the required fields above first';
     };
-
-    const openEditForm = (model: FailureModel) => {
-        setEditingModelId(model.id);
-        setFormGroupNos(model.groupNos);
-        setFormName(model.name);
-        setFormKind(model.kind);
-        setFormCategory(model.category);
-        setFormTarget(model.targetSensor ?? '');
-        setFormPredictors(model.predictorSensors ?? []);
-        setFormX(model.xSensor ?? '');
-        setFormY(model.ySensor ?? '');
-        setFormCriteria(model.criteriaSensor ?? '');
-        setFormClusterRanges(model.clusterRanges?.length ? model.clusterRanges : DEFAULT_CLUSTER_RANGES);
-        setShowForm(true);
-    };
-
-    useEffect(() => {
-        if (formKind !== 'clustering') return;
-        setFormClusterRanges(prev => prev.length === 3 ? prev : DEFAULT_CLUSTER_RANGES);
-    }, [formKind]);
-
-    const formComponentTarget = formKind === 'clustering' ? formY : formTarget;
-    const formComponent = formComponentTarget ? getComponent(formComponentTarget) : '';
-
-    const formValid = formName.trim() !== '' && formKind !== null && formCategory !== null && formGroupNos.length > 0 && (
-        formKind === 'individual' ? formTarget !== '' :
-        formKind === 'relationship' ? formTarget !== '' && formPredictors.length >= 1 :
-        formKind === 'clustering' ? formX !== '' && formY !== '' && (!formCriteria || formClusterRanges.every(r => r.min !== null && r.max !== null)) :
-        false
-    );
 
     // Returns the `persist()` promise (rather than firing it and forgetting)
-    // so `buildModelFromForm` below can await the write actually landing on
-    // disk before navigating to the PM page — see that function's own
-    // comment for the race this closes.
-    const commitForm = async () => {
-        if (!formValid || !formKind || !formCategory || !editingModelId) return;
-        const fields = {
-            groupNos: formGroupNos,
-            name: formName.trim(),
-            kind: formKind,
-            category: formCategory,
-            targetSensor: formKind === 'clustering' ? '' : formTarget,
-            predictorSensors: formKind === 'relationship' ? formPredictors : [],
-            xSensor: formKind === 'clustering' ? formX : '',
-            ySensor: formKind === 'clustering' ? formY : '',
-            criteriaSensor: formKind === 'clustering' ? formCriteria : '',
-            clusterRanges: formKind === 'clustering' && formCriteria ? formClusterRanges : [],
-        };
+    // so `buildModel` below can await the write actually landing on disk
+    // before navigating to the PM page — see that function's own comment for
+    // the race this closes.
+    const commitModel = async (m: FailureModel) => {
+        if (modelBlockReason(m) !== null) return;
+        const d = draftOf(m);
+        const fields: Partial<FailureModel> =
+            m.kind === 'individual' ? { name: d.name.trim() } :
+            m.kind === 'relationship' ? { name: d.name.trim(), predictorSensors: d.predictors } :
+            { name: d.name.trim(), ySensor: d.y, criteriaSensor: d.criteria, clusterRanges: d.criteria ? d.ranges : [] };
         await persist((models, groups) => ({
             groups,
-            models: models.map(m => m.id === editingModelId ? { ...m, ...fields } : m),
+            models: models.map(x => x.id === m.id ? { ...x, ...fields } : x),
         }));
-        resetForm();
+        setDrafts(prev => {
+            if (!(m.id in prev)) return prev;
+            const rest = { ...prev };
+            delete rest[m.id];
+            return rest;
+        });
+    };
+
+    /** The sensor header's category control: writes EVERY model of that sensor
+     *  in EVERY failure group, and saves instantly (no Save button). */
+    const changeCategory = async (key: string, cat: ModelCategory) => {
+        if (sensorCategory(allModels, key) === cat) return;
+        const groupNos = [...new Set(allModels.filter(m => modelSensorKey(m) === key).flatMap(m => m.groupNos))].sort((a, b) => a - b);
+        await persist((models, groups) => ({ groups, models: setSensorCategory(models, key, cat) }));
+        setCategoryWarn(groupNos.length > 1
+            ? { key, text: `Category applies to this sensor in every failure group: ${groupNos.map(n => n === 0 ? 'Not in Group' : `FG-${n}`).join(', ')}.` }
+            : null);
+    };
+
+    const dismissCategoryNotice = async () => {
+        if (!workspaceId) return;
+        const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
+        if (next?.failureGroupState) {
+            applyFg(next.failureGroupState);
+            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+        }
     };
 
     const toggleModelStatus = (modelId: string) => {
@@ -496,8 +530,8 @@ export default function BuildModelWindow() {
     /** Sets `status: true` unconditionally (unlike `toggleModelStatus`) —
      *  used by the PM page's "Finish" button, where clicking it again should
      *  never accidentally flip an already-complete model back to
-     *  incomplete. Un-marking a model still goes through the overview's own
-     *  status pill (`toggleModelStatus`). */
+     *  incomplete. Un-marking a model still goes through the status pill
+     *  (`toggleModelStatus`). */
     const markModelComplete = (modelId: string) => {
         persist((models, groups) => ({
             groups,
@@ -514,143 +548,127 @@ export default function BuildModelWindow() {
         await getCurrentWindow().close();
     };
 
-    // Split into fields (own bounded, independently-scrollable box) + a
-    // footer (Save changes) that is never inside that box — a tall form
-    // (e.g. Relationship kind with several fields) used to be one long
-    // flow relying on the whole page's scroll position to reach its own
-    // button, which repeatedly left it unreachable or looking "missing"
-    // depending on exactly where the page happened to be scrolled. The
-    // footer is now structurally always rendered directly under the
-    // fields box, at a fixed, predictable position, regardless of how
-    // tall the fields are or how the surrounding list is scrolled.
-    const renderModelFormFields = () => {
-        // 2026-08-31: add-mode removed entirely — this form only ever
-        // edits an existing model now, so the sensor list is always
-        // unrestricted (the model's own target/group is already
-        // established and may legitimately need any sensor).
-        const sensorOptions = allSensors;
+    // 🆕 2026-09-18 [bug fix]: must await commitModel's write landing on disk
+    // before navigating to the PM page. The PM page's own hydration effect
+    // reads the workspace file directly (loadWorkspaceData, NOT queued behind
+    // a still-in-flight updateWorkspaceData write) and could win the race,
+    // loading the model record from BEFORE this commit: predictors picked on
+    // this form showed as "No predictors selected" on the PM page.
+    const buildModel = async (m: FailureModel) => {
+        if (modelBlockReason(m) !== null) return;
+        await commitModel(m);
+        trainModel(m.id);
+    };
+
+    // The fields shared by every model of one sensor: the locked key sensor,
+    // its component, and the (read-only) failure groups. Shown once per
+    // sensor row, or once per model in the Component / Model Type views.
+    const renderSharedFields = (models: FailureModel[]) => {
+        const first = models[0];
+        const keyTag = (first.kind === 'clustering' ? first.xSensor : first.targetSensor) ?? '';
+        const clusteringOnly = models.every(m => m.kind === 'clustering');
+        const component = keyTag ? getComponent(keyTag) : '';
+        const groupNos = [...new Set(models.flatMap(m => m.groupNos))].sort((a, b) => a - b);
+        return (
+            <div data-testid="sensor-shared-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px 14px' }}>
+                <div className="fg-inspector-field">
+                    <div className="fg-inspector-field-label-row"><label>{clusteringOnly ? 'X sensor' : 'Target sensor'}</label></div>
+                    <div className="model-component-readout">{keyTag ? sensorLabel(keyTag) : '—'}</div>
+                    <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created, to prevent picking the wrong sensor by mistake.</div>
+                </div>
+                <div className="fg-inspector-field">
+                    <div className="fg-inspector-field-label-row"><label>Component</label></div>
+                    <div className={`model-component-readout${component ? '' : ' model-component-readout--placeholder'}`}>
+                        {component || 'Auto-filled from the sensor'}
+                    </div>
+                </div>
+                {/* Read-only: group membership is changed exclusively via the
+                    Dashboard's Sensor tab per-kind toggle (2026-09-01). */}
+                <div>
+                    <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {groupNos.map(no => {
+                            const g = realGroups.find(x => x.no === no);
+                            const inGroup = models.filter(m => m.groupNos.includes(no));
+                            const partial = models.length > 1 && inGroup.length < models.length
+                                ? ` (${inGroup.map(m => KIND_ABBREV[m.kind]).join(' ')} only)` : '';
+                            return (
+                                <span key={no} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', padding: '3px 8px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
+                                    <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(no)], flexShrink: 0 }} />
+                                    {no === 0 ? 'Not in Group' : `FG-${no} · ${g?.name ?? ''}`}{partial}
+                                </span>
+                            );
+                        })}
+                    </div>
+                    <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '4px' }}>
+                        Managed from the Dashboard's Sensor tab.
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // Fields that belong to ONE model (its own tab): name plus whatever its
+    // kind needs. Own bounded, independently-scrollable box; the footer is
+    // never inside it (a tall form used to leave its own button unreachable).
+    const renderKindFields = (m: FailureModel) => {
+        const d = draftOf(m);
         return (
         <div data-testid="add-model-form-fields" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '48vh', overflowY: 'auto', padding: '12px 14px' }}>
             <div className="fg-inspector-field">
                 <div className="fg-inspector-field-label-row"><label>Model name</label></div>
                 <input
                     className="fg-inspector-input"
-                    value={formName}
+                    value={d.name}
                     placeholder="e.g. Bearing vibration model"
-                    onChange={e => setFormName(e.target.value)}
+                    onChange={e => patchDraft(m, { name: e.target.value })}
                 />
             </div>
 
-            {/* Read-only — 2026-09-01: group membership stopped being
-                editable here per explicit user request ("ไม่ควรแก้ FG ได้
-                ในหน้านี้ ดูได้อย่างเดียว ไปแก้ที่หน้า dashboard ที่ทำไว้แล้ว");
-                it's changed exclusively via the Sensor tab's per-kind
-                toggle now (see Dashboard.tsx's toggleSensorGroupKind), same
-                place that creates/removes a model altogether. This just
-                shows where the model currently sits. */}
-            <div>
-                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Failure groups</label></div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                    {formGroupNos.map(no => {
-                        const g = realGroups.find(x => x.no === no);
-                        return (
-                            <span key={no} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', padding: '3px 8px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
-                                <span style={{ width: '6px', height: '6px', borderRadius: '2px', background: FG_ACCENT[getFgGroupColor(no)], flexShrink: 0 }} />
-                                {no === 0 ? 'Not in Group' : `FG-${no} · ${g?.name ?? ''}`}
-                            </span>
-                        );
-                    })}
-                </div>
-                <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '4px' }}>
-                    Managed from the Dashboard's Sensor tab.
-                </div>
-            </div>
-
-            <div>
-                <div className="fg-inspector-field-label-row" style={{ marginBottom: '4px' }}><label>Category</label></div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                    {(['performance', 'condition'] as ModelCategory[]).map(c => {
-                        const active = formCategory === c;
-                        const activeColor = c === 'condition' ? 'var(--cond)' : 'var(--accent-color)';
-                        const activeBg = c === 'condition' ? 'var(--cond-muted)' : 'var(--accent-muted)';
-                        return (
-                            <button
-                                key={c}
-                                onClick={() => setFormCategory(c)}
-                                style={{
-                                    flex: 1, padding: '6px 4px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer',
-                                    border: `1px solid ${active ? activeColor : 'var(--border)'}`,
-                                    background: active ? activeBg : 'none',
-                                    color: active ? activeColor : 'var(--text-secondary)',
-                                    fontWeight: active ? 600 : 400,
-                                }}
-                            >
-                                {CATEGORY_LABELS[c]}
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {formKind === 'individual' && (
+            {m.kind === 'relationship' && (
                 <div className="fg-inspector-field">
-                    <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
-                    <div className="model-component-readout">{formTarget ? sensorLabel(formTarget) : '—'}</div>
-                    <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created, to prevent picking the wrong sensor by mistake.</div>
+                    <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
+                    <SensorPickerModal
+                        sensors={allSensors}
+                        getDesc={getDesc}
+                        getComponent={getComponent}
+                        selected={d.predictors}
+                        excluded={[m.targetSensor ?? '']}
+                        onConfirm={predictors => patchDraft(m, { predictors })}
+                        noun="predictors"
+                    />
+                    {d.predictors.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                            {d.predictors.map(p => (
+                                <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', padding: '2px 6px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
+                                    {sensorLabel(p)}
+                                    <button onClick={() => patchDraft(m, { predictors: d.predictors.filter(x => x !== p) })} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                                        <X size={9} />
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
-            {formKind === 'relationship' && (
-                <>
-                    <div className="fg-inspector-field">
-                        <div className="fg-inspector-field-label-row"><label>Target sensor</label></div>
-                        <div className="model-component-readout">{formTarget ? sensorLabel(formTarget) : '—'}</div>
-                        <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created, to prevent picking the wrong sensor by mistake.</div>
-                    </div>
-                    <div className="fg-inspector-field">
-                        <div className="fg-inspector-field-label-row"><label>Predictor sensors (≥ 1)</label></div>
-                        <SensorPickerModal
-                            sensors={allSensors}
-                            getDesc={getDesc}
-                            getComponent={getComponent}
-                            selected={formPredictors}
-                            excluded={[formTarget]}
-                            onConfirm={setFormPredictors}
-                            noun="predictors"
-                        />
-                        {formPredictors.length > 0 && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-                                {formPredictors.map(p => (
-                                    <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', padding: '2px 6px', borderRadius: '999px', background: 'var(--chip-bg)', border: '1px solid var(--border)' }}>
-                                        {sensorLabel(p)}
-                                        <button onClick={() => setFormPredictors(prev => prev.filter(x => x !== p))} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                                            <X size={9} />
-                                        </button>
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </>
-            )}
-
-            {formKind === 'clustering' && (
+            {m.kind === 'clustering' && (
                 <>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                        <div className="fg-inspector-field" style={{ flex: 1 }}>
+                        <div className="fg-inspector-field" style={{ flex: 1, minWidth: 0 }}>
                             <div className="fg-inspector-field-label-row"><label>X sensor</label></div>
-                            <div className="model-component-readout">{formX ? sensorLabel(formX) : '—'}</div>
+                            <div className="model-component-readout" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.xSensor ? sensorLabel(m.xSensor) : '—'}</div>
                             <div style={{ fontSize: '0.64rem', color: 'var(--text-faint)', marginTop: '3px' }}>Locked — set when the model was created.</div>
                         </div>
-                        <div className="fg-inspector-field" style={{ flex: 1 }}>
+                        <div className="fg-inspector-field" style={{ flex: 1, minWidth: 0 }}>
                             <div className="fg-inspector-field-label-row"><label>Y sensor (target)</label></div>
                             <SensorPickerModal
-                                sensors={sensorOptions}
+                                sensors={allSensors}
                                 getDesc={getDesc}
                                 getComponent={getComponent}
                                 single
-                                value={formY}
-                                onSelect={setFormY}
+                                value={d.y}
+                                onSelect={y => patchDraft(m, { y })}
                                 noun="Y sensor"
                             />
                         </div>
@@ -663,15 +681,15 @@ export default function BuildModelWindow() {
                             getComponent={getComponent}
                             single
                             allowNone
-                            value={formCriteria}
-                            onSelect={setFormCriteria}
+                            value={d.criteria}
+                            onSelect={criteria => patchDraft(m, { criteria })}
                             noun="criteria sensor"
                         />
                     </div>
-                    {formCriteria && (
+                    {d.criteria && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div className="fg-inspector-field-label-row"><label>Cluster ranges</label></div>
-                            {formClusterRanges.map((r, i) => (
+                            {d.ranges.map((r, i) => (
                                 <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                                     <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', width: '16px' }}>{i + 1}</span>
                                     <input
@@ -679,14 +697,14 @@ export default function BuildModelWindow() {
                                         className="fg-inspector-input"
                                         value={r.min ?? ''}
                                         placeholder="min"
-                                        onChange={e => setFormClusterRanges(prev => prev.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row))}
+                                        onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row) })}
                                     />
                                     <input
                                         type="number"
                                         className="fg-inspector-input"
                                         value={r.max ?? ''}
                                         placeholder="max"
-                                        onChange={e => setFormClusterRanges(prev => prev.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row))}
+                                        onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row) })}
                                     />
                                 </div>
                             ))}
@@ -694,102 +712,52 @@ export default function BuildModelWindow() {
                     )}
                 </>
             )}
-
-            {formKind && (
-                <div className="fg-inspector-field">
-                    <div className="fg-inspector-field-label-row"><label>Component</label></div>
-                    <div className={`model-component-readout${formComponent ? '' : ' model-component-readout--placeholder'}`}>
-                        {formComponent || 'Auto-filled from target sensor'}
-                    </div>
-                </div>
-            )}
         </div>
         );
     };
 
-    // No "Cancel" button — closing the form is already just re-clicking
-    // whatever opened it (the model row), same toggle everywhere, per
-    // explicit user feedback that a separate Cancel was redundant with
-    // that. `.fg-build-model-btn` defaults to `width: 100%` for its other
-    // use as a standalone full-width panel button, so it's explicitly
-    // sized here instead of left to stretch across the whole row.
-    //
-    // 2026-08-31: this form only ever edits an existing model now (add
-    // removed entirely), so `editingModelId` is always set whenever the
-    // form is open — footer no longer branches on it. No "Remove model"
-    // button either — model deletion moved to Dashboard's Failure Groups
-    // tab (a trash icon per model row there), per explicit user request
-    // that Build Model do only detail-editing and training, nothing else.
-    //
-    // 2026-09-09: "Build Model →" moved here from the (always-visible)
-    // row header, right after Save changes, per explicit user request
-    // (screenshot) — training an incomplete model didn't make sense, so
-    // it's disabled on the same `formValid` gate Save changes already
-    // uses, and only reachable once the row is open for review anyway.
-    // Clicking it commits the current draft first (same as Save changes)
-    // before navigating — without that, editing a field and clicking
-    // Build Model straight away (without an intervening Save click) would
-    // silently train on the OLD persisted values while the screen still
-    // showed the new ones.
-    //
-    // `position: sticky, bottom: 0` — being structurally right after the
-    // fields box (rather than, say, inside a page-level modal) turned out
-    // not to be enough: a group deep in a long list, or a form long enough
-    // to fill the fields box's own max-height, could still place this
-    // footer's natural position below the currently-visible viewport, with
-    // no indication it existed at all. Sticky pins it to the bottom of the
-    // visible area the instant the form opens, regardless of where the
-    // page happens to be scrolled or how tall the fields above it are —
-    // it only lets go once the whole accordion block scrolls out of view.
-    // Requires no `overflow: hidden` on any ancestor between this and the
-    // page's own scroll container (see the group card wrappers above).
-    // 🆕 2026-09-18 [bug fix]: must await commitForm's write landing on disk
-    // before navigating to the PM page. commitForm used to fire its persist()
-    // and return immediately, so trainModel() below switched pages right
-    // away — the PM page's own hydration effect then read the workspace file
-    // directly (loadWorkspaceData, NOT queued behind the still-in-flight
-    // updateWorkspaceData write) and could win the race, loading the model
-    // record from BEFORE this commit. Symptom: predictors picked on this
-    // form (required for Relationship — formValid demands >=1) showed as
-    // "No predictors selected" the instant the PM page opened.
-    const buildModelFromForm = async () => {
-        if (!formValid || !editingModelId) return;
-        const modelId = editingModelId;
-        await commitForm();
-        trainModel(modelId);
-    };
-
-    const renderModelFormFooter = () => (
-        // Bottom corners rounded to match the editing card's own
-        // `borderRadius: '10px'` (see `overviewModelRow`'s accent-bordered
-        // wrapper) — that wrapper deliberately has no `overflow: hidden`
-        // (see its own comment: clipping would break this footer's
-        // stickiness), so without matching corners here, this footer's
-        // flat, opaque (`--card-bg`) rectangle visually paints straight
-        // over the parent's rounded bottom corners once it settles at the
-        // bottom of the scroll — reading as the accent border simply not
-        // connecting there (reported 2026-09-17).
-        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px' }}>
-            <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={!formValid} onClick={commitForm}>
+    // Save changes + Build Model → (+ the status pill when `withStatus`, i.e.
+    // inside a sensor row's tab, where no row header carries one). Each model
+    // keeps its OWN status / Save / Build. `position: sticky, bottom: 0` pins
+    // it to the bottom of the visible area however tall the fields above are
+    // (requires no `overflow: hidden` on any ancestor up to the page scroller).
+    // Bottom corners are rounded to match the card's own 10px radius, or this
+    // flat opaque footer paints over the parent's rounded corners.
+    const renderModelFooter = (m: FailureModel, withStatus: boolean) => {
+        const reason = modelBlockReason(m);
+        return (
+        <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px', flexWrap: 'wrap' }}>
+            {withStatus && (
+                <button
+                    className={`model-status-pill model-status-pill--${m.status ? 'complete' : 'incomplete'}`}
+                    style={{ marginRight: 'auto' }}
+                    onClick={() => toggleModelStatus(m.id)}
+                >
+                    {m.status ? 'Complete' : 'Incomplete'}
+                </button>
+            )}
+            {reason && <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)' }}>{reason}</span>}
+            <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={reason !== null} onClick={() => commitModel(m)}>
                 Save changes
             </button>
             <button
                 className="model-open-pm"
-                disabled={!formValid}
-                title={formValid ? undefined : 'Fill in the required fields above first'}
-                onClick={buildModelFromForm}
+                disabled={reason !== null}
+                title={reason ?? undefined}
+                onClick={() => buildModel(m)}
             >
                 Build Model →
             </button>
         </div>
-    );
+        );
+    };
 
-    // Both halves together — fields in their own bounded, independently
-    // scrollable box, footer always visible directly beneath it.
-    const renderModelForm = () => (
+    // One model's whole form outside a sensor row (Component / Model Type views).
+    const renderModelForm = (m: FailureModel) => (
         <div data-testid="add-model-form">
-            {renderModelFormFields()}
-            {renderModelFormFooter()}
+            {renderSharedFields([m])}
+            {renderKindFields(m)}
+            {renderModelFooter(m, false)}
         </div>
     );
 
@@ -819,9 +787,17 @@ export default function BuildModelWindow() {
             .map((k): [ModelKind, FailureModel[]] => [k, byKind.get(k)!]);
     })();
 
-    // One row per model, with its own add/edit form directly beneath it
-    // when active (accordion) — used by both the FG-grouped and
-    // Component-grouped views.
+    // The Component / Model Type views keep one row per MODEL (only the
+    // Failure Group view is one-row-per-sensor). Category is per sensor, so
+    // here it is a read-only chip with a link to the sensor header that owns it.
+    const goToSensorHeader = (model: FailureModel) => {
+        const groupNo = model.groupNos.find(n => n !== 0) ?? model.groupNos[0] ?? 0;
+        setGroupBy('fg');
+        setOpenRow(`fg:${groupNo}:${modelSensorKey(model)}`);
+    };
+
+    // One row per model, with its own form directly beneath it when active
+    // (accordion) — used by the Component-grouped and Model-Type-grouped views.
     const overviewModelRow = (model: FailureModel, showFgTag: boolean) => {
         // A model can belong to several groups now — the chip lists all of
         // them (comma-separated), and the accordion's own accent border
@@ -833,8 +809,10 @@ export default function BuildModelWindow() {
         }).join(', ');
         const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const component = targetTag ? getComponent(targetTag) : '';
-        const isEditingThis = showForm && editingModelId === model.id;
+        const rowId = `m:${model.id}`;
+        const isEditingThis = openRow === rowId;
         const accent = FG_ACCENT[getFgGroupColor(model.groupNos[0] ?? 0)];
+        const category = categoryOf(model);
         return (
             <div key={model.id} style={{ borderTop: '1px solid var(--border)' }}>
                 {/* A real border (not an absolutely-positioned left bar) so the
@@ -845,7 +823,7 @@ export default function BuildModelWindow() {
                     page scrolls (the report that prompted this). */}
                 <div style={isEditingThis ? { border: `1.5px solid ${accent}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
                     <div
-                        onClick={() => { if (isEditingThis) resetForm(); else openEditForm(model); }}
+                        onClick={() => setOpenRow(isEditingThis ? null : rowId)}
                         style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 10px 18px' }}
                     >
                         <div className={`model-kind-icon model-kind-icon--${model.kind}`} style={{ width: '24px', height: '24px', fontSize: '0.62rem' }}>
@@ -859,11 +837,22 @@ export default function BuildModelWindow() {
                                     </span>
                                 )}
                                 <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{modelDisplayLabel(model)}</span>
-                                {model.category && (
-                                    <span className={`model-chip model-chip--${model.category === 'performance' ? 'perf' : 'cond'}`}>
-                                        {CATEGORY_LABELS[model.category]}
-                                    </span>
-                                )}
+                                <span
+                                    className={`model-chip model-chip--${category === 'condition' ? 'cond' : 'perf'}`}
+                                    data-testid={`model-category-chip-${model.id}`}
+                                    style={category ? undefined : { opacity: 0.6 }}
+                                >
+                                    {category ? CATEGORY_LABELS[category] : 'No category'}
+                                </span>
+                                <button
+                                    type="button"
+                                    className="text-btn"
+                                    style={{ fontSize: '0.64rem' }}
+                                    title="Category is set once per sensor, on the sensor header in the Failure Group view"
+                                    onClick={e => { e.stopPropagation(); goToSensorHeader(model); }}
+                                >
+                                    Change in Failure Group view
+                                </button>
                                 {component && <span className="model-chip model-chip--component">{component}</span>}
                             </div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -879,7 +868,135 @@ export default function BuildModelWindow() {
                     </div>
                     {isEditingThis && (
                         <div style={{ borderTop: '1px solid var(--border)' }}>
-                            {renderModelForm()}
+                            {renderModelForm(model)}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    // Failure Group view: ONE row per sensor per FG (Feature 4-A). Only the
+    // kinds that actually exist are shown. Shared fields once, then a tab per
+    // model (each keeps its own status / Save / Build Model). The category
+    // control lives on this header because category belongs to the sensor.
+    // Long text is single-line ellipsis everywhere in the header.
+    const sensorRow = (groupNo: number, sg: SensorModelGroup) => {
+        const rowId = `fg:${groupNo}:${sg.key}`;
+        const isOpen = openRow === rowId;
+        const first = sg.models[0];
+        const keyTag = (first.kind === 'clustering' ? first.xSensor : first.targetSensor) ?? '';
+        const label = keyTag ? sensorLabel(keyTag) : modelDisplayLabel(first);
+        const component = keyTag ? getComponent(keyTag) : '';
+        const category = sensorCategory(allModels, sg.key);
+        const otherGroups = [...new Set(allModels.filter(m => modelSensorKey(m) === sg.key).flatMap(m => m.groupNos))]
+            .filter(n => n !== groupNo && n !== 0).sort((a, b) => a - b);
+        const ordered = KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k));
+        const done = ordered.filter(m => m.status).length;
+        const activeModel = ordered.find(m => m.id === activeTab[rowId]) ?? ordered[0];
+        const accent = FG_ACCENT[getFgGroupColor(groupNo)];
+        return (
+            <div key={rowId} data-testid={`sensor-row-${rowId}`} style={{ borderTop: '1px solid var(--border)' }}>
+                <div style={isOpen ? { border: `1.5px solid ${accent}`, borderRadius: '10px', margin: '6px 8px' } : undefined}>
+                    <div
+                        onClick={() => setOpenRow(isOpen ? null : rowId)}
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px 10px 14px', flexWrap: 'nowrap', minWidth: 0 }}
+                    >
+                        <ChevronRight size={13} color="var(--text-faint)" style={{ flexShrink: 0, transform: isOpen ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }} />
+                        <span
+                            data-testid="sensor-row-label"
+                            title={label}
+                            style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                            {label}
+                        </span>
+                        {component && <span className="model-chip model-chip--component" style={{ flexShrink: 1, minWidth: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{component}</span>}
+                        {otherGroups.map(n => (
+                            <span key={n} className="model-chip model-chip--component" style={{ flexShrink: 0, fontFamily: 'var(--mono)' }}>also in FG-{n}</span>
+                        ))}
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', flexShrink: 0, whiteSpace: 'nowrap' }}>{done} of {ordered.length} complete</span>
+                        {ordered.map(m => (
+                            <span
+                                key={m.id}
+                                className={`model-kind-icon model-kind-icon--${m.kind}`}
+                                title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : 'Incomplete'}`}
+                                data-testid={`sensor-kind-chip-${m.id}`}
+                                style={{ position: 'relative', width: '22px', height: '22px', fontSize: '0.6rem', flexShrink: 0 }}
+                            >
+                                {KIND_ABBREV[m.kind]}
+                                <span style={{ position: 'absolute', right: '-2px', top: '-2px', width: '7px', height: '7px', borderRadius: '50%', border: '1px solid var(--card-bg)', background: m.status ? 'var(--success, #3fb950)' : 'var(--text-faint)' }} />
+                            </span>
+                        ))}
+                        {/* Category — per SENSOR, saves instantly, no "Mixed" state. */}
+                        <div
+                            role="group"
+                            aria-label="Category"
+                            onClick={e => e.stopPropagation()}
+                            style={{ display: 'inline-flex', flexShrink: 0, background: 'var(--input-bg)', border: `1px solid ${category ? 'var(--border-strong)' : 'rgba(245,158,11,0.6)'}`, borderRadius: '7px', padding: '2px', gap: '2px' }}
+                        >
+                            {(['performance', 'condition'] as ModelCategory[]).map(c => {
+                                const active = category === c;
+                                const activeColor = c === 'condition' ? 'var(--cond)' : 'var(--accent-color)';
+                                const activeBg = c === 'condition' ? 'var(--cond-muted)' : 'var(--accent-muted)';
+                                return (
+                                    <button
+                                        key={c}
+                                        type="button"
+                                        aria-pressed={active}
+                                        onClick={() => changeCategory(sg.key, c)}
+                                        style={{
+                                            padding: '3px 9px', borderRadius: '5px', fontSize: '0.68rem', cursor: 'pointer', border: 'none',
+                                            background: active ? activeBg : 'none',
+                                            color: active ? activeColor : 'var(--text-secondary)',
+                                            fontWeight: active ? 600 : 400,
+                                        }}
+                                    >
+                                        {CATEGORY_LABELS[c]}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    {category === null && (
+                        <div style={{ padding: '0 14px 8px 35px', fontSize: '0.68rem', color: 'var(--warn, #d9a441)' }}>
+                            Pick a category — it is set once for this sensor and applies to all of its models.
+                        </div>
+                    )}
+                    {categoryWarn?.key === sg.key && (
+                        <div role="status" style={{ padding: '0 14px 8px 35px', fontSize: '0.68rem', color: 'var(--warn, #d9a441)' }}>
+                            {categoryWarn.text}
+                        </div>
+                    )}
+                    {isOpen && activeModel && (
+                        <div data-testid="add-model-form" style={{ borderTop: '1px solid var(--border)' }}>
+                            {renderSharedFields(ordered)}
+                            <div role="tablist" style={{ display: 'flex', gap: '2px', padding: '0 14px', borderBottom: '1px solid var(--border)' }}>
+                                {ordered.map(m => {
+                                    const selected = m.id === activeModel.id;
+                                    return (
+                                        <button
+                                            key={m.id}
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={selected}
+                                            onClick={() => setActiveTab(prev => ({ ...prev, [rowId]: m.id }))}
+                                            style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px', fontSize: '0.74rem', cursor: 'pointer',
+                                                background: 'none', border: 'none', borderBottom: `2px solid ${selected ? 'var(--accent-color)' : 'transparent'}`,
+                                                color: selected ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: selected ? 600 : 400,
+                                            }}
+                                        >
+                                            {KIND_LABEL[m.kind]}
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: m.status ? 'var(--success, #3fb950)' : 'var(--text-faint)' }} />
+                                            {m.id in drafts && <span style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>edited</span>}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`}>
+                                {renderKindFields(activeModel)}
+                                {renderModelFooter(activeModel, true)}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -1130,6 +1247,31 @@ export default function BuildModelWindow() {
                 scroll-container bug). This was the real cause of the button
                 row repeatedly looking "cut off" — not a width issue. */}
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {categoryNotice && categoryNotice.length > 0 && (
+                    <div
+                        role="status"
+                        data-testid="category-normalisation-notice"
+                        style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.74rem', lineHeight: 1.5 }}
+                    >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, marginBottom: '2px' }}>
+                                Categories were made consistent — {categoryNotice.length} model{categoryNotice.length === 1 ? '' : 's'} updated
+                            </div>
+                            <div style={{ color: 'var(--text-secondary)' }}>
+                                A sensor now has ONE category for all of its models. Where they disagreed, Individual wins over Relationship over Clustering.
+                            </div>
+                            <ul style={{ margin: '4px 0 0', paddingLeft: '16px', color: 'var(--text-secondary)' }}>
+                                {categoryNotice.map(c => (
+                                    <li key={c.modelId} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {sensorLabel(c.sensorKey)} · {KIND_LABEL[c.kind]}: {c.from ? CATEGORY_LABELS[c.from] : 'not set'} → {c.to ? CATEGORY_LABELS[c.to] : 'not set'}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                        <button type="button" className="text-btn" style={{ flexShrink: 0 }} onClick={dismissCategoryNotice}>Dismiss</button>
+                    </div>
+                )}
+
                 {groupBy === 'fg' ? (
                     realGroups.length === 0 ? (
                         <div className="no-results">No failure groups yet</div>
@@ -1151,7 +1293,7 @@ export default function BuildModelWindow() {
 
                                 {models.length === 0 ? (
                                     <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
-                                ) : models.map(m => overviewModelRow(m, false))}
+                                ) : groupModelsBySensor(allModels, g.no).map(sg => sensorRow(g.no, sg))}
                             </div>
                         );
                     })
@@ -1175,7 +1317,7 @@ export default function BuildModelWindow() {
 
                             {ungroupedModels.length === 0 ? (
                                 <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 10px 18px', fontSize: '0.72rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
-                            ) : ungroupedModels.map(m => overviewModelRow(m, false))}
+                            ) : groupModelsBySensor(allModels, 0).map(sg => sensorRow(0, sg))}
                         </div>
                     );
                 })()}

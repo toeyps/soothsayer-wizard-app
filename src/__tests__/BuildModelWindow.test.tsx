@@ -168,10 +168,10 @@ describe('BuildModelWindow', () => {
         expect(screen.getByText('Build Model — Overview')).toBeTruthy();
         expect(screen.getByText('Group A')).toBeTruthy();
         expect(screen.getByText('FG-1')).toBeTruthy();
-        expect(screen.getByText('Model One')).toBeTruthy();
+        expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy(); // one row per sensor, labelled by the sensor
     });
 
-    it('shows exactly one line per model — no duplicate description/description(tag) lines', async () => {
+    it('shows exactly one line per sensor — no duplicate description/description(tag) lines', async () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '', targetSensor: 'TAG1' })] } });
         expect(screen.getAllByText('Pump Pressure (TAG1)')).toHaveLength(1);
@@ -240,14 +240,14 @@ describe('BuildModelWindow', () => {
     it('stays in sync with a failure-group-state-changed broadcast from another window', async () => {
         render(<BuildModelWindow />);
         await deliverData();
-        expect(screen.queryByText('New Model')).toBeNull();
+        expect(screen.queryByText('Pump Temp (TAG2)')).toBeNull();
 
         await act(async () => {
             for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
-                cb({ payload: { workspaceId: 'ws1', origin: 'dashboard', groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model' })] } });
+                cb({ payload: { workspaceId: 'ws1', origin: 'dashboard', groups: [makeGroup()], models: [makeModel({ id: 'm2', name: 'New Model', targetSensor: 'TAG2' })] } });
             }
         });
-        expect(screen.getByText('New Model')).toBeTruthy();
+        expect(screen.getByText('Pump Temp (TAG2)')).toBeTruthy();
     });
 
     // 2026-09-21: multi-project isolation. This window is a singleton that
@@ -267,14 +267,14 @@ describe('BuildModelWindow', () => {
             await deliverData();
             await fire('failure-group-state-changed', {
                 workspaceId: 'some-other-workspace', origin: 'dashboard',
-                groups: [makeGroup()], models: [makeModel({ id: 'x', name: 'Foreign Model' })],
+                groups: [makeGroup()], models: [makeModel({ id: 'x', name: 'Foreign Model', targetSensor: 'TAG2' })],
             });
             await fire('failure-group-state-changed', {
-                groups: [makeGroup()], models: [makeModel({ id: 'y', name: 'Unscoped Model' })],
+                groups: [makeGroup()], models: [makeModel({ id: 'y', name: 'Unscoped Model', targetSensor: 'TAG3' })],
             });
-            expect(screen.queryByText('Foreign Model')).toBeNull();
-            expect(screen.queryByText('Unscoped Model')).toBeNull();
-            expect(screen.getByText('Model One')).toBeTruthy();
+            expect(screen.queryByText('Pump Temp (TAG2)')).toBeNull(); // foreign model's sensor
+            expect(screen.queryByText('TAG3')).toBeNull(); // unscoped model's sensor
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
         });
 
         it('skips its own echo but still applies the Predictive Model page\'s broadcast (that page lives inside this window)', async () => {
@@ -282,19 +282,20 @@ describe('BuildModelWindow', () => {
             await deliverData();
             await fire('failure-group-state-changed', {
                 workspaceId: 'ws1', origin: 'build-model',
-                groups: [makeGroup()], models: [makeModel({ id: 'e', name: 'Echoed Model' })],
+                groups: [makeGroup()], models: [makeModel({ id: 'e', name: 'Echoed Model', targetSensor: 'TAG2' })],
             });
-            expect(screen.queryByText('Echoed Model')).toBeNull();
+            expect(screen.queryByText('Pump Temp (TAG2)')).toBeNull();
             await fire('failure-group-state-changed', {
                 workspaceId: 'ws1', origin: 'predictive-model',
-                groups: [makeGroup()], models: [makeModel({ id: 'p', name: 'PM Edit' })],
+                groups: [makeGroup()], models: [makeModel({ id: 'p', name: 'PM Edit', targetSensor: 'TAG2' })],
             });
-            expect(screen.getByText('PM Edit')).toBeTruthy();
+            expect(screen.getByText('Pump Temp (TAG2)')).toBeTruthy();
         });
 
         it('stamps every failure-group broadcast it sends with its workspace id', async () => {
             render(<BuildModelWindow />);
             await deliverData();
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             fireEvent.click(screen.getByText('Incomplete')); // toggles the status pill -> persist()
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
             expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
@@ -306,13 +307,13 @@ describe('BuildModelWindow', () => {
         it('being re-pointed at a DIFFERENT workspace drops the old one\'s open PM page and shows only the new workspace\'s models', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
 
             mockLoadWorkspaceData.mockResolvedValue({
                 id: 'ws2',
-                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model' })] },
+                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })] },
             });
             await fire('build-model-data', {
                 workspaceId: 'ws2',
@@ -322,14 +323,14 @@ describe('BuildModelWindow', () => {
             });
 
             expect(screen.queryByTestId('pm-page-mock')).toBeNull(); // model 'm1' does not exist in ws2
-            expect(screen.getByText('Other Project Model')).toBeTruthy();
-            expect(screen.queryByText('Model One')).toBeNull();
+            expect(screen.getByText('OTHER1')).toBeTruthy();
+            expect(screen.queryByText('Pump Pressure (TAG1)')).toBeNull();
         });
 
         it('re-delivery for the SAME workspace keeps the open PM page', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             await deliverData();
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
@@ -341,7 +342,7 @@ describe('BuildModelWindow', () => {
             mockLoadWorkspaceData.mockReturnValueOnce(new Promise(res => { resolveFirst = res; }));
             mockLoadWorkspaceData.mockResolvedValueOnce({
                 id: 'ws1',
-                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model' })] },
+                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })] },
             });
             const payload = {
                 workspaceId: 'ws1', sensorHeaders: ['TAG1'], sensorMetadata: [],
@@ -349,15 +350,15 @@ describe('BuildModelWindow', () => {
             };
             await fire('build-model-data', payload); // first reply: its load stays pending
             await fire('build-model-data', payload); // second reply: resolves immediately
-            expect(screen.getByText('Fresh Model')).toBeTruthy();
+            expect(screen.getByText('TAG2')).toBeTruthy();
 
             await act(async () => {
-                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model' })] } });
+                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })] } });
                 await Promise.resolve();
                 await Promise.resolve();
             });
-            expect(screen.queryByText('Stale Model')).toBeNull();
-            expect(screen.getByText('Fresh Model')).toBeTruthy();
+            expect(screen.queryByText('TAG3')).toBeNull();
+            expect(screen.getByText('TAG2')).toBeTruthy();
         });
     });
 
@@ -385,7 +386,7 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             mockEmit.mockClear();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
             expect(screen.getByTestId('add-model-form')).toBeTruthy();
             expect(screen.getByText('Build Model — Overview')).toBeTruthy(); // still on the same page
@@ -395,7 +396,7 @@ describe('BuildModelWindow', () => {
         it('shows the model\'s Failure Group membership as a read-only chip list, no checkboxes (2026-09-01: editing group membership moved to the Sensor tab entirely — "ไม่ควรแก้ FG ได้ในหน้านี้ ดูได้อย่างเดียว")', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup({ no: 2, name: 'Group B' })], models: [makeModel({ groupNos: [2] })] } });
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const form = within(screen.getByTestId('add-model-form'));
             expect(form.getByText('FG-2 · Group B')).toBeTruthy();
             expect(form.queryByRole('checkbox')).toBeNull();
@@ -409,7 +410,7 @@ describe('BuildModelWindow', () => {
                     models: [makeModel({ groupNos: [1] })],
                 },
             });
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const form = within(screen.getByTestId('add-model-form'));
             expect(form.getByText('FG-1 · Group A')).toBeTruthy();
             expect(form.queryByText('FG-2 · Group B')).toBeNull();
@@ -427,7 +428,7 @@ describe('BuildModelWindow', () => {
         it('the Save changes footer sits structurally outside the bounded, independently-scrollable fields box (regression: a tall form previously had no reliable, always-visible place for its own button, requiring exactly the right page scroll position to reach it)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
             const fields = screen.getByTestId('add-model-form-fields');
             expect(fields.style.maxHeight).toBeTruthy();
@@ -439,7 +440,7 @@ describe('BuildModelWindow', () => {
         it('the footer is sticky to the viewport bottom, not just structurally present (regression: a form deep in a long list, or with a fields box near its own max-height, could still place the footer below the visible area with the fields box alone not being enough)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
             const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
             const footer = saveBtn.parentElement as HTMLElement;
@@ -460,7 +461,7 @@ describe('BuildModelWindow', () => {
         it('the sticky footer\'s own bottom corners are rounded to match the editing card\'s border-radius (regression: no overflow:hidden on the card -- the previous item -- means the footer\'s flat, opaque (--card-bg) background paints straight over the card\'s rounded bottom corners once it settles at the bottom of the scroll, reading as the accent border simply not connecting there; reported 2026-09-17)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
             const footer = saveBtn.parentElement as HTMLElement;
             expect(footer.style.borderBottomLeftRadius).toBe('10px');
@@ -470,10 +471,10 @@ describe('BuildModelWindow', () => {
         it('the opened form\'s boundary is a real border wrapping the whole card (header + footer), not just a left accent bar (regression: an absolutely-positioned bar was anchored to the row\'s un-scrolled flow position and visually detached from the sticky footer once the page scrolled)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
             const saveBtn = screen.getByText('Save changes');
-            let boundary: HTMLElement | null = screen.getByText('Model One').parentElement;
+            let boundary: HTMLElement | null = screen.getAllByTestId('sensor-row-label')[0].parentElement;
             while (boundary && !boundary.style.border) boundary = boundary.parentElement;
             expect(boundary).not.toBeNull();
             expect(boundary!.contains(saveBtn)).toBe(true);
@@ -482,10 +483,10 @@ describe('BuildModelWindow', () => {
         it('clicking the same row again closes its form (toggle)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             expect(screen.getByTestId('add-model-form')).toBeTruthy();
 
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
@@ -495,10 +496,10 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [first, second] } });
 
-            fireEvent.click(screen.getByText('First Model'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('First Model');
 
-            fireEvent.click(screen.getByText('Second Model'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[1]);
             expect((within(screen.getByTestId('add-model-form')).getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Second Model');
         });
 
@@ -512,11 +513,11 @@ describe('BuildModelWindow', () => {
             render(<BuildModelWindow />);
             await deliverData();
             mockUpdateWorkspaceData.mockClear();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             expect(screen.queryByText('Cancel')).toBeNull();
             const form = within(screen.getByTestId('add-model-form'));
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Discarded' } });
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
@@ -524,7 +525,7 @@ describe('BuildModelWindow', () => {
         it('Save changes is a normal-sized button, not stretched full-width (regression: .fg-build-model-btn\'s width:100% default)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const saveBtn = screen.getByText('Save changes').closest('button') as HTMLButtonElement;
             expect(saveBtn.style.width).not.toBe('100%');
         });
@@ -532,14 +533,14 @@ describe('BuildModelWindow', () => {
         it('shows no "Remove model" button anywhere (2026-08-31: removed per explicit user request — model deletion moved to Dashboard\'s Failure Groups tab; Build Model only edits/trains)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             expect(screen.queryByText('Remove model')).toBeNull();
         });
 
-        it('saving an edit persists it and closes the form, showing the change immediately', async () => {
+        it('saving an edit persists it and clears the draft, showing the change immediately', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const form = within(screen.getByTestId('add-model-form'));
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed Model' } });
             await act(async () => {
@@ -548,8 +549,11 @@ describe('BuildModelWindow', () => {
                 await Promise.resolve();
             });
 
-            expect(screen.queryByTestId('add-model-form')).toBeNull();
-            expect(screen.getByText('Renamed Model')).toBeTruthy();
+            // The row stays open (it holds several models' tabs); the saved name is now the stored one.
+            expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Renamed Model');
+            expect(screen.queryByText('edited')).toBeNull();
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].name).toBe('Renamed Model');
         });
 
         describe('"Not in Group" (FG-0) — a model without a failure group', () => {
@@ -580,18 +584,20 @@ describe('BuildModelWindow', () => {
                         models: [makeModel({ id: 'm-ng', name: 'Orphan Model', groupNos: [0] })],
                     },
                 });
-                expect(screen.getByText('Orphan Model')).toBeTruthy();
+                expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy(); // sensor row inside the Not in Group card
             });
 
         });
 
-        it('toggling the status pill persists the change without opening the form', async () => {
+        it('the status pill lives inside each model own tab, and toggling it persists just that model without touching the form', async () => {
             render(<BuildModelWindow />);
             await deliverData();
+            // Row header shows only a status DOT per kind chip (no pill) until the row is open.
+            expect(screen.queryByText('Incomplete')).toBeNull();
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             fireEvent.click(screen.getByText('Incomplete'));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].status).toBe(true);
-            expect(screen.queryByTestId('add-model-form')).toBeNull();
         });
 
         // 2026-09-09: "Build Model →" moved from the (always-visible) row
@@ -601,7 +607,7 @@ describe('BuildModelWindow', () => {
         it('"Build Model" navigates to the in-window Predictive Model page instead of opening a new window', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One')); // open the row — makeModel() is already complete
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]); // open the row — makeModel() is already complete
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             // No cross-window event — this is now local page-navigation state.
             expect(mockEmit).not.toHaveBeenCalledWith('launch-predictive-model', expect.anything());
@@ -617,7 +623,7 @@ describe('BuildModelWindow', () => {
         it('waits for commitForm\'s persist to actually land before navigating to the PM page (2026-09-18 regression: the write used to be fire-and-forget, so the PM page could hydrate from the model record from BEFORE this commit -- e.g. predictors just picked on this form, required for Relationship, showing as "No predictors selected" the instant the page opened)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
             let resolvePersist!: (v: unknown) => void;
             mockUpdateWorkspaceData.mockImplementation(() => new Promise(resolve => { resolvePersist = resolve; }));
@@ -638,7 +644,7 @@ describe('BuildModelWindow', () => {
         it('is disabled until the form is valid, and shows why', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '' })] } });
-            fireEvent.click(screen.getByText('Pump Pressure (TAG1)')); // falls back to the sensor label since name is blank -- still opens the row
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]); // falls back to the sensor label since name is blank -- still opens the row
             const buildBtn = screen.getByText('Build Model →') as HTMLButtonElement;
             expect(buildBtn.disabled).toBe(true);
             expect(buildBtn.title).toMatch(/Fill in the required fields/);
@@ -653,7 +659,7 @@ describe('BuildModelWindow', () => {
         it('saves any unsaved draft edits before navigating, so training never silently uses stale values', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed before building' } });
 
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
@@ -666,18 +672,20 @@ describe('BuildModelWindow', () => {
         it('the PM page\'s Back control returns to the model overview', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
             fireEvent.click(screen.getByText('Mock Back'));
             expect(screen.queryByTestId('pm-page-mock')).toBeNull();
-            expect(screen.queryByText('Build Model →')).toBeNull(); // the row's editor closed along with the old model reference
+            expect(screen.getByText('Build Model — Overview')).toBeTruthy();
+            // The sensor row the user came from is still open (the draft was committed before navigating).
+            expect(screen.getByTestId('add-model-form')).toBeTruthy();
         });
 
         it('the PM page\'s Finish control marks the model Complete and returns to the model overview', async () => {
             render(<BuildModelWindow />);
             await deliverData(); // makeModel() defaults to status: false (Incomplete)
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
 
@@ -691,7 +699,7 @@ describe('BuildModelWindow', () => {
         it('Finish never flips an already-complete model back to Incomplete (one-directional, unlike the overview\'s toggle pill)', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
 
             fireEvent.click(screen.getByText('Mock Finish'));
@@ -710,9 +718,12 @@ describe('BuildModelWindow', () => {
             const rel = makeModel({ id: 'm1', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'] });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            // The one-line summary lives on the per-model rows (Component view); the FG view's row is per sensor.
+            fireEvent.click(screen.getByText('Group by Component'));
             expect(screen.getByText('Target: Pump Pressure (TAG1) · Predictors: Pump Temp (TAG2), TAG3')).toBeTruthy();
+            fireEvent.click(screen.getByText('Group by Failure Group'));
 
-            fireEvent.click(screen.getByText('Rel Model'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const form = within(screen.getByTestId('add-model-form'));
             // 2026-09-01: Target sensor is now a locked readout, not a select
             // offering every sensor as an option — so each predictor's label
@@ -720,19 +731,19 @@ describe('BuildModelWindow', () => {
             // Target select's own unrelated option list).
             expect(form.getAllByText('Pump Temp (TAG2)').length).toBe(1);
             expect(form.getAllByText('TAG3').length).toBe(1);
-            expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked Target readout
+            expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked Target readout (shared, once)
         });
 
         it('gives each model kind a distinct single-letter icon and color', async () => {
             const ind = makeModel({ id: 'm1', name: 'Ind Model', kind: 'individual' });
             const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG3'] });
-            const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG2', ySensor: 'TAG3' });
+            const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG3', ySensor: 'TAG2' });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind, rel, clu] } });
 
-            const indColor = (screen.getByText('I').closest('.model-kind-icon') as HTMLElement).className;
-            const relColor = (screen.getByText('R').closest('.model-kind-icon') as HTMLElement).className;
-            const cluColor = (screen.getByText('C').closest('.model-kind-icon') as HTMLElement).className;
+            const indColor = (screen.getByTestId('sensor-kind-chip-m1')).className;
+            const relColor = (screen.getByTestId('sensor-kind-chip-m2')).className;
+            const cluColor = (screen.getByTestId('sensor-kind-chip-m3')).className;
             expect(new Set([indColor, relColor, cluColor]).size).toBe(3);
         });
 
@@ -740,7 +751,7 @@ describe('BuildModelWindow', () => {
             it('Save changes is disabled once the name is cleared, re-enabled once restored', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Model One'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
@@ -757,7 +768,7 @@ describe('BuildModelWindow', () => {
                 const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
-                fireEvent.click(screen.getByText('Rel Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
@@ -771,12 +782,12 @@ describe('BuildModelWindow', () => {
                 const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '' });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
-                fireEvent.click(screen.getByText('Clu Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
                 const save = form.getByText('Save changes').closest('button') as HTMLButtonElement;
                 expect(save.disabled).toBe(true); // Y still unset
-                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // locked X readout
+                expect(form.getAllByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).length).toBeGreaterThan(0); // locked X readout
 
                 fireEvent.change(form.getByPlaceholderText('Pick Y sensor...'), { target: { value: 'TAG2' } });
                 expect(save.disabled).toBe(false);
@@ -785,12 +796,13 @@ describe('BuildModelWindow', () => {
             it('shows no "Model kind" picker anywhere — a model\'s kind is decided once, on the Sensor tab, and can\'t be switched here anymore (2026-09-01, per explicit user request: "ลบการเปลี่ยน model kind ออก เพราะว่าเราเลือก model kind ที่หน้า dashboard แล้ว")', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Model One'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
                 expect(form.queryByText('Model kind')).toBeNull();
-                expect(form.queryByText('Individual')).toBeNull();
-                expect(form.queryByText('Relationship')).toBeNull();
-                expect(form.queryByText('Clustering')).toBeNull();
+                // Kind is only ever a (read-only) tab label; there is no select/radio to switch it.
+                expect(form.queryByRole('combobox')).toBeNull();
+                expect(form.queryByRole('radio')).toBeNull();
+                expect(form.getAllByRole('tab')).toHaveLength(1);
             });
 
         });
@@ -799,19 +811,19 @@ describe('BuildModelWindow', () => {
             it('Individual\'s Target sensor is a read-only readout, not a select — the raw tag can\'t be reassigned', async () => {
                 render(<BuildModelWindow />);
                 await deliverData();
-                fireEvent.click(screen.getByText('Model One'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getByText('Pump Pressure (TAG1)')).toBeTruthy();
-                expect(form.getByText('Pump Pressure (TAG1)').closest('select')).toBeNull();
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy();
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).closest('select')).toBeNull();
             });
 
             it('Relationship\'s Target sensor is locked too, but its Predictors stay a normal editable multi-select', async () => {
                 const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
-                fireEvent.click(screen.getByText('Rel Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getByText('Pump Pressure (TAG1)').closest('select')).toBeNull(); // Target: locked
+                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).closest('select')).toBeNull(); // Target: locked
 
                 fireEvent.change(form.getByPlaceholderText('Add predictors…'), { target: { value: 'TAG3' } });
                 expect(form.getByText('TAG3')).toBeTruthy(); // Predictors: still freely editable (now the chip)
@@ -821,7 +833,7 @@ describe('BuildModelWindow', () => {
                 const rel = makeModel({ id: 'm2', name: 'Rel Model', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
-                fireEvent.click(screen.getByText('Rel Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
                 const predictorProps = sensorPickerModalProps.find(p => p.noun === 'predictors');
                 expect(predictorProps).toBeTruthy();
@@ -834,9 +846,9 @@ describe('BuildModelWindow', () => {
                 const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
-                fireEvent.click(screen.getByText('Clu Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
-                expect(form.getByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' })).toBeTruthy(); // X: locked
+                expect(form.getAllByText('Pump Pressure (TAG1)', { selector: '.model-component-readout' }).length).toBeGreaterThan(0); // X: locked
 
                 const yPicker = form.getByDisplayValue('TAG2') as HTMLInputElement; // Y: still freely editable
                 fireEvent.change(yPicker, { target: { value: 'TAG3' } });
@@ -847,7 +859,7 @@ describe('BuildModelWindow', () => {
                 const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: '', criteriaSensor: '' });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
-                fireEvent.click(screen.getByText('Clu Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
 
                 const yProps = sensorPickerModalProps.find(p => p.noun === 'Y sensor');
                 const criteriaProps = sensorPickerModalProps.find(p => p.noun === 'criteria sensor');
@@ -864,7 +876,7 @@ describe('BuildModelWindow', () => {
                 const clu = makeModel({ id: 'm3', name: 'Clu Model', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: '' });
                 render(<BuildModelWindow />);
                 await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
-                fireEvent.click(screen.getByText('Clu Model'));
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
                 const form = within(screen.getByTestId('add-model-form'));
 
                 fireEvent.change(form.getByPlaceholderText('Pick criteria sensor...'), { target: { value: 'TAG3' } });
@@ -1014,7 +1026,7 @@ describe('BuildModelWindow', () => {
                 };
                 return patch(prev);
             });
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
             expect(lastProps.runningConditionTimeStart).toBe('2026-05-01T00:00');
@@ -1042,7 +1054,7 @@ describe('BuildModelWindow', () => {
                 const prev = { id, failureGroupState: { groups: [makeGroup()], models: [modelWithGroup], runningConditionFilters: filters } };
                 return patch(prev);
             });
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
             const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
             expect(lastProps.runningConditionFilters).toEqual(filters);
@@ -1066,7 +1078,7 @@ describe('BuildModelWindow', () => {
                 },
             }));
 
-            fireEvent.click(screen.getByText('Model One'));
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
             const form = within(screen.getByTestId('add-model-form'));
             fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
             fireEvent.click(form.getByText('Save changes'));
@@ -1075,6 +1087,249 @@ describe('BuildModelWindow', () => {
             expect(state.failureGroupState.runningConditionFilters).toEqual([
                 { id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' },
             ]);
+        });
+    });
+    // ---- Feature 4-A (2026-09-24): one row per SENSOR per FG, category per sensor ----
+    describe('one row per sensor (Feature 4-A)', () => {
+        const ind = (o: Record<string, any> = {}) => makeModel({ id: 'i1', name: 'Ind', kind: 'individual', targetSensor: 'TAG1', ...o });
+        const rel = (o: Record<string, any> = {}) => makeModel({ id: 'r1', name: 'Rel', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], ...o });
+        const clu = (o: Record<string, any> = {}) => makeModel({ id: 'c1', name: 'Clu', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', ...o });
+        const groups = [makeGroup({ no: 1, name: 'Group A' }), makeGroup({ no: 2, name: 'Group B' })];
+
+        /** What "disk" holds when a write runs -- the write's patch is applied to THIS, like the real store. */
+        function seedDisk(models: any[], extra: Record<string, any> = {}) {
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups, models, ...extra } }));
+        }
+        const lastWrite = async () => (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+        const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+        it('two or three models of one sensor render as ONE row showing only the kinds that exist', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), rel()] } });
+            expect(screen.getAllByTestId('sensor-row-label')).toHaveLength(1);
+            expect(screen.getByTestId('sensor-kind-chip-i1')).toBeTruthy();
+            expect(screen.getByTestId('sensor-kind-chip-r1')).toBeTruthy();
+            expect(document.querySelectorAll('.model-kind-icon--clustering')).toHaveLength(0); // no Clustering chip -- none exists
+            expect(screen.getByText('0 of 2 complete')).toBeTruthy();
+        });
+
+        it('a Clustering model is grouped by its X sensor, and changing Y never moves the row', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), clu({ ySensor: 'TAG3' })] } });
+            expect(screen.getAllByTestId('sensor-row-label')).toHaveLength(1); // X = TAG1 = Individual's target
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            fireEvent.click(screen.getByRole('tab', { name: /Clustering/ }));
+            fireEvent.change(screen.getByDisplayValue('TAG3'), { target: { value: 'TAG2' } });
+            expect(screen.getAllByTestId('sensor-row-label')).toHaveLength(1);
+        });
+
+        it('models on different sensors make separate rows', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), rel({ targetSensor: 'TAG2', predictorSensors: ['TAG3'] })] } });
+            expect(screen.getAllByTestId('sensor-row-label')).toHaveLength(2);
+        });
+
+        it('shared fields (locked sensor, component, failure groups) render ONCE, with one tab per existing kind', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), rel(), clu()] } });
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            expect(screen.getAllByTestId('sensor-shared-fields')).toHaveLength(1);
+            expect(screen.getAllByRole('tab')).toHaveLength(3);
+            expect(within(screen.getByTestId('sensor-shared-fields')).getByText('Pump')).toBeTruthy(); // component
+        });
+
+        it('failure groups are read-only chips with an "(I only)" suffix when membership is partial', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind({ groupNos: [1, 2] }), rel({ groupNos: [1] })] } });
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]); // FG-1 row: both kinds
+            const shared = within(screen.getByTestId('sensor-shared-fields'));
+            expect(shared.getByText('FG-1 · Group A')).toBeTruthy();
+            expect(shared.getByText(/FG-2 · Group B \(I only\)/)).toBeTruthy();
+            expect(shared.queryByRole('checkbox')).toBeNull();
+            expect(screen.getAllByText('also in FG-2').length).toBeGreaterThan(0); // header says the sensor is elsewhere too
+        });
+
+        it('each model tab keeps its own draft -- switching tabs does not lose an unsaved edit, and the tab is marked "edited"', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), rel()] } });
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Ind renamed' } });
+            expect(screen.getByText('edited')).toBeTruthy();
+
+            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Rel');
+            fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
+            expect((screen.getByPlaceholderText('e.g. Bearing vibration model') as HTMLInputElement).value).toBe('Ind renamed');
+        });
+
+        it('Save changes only touches the active tab model, and never writes category', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), rel()] } });
+            seedDisk([ind({ category: 'condition' }), rel({ category: 'condition' })]); // disk moved on since this window loaded
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Ind renamed' } });
+            await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+            const models = (await lastWrite()).models;
+            expect(models.find((m: any) => m.id === 'i1').name).toBe('Ind renamed');
+            expect(models.find((m: any) => m.id === 'r1').name).toBe('Rel');
+            expect(models.every((m: any) => m.category === 'condition')).toBe(true); // a stale draft can't revert the sensor's category
+        });
+
+        it('each tab has its own status pill; toggling one leaves the other kind alone', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind(), rel()] } });
+            seedDisk([ind(), rel()]);
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            fireEvent.click(screen.getByText('Incomplete'));
+            const models = (await lastWrite()).models;
+            expect(models.find((m: any) => m.id === 'r1').status).toBe(true);
+            expect(models.find((m: any) => m.id === 'i1').status).toBe(false);
+        });
+
+        it('long sensor labels stay on one line (single-line ellipsis)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups, models: [ind()] } });
+            const label = screen.getAllByTestId('sensor-row-label')[0];
+            expect(label.style.whiteSpace).toBe('nowrap');
+            expect(label.style.textOverflow).toBe('ellipsis');
+            expect(label.style.overflow).toBe('hidden');
+        });
+
+        describe('category is set once, on the sensor header', () => {
+            it('there is no per-model Category field in the form, and no "Mixed" state anywhere', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ category: 'performance' }), rel({ category: 'condition' })] } });
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+                const form = within(screen.getByTestId('add-model-form'));
+                expect(form.queryByText('Category')).toBeNull();
+                expect(screen.queryByText(/mixed/i)).toBeNull();
+            });
+
+            it('clicking a category on the header saves INSTANTLY (no Save) and writes every model of that sensor in every FG', async () => {
+                const models = [ind({ groupNos: [1], category: null }), rel({ groupNos: [2], category: null }), ind({ id: 'other', targetSensor: 'TAG2', category: null })];
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models } });
+                seedDisk(models);
+                mockUpdateWorkspaceData.mockClear();
+                seedDisk(models);
+                fireEvent.click(within(screen.getByTestId('sensor-row-fg:1:tag1')).getByRole('button', { name: 'Condition' }));
+                await flush();
+                const written = (await lastWrite()).models;
+                expect(written.find((m: any) => m.id === 'i1').category).toBe('condition');
+                expect(written.find((m: any) => m.id === 'r1').category).toBe('condition'); // in FG-2, a different row
+                expect(written.find((m: any) => m.id === 'other').category).toBeNull(); // another sensor untouched
+            });
+
+            it('the pressed state reflects the sensor category, and clicking the active one is a no-op', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ category: 'performance' })] } });
+                const row = within(screen.getByTestId('sensor-row-fg:1:tag1'));
+                expect(row.getByRole('button', { name: 'Performance' }).getAttribute('aria-pressed')).toBe('true');
+                expect(row.getByRole('button', { name: 'Condition' }).getAttribute('aria-pressed')).toBe('false');
+                mockUpdateWorkspaceData.mockClear();
+                fireEvent.click(row.getByRole('button', { name: 'Performance' }));
+                await flush();
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+
+            it('warns when the change also applies to other failure groups, and stays quiet for a single-FG sensor', async () => {
+                const multi = [ind({ groupNos: [1, 2], category: 'performance' })];
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: multi } });
+                seedDisk(multi);
+                fireEvent.click(within(screen.getByTestId('sensor-row-fg:1:tag1')).getByRole('button', { name: 'Condition' }));
+                await flush();
+                expect(screen.getAllByRole('status')[0].textContent).toMatch(/every failure group: FG-1, FG-2/);
+                cleanup();
+
+                const single = [ind({ groupNos: [1], category: 'performance' })];
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: single } });
+                seedDisk(single);
+                fireEvent.click(within(screen.getByTestId('sensor-row-fg:1:tag1')).getByRole('button', { name: 'Condition' }));
+                await flush();
+                expect(screen.queryByText(/every failure group/)).toBeNull();
+            });
+
+            it('Save and Build Model stay disabled, with the reason, while the sensor has no category -- and enable once one is picked', async () => {
+                const models = [ind({ category: null })];
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models } });
+                seedDisk(models);
+                fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+                expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
+                const build = screen.getByText('Build Model →') as HTMLButtonElement;
+                expect(build.disabled).toBe(true);
+                expect(build.title).toBe('Pick a category on the sensor header');
+                expect(screen.getAllByText('Pick a category on the sensor header').length).toBeGreaterThan(0);
+
+                fireEvent.click(within(screen.getByTestId('sensor-row-fg:1:tag1')).getByRole('button', { name: 'Performance' }));
+                await flush();
+                expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
+            });
+
+            it('Component and Model Type views show a read-only category chip with a link back to the sensor header', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind({ category: 'condition' })] } });
+                fireEvent.click(screen.getByText('Group by Component'));
+                expect(screen.getByTestId('model-category-chip-i1').textContent).toBe('Condition');
+                expect(screen.queryByRole('button', { name: 'Condition' })).toBeNull(); // no editable control here
+
+                fireEvent.click(screen.getByText('Change in Failure Group view'));
+                expect(screen.getByTestId('sensor-row-fg:1:tag1')).toBeTruthy(); // switched to the FG view
+                expect(screen.getByTestId('add-model-form')).toBeTruthy(); // ...with that sensor's row open
+            });
+        });
+
+        describe('one-time category normalisation notice', () => {
+            const inconsistent = () => [ind({ category: 'performance' }), rel({ category: 'condition' })];
+
+            it('hydrating a legacy workspace normalises it, WRITES IT BACK once with the notice, and shows the notice', async () => {
+                seedDisk(inconsistent());
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: inconsistent() } });
+                expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
+                expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+                const written = await lastWrite();
+                expect(written.models.map((m: any) => m.category)).toEqual(['performance', 'performance']); // Individual wins
+                expect(written.categoryNormalisationNotice).toEqual([
+                    expect.objectContaining({ modelId: 'r1', kind: 'relationship', from: 'condition', to: 'performance' }),
+                ]);
+                expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({ workspaceId: 'ws1', origin: 'build-model' }));
+            });
+
+            it('a consistent workspace shows no notice and is not written on open', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: [ind(), rel()] } });
+                expect(screen.queryByTestId('category-normalisation-notice')).toBeNull();
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+
+            it('an already-stored notice is shown but NOT re-derived or re-written', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: {
+                    groups, models: [ind(), rel()],
+                    categoryNormalisationNotice: [{ modelId: 'r1', kind: 'relationship', sensorKey: 'tag1', from: 'condition', to: 'performance' }],
+                } });
+                expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+
+            it('Dismiss persists categoryNormalisationNotice: null (so it never comes back) and removes the card', async () => {
+                seedDisk(inconsistent());
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups, models: inconsistent() } });
+                mockUpdateWorkspaceData.mockClear();
+                seedDisk(inconsistent().map(m => ({ ...m, category: 'performance' })), {
+                    categoryNormalisationNotice: [{ modelId: 'r1', kind: 'relationship', sensorKey: 'tag1', from: 'condition', to: 'performance' }],
+                });
+                fireEvent.click(screen.getByText('Dismiss'));
+                await flush();
+                expect((await lastWrite()).categoryNormalisationNotice).toBeNull();
+                expect(screen.queryByTestId('category-normalisation-notice')).toBeNull();
+            });
         });
     });
 });

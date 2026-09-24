@@ -4,11 +4,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
 import { withFailureGroupState } from '../../utils/failureGroupState';
+import { modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
 import { subscribe } from '../../utils/tauriEvents';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureModel, ModelKind, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
+    FailureGroup, FailureModel, ModelKind, ModelCategory, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
     FailureGroupStateSlice, FailureGroupStateChangedPayload,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
@@ -61,9 +62,7 @@ const sameTag = (a: string, b: string) => a.trim().toLowerCase() === b.trim().to
 // sensor as X on creation — see makeDefaultModelForKind). Pure so it can run
 // against the mirror AND against what is on disk inside a write.
 const findKindIn = (models: FailureModel[], tag: string, kind: ModelKind) =>
-    models.find(m => m.kind === kind && (
-        kind === 'clustering' ? (m.xSensor ?? '').toLowerCase() === tag.toLowerCase() : (m.targetSensor ?? '').toLowerCase() === tag.toLowerCase()
-    ));
+    models.find(m => m.kind === kind && modelSensorKey(m) === normalizeSensorTag(tag));
 
 type PanelId = keyof typeof PANELS;
 
@@ -470,12 +469,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // it from a single-sensor toggle seeds that sensor as X and leaves Y
     // blank for later — confirmed via AskUserQuestion over not offering
     // Clustering in this flow at all.
-    const makeDefaultModelForKind = useCallback((tag: string, groupNos: number[], kind: ModelKind): FailureModel => ({
+    // `category` is the sensor's existing category (Feature 4-A: category is
+    // per SENSOR, set on Build Model's sensor header), so a new model inherits
+    // it instead of starting unset. Callers compute it via `sensorCategory`
+    // against the same models list they append to.
+    const makeDefaultModelForKind = useCallback((tag: string, groupNos: number[], kind: ModelKind, category: ModelCategory | null = null): FailureModel => ({
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         groupNos,
         name: getSensorMeta(tag)?.description || tag,
         kind,
-        category: null,
+        category,
         notes: '',
         status: false,
         targetSensor: kind === 'clustering' ? '' : tag,
@@ -551,7 +554,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), groupNo])] }
                 : m);
         }
-        return [...models, makeDefaultModelForKind(tag, [groupNo], kind)];
+        return [...models, makeDefaultModelForKind(tag, [groupNo], kind, sensorCategory(models, normalizeSensorTag(tag)))];
     }, [makeDefaultModelForKind]);
 
     const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
@@ -578,7 +581,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     ? models.map(m => m === existing
                         ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
                         : m)
-                    : [...models, makeDefaultModelForKind(tag, [newGroupNo], 'individual')],
+                    : [...models, makeDefaultModelForKind(tag, [newGroupNo], 'individual', sensorCategory(models, normalizeSensorTag(tag)))],
             };
         };
         const optimistic = build(fgGroups, fgModels);
