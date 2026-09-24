@@ -6,6 +6,52 @@
 
 ---
 
+## [0.7.0] — 2026-09-24
+
+Minor release — Feature 4: หน้า Failure Group จัดใหม่เป็น 1 แถวต่อ sensor, ต้องตั้ง Running Condition ก่อน
+build model, และเลือกช่วงเวลา training ได้หลายช่วง (ต่อจาก 0.6.0 ที่ยังไม่ได้ build เป็น installer)
+
+### ⚠️ Breaking changes (workspace เก่าเปิดได้ แต่พฤติกรรมเปลี่ยน)
+
+- **ต้องตั้ง Running Condition ก่อนกด Build Model / Finish** — ตั้งเงื่อนไขอย่างน้อย 1 ข้อ หรือเลือก
+  "No condition — use all rows" อย่างชัดเจน (ช่วงเวลาอย่างเดียวไม่นับ) ปุ่ม Save ยังกดได้ตามปกติ
+  workspace เก่าที่มีโมเดลอยู่แล้วจะเห็นแบนเนอร์ให้เลือก "Set a condition" / "Keep using all data" / "Remind me later"
+- **Category (Performance / Condition) ตั้งที่ระดับ sensor แล้ว** ไม่ใช่รายโมเดล — ข้อมูลเก่าที่ category
+  ไม่ตรงกันจะถูกปรับให้เป็นค่าเดียวครั้งเดียวตอนเปิด Build Model พร้อมแจ้งเตือนที่ปิดได้
+- **ช่วงเวลา training เก็บเป็นหลายช่วง** — ช่วงเดิมช่วงเดียวถูกย้ายเป็น 1 period อัตโนมัติ
+
+### ✨ Features
+
+- **Build Model / แท็บ Failure Groups ใน Dashboard**: 1 แถวต่อ sensor ต่อ FG แสดงเฉพาะชนิดโมเดลที่มีจริง (I/R/C)
+  ฟิลด์ร่วมโชว์ครั้งเดียว มีแท็บแยกต่อโมเดล (ชื่อ, predictors, X/Y/criteria/cluster ranges) แต่ละโมเดลมี status,
+  Save, Build Model ของตัวเอง — Clustering จัดกลุ่มตาม X sensor
+- **Category ตั้งครั้งเดียวที่หัว sensor** มีผลกับทุกโมเดลของ sensor นั้นทั้ง workspace บันทึกทันที และเตือนถ้ากระทบ FG อื่น
+  โมเดลที่สร้างใหม่รับ category ของ sensor อัตโนมัติ
+- **หลายช่วงเวลา training** (เช่น เดือน 1–2 และ 6–7): เพิ่ม/แก้ช่วงได้ที่หน้า Overview (ค่า default ของ workspace)
+  และที่หน้า Build ของแต่ละโมเดล (Custom) — แถวที่อยู่ในช่วงใดช่วงหนึ่ง **และ** ผ่านเงื่อนไข sensor จึงถูกใช้
+  ช่วงซ้อนกันแสดงคำเตือนพร้อมปุ่ม "Merge into one", ช่วงที่สิ้นสุดก่อนเริ่มจะบล็อกการ build
+- Badge บนแถว: "Needs condition", "Needs category", "Fix periods", "N blocked"
+
+### 🐛 Bug fixes
+
+- **ช่วงเวลา training ระดับ workspace หายเงียบๆ** หลังแก้อะไรก็ตามที่ Dashboard (autosave เขียนทับ) — และกัน
+  race ตอน toggle sensor / สร้าง-ลบ-เปลี่ยนชื่อ Failure Group ไม่ให้ทับข้อมูลที่แก้จากหน้าต่าง Build Model
+- Finish / Back ทันทีหลังแก้ค่าในหน้าโมเดลทำให้ค่าที่แก้หาย หรือ Finish เงียบหายโดยไม่บอกเหตุผล
+- workspace ใหม่แสดงแบนเนอร์ "legacy" ผิดๆ
+- เงื่อนไข `between` ที่ยังกรอกไม่ครบทำให้ OR filter ผ่านทุกแถว
+- แก้ตำแหน่ง/ข้อความที่ทำให้ตัวเลือก sensor ขึ้น 2 บรรทัด (จาก 0.6.0)
+
+### 🧪 Tests
+
+- เทสต์ frontend รวม 1270 ตัว (54 ไฟล์), Rust 183 + integration 13 ตัว รวมชุด integration ข้าม window
+  และ fixture สัญญา filter ที่ใช้ร่วมกันระหว่าง TS กับ Rust
+
+### 📝 Docs
+
+- Manual test plan 238 ข้อ (id ที่เปลี่ยนความหมายถูกตั้งใหม่: BMW-15/16/17, FG-8, PM-26/27 ฯลฯ)
+
+---
+
 ## [0.6.0] — 2026-09-23
 
 Minor release — ต่อจาก 0.5.0: Running Condition Filter รองรับ AND/OR และตั้งค่าแยกต่อโมเดลได้
