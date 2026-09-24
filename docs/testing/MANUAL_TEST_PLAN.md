@@ -1,10 +1,10 @@
 # Wizard — Manual Test Plan
 
-> 233 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9)
+> 236 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
-> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
+> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
 >
 > เครื่องหมาย: 🆕 = ของที่เพิ่งทำ ยังไม่เคยมีคนกดจริง · 👀 = บั๊กที่เพิ่งแก้ หรือรายงานที่ยังไม่เคยตามไปดู · 🐍 = path เดียวที่เรียก Python sidecar
 
@@ -1047,7 +1047,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - เปิดแก้โมเดลที่ข้อมูลยังไม่ครบ (เช่น Relationship ที่ยังไม่เลือก predictor สักตัว)
   - เปิดแถว sensor ที่ยังไม่ได้เลือก Category ที่หัวแถว
   - ดูตำแหน่ง สถานะ และข้อความข้างปุ่ม Build Model / Save changes
-  - **คาดหวัง:** ปุ่ม **"Build Model →" อยู่ต่อจาก "Save changes" ที่มุมล่างขวาของแท็บ** และต้อง **จางลงกดไม่ได้เหมือนปุ่ม Save changes เป๊ะ ๆ** พร้อม tooltip/ข้อความบอกเหตุผล — ถ้ายังไม่มี Category ต้องขึ้น **"Pick a category on the sensor header"** และปุ่มทั้งสองกดไม่ได้จนกว่าจะเลือกที่หัว sensor — **ถ้ายังดูสีเข้มเหมือนกดได้ทั้งที่ข้อมูลยังไม่ครบ ให้รายงานทันที**
+  - **คาดหวัง:** ปุ่ม **"Build Model →" อยู่ต่อจาก "Save changes" ที่มุมล่างขวาของแท็บ** และต้อง **จางลงกดไม่ได้เหมือนปุ่ม Save changes เป๊ะ ๆ** พร้อม tooltip/ข้อความบอกเหตุผล — ถ้ายังไม่มี Category ต้องขึ้น **"Pick a category on the sensor header"** และปุ่มทั้งสองกดไม่ได้จนกว่าจะเลือกที่หัว sensor — **ถ้ายังดูสีเข้มเหมือนกดได้ทั้งที่ข้อมูลยังไม่ครบ ให้รายงานทันที** — **ถ้าข้อมูลครบและมี Category แล้ว แต่ workspace ยังไม่ได้ตั้ง Running Condition (หรือยังไม่ได้กด "No condition") ปุ่ม Build Model ต้องจางกดไม่ได้ พร้อมเหตุผล "Set a running condition first, or choose "No condition — use all rows"." ทั้งใน tooltip และข้อความข้างปุ่ม ส่วนปุ่ม Save changes ยังกดได้** (ดู BMW-23)
 
 - [ ] **BMW-8 — กด Build Model แล้วค่าที่เพิ่งแก้ (ยังไม่ได้กด Save) ต้องถูกบันทึกด้วย** 🆕
   - เปิดแก้โมเดลตัวหนึ่งที่ข้อมูลครบอยู่แล้ว
@@ -1082,22 +1082,23 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ดูส่วน Predictor sensors ที่หน้า PM
   - **คาดหวัง:** predictor ที่เพิ่งเลือกอยู่ครบและตัวเลขนับถูก — **ต้องไม่ขึ้น "No predictors selected"** (เคยเป็นบั๊ก race: หน้า PM อ่านไฟล์ก่อนที่การบันทึกจะเสร็จ ทำได้ไม่ทุกครั้ง ให้ลองซ้ำหลายรอบ)
 
-- [ ] **BMW-11 — Running Condition Filter (เงื่อนไข "เครื่องกำลังทำงาน" ระดับ workspace) — sensor picker เป็น popup + เลือก AND/OR ได้ + มี Time start/end ของ workspace เอง (แก้บั๊ก 2026-09-22, เพิ่ม AND/OR + Time range 2026-09-23)** 🆕
-  - ที่หน้า Overview เปิดแผง "Running Condition Filter" ด้านบน (ตอนยังไม่ตั้งต้องเขียนว่า "Not set — models train on the full dataset…")
-  - ตั้งค่า **Time start / Time end** ของแผงนี้ (มีไอคอนปฏิทินให้กดเปิด picker เหมือนหน้า PM)
-  - กด "Add condition" แล้วคลิกที่ช่อง sensor — **ต้องเปิด popup ค้นหา+จัดกลุ่มตาม Component แบบเดียวกับ Predictor/X/Y/Criteria sensor ที่อื่นในแอป** (เลือกได้**ทุก sensor** ไม่ใช่แค่ target/predictor) แล้วลองเปลี่ยนเป็น sensor อื่น ตั้ง operation, ค่า
-  - เพิ่มเงื่อนไขที่ 2 แล้วลองสลับปุ่ม "Match" ระหว่าง AND/OR — ดูว่าข้อความสรุปด้านบนแผง (ตอนพับ) เปลี่ยนคำเชื่อมตามด้วย และรวมช่วงเวลาไว้ในสรุปด้วย
-  - ลบเงื่อนไขที่ 1
-  - เปิดโมเดลใดก็ได้เข้าหน้า Build Model แล้วดูส่วน Training scope → Training conditions
+- [ ] **BMW-18 — Running Condition Filter: บังคับตั้งก่อน (Required) + เลือก "Filter by condition" หรือ "No condition" + sensor picker popup + AND/OR + Time start/end ของ workspace (แทน BMW-11)** 🆕
+  - เปิด workspace ที่ยังไม่เคยตั้ง Running Condition เลย (มีโมเดลแล้วหรือยังไม่มีก็ได้)
+  - ดูแผง "Running Condition Filter" ด้านบนหน้า Overview
+  - ตั้งค่า **Time start / Time end** (ช่วงเวลาอย่างเดียว**ไม่ถือว่าตั้งเงื่อนไขแล้ว**)
+  - ในแผงมีตัวเลือก **"Filter by condition | No condition"** — เลือก "Filter by condition" แล้วกด "Add condition" คลิกช่อง sensor ต้องเปิด popup ค้นหา+จัดกลุ่มตาม Component (เลือกได้ทุก sensor) ตั้ง operation และค่า
+  - เพิ่มเงื่อนไขที่ 2 แล้วสลับปุ่ม "Match" AND/OR — ดูข้อความสรุปตอนพับแผง
+  - ลองเว้น "ค่า" ว่างไว้ / เลือก sensor ที่ไม่มีในไฟล์ข้อมูล แล้วดูว่ายังขึ้น Required อยู่
+  - กด "No condition" แล้วกลับมากด "Filter by condition"
   - ปิดเปิดโปรแกรมแล้วกลับมาดูแผง
-  - **คาดหวัง:** เลือก/เปลี่ยน sensor ในเงื่อนไขได้จริง (ผู้ใช้เคยรายงานว่าช่องนี้กดแล้วเลือกไม่ได้เลย — เป็นแถวที่กว้างเต็มแผงจนตัว dropdown เดิมใช้งานไม่ได้) — สลับ AND/OR ได้และมีผลกับสรุปที่แสดง — Time start/end + เงื่อนไขที่ตั้งไว้เป็น**ค่าเริ่มต้นของทุกโมเดล** (โมเดลไหนตั้ง Custom ของตัวเองแล้วจะไม่ตามทั้งช่วงเวลาและเงื่อนไขนี้ — ดู PM-21), หน้า PM ที่ยังใช้ Workspace mode แสดงช่วงเวลา + เงื่อนไขนี้แบบอ่านอย่างเดียว พร้อมลิงก์ "Edit on Overview →" และ combine mode ที่สืบทอดมา — **ช่อง Time start/end แบบพิมพ์เองที่เคยอยู่บนสุดของ Training scope หายไปแล้วตอนอยู่โหมด Workspace** (ย้ายเข้าไปอยู่ในโหมด Custom เท่านั้น — ดู PM-21), ค่าที่ตั้งไว้อยู่ครบหลังปิดเปิด (ของเดิมเป็น Sensor value filter ต่อโมเดลที่ต้องตั้งซ้ำทีละตัว — ถูกแทนที่แล้ว)
+  - **คาดหวัง:** ตอนยังไม่ตั้งอะไร แผงมี**ป้าย "Required" สีเหลือง กรอบสีเหลือง เปิดแผงให้เองครั้งเดียวตอนเปิดหน้า** และข้อความ "Required — add a condition, or choose "No condition — use all rows"…" — มีเงื่อนไขที่กรอกครบอย่างน้อย 1 แถว (sensor อยู่ในไฟล์ + มีค่า, ถ้า between ต้องมีทั้งสองค่า) **หรือ**กด "No condition" ถึงจะหายป้าย Required — "No condition" ซ่อนรายการเงื่อนไขและมีข้อความว่า **เงื่อนไขที่เคยบันทึกไว้ยังอยู่แต่ไม่ถูกนำมาใช้** (ไม่ลบทิ้ง) แล้วกลับมา "Filter by condition" เงื่อนไขเดิมกลับมา — เพิ่มเงื่อนไขใหม่ขณะเลือก "No condition" ไม่ได้ (ต้องสลับกลับก่อน) และทั้งสองอย่างไม่ค้างพร้อมกัน — เลือก/เปลี่ยน sensor ได้จริง, สลับ AND/OR มีผลกับสรุป, Time start/end + เงื่อนไขเป็น**ค่าเริ่มต้นของทุกโมเดล** (โมเดลที่ตั้ง Custom จะไม่ตาม — ดู PM-21), ค่าอยู่ครบหลังปิดเปิด — เงื่อนไขนี้**ไม่กระทบกราฟ/ตารางของ Dashboard** เลย
 
 - [ ] **BMW-16 — ป้ายสถานะ Complete / Incomplete ต่อโมเดลแต่ละแท็บ** 🆕
   - ที่หัวแถว sensor ดูจุดสถานะบนชิป I / R / C และข้อความ "k of n complete"
   - กางแถว เปิดแท็บของโมเดลหนึ่ง แล้วกดป้าย "Incomplete" ที่มุมล่างซ้ายของแท็บ
   - กดอีกครั้ง
   - ดูที่ Group by Component / Model Type (แถวต่อโมเดล) ว่าป้ายยังกดสลับได้ที่หัวแถว
-  - **คาดหวัง:** สลับ Incomplete ⇄ Complete ได้เฉพาะโมเดลของแท็บนั้น (ชนิดอื่นของ sensor เดียวกันไม่เปลี่ยน) จุดสีบนชิปและ "k of n complete" อัปเดตทันที และค่าอยู่ต่อหลังปิดเปิดโปรแกรม (ปุ่ม Finish ในหน้า PM ตั้งเป็น Complete ทางเดียว — ดู PM-14)
+  - **คาดหวัง:** สลับ Incomplete ⇄ Complete ได้เฉพาะโมเดลของแท็บนั้น (ชนิดอื่นของ sensor เดียวกันไม่เปลี่ยน) จุดสีบนชิปและ "k of n complete" อัปเดตทันที และค่าอยู่ต่อหลังปิดเปิดโปรแกรม (ปุ่ม Finish ในหน้า PM ตั้งเป็น Complete ทางเดียว — ดู PM-22)
 
 - [ ] **BMW-19 — หนึ่งแถวต่อ sensor ต่อกลุ่ม (Group by Failure Group)** 🆕
   - ให้ sensor ตัวเดียวมี Individual + Relationship + Clustering ในกลุ่มเดียวกัน (สร้างที่ Dashboard แท็บ Sensor)
@@ -1125,6 +1126,21 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - เปิด Build Model ดูแถวนั้น
   - **คาดหวัง:** โมเดลใหม่ใช้ Category เดียวกับ sensor ทันที (ไม่ต้องตั้งใหม่ ไม่ขึ้น "Pick a category") — sensor ที่ยังไม่เคยตั้ง Category โมเดลใหม่ยังไม่มี Category ให้เลือกที่หัวแถว
 
+- [ ] **BMW-23 — ด่านบังคับ Running Condition: Build Model / ป้ายสถานะ Complete / Finish ถูกล็อกจนกว่าจะตั้ง (soft gate A)** 🆕
+  - ใช้ workspace ที่ **ยังไม่ตั้ง** Running Condition และมีโมเดลอย่างน้อย 2 ตัวของ sensor เดียวกัน (Incomplete ทั้งคู่)
+  - ดูหัวแถว sensor และแท็บของแต่ละโมเดล
+  - เปิดแถว กด "Build Model →" และลองกดป้าย Incomplete
+  - สลับไป "Group by Component" ดูป้ายและป้ายสถานะ
+  - ที่แผง Running Condition ตั้งเงื่อนไขที่กรอกครบ 1 แถว (หรือกด "No condition") แล้วกลับมาดูซ้ำ
+  - **คาดหวัง:** หัวแถว sensor มีป้ายเหลือง **"N blocked"** (นับเฉพาะโมเดลที่ยัง Incomplete), แต่ละแท็บ/แถวโมเดลมีป้าย **"Needs condition"** — โมเดลที่ Complete อยู่แล้วแต่ยังไม่มีเงื่อนไข ขึ้น **"Legacy · all data"** แทน — ปุ่ม "Build Model →" กดไม่ได้พร้อมเหตุผล (Save changes ยังกดได้) — ป้ายสถานะกดเปลี่ยนเป็น **Complete ไม่ได้** (จางพร้อม tooltip เหตุผล) แต่เปลี่ยนจาก Complete กลับเป็น Incomplete ได้เสมอ — พอตั้งเงื่อนไขแล้วป้ายทั้งหมดหาย ปุ่ม/ป้ายกดได้ และกด Build Model เข้าหน้า PM ได้ — โมเดลที่ตั้ง Custom ต้องมีเงื่อนไขของตัวเอง (หรือกด No condition ในหน้า PM) ถึงจะผ่าน แม้ workspace จะตั้งแล้ว
+
+- [ ] **BMW-24 — Workspace เก่าที่มีโมเดลอยู่แล้วแต่ไม่เคยตั้ง Running Condition: แบนเนอร์ 3 ปุ่ม** 🆕
+  - เปิด workspace เก่า (สร้างก่อนฟีเจอร์นี้) ที่มีโมเดลแล้วและไม่เคยตั้ง Running Condition
+  - ดูแบนเนอร์เหลือง "This workspace has models but no running condition" ใต้แผง Running Condition
+  - ลองปุ่ม "Remind me later" แล้วปิดโปรแกรม เปิดใหม่
+  - ลองปุ่ม "Set a condition" แล้วตั้งเงื่อนไขที่กรอกครบ
+  - เปิด workspace เก่าอีกอันแล้วกด "Keep using all data"
+  - **คาดหวัง:** แบนเนอร์มี 3 ปุ่ม — "Remind me later" ซ่อนแบนเนอร์แค่ในรอบที่เปิดอยู่ (**ไม่บันทึก** เปิดโปรแกรมใหม่แบนเนอร์กลับมา) — "Set a condition" เปิดแผง Running Condition ให้ และแบนเนอร์หายเมื่อตั้งเงื่อนไขครบแล้ว **และไม่กลับมาอีกแม้ลบเงื่อนไขทีหลัง** — "Keep using all data" = ยืนยัน No condition แบนเนอร์หายถาวร โมเดลที่ Complete อยู่แล้วไม่ถูกแตะ — workspace ใหม่ที่ยังไม่มีโมเดลต้อง**ไม่**เห็นแบนเนอร์นี้ และ workspace ที่ตั้งเงื่อนไขไว้แล้วก็ไม่เห็น
 ---
 
 ## PM
@@ -1195,12 +1211,19 @@ _อยู่ในหน้าต่าง Build Model — เข้าจา�
   - เปิดโมเดลนั้นจากอีกกลุ่มหนึ่ง
   - **คาดหวัง:** เป็นโมเดลตัวเดียวกัน (ไม่มีสำเนาแยก) ค่าที่ตั้งไว้เหมือนกันทั้งสองทาง และตั้งค่าของโมเดลหนึ่งไม่ไปทับโมเดลอื่น (รายงานเดิม "ต้องเทรนหลายครั้ง" แก้แล้วด้วยการเก็บ config แยกต่อโมเดล)
 
-- [ ] **PM-14 — ปุ่ม Finish** 🆕
-  - เปิดหน้า PM ของโมเดลที่ป้ายยังเป็น Incomplete
-  - กด "Finish" (มุมขวาบน)
-  - ดูป้ายของโมเดลนั้นที่หน้า Overview
+- [ ] **PM-22 — ปุ่ม Finish (ล็อกด้วย Running Condition, แทน PM-14)** 🆕
+  - เปิดหน้า PM ของโมเดลที่ป้ายยังเป็น Incomplete ตอนที่ workspace **ยังไม่ตั้ง** Running Condition (เข้าผ่านช่องทางอื่น เช่นเปลี่ยนเงื่อนไขจากอีกหน้าต่างหลังเปิด PM ค้างไว้ หรือโมเดลที่เป็น Custom)
+  - ดูปุ่ม "Finish" มุมขวาบนและข้อความข้าง ๆ
+  - ตั้งเงื่อนไข / กด "No condition" แล้วกด "Finish"
   - เปิดโมเดลเดิมอีกรอบแล้วกด Finish ซ้ำ
-  - **คาดหวัง:** กด Finish แล้ว**กลับหน้า Overview อัตโนมัติ**และป้ายเปลี่ยนเป็น Complete (สีเขียว) — กดซ้ำกับโมเดลที่ Complete อยู่แล้ว**ต้องไม่สลับกลับเป็น Incomplete** (ถ้าจะยกเลิกให้กดที่ป้ายเอง ดู BMW-16) และสถานะอยู่ต่อหลังปิดเปิดโปรแกรม
+  - **คาดหวัง:** ระหว่างยังไม่ตั้ง ปุ่ม Finish **จางกดไม่ได้** พร้อมเหตุผลเดียวกับปุ่ม Build Model ของหน้า Overview (tooltip + ข้อความสีเหลืองข้างปุ่ม) — พอตั้งแล้วกด Finish จะ**กลับหน้า Overview อัตโนมัติ**และป้ายเป็น Complete (สีเขียว) — กดซ้ำกับโมเดลที่ Complete อยู่แล้ว**ต้องไม่สลับกลับเป็น Incomplete** (ยกเลิกต้องกดที่ป้ายเอง ดู BMW-16) และสถานะอยู่ต่อหลังปิดเปิดโปรแกรม — โมเดล Custom ที่ตั้งเงื่อนไขของตัวเองไว้ Finish ได้แม้ workspace จะยังไม่ตั้ง
+
+- [ ] **PM-23 — หน้า PM: แบนเนอร์ "Running condition required" + ตัวเลือก "No condition — use all rows" ของโหมด Custom** 🆕
+  - เปิดหน้า PM ของโมเดลที่ใช้ Workspace mode ตอนที่ workspace ยังไม่ตั้ง Running Condition (ดูวิธีเข้าใน PM-22)
+  - ในส่วน Training conditions ดูแบนเนอร์เหลือง แล้วกด "Set on Overview →" (ถ้ากดแล้วกลับ Overview) และลองอีกรอบกด "Use Custom instead"
+  - ในโหมด Custom ติ๊ก "No condition — use all rows" แล้วติ๊กออก จากนั้นกด "+ Add condition"
+  - ปิดเปิดโปรแกรม
+  - **คาดหวัง:** แบนเนอร์มีปุ่ม "Set on Overview →" (กลับหน้า Overview) และ "Use Custom instead" (สลับเป็น Custom ทันที) และหายไปเมื่อ workspace ตั้งแล้ว — Custom มีช่องติ๊ก "No condition — use all rows" พร้อมข้อความเตือนสีเหลืองว่าโมเดลนี้จะเทรนด้วยทุกแถวรวมช่วงเครื่องหยุด และปุ่ม Finish ปลดล็อก — ติ๊กแล้วรายการเงื่อนไขถูกซ่อน (เงื่อนไขที่บันทึกไว้ยังอยู่แต่ไม่ถูกใช้ กราฟไม่ถูกกรอง) — เพิ่มเงื่อนไขใหม่แล้วเครื่องหมายติ๊กหายไป — ค่าที่ติ๊กอยู่ครบหลังปิดเปิดโปรแกรม
 
 - [ ] **PM-15 — ชนิดโมเดลล็อกตามที่เลือกไว้ที่ Overview + ข้อความ "Target sensor"** 🆕
   - เปิดโมเดลแต่ละชนิด (Individual / Relationship / Clustering) ทีละตัว
@@ -1230,7 +1253,7 @@ _อยู่ในหน้าต่าง Build Model — เข้าจา�
   - **คาดหวัง:** ช่อง X sensor เขียนว่า "No predictors selected" และกดไม่ได้ตอนยังไม่มี predictor, พอมี predictor แล้วเลือกได้ทันที (ตัวเลือกจำกัดแค่ predictor ที่เลือกไว้เท่านั้น) — เลือกแล้ว popup ปิดทันทีไม่มีปุ่ม OK — ช่อง Criteria Sensor เลือกได้จาก**ทุก sensor** ไม่ใช่แค่ predictor และมีตัวเลือก "None"
 
 - [ ] **PM-21 — Training conditions: สลับ Workspace/Custom ได้ต่อโมเดล ครอบทั้ง Time start/end และ Running condition (เพิ่ม 2026-09-23, ขยายรวม Time range วันเดียวกัน)** 🆕
-  - ที่ Overview ตั้ง Time start/end + Running Condition Filter ไว้อย่างน้อย 1 เงื่อนไข (ดู BMW-11)
+  - ที่ Overview ตั้ง Time start/end + Running Condition Filter ไว้อย่างน้อย 1 เงื่อนไข (ดู BMW-18)
   - เปิดโมเดลใดก็ได้เข้าหน้า PM ดูส่วน "Training conditions" — ต้องเห็นสวิตช์ "Workspace / Custom" อยู่บนสุด เริ่มที่ Workspace, ใต้สวิตช์ต้องเห็นบรรทัด "Time: …–…" (อ่านอย่างเดียว) — **ไม่มีช่อง Time start/end แบบพิมพ์เองให้เห็นเลยตอนนี้**
   - คลิก "Custom" — ดูว่าช่อง Time start/Time end ที่แก้ไขได้ (พร้อมไอคอนปฏิทิน) โผล่ขึ้นมา พร้อมค่าที่ก็อปมาจาก Overview อัตโนมัติ, เงื่อนไขจาก Overview ก็ถูกก็อปมาเป็นแถวที่แก้ไขได้เช่นกัน (ไม่ใช่อ่านอย่างเดียวอีกต่อไป)
   - แก้ Time start/end และ sensor/operation/ค่า ของแถวที่ก็อปมา แล้วลองกด "+ Add condition" เพิ่มอีกแถว พร้อมสลับ AND/OR ของโมเดลนี้เอง

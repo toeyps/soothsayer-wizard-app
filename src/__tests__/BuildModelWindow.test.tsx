@@ -109,11 +109,25 @@ async function deliverData(overrides: Record<string, any> = {}) {
         ],
         metadata: { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100 },
     };
-    mockLoadWorkspaceData.mockResolvedValue({
+    const ws: Record<string, any> = {
         id: 'ws1',
         failureGroupState: { groups: [makeGroup()], models: [makeModel()] },
         ...overrides,
-    });
+    };
+    // Feature 4-B gate defaults: fixtures read as a CONFIGURED workspace (No
+    // condition confirmed) with the legacy notice already handled, so tests that
+    // are about something else don't trip the running-condition gate or the
+    // hydration write-back. A test about the gate passes the key explicitly
+    // (even as `undefined`), which is respected.
+    if (ws.failureGroupState) {
+        const fg = ws.failureGroupState;
+        ws.failureGroupState = {
+            ...(!('runningConditionNoneConfirmed' in fg) ? { runningConditionNoneConfirmed: true } : {}),
+            ...(!('rcLegacyNotice' in fg) ? { rcLegacyNotice: null } : {}),
+            ...fg,
+        };
+    }
+    mockLoadWorkspaceData.mockResolvedValue(ws);
     await act(async () => {
         for (const cb of listenCallbacks['build-model-data'] ?? []) cb({ payload });
         await Promise.resolve();
@@ -130,7 +144,7 @@ beforeEach(() => {
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
-        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()] } };
+        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null } };
         return patch(prev);
     });
     mockLoadWorkspaceData.mockReset();
@@ -313,7 +327,7 @@ describe('BuildModelWindow', () => {
 
             mockLoadWorkspaceData.mockResolvedValue({
                 id: 'ws2',
-                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })] },
+                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null },
             });
             await fire('build-model-data', {
                 workspaceId: 'ws2',
@@ -342,7 +356,7 @@ describe('BuildModelWindow', () => {
             mockLoadWorkspaceData.mockReturnValueOnce(new Promise(res => { resolveFirst = res; }));
             mockLoadWorkspaceData.mockResolvedValueOnce({
                 id: 'ws1',
-                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })] },
+                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null },
             });
             const payload = {
                 workspaceId: 'ws1', sensorHeaders: ['TAG1'], sensorMetadata: [],
@@ -353,7 +367,7 @@ describe('BuildModelWindow', () => {
             expect(screen.getByText('TAG2')).toBeTruthy();
 
             await act(async () => {
-                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })] } });
+                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null } });
                 await Promise.resolve();
                 await Promise.resolve();
             });
@@ -898,18 +912,84 @@ describe('BuildModelWindow', () => {
     // this file's own PredictiveModelBuild mock (`predictiveModelBuildProps`)
     // for confirming the value actually reaches that page too.
     describe('Running Condition Filter panel', () => {
-        it('shows "not set" and applies-to-none until a condition is added', async () => {
+        /** A workspace with models but NO running condition set and none confirmed
+         *  (fixtures default to configured -- see deliverData), backed by a disk
+         *  that actually keeps what is written, so panel edits round-trip. */
+        async function deliverUnconfigured(extra: Record<string, any> = {}) {
+            let disk: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null, ...extra } };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+            await deliverData({ failureGroupState: disk.failureGroupState });
+        }
+
+        it('an unconfigured workspace shows the Required pill, an amber border, and opens the panel by itself', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            expect(screen.getByText('Running Condition Filter')).toBeTruthy();
-            expect(screen.getByText(/Not set — models train on the full dataset/)).toBeTruthy();
+            await deliverUnconfigured();
+            expect(screen.getByTestId('rc-required-pill').textContent).toBe('Required');
+            expect(screen.getByText(/Required — add a condition, or choose "No condition — use all rows"/)).toBeTruthy();
+            expect((screen.getByTestId('rc-panel') as HTMLElement).style.border).toContain('245, 158, 11');
+            expect(screen.getByText('Add condition')).toBeTruthy(); // auto-opened, not collapsed
             expect(screen.queryByText(/applies to/)).toBeNull();
+        });
+
+        it('a configured workspace has no Required pill and stays collapsed', async () => {
+            render(<BuildModelWindow />);
+            await deliverData(); // fixtures default to "No condition" confirmed
+            expect(screen.queryByTestId('rc-required-pill')).toBeNull();
+            expect(screen.getByText('No condition — use all rows')).toBeTruthy();
+            expect(screen.queryByText('Add condition')).toBeNull();
+        });
+
+        it('auto-opens only once per hydration: a later re-delivery does not re-open a panel the user closed', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured();
+            fireEvent.click(screen.getByText('Running Condition Filter')); // user collapses it
+            expect(screen.queryByText('Add condition')).toBeNull();
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, rcLegacyNotice: null } });
+            expect(screen.queryByText('Add condition')).toBeNull();
+        });
+
+        it('choosing "No condition" confirms it (persisted, nothing cleared), drops the Required pill and hides the condition list', async () => {
+            const filters = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '', value2: '' }]; // incomplete -> still unconfigured
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionFilters: filters });
+            expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
+
+            fireEvent.click(screen.getByRole('button', { name: 'No condition' }));
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+            const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.runningConditionNoneConfirmed).toBe(true);
+            expect(written.runningConditionFilters).toEqual(filters); // clears nothing
+            expect(screen.queryByTestId('rc-required-pill')).toBeNull();
+            expect(screen.getByTestId('rc-none-note').textContent).toMatch(/saved conditions are kept but not applied/i);
+            expect(screen.queryByText('Add condition')).toBeNull();
+        });
+
+        it('adding a condition after confirming "No condition" un-confirms it (mutually exclusive)', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionNoneConfirmed: true });
+            fireEvent.click(screen.getByText('Running Condition Filter')); // configured -> not auto-opened
+            fireEvent.click(screen.getByRole('button', { name: 'Filter by condition' }));
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+            let written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.runningConditionNoneConfirmed).toBe(false);
+
+            fireEvent.click(screen.getByText('Add condition'));
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+            written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.runningConditionNoneConfirmed).toBe(false);
+            expect(written.runningConditionFilters).toHaveLength(1);
+        });
+
+        it('a time range alone does NOT configure the workspace', async () => {
+            render(<BuildModelWindow />);
+            await deliverUnconfigured({ runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00' });
+            expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         });
 
         it('expands on click and adds a condition, which persists and broadcasts', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured(); // unconfigured workspace: the panel auto-opens
             fireEvent.click(screen.getByText('Add condition'));
 
             expect(mockUpdateWorkspaceData).toHaveBeenCalledWith('ws1', expect.any(Function));
@@ -921,8 +1001,7 @@ describe('BuildModelWindow', () => {
 
         it('editing a condition\'s value persists the new value', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured(); // unconfigured workspace: the panel auto-opens
             fireEvent.click(screen.getByText('Add condition'));
             await act(async () => { await Promise.resolve(); });
             mockUpdateWorkspaceData.mockClear();
@@ -935,8 +1014,7 @@ describe('BuildModelWindow', () => {
 
         it('the condition\'s sensor field is a single-select SensorPickerModal grouped by component (2026-09-22 fix — see next test for the reported bug this replaces)', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured(); // unconfigured workspace: the panel auto-opens
             fireEvent.click(screen.getByText('Add condition'));
 
             const rcProps = sensorPickerModalProps.find(p => p.noun === 'sensor');
@@ -947,8 +1025,7 @@ describe('BuildModelWindow', () => {
 
         it('picking a different sensor for a condition persists it (regression: this field used to render an unusable, unreachable dropdown — plain SensorAutocomplete at full row width with no test ever actually selecting through it)', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured(); // unconfigured workspace: the panel auto-opens
             fireEvent.click(screen.getByText('Add condition')); // defaults to sensor: 'TAG1'
             await act(async () => { await Promise.resolve(); });
             mockUpdateWorkspaceData.mockClear();
@@ -962,20 +1039,18 @@ describe('BuildModelWindow', () => {
 
         it('removing the only condition goes back to "not set"', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured(); // unconfigured workspace: the panel auto-opens
             fireEvent.click(screen.getByText('Add condition'));
             await act(async () => { await Promise.resolve(); });
 
             fireEvent.click(screen.getByTitle('Remove condition'));
             await act(async () => { await Promise.resolve(); });
-            expect(screen.getByText(/Not set — models train on the full dataset/)).toBeTruthy();
+            expect(screen.getByText(/Required — add a condition/)).toBeTruthy();
         });
 
         it('the Match AND/OR toggle persists runningConditionCombine and switches the summary joiner', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured(); // unconfigured workspace: the panel auto-opens
             fireEvent.click(screen.getByText('Add condition'));
             await act(async () => { await Promise.resolve(); });
             mockUpdateWorkspaceData.mockClear();
@@ -990,8 +1065,7 @@ describe('BuildModelWindow', () => {
         it('typing into the workspace Time start/end fields persists runningConditionTimeStart/-End (debounced) — 2026-09-23: time range merged into this same panel', async () => {
             vi.useFakeTimers();
             render(<BuildModelWindow />);
-            await deliverData();
-            fireEvent.click(screen.getByText('Running Condition Filter'));
+            await deliverUnconfigured();
 
             const startInput = screen.getByText('Time start').closest('.filter-row')!.querySelector('input') as HTMLInputElement;
             fireEvent.change(startInput, { target: { value: '2026-05-01T00:00' } });
@@ -1089,6 +1163,313 @@ describe('BuildModelWindow', () => {
             ]);
         });
     });
+    // ---- Feature 4-B (2026-09-24): mandatory running condition (soft gate A) ----
+    describe('running-condition gate (Feature 4-B)', () => {
+        const REASON = 'Set a running condition first, or choose "No condition — use all rows".';
+        const cond = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '1200', value2: '' }];
+        const ind = (o: Record<string, any> = {}) => makeModel({ id: 'i1', name: 'Ind', kind: 'individual', targetSensor: 'TAG1', ...o });
+        const rel = (o: Record<string, any> = {}) => makeModel({ id: 'r1', name: 'Rel', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], ...o });
+        const fgOf = (models: any[], extra: Record<string, any> = {}) => ({
+            groups: [makeGroup()], models, runningConditionNoneConfirmed: false, rcLegacyNotice: null, ...extra,
+        });
+        /** Disk that keeps what is written, seeded with the same state that is delivered. */
+        async function deliverGate(models: any[], extra: Record<string, any> = {}) {
+            let disk: any = { id: 'ws1', failureGroupState: fgOf(models, extra) };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+            await deliverData({ failureGroupState: disk.failureGroupState });
+        }
+        const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        const openRow = () => fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+
+        it('Build Model is disabled with the gate reason (button title + inline hint) while nothing is configured, and a click never navigates', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()]);
+            openRow();
+            const build = screen.getByText('Build Model →') as HTMLButtonElement;
+            expect(build.disabled).toBe(true);
+            expect(build.title).toBe(REASON);
+            expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
+            fireEvent.click(build);
+            await flush();
+            expect(screen.queryByTestId('pm-page-mock')).toBeNull();
+        });
+
+        it('Save changes stays allowed while Build Model is blocked by the running condition', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()]);
+            openRow();
+            expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('a complete condition unlocks Build Model', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionFilters: cond });
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.queryByTestId('build-block-reason')).toBeNull();
+        });
+
+        it('an incomplete condition (empty value) does not unlock Build Model', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionFilters: [{ ...cond[0], value1: '' }] });
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('a condition on a sensor that is not in the dataset does not count (Rust would drop it)', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionFilters: [{ ...cond[0], sensor: 'GONE' }] });
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('a time range alone does NOT unlock Build Model', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00' });
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('confirming "No condition — use all rows" on the panel enables Build Model', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()]);
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
+            fireEvent.click(screen.getByRole('button', { name: 'No condition' }));
+            await flush();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(false);
+            fireEvent.click(screen.getByText('Build Model →'));
+            await flush();
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+        });
+
+        it('a Custom-mode model is judged by its OWN list, not the workspace one', async () => {
+            render(<BuildModelWindow />);
+            // Workspace configured, but this model is Custom with nothing set -> still blocked.
+            await deliverGate([ind({ runningConditionMode: 'custom' })], { runningConditionFilters: cond });
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it('a Custom model with its own condition or confirmed None is unlocked even though the workspace is unset', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })]);
+            openRow();
+            expect((screen.getByText('Build Model →') as HTMLButtonElement).disabled).toBe(false);
+        });
+
+        it('passes runningConditionNoneConfirmed and the sensor category down to the PM page', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind({ category: 'condition' })], { runningConditionNoneConfirmed: true });
+            openRow();
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            const props = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
+            expect(props.runningConditionNoneConfirmed).toBe(true);
+            expect(props.category).toBe('condition');
+        });
+
+        it('the status pill cannot be toggled toward Complete while blocked (disabled, reason as tooltip), but Complete -> Incomplete is always allowed', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind({ status: false }), rel({ status: true })]);
+            openRow();
+            const pill = screen.getByText('Incomplete') as HTMLButtonElement; // Individual tab is active first
+            expect(pill.disabled).toBe(true);
+            expect(pill.title).toBe(REASON);
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(pill);
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+
+            fireEvent.click(screen.getByRole('tab', { name: /Relationship/ }));
+            const complete = screen.getByText('Complete') as HTMLButtonElement;
+            expect(complete.disabled).toBe(false); // legacy Complete model can still be un-marked
+            fireEvent.click(complete);
+            await flush();
+            const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.models.find((m: any) => m.id === 'r1').status).toBe(false);
+        });
+
+        it('once configured, the status pill can be marked Complete', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionFilters: cond });
+            openRow();
+            fireEvent.click(screen.getByText('Incomplete'));
+            await flush();
+            const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.models[0].status).toBe(true);
+        });
+
+        it('the Component / Model Type view pill is gated the same way', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()]);
+            fireEvent.click(screen.getByText('Group by Component'));
+            const pill = screen.getByText('Incomplete') as HTMLButtonElement;
+            expect(pill.disabled).toBe(true);
+            expect(pill.title).toBe(REASON);
+        });
+
+        it('markModelComplete refuses when the gate closed after the PM page opened (guard at the source, not just the disabled button)', async () => {
+            render(<BuildModelWindow />);
+            await deliverGate([ind()], { runningConditionNoneConfirmed: true });
+            openRow();
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+
+            // Another window un-confirms the workspace condition meanwhile.
+            await act(async () => {
+                for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
+                    cb({ payload: { workspaceId: 'ws1', origin: 'predictive-model', ...fgOf([ind()]) } });
+                }
+                await Promise.resolve();
+            });
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(screen.getByText('Mock Finish'));
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+        });
+
+        describe('badges', () => {
+            it('an unconfigured sensor row shows "N blocked" and each model tab shows "Needs condition"', async () => {
+                render(<BuildModelWindow />);
+                await deliverGate([ind(), rel()]);
+                expect(screen.getByText('2 blocked')).toBeTruthy();
+                openRow();
+                expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Needs condition');
+                expect(screen.getByTestId('condition-badge-r1').textContent).toBe('Needs condition');
+            });
+
+            it('N blocked counts only models still Incomplete; a Complete model shows "Legacy · all data" instead', async () => {
+                render(<BuildModelWindow />);
+                await deliverGate([ind({ status: true }), rel({ status: false })]);
+                expect(screen.getByText('1 blocked')).toBeTruthy();
+                openRow();
+                expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Legacy · all data');
+                expect(screen.getByTestId('condition-badge-r1').textContent).toBe('Needs condition');
+            });
+
+            it('no badges once the workspace is configured', async () => {
+                render(<BuildModelWindow />);
+                await deliverGate([ind(), rel()], { runningConditionNoneConfirmed: true });
+                expect(screen.queryByText(/blocked/)).toBeNull();
+                openRow();
+                expect(screen.queryByTestId('condition-badge-i1')).toBeNull();
+            });
+
+            it('the Component view row shows the same badge', async () => {
+                render(<BuildModelWindow />);
+                await deliverGate([ind()]);
+                fireEvent.click(screen.getByText('Group by Component'));
+                expect(screen.getByTestId('condition-badge-i1').textContent).toBe('Needs condition');
+            });
+        });
+
+        describe('legacy workspace banner', () => {
+            const legacyFg = (extra: Record<string, any> = {}) => fgOf([ind()], { rcLegacyNotice: 'pending', ...extra });
+            async function deliverLegacy(extra: Record<string, any> = {}) {
+                let disk: any = { id: 'ws1', failureGroupState: legacyFg(extra) };
+                mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+                await deliverData({ failureGroupState: disk.failureGroupState });
+            }
+            const written = async () => (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+
+            it('shows the banner with its three actions for a pending workspace that is still unconfigured', async () => {
+                render(<BuildModelWindow />);
+                await deliverLegacy();
+                const banner = screen.getByTestId('rc-legacy-banner');
+                expect(within(banner).getByText('Set a condition')).toBeTruthy();
+                expect(within(banner).getByText('Keep using all data')).toBeTruthy();
+                expect(within(banner).getByText('Remind me later')).toBeTruthy();
+            });
+
+            it('is not shown when the notice is null/handled', async () => {
+                render(<BuildModelWindow />);
+                await deliverGate([ind()]);
+                expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+            });
+
+            it('"Set a condition" opens the panel', async () => {
+                render(<BuildModelWindow />);
+                await deliverLegacy();
+                fireEvent.click(screen.getByText('Running Condition Filter')); // collapse the auto-opened panel
+                expect(screen.queryByText('Add condition')).toBeNull();
+                fireEvent.click(screen.getByText('Set a condition'));
+                expect(screen.getByText('Add condition')).toBeTruthy();
+                expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy(); // still pending until something is set
+            });
+
+            it('"Keep using all data" confirms No condition and clears the notice (persisted)', async () => {
+                render(<BuildModelWindow />);
+                await deliverLegacy();
+                fireEvent.click(screen.getByText('Keep using all data'));
+                await flush();
+                const fg = await written();
+                expect(fg.runningConditionNoneConfirmed).toBe(true);
+                expect(fg.rcLegacyNotice).toBeNull();
+                expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+                expect(screen.queryByTestId('rc-required-pill')).toBeNull();
+            });
+
+            it('"Remind me later" hides it for this session only and writes nothing', async () => {
+                render(<BuildModelWindow />);
+                await deliverLegacy();
+                mockUpdateWorkspaceData.mockClear();
+                fireEvent.click(screen.getByText('Remind me later'));
+                await flush();
+                expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+
+                // A fresh mount (next session) still has the persisted 'pending' flag -> banner is back.
+                cleanup();
+                render(<BuildModelWindow />);
+                await deliverLegacy();
+                expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
+            });
+
+            it('setting a condition through the panel settles the notice (never re-fires)', async () => {
+                render(<BuildModelWindow />);
+                await deliverLegacy();
+                fireEvent.click(screen.getByText('Add condition'));
+                await flush();
+                let fg = await written();
+                expect(fg.rcLegacyNotice).toBe('pending'); // empty value: still unconfigured, still pending
+
+                fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '1200' } });
+                await flush();
+                fg = await written();
+                expect(fg.rcLegacyNotice).toBeNull();
+                expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+            });
+
+            it('an unflagged legacy workspace is flagged AT HYDRATION and written back (stored data, not computed per render)', async () => {
+                let disk: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [ind()] } }; // no rcLegacyNotice key at all
+                mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind()], rcLegacyNotice: undefined, runningConditionNoneConfirmed: undefined } });
+                await flush();
+                expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+                expect(disk.failureGroupState.rcLegacyNotice).toBe('pending');
+                expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
+            });
+
+            it('an unflagged workspace that is already configured is not written back and shows no banner', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [ind()], rcLegacyNotice: undefined, runningConditionNoneConfirmed: true } });
+                await flush();
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+                expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+            });
+
+            it('a brand-new workspace with no models is never flagged', async () => {
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [], rcLegacyNotice: undefined, runningConditionNoneConfirmed: false } });
+                await flush();
+                expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+        });
+    });
+
     // ---- Feature 4-A (2026-09-24): one row per SENSOR per FG, category per sensor ----
     describe('one row per sensor (Feature 4-A)', () => {
         const ind = (o: Record<string, any> = {}) => makeModel({ id: 'i1', name: 'Ind', kind: 'individual', targetSensor: 'TAG1', ...o });

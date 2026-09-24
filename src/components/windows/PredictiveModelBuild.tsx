@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
 import { invoke } from "@tauri-apps/api/core";
-import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter } from "../../types";
+import { CsvRecord, SensorMetadata, FailureModel, ModelKind, PredictiveModelStateSlice, PredictiveClusterRange, WorkspaceSensorFilter, ModelCategory } from "../../types";
 import type {
     RelationshipPreviewResult,
     ClusteringPreview,
@@ -11,6 +11,7 @@ import { Check, Activity, GitBranch, Layers, Minus, Plus, Search, X, Calendar, C
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import { updateWorkspaceData, loadWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
+import { getBuildBlockReason, isRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
@@ -482,6 +483,13 @@ interface PredictiveModelBuildProps {
      *  = no bound, same convention as `filterTimeStart` itself. */
     runningConditionTimeStart: string;
     runningConditionTimeEnd: string;
+    /** Workspace: user confirmed "No condition — use all rows" on the Overview
+     *  panel. Optional (default false) — part of the running-condition gate. */
+    runningConditionNoneConfirmed?: boolean;
+    /** The model's per-SENSOR category, used only to evaluate the shared Build
+     *  gate here. Category is already enforced before this page can open, so
+     *  when omitted it is treated as set. */
+    category?: ModelCategory | null;
     /** Returns to BuildModelWindow's overview page. This page is a child of
      *  that window (not a spawned OS window of its own — see BuildModelWindow's
      *  own doc comment for why), so "closing" it just means switching the
@@ -514,7 +522,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimeStart, runningConditionTimeEnd, onBack, onFinish }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimeStart, runningConditionTimeEnd, runningConditionNoneConfirmed = false, category = 'performance', onBack, onFinish }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -603,6 +611,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const [runningConditionMode, setRunningConditionMode] = useState<'workspace' | 'custom'>('workspace');
     const [customRunningConditionFilters, setCustomRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
     const [customRunningConditionCombine, setCustomRunningConditionCombine] = useState<'and' | 'or'>('and');
+    // Custom mode: "No condition — use all rows" explicitly confirmed (soft gate A).
+    const [customRunningConditionNoneConfirmed, setCustomRunningConditionNoneConfirmed] = useState(false);
 
     // Switching to Custom seeds from the workspace's current conditions AND
     // time range — a sensible starting point to edit from rather than an
@@ -629,6 +639,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     };
 
     const addCustomRunningCondition = () => {
+        setCustomRunningConditionNoneConfirmed(false);
         setCustomRunningConditionFilters(prev => [...prev, {
             id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             sensor: allSensors[0] ?? '',
@@ -671,7 +682,12 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // those effects depend on `dashboardFilterKey` — placing the memos right
     // after the filter inputs avoids a temporal-dead-zone reference during
     // render.
-    const activeRunningConditionFilters = runningConditionMode === 'custom' ? customRunningConditionFilters : runningConditionFilters;
+    // "No condition" means saved conditions are kept but NOT applied.
+    const activeNoneConfirmed = runningConditionMode === 'custom' ? customRunningConditionNoneConfirmed : runningConditionNoneConfirmed;
+    const activeRunningConditionFilters = useMemo(
+        () => activeNoneConfirmed ? [] : (runningConditionMode === 'custom' ? customRunningConditionFilters : runningConditionFilters),
+        [activeNoneConfirmed, runningConditionMode, customRunningConditionFilters, runningConditionFilters],
+    );
     const activeRunningConditionCombine = runningConditionMode === 'custom' ? customRunningConditionCombine : runningConditionCombine;
     // Time range now follows the same Workspace/Custom split as the value
     // conditions (2026-09-23 — was unconditionally `filterTimeStart`/
@@ -698,6 +714,23 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
             combine: activeRunningConditionCombine,
         };
     }, [activeRunningConditionFilters, activeRunningConditionCombine, activeTimeStart, activeTimeEnd]);
+
+    // The shared Build gate (Feature 4-B) evaluated against THIS page's live
+    // state - Custom-mode edits here are debounce-persisted, so the parent's
+    // copy of the model can lag by a moment. Same `getBuildBlockReason` the
+    // Overview's Build Model button uses: one gate, one reason string.
+    const gateModel = {
+        id: modelId, kind, category,
+        runningConditionMode, customRunningConditionFilters, customRunningConditionCombine,
+        customRunningConditionNoneConfirmed, filterTimeStart, filterTimeEnd,
+    } as FailureModel;
+    const gateFg: RunningConditionFg = {
+        runningConditionFilters, runningConditionCombine, runningConditionTimeStart, runningConditionTimeEnd,
+        runningConditionNoneConfirmed,
+    };
+    const gateHeaders = sensorHeaders.length ? sensorHeaders : null;
+    const finishBlockReason = getBuildBlockReason(gateModel, gateFg, gateHeaders);
+    const workspaceUnset = !isRunningConditionConfigured({ ...gateModel, runningConditionMode: 'workspace' } as FailureModel, gateFg, gateHeaders);
 
     // Stable string key used to detect filter changes for cache invalidation
     // without re-running effects on identical-but-new object references.
@@ -918,6 +951,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 setRunningConditionMode(slice.runningConditionMode ?? 'workspace');
                 setCustomRunningConditionFilters(slice.customRunningConditionFilters ?? []);
                 setCustomRunningConditionCombine(slice.customRunningConditionCombine ?? 'and');
+                setCustomRunningConditionNoneConfirmed(slice.customRunningConditionNoneConfirmed ?? false);
                 // NOTE: Fit results (relPreview / subModels / clusteringPreview)
                 // are deliberately NOT persisted. With many target sensors or
                 // large datasets the predictor_raw matrices balloon the workspace
@@ -970,6 +1004,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                 runningConditionMode,
                 customRunningConditionFilters,
                 customRunningConditionCombine,
+                customRunningConditionNoneConfirmed,
             };
             (async () => {
                 // `withFailureGroupState` carries every field this page does not own
@@ -990,7 +1025,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         workspaceId, pmModelId, targetSensor, predictorSensors, individualChecked, rcMode, scatterXSensor,
         relModelName, relStiffness, clusterModelName, numClusters, criteriaSensor,
         clusterRanges, filterTimeStart, filterTimeEnd,
-        runningConditionMode, customRunningConditionFilters, customRunningConditionCombine,
+        runningConditionMode, customRunningConditionFilters, customRunningConditionCombine, customRunningConditionNoneConfirmed,
     ]);
 
     // Auto-divide cluster ranges across the criteria sensor's [min, max]
@@ -1895,10 +1930,16 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                     <span className="pm-crumb-current">{targetSensor || 'Model'}</span>
                 </div>
                 <div className="pm-flex-spacer" />
+                {finishBlockReason && (
+                    <span data-testid="finish-block-reason" style={{ fontSize: '0.68rem', color: 'var(--warn, #d9a441)', marginRight: '8px' }}>
+                        {finishBlockReason}
+                    </span>
+                )}
                 <button
                     className="pm-btn pm-btn-primary"
-                    onClick={onFinish}
-                    title="Mark this model Complete and return to the overview"
+                    onClick={() => { if (finishBlockReason === null) onFinish(); }}
+                    disabled={finishBlockReason !== null}
+                    title={finishBlockReason ?? 'Mark this model Complete and return to the overview'}
                 >
                     <Check size={13} />
                     <span>Finish</span>
@@ -2090,7 +2131,34 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         </button>
                                     </div>
 
-                                    {runningConditionFilters.length === 0 ? (
+                                    {workspaceUnset && (
+                                        <div
+                                            role="alert"
+                                            data-testid="pm-rc-required-banner"
+                                            style={{ marginTop: '0.4rem', padding: '0.4rem 0.5rem', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.68rem', lineHeight: 1.45 }}
+                                        >
+                                            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Running condition required</div>
+                                            <div style={{ color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                                                The workspace has no running condition, so this model cannot be finished yet.
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                                <button type="button" className="text-btn" onClick={onBack}>Set on Overview →</button>
+                                                <button type="button" className="text-btn" onClick={() => handleRunningConditionModeChange('custom')}>Use Custom instead</button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {runningConditionNoneConfirmed ? (
+                                        <div style={{
+                                            fontSize: '0.7rem',
+                                            color: 'var(--text-secondary)',
+                                            opacity: 0.65,
+                                            padding: '0.3rem 0 0',
+                                            fontStyle: 'italic',
+                                        }}>
+                                            No condition — using all rows, including idle periods.
+                                        </div>
+                                    ) : runningConditionFilters.length === 0 ? (
                                         <div style={{
                                             fontSize: '0.7rem',
                                             color: 'var(--text-secondary)',
@@ -2167,6 +2235,21 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                             </div>
                                         </div>
                                     </div>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.66rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={customRunningConditionNoneConfirmed}
+                                            onChange={e => setCustomRunningConditionNoneConfirmed(e.target.checked)}
+                                        />
+                                        No condition — use all rows
+                                    </label>
+                                    {customRunningConditionNoneConfirmed && (
+                                        <div data-testid="pm-custom-none-warning" style={{ fontSize: '0.62rem', color: 'var(--warn, #d9a441)', lineHeight: 1.4 }}>
+                                            This model will train on every row, including idle periods. Saved conditions are kept but not applied.
+                                        </div>
+                                    )}
+                                    {!customRunningConditionNoneConfirmed && (
+                                    <>
                                     <div style={{ display: 'inline-flex', alignSelf: 'flex-start', background: 'var(--input-bg)', border: '1px solid var(--border-strong)', borderRadius: '6px', padding: '2px', gap: '2px' }}>
                                         {(['and', 'or'] as const).map(mode => (
                                             <button
@@ -2248,6 +2331,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                     >
                                         + Add condition
                                     </button>
+                                    </>
+                                    )}
 
                                     <div style={{ fontSize: '0.6rem', color: 'var(--text-faint)' }}>
                                         Only this model · the workspace default is untouched.

@@ -875,10 +875,132 @@ describe('PredictiveModelBuild', () => {
     });
 
     describe('Finish button (2026-09-17: marks the model Complete on the overview list, replacing the old Preview/Save Model flow)', () => {
-        it('clicking Finish calls onFinish', async () => {
-            const { onFinish } = await renderHydrated();
+        // Feature 4-B (2026-09-24): Finish is behind the running-condition gate
+        // (soft gate A) -- the same getBuildBlockReason the Overview's Build Model uses.
+        const cond = [{ id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' }] as const;
+        const finishBtn = () => screen.getByText('Finish').closest('button') as HTMLButtonElement;
+
+        it('clicking Finish calls onFinish once the workspace running condition is set', async () => {
+            const { onFinish } = await renderHydrated({ runningConditionFilters: [...cond] });
+            expect(finishBtn().disabled).toBe(false);
             fireEvent.click(screen.getByText('Finish'));
             expect(onFinish).toHaveBeenCalledTimes(1);
+        });
+
+        it('is disabled with the reason (button title + inline text) while the workspace condition is unset, and a click does nothing', async () => {
+            const { onFinish } = await renderHydrated();
+            expect(finishBtn().disabled).toBe(true);
+            expect(finishBtn().title).toMatch(/Set a running condition first/);
+            expect(screen.getByTestId('finish-block-reason').textContent).toMatch(/No condition — use all rows/);
+            fireEvent.click(finishBtn());
+            expect(onFinish).not.toHaveBeenCalled();
+        });
+
+        it('a time range alone does not unlock Finish', async () => {
+            await renderHydrated({ runningConditionTimeStart: '2026-05-01T00:00', runningConditionTimeEnd: '2026-06-01T00:00' });
+            expect(finishBtn().disabled).toBe(true);
+        });
+
+        it('an incomplete workspace condition (no value) does not unlock Finish', async () => {
+            await renderHydrated({ runningConditionFilters: [{ ...cond[0], value1: '' }] });
+            expect(finishBtn().disabled).toBe(true);
+        });
+
+        it('a workspace "No condition — use all rows" confirmation unlocks Finish', async () => {
+            await renderHydrated({ runningConditionNoneConfirmed: true });
+            expect(finishBtn().disabled).toBe(false);
+            expect(screen.queryByTestId('finish-block-reason')).toBeNull();
+        });
+
+        it('reports the SAME reason string the shared gate returns (one gate, one message)', async () => {
+            await renderHydrated();
+            expect(finishBtn().title).toBe('Set a running condition first, or choose "No condition — use all rows".');
+        });
+
+        it('a configured Custom model can Finish even though the workspace is unset', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({
+                    runningConditionMode: 'custom',
+                    customRunningConditionFilters: [{ id: 'c1', sensor: 'PRED1', operation: 'less_than', value1: '50', value2: '' }],
+                })] },
+            });
+            const { onFinish } = await renderHydrated(); // workspace: nothing set
+            expect(finishBtn().disabled).toBe(false);
+            fireEvent.click(finishBtn());
+            expect(onFinish).toHaveBeenCalledTimes(1);
+        });
+
+        it('a Custom model with nothing set stays blocked even if the workspace is configured (workspace None does not help Custom)', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom' })] },
+            });
+            await renderHydrated({ runningConditionNoneConfirmed: true });
+            expect(finishBtn().disabled).toBe(true);
+        });
+    });
+
+    describe('running-condition banner and Custom "No condition" (Feature 4-B)', () => {
+        it('Workspace mode with the workspace unset shows a banner with "Set on Overview →" (onBack) and "Use Custom instead"', async () => {
+            const { onBack } = await renderHydrated();
+            const banner = screen.getByTestId('pm-rc-required-banner');
+            fireEvent.click(within(banner).getByText('Set on Overview →'));
+            expect(onBack).toHaveBeenCalledTimes(1);
+
+            fireEvent.click(within(banner).getByText('Use Custom instead'));
+            expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull();
+            expect(screen.getByLabelText('No condition — use all rows')).toBeTruthy(); // Custom's own confirm control
+        });
+
+        it('no banner once the workspace is configured (condition or confirmed None)', async () => {
+            await renderHydrated({ runningConditionNoneConfirmed: true });
+            expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull();
+            expect(screen.getByText(/No condition — using all rows/)).toBeTruthy();
+        });
+
+        it('Custom "No condition — use all rows" shows a warning, unlocks Finish and persists customRunningConditionNoneConfirmed', async () => {
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom' });
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
+            vi.useFakeTimers();
+            await renderHydrated();
+            const finish = () => screen.getByText('Finish').closest('button') as HTMLButtonElement;
+            expect(finish().disabled).toBe(true);
+            expect(screen.queryByTestId('pm-custom-none-warning')).toBeNull();
+
+            fireEvent.click(screen.getByLabelText('No condition — use all rows'));
+            expect(screen.getByTestId('pm-custom-none-warning')).toBeTruthy();
+            expect(finish().disabled).toBe(false);
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].customRunningConditionNoneConfirmed).toBe(true);
+            vi.useRealTimers();
+        });
+
+        it('adding a Custom condition after confirming None clears the confirmation', async () => {
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })] },
+            });
+            await renderHydrated();
+            const box = screen.getByLabelText('No condition — use all rows') as HTMLInputElement;
+            expect(box.checked).toBe(true);
+            fireEvent.click(box); // un-confirm to reach the list
+            fireEvent.click(screen.getByText('+ Add condition'));
+            expect((screen.getByLabelText('No condition — use all rows') as HTMLInputElement).checked).toBe(false);
+            expect(screen.getByPlaceholderText('val')).toBeTruthy();
+        });
+
+        it('a confirmed workspace None means the saved workspace conditions are NOT sent in the query filter', async () => {
+            await renderHydrated({
+                runningConditionNoneConfirmed: true,
+                runningConditionFilters: [{ id: 'rcf1', sensor: 'PRED1', operation: 'greater_than', value1: '1200', value2: '' }],
+            });
+            const lastQuery = last(mockUseChartData.mock.calls)[0] as any;
+            expect(lastQuery.filter.value_filters).toEqual([]);
         });
     });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
@@ -7,7 +7,8 @@ import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, C
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
-import { normalizeCategories } from "../../utils/workspaceMigrations";
+import { normalizeCategories, flagLegacyGate } from "../../utils/workspaceMigrations";
+import { getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 
@@ -70,6 +71,10 @@ function sensorSummary(model: FailureModel, label: (tag: string) => string): str
 }
 
 type GroupBy = 'fg' | 'component' | 'kind';
+
+const CONDITION_BADGE_STYLE: CSSProperties = {
+    color: 'var(--warn, #d9a441)', background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.45)',
+};
 
 /** Unsaved edits to ONE model (kept per model id so switching a sensor row's
  *  tabs never loses them). Only fields the user can edit here; `category` is
@@ -186,6 +191,17 @@ export default function BuildModelWindow() {
     const rcTimeStartRef = useRef<HTMLInputElement>(null);
     const rcTimeEndRef = useRef<HTMLInputElement>(null);
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
+    // "No condition - use all rows" was explicitly confirmed for the workspace
+    // (Feature 4, soft gate A). Mirrors failureGroupState.runningConditionNoneConfirmed.
+    const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
+    // Legacy-workspace banner: the STORED flag (failureGroupState.rcLegacyNotice,
+    // written at hydration) plus a session-only "Remind me later" (never persisted).
+    const [rcLegacyNotice, setRcLegacyNotice] = useState<'pending' | null>(null);
+    const [legacyRemindLater, setLegacyRemindLater] = useState(false);
+    // Workspace id the panel was last auto-opened for, so "auto-open when the
+    // running condition is unconfigured" happens once per hydration, not on
+    // every broadcast.
+    const rcAutoOpenedFor = useRef<string | null>(null);
     const [loading, setLoading] = useState(true);
     const hydratedRef = useRef(false);
 
@@ -274,6 +290,8 @@ export default function BuildModelWindow() {
         setRunningConditionCombine(fg?.runningConditionCombine ?? 'and');
         setRunningConditionTimeStart(fg?.runningConditionTimeStart ?? '');
         setRunningConditionTimeEnd(fg?.runningConditionTimeEnd ?? '');
+        setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
+        setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
 
@@ -315,6 +333,10 @@ export default function BuildModelWindow() {
                 setRunningConditionCombine('and');
                 setRunningConditionTimeStart('');
                 setRunningConditionTimeEnd('');
+                setRunningConditionNoneConfirmed(false);
+                setRcLegacyNotice(null);
+                setLegacyRemindLater(false);
+                setRcFilterOpen(false);
             }
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
@@ -327,10 +349,19 @@ export default function BuildModelWindow() {
                 // something, the result + notice are WRITTEN BACK here so the
                 // notice is stored data (Dashboard's autosave can't lose it,
                 // and it never re-fires once dismissed).
-                const migrated = ws ? normalizeCategories(ws) : ws;
+                // Same for the running-condition gate (Feature 4-B): a workspace
+                // that already has models but nothing configured is flagged
+                // `rcLegacyNotice: 'pending'` and written back, so the banner is
+                // stored data rather than something recomputed per render.
+                const migrated = ws ? flagLegacyGate(normalizeCategories(ws)) : ws;
                 applyFg(migrated?.failureGroupState);
-                if (migrated !== ws && migrated?.failureGroupState?.categoryNormalisationNotice?.length) {
-                    const written = await updateWorkspaceData(d.workspaceId, prev => normalizeCategories(prev));
+                if (migrated && rcAutoOpenedFor.current !== d.workspaceId) {
+                    rcAutoOpenedFor.current = d.workspaceId;
+                    const headers = d.sensorHeaders.length ? d.sensorHeaders : null;
+                    if (!isWorkspaceRunningConditionConfigured(migrated.failureGroupState, headers)) setRcFilterOpen(true);
+                }
+                if (migrated !== ws && (migrated?.failureGroupState?.categoryNormalisationNotice?.length || migrated?.failureGroupState?.rcLegacyNotice === 'pending')) {
+                    const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(prev)));
                     if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                     if (written?.failureGroupState) {
                         applyFg(written.failureGroupState);
@@ -397,15 +428,25 @@ export default function BuildModelWindow() {
         combine?: 'and' | 'or';
         timeStart?: string;
         timeEnd?: string;
+        noneConfirmed?: boolean;
     }) => {
         if (!workspaceId) return;
-        const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, {
-            // Only the fields this call was given; everything else stays as it is.
-            ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
-            ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
-            ...(patch.timeStart !== undefined ? { runningConditionTimeStart: patch.timeStart } : {}),
-            ...(patch.timeEnd !== undefined ? { runningConditionTimeEnd: patch.timeEnd } : {}),
-        }));
+        const next = await updateWorkspaceData(workspaceId, prev => {
+            const applied = withFailureGroupState(prev, {
+                // Only the fields this call was given; everything else stays as it is.
+                ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
+                ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
+                ...(patch.timeStart !== undefined ? { runningConditionTimeStart: patch.timeStart } : {}),
+                ...(patch.timeEnd !== undefined ? { runningConditionTimeEnd: patch.timeEnd } : {}),
+                ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
+            });
+            // Any edit made through this panel settles the legacy notice: it stays
+            // 'pending' only while the workspace is still unconfigured, and is
+            // otherwise marked handled (null) so it can never re-fire later.
+            const fg = applied.failureGroupState;
+            const stillPending = fg?.rcLegacyNotice === 'pending' && !isWorkspaceRunningConditionConfigured(fg);
+            return withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null });
+        });
         if (next?.failureGroupState) {
             applyFg(next.failureGroupState);
             await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
@@ -420,8 +461,10 @@ export default function BuildModelWindow() {
             value1: '',
             value2: '',
         }];
+        // A condition and "No condition" are mutually exclusive.
+        setRunningConditionNoneConfirmed(false);
         setRunningConditionFilters(next);
-        persistRunningCondition({ filters: next });
+        persistRunningCondition({ filters: next, noneConfirmed: false });
     }, [runningConditionFilters, allSensors, persistRunningCondition]);
 
     const updateRunningConditionFilter = useCallback((id: string, patch: Partial<WorkspaceSensorFilter>) => {
@@ -465,7 +508,19 @@ export default function BuildModelWindow() {
     /** Category of the model's sensor across every FG (never per-model any more). */
     const categoryOf = (m: FailureModel): ModelCategory | null => sensorCategory(allModels, modelSensorKey(m));
 
-    /** Why Save / Build Model is disabled, or null when the model is ready. */
+    // ---- Running-condition gate (Feature 4-B, soft gate A). ONE source of
+    //      truth: `getBuildBlockReason`. Every Build / Finish / "mark Complete"
+    //      path below asks it; Save is deliberately NOT gated by it. ----
+    const gateFg: RunningConditionFg = {
+        models: allModels, runningConditionFilters, runningConditionCombine,
+        runningConditionTimeStart, runningConditionTimeEnd, runningConditionNoneConfirmed,
+    };
+    const gateHeaders = allSensors.length ? allSensors : null;
+    const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(m, gateFg, gateHeaders);
+    const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
+    const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
+
+    /** Why Save is disabled (category / required fields), or null. */
     const modelBlockReason = (m: FailureModel): string | null => {
         if (categoryOf(m) === null) return 'Pick a category on the sensor header';
         const d = draftOf(m);
@@ -476,6 +531,9 @@ export default function BuildModelWindow() {
         );
         return ok ? null : 'Fill in the required fields above first';
     };
+
+    /** Why Build Model is disabled: everything Save needs, then the gate. */
+    const buildBlockReason = (m: FailureModel): string | null => modelBlockReason(m) ?? gateReasonOf(m);
 
     // Returns the `persist()` promise (rather than firing it and forgetting)
     // so `buildModel` below can await the write actually landing on disk
@@ -521,6 +579,10 @@ export default function BuildModelWindow() {
     };
 
     const toggleModelStatus = (modelId: string) => {
+        // Toward Complete only: an unconfigured model can't be marked Complete;
+        // going back to Incomplete is always allowed.
+        const target = allModels.find(m => m.id === modelId);
+        if (target && !target.status && gateReasonOf(target) !== null) return;
         persist((models, groups) => ({
             groups,
             models: models.map(m => m.id === modelId ? { ...m, status: !m.status } : m),
@@ -533,6 +595,8 @@ export default function BuildModelWindow() {
      *  incomplete. Un-marking a model still goes through the status pill
      *  (`toggleModelStatus`). */
     const markModelComplete = (modelId: string) => {
+        const target = allModels.find(m => m.id === modelId);
+        if (target && gateReasonOf(target) !== null) return;
         persist((models, groups) => ({
             groups,
             models: models.map(m => m.id === modelId ? { ...m, status: true } : m),
@@ -540,6 +604,9 @@ export default function BuildModelWindow() {
     };
 
     const trainModel = (modelId: string) => {
+        // Guard at the source too, so a future caller can't bypass the gate.
+        const target = allModels.find(m => m.id === modelId);
+        if (target && gateReasonOf(target) !== null) return;
         setPmPageModelId(modelId);
         setActivePage('model');
     };
@@ -555,7 +622,7 @@ export default function BuildModelWindow() {
     // loading the model record from BEFORE this commit: predictors picked on
     // this form showed as "No predictors selected" on the PM page.
     const buildModel = async (m: FailureModel) => {
-        if (modelBlockReason(m) !== null) return;
+        if (buildBlockReason(m) !== null) return;
         await commitModel(m);
         trainModel(m.id);
     };
@@ -724,20 +791,24 @@ export default function BuildModelWindow() {
     // Bottom corners are rounded to match the card's own 10px radius, or this
     // flat opaque footer paints over the parent's rounded corners.
     const renderModelFooter = (m: FailureModel, withStatus: boolean) => {
-        const reason = modelBlockReason(m);
+        const saveReason = modelBlockReason(m);
+        const reason = buildBlockReason(m);
+        const statusBlock = !m.status ? gateReasonOf(m) : null;
         return (
         <div style={{ position: 'sticky', bottom: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--card-bg)', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px', flexWrap: 'wrap' }}>
             {withStatus && (
                 <button
                     className={`model-status-pill model-status-pill--${m.status ? 'complete' : 'incomplete'}`}
                     style={{ marginRight: 'auto' }}
+                    disabled={statusBlock !== null}
+                    title={statusBlock ?? undefined}
                     onClick={() => toggleModelStatus(m.id)}
                 >
                     {m.status ? 'Complete' : 'Incomplete'}
                 </button>
             )}
-            {reason && <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)' }}>{reason}</span>}
-            <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={reason !== null} onClick={() => commitModel(m)}>
+            {reason && <span data-testid="build-block-reason" style={{ fontSize: '0.68rem', color: 'var(--text-faint)' }}>{reason}</span>}
+            <button className="fg-build-model-btn" style={{ width: 'auto', padding: '8px 22px' }} disabled={saveReason !== null} onClick={() => commitModel(m)}>
                 Save changes
             </button>
             <button
@@ -854,6 +925,11 @@ export default function BuildModelWindow() {
                                     Change in Failure Group view
                                 </button>
                                 {component && <span className="model-chip model-chip--component">{component}</span>}
+                                {needsCondition(model) && (
+                                    <span data-testid={`condition-badge-${model.id}`} className="model-chip" style={CONDITION_BADGE_STYLE}>
+                                        {model.status ? 'Legacy · all data' : 'Needs condition'}
+                                    </span>
+                                )}
                             </div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {sensorSummary(model, sensorLabel)}
@@ -861,6 +937,8 @@ export default function BuildModelWindow() {
                         </div>
                         <button
                             className={`model-status-pill model-status-pill--${model.status ? 'complete' : 'incomplete'}`}
+                            disabled={!model.status && gateReasonOf(model) !== null}
+                            title={!model.status ? (gateReasonOf(model) ?? undefined) : undefined}
                             onClick={e => { e.stopPropagation(); toggleModelStatus(model.id); }}
                         >
                             {model.status ? 'Complete' : 'Incomplete'}
@@ -894,6 +972,7 @@ export default function BuildModelWindow() {
         const ordered = KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k));
         const done = ordered.filter(m => m.status).length;
         const activeModel = ordered.find(m => m.id === activeTab[rowId]) ?? ordered[0];
+        const blocked = ordered.filter(m => !m.status && needsCondition(m)).length;
         const accent = FG_ACCENT[getFgGroupColor(groupNo)];
         return (
             <div key={rowId} data-testid={`sensor-row-${rowId}`} style={{ borderTop: '1px solid var(--border)' }}>
@@ -914,6 +993,11 @@ export default function BuildModelWindow() {
                         {otherGroups.map(n => (
                             <span key={n} className="model-chip model-chip--component" style={{ flexShrink: 0, fontFamily: 'var(--mono)' }}>also in FG-{n}</span>
                         ))}
+                        {blocked > 0 && (
+                            <span data-testid={`sensor-blocked-${rowId}`} className="model-chip" style={{ ...CONDITION_BADGE_STYLE, flexShrink: 0, whiteSpace: 'nowrap' }} title="Set a running condition on the Overview panel to unlock Build Model">
+                                {blocked} blocked
+                            </span>
+                        )}
                         <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', flexShrink: 0, whiteSpace: 'nowrap' }}>{done} of {ordered.length} complete</span>
                         {ordered.map(m => (
                             <span
@@ -989,6 +1073,11 @@ export default function BuildModelWindow() {
                                             {KIND_LABEL[m.kind]}
                                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: m.status ? 'var(--success, #3fb950)' : 'var(--text-faint)' }} />
                                             {m.id in drafts && <span style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>edited</span>}
+                                            {needsCondition(m) && (
+                                                <span data-testid={`condition-badge-${m.id}`} style={{ fontSize: '0.6rem', color: 'var(--warn, #d9a441)' }}>
+                                                    {m.status ? 'Legacy · all data' : 'Needs condition'}
+                                                </span>
+                                            )}
                                         </button>
                                     );
                                 })}
@@ -1033,6 +1122,8 @@ export default function BuildModelWindow() {
                     runningConditionCombine={runningConditionCombine}
                     runningConditionTimeStart={runningConditionTimeStart}
                     runningConditionTimeEnd={runningConditionTimeEnd}
+                    runningConditionNoneConfirmed={runningConditionNoneConfirmed}
+                    category={categoryOf(pmPageModel)}
                     onBack={() => setActivePage('overview')}
                     onFinish={() => {
                         markModelComplete(pmPageModel.id);
@@ -1051,7 +1142,7 @@ export default function BuildModelWindow() {
                 workspace default at all until the user pointed out the
                 filter concept isn't just sensor value, it needs a time
                 range too, same as this panel's value conditions. */}
-            <div style={{ margin: '12px 20px 0', border: `1px solid ${(runningConditionFilters.length > 0 || runningConditionTimeStart || runningConditionTimeEnd) ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
+            <div data-testid="rc-panel" style={{ margin: '12px 20px 0', border: `1px solid ${!rcConfigured ? 'rgba(245,158,11,0.6)' : (runningConditionFilters.length > 0 || runningConditionTimeStart || runningConditionTimeEnd) ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`, borderRadius: '10px', background: 'var(--input-bg)' }}>
                 <div
                     onClick={() => setRcFilterOpen(o => !o)}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 14px', cursor: 'pointer', userSelect: 'none' }}
@@ -1061,13 +1152,20 @@ export default function BuildModelWindow() {
                             <Gauge size={15} color="var(--accent-color)" />
                         </div>
                         <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>Running Condition Filter</div>
+                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                Running Condition Filter
+                                {!rcConfigured && (
+                                    <span data-testid="rc-required-pill" className="model-chip" style={{ ...CONDITION_BADGE_STYLE, fontSize: '0.62rem', fontWeight: 700 }}>Required</span>
+                                )}
+                            </div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {runningConditionTimeStart || runningConditionTimeEnd
                                     ? `${runningConditionTimeStart || '…'} – ${runningConditionTimeEnd || '…'}${runningConditionFilters.length > 0 ? ' · ' : ''}`
                                     : ''}
-                                {runningConditionFilters.length === 0
-                                    ? (runningConditionTimeStart || runningConditionTimeEnd ? '' : 'Not set — models train on the full dataset, including idle periods, unless configured otherwise.')
+                                {runningConditionNoneConfirmed
+                                    ? 'No condition — use all rows'
+                                    : runningConditionFilters.length === 0
+                                    ? 'Required — add a condition, or choose "No condition — use all rows" to build models.'
                                     : runningConditionFilters.map(f => `${getDesc(f.sensor) || f.sensor} ${f.operation === 'greater_than' ? '>' : f.operation === 'less_than' ? '<' : f.operation === 'between' ? 'between' : '='} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`).join(runningConditionCombine === 'or' ? ' OR ' : ' AND ')}
                             </div>
                         </div>
@@ -1118,6 +1216,43 @@ export default function BuildModelWindow() {
                             </div>
                         </div>
 
+                        {/* Value conditions vs. an explicit "No condition" — exactly one
+                            is active; a running condition is REQUIRED before any model
+                            can be built (soft gate A). Choosing "No condition" clears
+                            nothing stored, it just stops the saved conditions applying. */}
+                        <div role="group" aria-label="Condition mode" style={{ display: 'inline-flex', background: 'var(--card-bg, var(--bg-secondary))', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px', marginBottom: '12px' }}>
+                            {([['condition', 'Filter by condition'], ['none', 'No condition']] as const).map(([mode, label]) => {
+                                const active = (mode === 'none') === runningConditionNoneConfirmed;
+                                return (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        aria-pressed={active}
+                                        onClick={() => {
+                                            const none = mode === 'none';
+                                            if (none === runningConditionNoneConfirmed) return;
+                                            setRunningConditionNoneConfirmed(none);
+                                            persistRunningCondition({ noneConfirmed: none });
+                                        }}
+                                        style={{
+                                            fontSize: '0.68rem', fontWeight: 600, padding: '4px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer',
+                                            background: active ? 'var(--accent-color)' : 'none',
+                                            color: active ? '#06111f' : 'var(--text-secondary)',
+                                        }}
+                                    >
+                                        {label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {runningConditionNoneConfirmed ? (
+                            <div data-testid="rc-none-note" style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                No condition — use all rows. Models follow this default and train on every row, including idle periods.
+                                {runningConditionFilters.length > 0 && ' Your saved conditions are kept but not applied.'}
+                            </div>
+                        ) : (
+                        <>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Match</span>
                             <div style={{ display: 'inline-flex', background: 'var(--card-bg, var(--bg-secondary))', border: '1px solid var(--border-strong)', borderRadius: '7px', padding: '2px', gap: '2px' }}>
@@ -1207,6 +1342,8 @@ export default function BuildModelWindow() {
                         >
                             <Plus size={11} /> Add condition
                         </button>
+                        </>
+                        )}
 
                         <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
                             Default for every model — override per model on its own Build page.
@@ -1214,6 +1351,35 @@ export default function BuildModelWindow() {
                     </div>
                 )}
             </div>
+
+            {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
+                <div
+                    role="status"
+                    data-testid="rc-legacy-banner"
+                    style={{ margin: '12px 20px 0', display: 'flex', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.08)', fontSize: '0.74rem', lineHeight: 1.5 }}
+                >
+                    <div style={{ flex: 1, minWidth: '220px' }}>
+                        <div style={{ fontWeight: 600, marginBottom: '2px' }}>This workspace has models but no running condition</div>
+                        <div style={{ color: 'var(--text-secondary)' }}>
+                            Models built so far trained on all rows. A running condition is now required to build or finish a model: set one, or confirm that using all data is intended.
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0, flexWrap: 'wrap' }}>
+                        <button type="button" className="text-btn" onClick={() => setRcFilterOpen(true)}>Set a condition</button>
+                        <button
+                            type="button"
+                            className="text-btn"
+                            onClick={() => {
+                                setRunningConditionNoneConfirmed(true);
+                                persistRunningCondition({ noneConfirmed: true });
+                            }}
+                        >
+                            Keep using all data
+                        </button>
+                        <button type="button" className="text-btn" onClick={() => setLegacyRemindLater(true)}>Remind me later</button>
+                    </div>
+                </div>
+            )}
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-faint)', display: 'flex', gap: '8px', alignItems: 'center' }}>
