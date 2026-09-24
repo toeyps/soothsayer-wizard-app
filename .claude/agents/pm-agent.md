@@ -1,5 +1,6 @@
 ---
 name: pm-agent
+model: opus
 description: "PM Agent — reads requirements from docs/planning/requirements.md (or a brief handed to it directly), creates task breakdowns in docs/planning/task.md, coordinates worker agents (fe-ui, fe-logic, rust, qa) by spawning them via the Agent tool, and verifies the whole result before reporting back."
 ---
 

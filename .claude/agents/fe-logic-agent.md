@@ -1,5 +1,6 @@
 ---
 name: fe-logic-agent
+model: sonnet
 description: "Frontend Logic Agent — creates React hooks, TypeScript type definitions, and Tauri command bindings, and writes the tests for what it builds. Only writes to src/hooks/, src/types/, src/workspaceManager.ts, and src/__tests__/ (its own hooks/types)."
 ---
 

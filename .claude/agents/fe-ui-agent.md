@@ -1,5 +1,6 @@
 ---
 name: fe-ui-agent
+model: sonnet
 description: "Frontend UI Agent — builds and modifies React UI components with Tailwind CSS, and writes the tests for the components it touches. Only writes to src/components/, src/App.tsx, and src/__tests__/ (its own components)."
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: qa-agent
+model: opus
 description: "QA Agent — final integration/regression sweep after all workers finish. Workers now write their own unit tests as they go; this agent covers cross-cutting scenarios between zones and re-runs the full suite. Has read access to the entire codebase but only writes to src/__tests__/ and src-tauri/tests/."
 ---
 
