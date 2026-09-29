@@ -1430,6 +1430,7 @@ export default function BuildModelWindow() {
                             </button>
                         </div>
                         <RunningConditionPanel
+                            embedded
                             open={true}
                             onToggle={() => setRcFilterOpen(false)}
                             configured={rcConfigured}

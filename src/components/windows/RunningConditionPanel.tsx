@@ -32,11 +32,21 @@ interface RunningConditionPanelProps {
     sensors: string[];
     getDesc: (tag: string) => string;
     getComponent: (tag: string) => string;
+    /** 2026-09-29: true when rendered inside `BuildModelWindow`'s own Edit…
+     *  modal, which already supplies its own title bar + close button and
+     *  is always open (never collapsed). Suppresses this panel's own
+     *  collapsible header (icon/title/summary chips/pill/chevron) and the
+     *  card border/background around it, so the result is one card with
+     *  one header instead of a card nested inside the modal's own card
+     *  with two stacked, overlapping-looking titles. `open`/`onToggle`
+     *  still control the body — the modal always passes `open={true}`. */
+    embedded?: boolean;
 }
 
 export default function RunningConditionPanel({
     open, onToggle, configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent,
+    embedded = false,
 }: RunningConditionPanelProps) {
     const status = validatePeriods(periods);
     const firstBad = status.findIndex(s => s.invalid);
@@ -59,33 +69,35 @@ export default function RunningConditionPanel({
         : <span className="f4-pill f4-pill--blue">{filters.length} condition{filters.length === 1 ? '' : 's'}</span>;
 
     return (
-        <div data-testid="rc-panel" className={`f4-rc ${configured ? 'f4-rc--set' : 'f4-rc--req'}`}>
-            <div
-                className="f4-rc-h"
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
-                onClick={onToggle}
-                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
-            >
-                <div className="f4-rc-t">
-                    <div className="f4-ico"><Gauge size={15} /></div>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                        <div className="f4-ttl">Running Condition Filter</div>
-                        <div className="f4-hline" data-testid="rc-summary">
-                            {validCount > 0
-                                ? <><PeriodChipsLine periods={periods} /><span style={{ color: 'var(--text-faint)' }}>·</span></>
-                                : <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>Any time ·</span>}
-                            <span className={`f4-hline-cx${!configured ? ' f4-hline-cx--warn' : ''}`}>{condText}</span>
+        <div data-testid="rc-panel" className={`f4-rc ${configured ? 'f4-rc--set' : 'f4-rc--req'}${embedded ? ' f4-rc--embedded' : ''}`}>
+            {!embedded && (
+                <div
+                    className="f4-rc-h"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open}
+                    onClick={onToggle}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+                >
+                    <div className="f4-rc-t">
+                        <div className="f4-ico"><Gauge size={15} /></div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                            <div className="f4-ttl">Running Condition Filter</div>
+                            <div className="f4-hline" data-testid="rc-summary">
+                                {validCount > 0
+                                    ? <><PeriodChipsLine periods={periods} /><span style={{ color: 'var(--text-faint)' }}>·</span></>
+                                    : <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>Any time ·</span>}
+                                <span className={`f4-hline-cx${!configured ? ' f4-hline-cx--warn' : ''}`}>{condText}</span>
+                            </div>
                         </div>
                     </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                        {firstBad >= 0 && <span data-testid="rc-fix-period-pill" className="f4-pill f4-pill--bad">Fix period</span>}
+                        {pill('rc-required-pill')}
+                        <ChevronDown size={14} color="var(--text-faint)" style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
+                    </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                    {firstBad >= 0 && <span data-testid="rc-fix-period-pill" className="f4-pill f4-pill--bad">Fix period</span>}
-                    {pill('rc-required-pill')}
-                    <ChevronDown size={14} color="var(--text-faint)" style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
-                </div>
-            </div>
+            )}
 
             {open && (
                 <div className="f4-rc-b">

@@ -4128,6 +4128,13 @@ body {
 
 /* the panel */
 .f4-rc { margin: 12px 20px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--input-bg); }
+/* 2026-09-29: inside BuildModelWindow's Edit… modal the modal itself is
+   already the card (.bmw-modal) with its own title bar — without this,
+   .f4-rc's own margin/border/background nested a second, asymmetrically
+   inset card directly under the modal's header, on top of the panel's own
+   (now-hidden-when-embedded) header, which is what looked crowded/uneven. */
+.f4-rc--embedded { margin: 0; border: 0; border-radius: 0; background: none; }
+.f4-rc--embedded .f4-rc-b { border-top: 0; padding: 16px; }
 .f4-rc--set { border-color: var(--blue-line); }
 .f4-rc--req { border-color: var(--warn-line); }
 .f4-rc-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; cursor: pointer; user-select: none; width: 100%; background: none; border: 0; text-align: left; color: inherit; font: inherit; border-radius: 10px; }

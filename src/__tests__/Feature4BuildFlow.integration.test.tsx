@@ -288,7 +288,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         // holds the same RunningConditionPanel the old inline card showed.
         expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
         expect(rcModal()).toBeTruthy();
-        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
+        expect(screen.getByTestId('rc-required-pill-inline')).toBeTruthy();
         expect(screen.getAllByLabelText('Period 1 end').map(e => (e as HTMLInputElement).value)).toContain('2026-06-30T23:59');
         openFirstRow();
         expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
@@ -364,7 +364,7 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
         await mountBuildModel();
         // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
         expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
-        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
+        expect(screen.getByTestId('rc-required-pill-inline')).toBeTruthy();
         await openPmFor();
         expect(finishBtn().disabled).toBe(false);
         expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull(); // banner is Workspace-mode only

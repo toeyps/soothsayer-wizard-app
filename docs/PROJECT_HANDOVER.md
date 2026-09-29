@@ -2465,3 +2465,9 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **แก้**: เปลี่ยนพื้นหลังเป็นสีฟ้าอ่อน (`--blue-bg`) + เส้นขอบล่าง 2px สีฟ้า (`--blue-line`) ให้ดูเป็นโซนแยกจากส่วนอื่นชัดเจน, label ตัวหนาขึ้นและเปลี่ยนเป็นสี accent แทนสีจาง
   - **Verified**: `npx vite build` ผ่าน (เรียนบทเรียนจากบั๊กคอมเมนต์ CSS ก่อนหน้านี้ในวันเดียวกัน), `BuildModelWindow.test.tsx` 67/67 ผ่าน — ยังไม่ได้ให้ผู้ใช้ยืนยันซ้ำในแอปจริงว่าสีนี้ชัดพอหรือยัง
   - ไฟล์: `src/App.css`
+
+- **🆕 2026-09-29 — 🎨 Running Condition Edit modal: กรอบซ้อนกัน + หัวข้อ/ข้อความทับกัน**: ผู้ใช้เปิด popup "Edit…" แล้วชี้ว่ากรอบนอกดูไม่สมมาตร และข้างบนมี text ทับกันไม่สวย
+  - **สาเหตุ**: `RunningConditionPanel` เดิมออกแบบมาเป็นการ์ดแบบพับได้ที่ฝังอยู่ในหน้า Overview เอง (มีกรอบ+พื้นหลัง+หัวข้อ/ไอคอน/chip สรุป/pill ของตัวเอง) พอ Phase A ย้ายมาห่อด้วย modal ใหม่ (`.bmw-modal` ซึ่งมีหัวข้อ+ปุ่มปิดของตัวเองอยู่แล้ว) เลยกลายเป็นกล่องซ้อนกล่อง (การ์ดของ panel เดิม อยู่ในการ์ดของ modal) และหัวข้อ "Running Condition Filter" ขึ้นซ้ำ 2 ที่ พร้อม chip สรุปช่วงเวลา/เงื่อนไข/pill เบียดกันแถวเดียว
+  - **แก้**: เพิ่ม prop `embedded` ให้ `RunningConditionPanel` — เมื่อ `embedded` จะซ่อนหัวข้อ/ไอคอน/chip สรุป/pill/chevron ของตัวเอง (modal มีหัวข้อ+ปุ่มปิดให้แล้ว) และตัดกรอบ/พื้นหลัง/margin ของการ์ดเดิมออก (modal เป็นกรอบเดียวพอ) — `BuildModelWindow.tsx` ส่ง `embedded` เข้าไปตอนเรียกใน modal · เทสต์ 2 จุดที่เช็ค pill ของหัวข้อเดิม (`rc-required-pill`) เปลี่ยนไปเช็ค pill ที่ยังอยู่ในเนื้อหา (`rc-required-pill-inline`) แทน — ยังยืนยันสถานะเดิมทุกอย่าง ไม่ได้ลดความเข้ม
+  - **Verified**: `npx vite build` ผ่าน, `tsc` สะอาด, vitest **1296/1296** ผ่านทั้งชุด — ยังไม่ได้ให้ผู้ใช้ยืนยันซ้ำในแอปจริง
+  - ไฟล์: `src/components/windows/RunningConditionPanel.tsx`, `src/components/windows/BuildModelWindow.tsx`, `src/App.css`, `src/__tests__/Feature4BuildFlow.integration.test.tsx`
