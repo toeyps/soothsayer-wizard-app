@@ -516,6 +516,18 @@ interface PredictiveModelBuildProps {
      *  flip it back to Incomplete (that's what the overview's own status
      *  pill is for). */
     onFinish: () => void | Promise<void>;
+    /** 🆕 2026-09-29 [data-loss fix]: this page is a CHILD of BuildModelWindow
+     *  (one OS window, see `onBack`'s own comment above) and owns its own
+     *  debounced (250ms) persist (`writeSliceNow`/`flushPersist` below). That
+     *  debounce is already flushed before `onBack`/`onFinish` navigate away,
+     *  but a native window close (the titlebar X, Alt+F4, OS shutdown)
+     *  bypasses both of those and closes the OS window directly — which used
+     *  to drop an edit made in the last 250ms before closing. If given, this
+     *  is called on every render with this page's current `flushPersist` (or
+     *  `null` on unmount) so the parent can await it before actually letting
+     *  the window close. Optional so a future caller that doesn't need this
+     *  (e.g. a test rendering this page standalone) isn't forced to wire it. */
+    registerFlush?: (flush: (() => Promise<void>) | null) => void;
 }
 
 /**
@@ -537,7 +549,7 @@ const CLUSTER_PALETTE = [
     '#6366f1', // indigo
 ];
 
-export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed = false, category = 'performance', onBack, onFinish }: PredictiveModelBuildProps) {
+export default function PredictiveModelBuild({ workspaceId, modelId, kind, sensorHeaders, sensorMetadata, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed = false, category = 'performance', onBack, onFinish, registerFlush }: PredictiveModelBuildProps) {
     const [workspaceName, setWorkspaceName] = useState<string>("");
     const hydratedRef = useRef(false);
     // Alias kept so the large body of pre-existing code below (persistence
@@ -1045,6 +1057,23 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
         if (persistPendingRef.current) await writeSliceNow();
     };
+    // 🆕 2026-09-29 [data-loss fix]: hands the PARENT (BuildModelWindow) a
+    // live reference to this page's own `flushPersist`, so a native window
+    // close (which bypasses `handleBack`/`handleFinish` below entirely) can
+    // still flush this page's pending debounced write before the window is
+    // allowed to close. Re-registers on every render (no dependency array) —
+    // `flushPersist`/`writeSliceNow` close over `workspaceId`/`pmModelId`
+    // directly (not refs), so a stale closure from an earlier render could
+    // write the wrong model's slice; the effect below keeps the parent's
+    // reference pointing at the CURRENT render's closure instead. Cheap: it's
+    // just a ref assignment on the parent's side, not a new write.
+    useEffect(() => {
+        registerFlush?.(flushPersist);
+    });
+    // Un-registers on unmount (page navigated away via Back/Finish, or the
+    // model being edited changed) so the parent never calls a flush for a
+    // page that's no longer mounted.
+    useEffect(() => () => { registerFlush?.(null); }, [registerFlush]);
     // Nothing pending -> leave synchronously; otherwise write first, then leave.
     const handleBack = async () => {
         if (persistPendingRef.current) await flushPersist();

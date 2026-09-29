@@ -298,6 +298,55 @@ export default function BuildModelWindow() {
     const workspaceIdRef = useRef<string | null>(null);
     const loadSeq = useRef(0);
 
+    // 🆕 2026-09-29 [data-loss fix]: the most recent in-flight
+    // `updateWorkspaceData` write from ANY persist path in this window
+    // (running-condition edits, a model draft Save, Finish/markModelComplete,
+    // the hydration-time migration write, …). Mirrors Dashboard.tsx's own
+    // `pendingSaveRef` pattern, but applied per-call here rather than to one
+    // shared debounced autosave effect — this window has several discrete,
+    // independently-fired write paths instead of one. Always overwritten to
+    // the LATEST write; a superseded one is simply abandoned, never left
+    // dangling. `handleClose` and the `onCloseRequested` handler below await
+    // whatever this currently holds before actually letting the window close,
+    // closing the same class of bug already fixed for Dashboard on
+    // 2026-09-18/2026-09-01: every persist call here used to be fire-and-forget
+    // (`persistRunningCondition(...)` etc. called without `await`), so an edit
+    // made right before closing the window could be lost — reported as
+    // "changed a training period, closed and reopened, the edit was gone."
+    const pendingSaveRef = useRef<Promise<void> | null>(null);
+    // Wraps a write's promise so it's always discoverable via
+    // `pendingSaveRef.current`, without forcing every call site to become a
+    // blocking `await` (they stay fire-and-forget for UI responsiveness).
+    const trackPending = useCallback((p: Promise<void>): Promise<void> => {
+        const tracked = p.finally(() => {
+            if (pendingSaveRef.current === tracked) pendingSaveRef.current = null;
+        });
+        pendingSaveRef.current = tracked;
+        return tracked;
+    }, []);
+    // The Predictive Model page (rendered inline below, not a separate OS
+    // window — see this file's own doc comment) owns its own debounced
+    // persist and already flushes it on its Back/Finish buttons
+    // (`PredictiveModelBuild.tsx`'s `flushPersist`). A native window close (the
+    // titlebar X, Alt+F4, OS shutdown) bypasses those buttons entirely, so
+    // this window also needs a way to flush THAT page's pending write before
+    // it is allowed to close. `registerPmFlush` below is handed to the PM
+    // page as `registerFlush`; the PM page calls it every render with its
+    // current `flushPersist`, so this ref always holds a live, non-stale
+    // flush function for whichever model is currently open (or `null` when no
+    // PM page is mounted).
+    const pmFlushRef = useRef<(() => Promise<void>) | null>(null);
+    const registerPmFlush = useCallback((flush: (() => Promise<void>) | null) => {
+        pmFlushRef.current = flush;
+    }, []);
+    /** Awaits both this window's own pending write and the PM page's pending
+     *  debounced write (if that page is open), so no path off this window can
+     *  drop an edit made just before closing. */
+    const flushAllPending = useCallback(async () => {
+        if (pmFlushRef.current) await pmFlushRef.current();
+        if (pendingSaveRef.current) await pendingSaveRef.current;
+    }, []);
+
     // Mirrors the whole slice into local state — used by every path that
     // receives a fresh copy (hydration, broadcasts, our own writes).
     const applyFg = useCallback((fg: FailureGroupStateSlice | undefined | null) => {
@@ -380,12 +429,14 @@ export default function BuildModelWindow() {
                     if (!isWorkspaceRunningConditionConfigured(migrated.failureGroupState, headers)) setRcFilterOpen(true);
                 }
                 if (periodsChanged || (migrated !== ws && (migrated?.failureGroupState?.categoryNormalisationNotice?.length || migrated?.failureGroupState?.rcLegacyNotice === 'pending'))) {
-                    const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(migratePeriods(prev, { dropLegacyKeys: true }))));
-                    if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
-                    if (written?.failureGroupState) {
-                        applyFg(written.failureGroupState);
-                        await emit('failure-group-state-changed', { ...written.failureGroupState, workspaceId: d.workspaceId, origin: 'build-model' });
-                    }
+                    await trackPending((async () => {
+                        const written = await updateWorkspaceData(d.workspaceId, prev => flagLegacyGate(normalizeCategories(migratePeriods(prev, { dropLegacyKeys: true }))));
+                        if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
+                        if (written?.failureGroupState) {
+                            applyFg(written.failureGroupState);
+                            await emit('failure-group-state-changed', { ...written.failureGroupState, workspaceId: d.workspaceId, origin: 'build-model' });
+                        }
+                    })());
                 }
             } catch (e) {
                 console.warn('Failed to hydrate failure-group state:', e);
@@ -413,25 +464,32 @@ export default function BuildModelWindow() {
             offData();
             offChanged();
         };
-    }, [applyFg]);
+    }, [applyFg, trackPending]);
 
-    const persist = useCallback(async (
+    // Returns the write's promise (also tracked via `trackPending`, so a
+    // window close can await it) rather than being fire-and-forget itself —
+    // every call site stays free to not await it for responsiveness, but
+    // `commitModel`/`buildModel` below still rely on being able to await it
+    // when they specifically need the write to have landed first.
+    const persist = useCallback((
         updater: (models: FailureModel[], groups: FailureGroup[]) => { models: FailureModel[]; groups: FailureGroup[] },
-    ) => {
-        if (!workspaceId) return;
-        const next = await updateWorkspaceData(workspaceId, prev => {
-            const groups = prev.failureGroupState?.groups ?? [];
-            const models = prev.failureGroupState?.models ?? [];
-            const result = updater(models, groups);
-            // Spread-merge: this path only changes groups/models; every other slice
-            // field (running condition incl. time range, future fields) must survive.
-            return withFailureGroupState(prev, { groups: result.groups, models: result.models });
-        });
-        if (next?.failureGroupState) {
-            applyFg(next.failureGroupState);
-            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
-        }
-    }, [workspaceId, applyFg]);
+    ): Promise<void> => {
+        if (!workspaceId) return Promise.resolve();
+        return trackPending((async () => {
+            const next = await updateWorkspaceData(workspaceId, prev => {
+                const groups = prev.failureGroupState?.groups ?? [];
+                const models = prev.failureGroupState?.models ?? [];
+                const result = updater(models, groups);
+                // Spread-merge: this path only changes groups/models; every other slice
+                // field (running condition incl. time range, future fields) must survive.
+                return withFailureGroupState(prev, { groups: result.groups, models: result.models });
+            });
+            if (next?.failureGroupState) {
+                applyFg(next.failureGroupState);
+                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            }
+        })());
+    }, [workspaceId, applyFg, trackPending]);
 
     // The one path that actually changes the workspace-wide running
     // condition — edited entirely from this window's own "Running Condition
@@ -442,33 +500,42 @@ export default function BuildModelWindow() {
     // which is exactly the kind of easy-to-miss duplication that caused a
     // real bug once already (see `persist` above's own comment). A field
     // left out of `patch` falls through to whatever's already on disk.
-    const persistRunningCondition = useCallback(async (patch: {
+    //
+    // 🆕 2026-09-29: also tracked via `trackPending` (like every other writer
+    // in this file) — this is THE function the reported data-loss bug points
+    // at directly: every call site below (`addRunningConditionFilter` etc.)
+    // calls this WITHOUT awaiting it (deliberately, so typing/clicking stays
+    // responsive), so nothing used to stop the window from closing — native
+    // or via the button — before the write actually reached disk.
+    const persistRunningCondition = useCallback((patch: {
         filters?: WorkspaceSensorFilter[];
         combine?: 'and' | 'or';
         periods?: TimePeriod[];
         noneConfirmed?: boolean;
-    }) => {
-        if (!workspaceId) return;
-        const next = await updateWorkspaceData(workspaceId, prev => {
-            const applied = withFailureGroupState(prev, {
-                // Only the fields this call was given; everything else stays as it is.
-                ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
-                ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
-                ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
-                ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
+    }): Promise<void> => {
+        if (!workspaceId) return Promise.resolve();
+        return trackPending((async () => {
+            const next = await updateWorkspaceData(workspaceId, prev => {
+                const applied = withFailureGroupState(prev, {
+                    // Only the fields this call was given; everything else stays as it is.
+                    ...(patch.filters !== undefined ? { runningConditionFilters: patch.filters } : {}),
+                    ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
+                    ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
+                    ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
+                });
+                // Any edit made through this panel settles the legacy notice: it stays
+                // 'pending' only while the workspace is still unconfigured, and is
+                // otherwise marked handled (null) so it can never re-fire later.
+                const fg = applied.failureGroupState;
+                const stillPending = fg?.rcLegacyNotice === 'pending' && !isWorkspaceRunningConditionConfigured(fg);
+                return withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null });
             });
-            // Any edit made through this panel settles the legacy notice: it stays
-            // 'pending' only while the workspace is still unconfigured, and is
-            // otherwise marked handled (null) so it can never re-fire later.
-            const fg = applied.failureGroupState;
-            const stillPending = fg?.rcLegacyNotice === 'pending' && !isWorkspaceRunningConditionConfigured(fg);
-            return withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null });
-        });
-        if (next?.failureGroupState) {
-            applyFg(next.failureGroupState);
-            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
-        }
-    }, [workspaceId, applyFg]);
+            if (next?.failureGroupState) {
+                applyFg(next.failureGroupState);
+                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            }
+        })());
+    }, [workspaceId, applyFg, trackPending]);
 
     const addRunningConditionFilter = useCallback(() => {
         const next = [...runningConditionFilters, {
@@ -600,13 +667,15 @@ export default function BuildModelWindow() {
             : null);
     };
 
-    const dismissCategoryNotice = async () => {
-        if (!workspaceId) return;
-        const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
-        if (next?.failureGroupState) {
-            applyFg(next.failureGroupState);
-            await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
-        }
+    const dismissCategoryNotice = (): Promise<void> => {
+        if (!workspaceId) return Promise.resolve();
+        return trackPending((async () => {
+            const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
+            if (next?.failureGroupState) {
+                applyFg(next.failureGroupState);
+                await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            }
+        })());
     };
 
     const toggleModelStatus = (modelId: string) => {
@@ -629,23 +698,25 @@ export default function BuildModelWindow() {
     // page flushes its own edits first), never against this window's possibly
     // lagging copy — so Finish (which the PM page enabled from its LIVE state)
     // and the gate can't disagree. If it still blocks, say why (never silent).
-    const markModelComplete = async (modelId: string) => {
-        if (!workspaceId) return;
+    const markModelComplete = (modelId: string): Promise<void> => {
+        if (!workspaceId) return Promise.resolve();
         setCompleteBlock(null);
-        const res = { reason: null as string | null };
-        const next = await updateWorkspaceData(workspaceId, prev => {
-            const fg = prev.failureGroupState;
-            const target = fg?.models?.find(m => m.id === modelId);
-            if (!target) return prev;
-            res.reason = getBuildBlockReason(target, fg, gateHeaders);
-            if (res.reason !== null) return prev;
-            return withFailureGroupState(prev, { models: (fg?.models ?? []).map(m => m.id === modelId ? { ...m, status: true } : m) });
-        });
-        if (res.reason !== null) setCompleteBlock(res.reason);
-        if (next?.failureGroupState) {
-            applyFg(next.failureGroupState);
-            if (res.reason === null) await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
-        }
+        return trackPending((async () => {
+            const res = { reason: null as string | null };
+            const next = await updateWorkspaceData(workspaceId, prev => {
+                const fg = prev.failureGroupState;
+                const target = fg?.models?.find(m => m.id === modelId);
+                if (!target) return prev;
+                res.reason = getBuildBlockReason(target, fg, gateHeaders);
+                if (res.reason !== null) return prev;
+                return withFailureGroupState(prev, { models: (fg?.models ?? []).map(m => m.id === modelId ? { ...m, status: true } : m) });
+            });
+            if (res.reason !== null) setCompleteBlock(res.reason);
+            if (next?.failureGroupState) {
+                applyFg(next.failureGroupState);
+                if (res.reason === null) await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            }
+        })());
     };
 
     const trainModel = (modelId: string) => {
@@ -656,9 +727,42 @@ export default function BuildModelWindow() {
         setActivePage('model');
     };
 
+    // 🆕 2026-09-29 [data-loss fix]: awaits every in-flight write (this
+    // window's own pending persist AND the PM page's own debounced persist,
+    // if that page is open) before actually closing the window. Previously
+    // this just closed immediately — a Running Condition Filter edit, a
+    // training-period edit, or a model Save made right before clicking this
+    // button could still be in flight and got lost. See `flushAllPending`
+    // and the `onCloseRequested` effect below for the native-close (titlebar
+    // X / Alt+F4 / OS shutdown) equivalent of this same fix.
     const handleClose = async () => {
+        await flushAllPending();
         await getCurrentWindow().close();
     };
+
+    // 🆕 2026-09-29 [data-loss fix]: a native close (the window's own X
+    // button, Alt+F4, or the OS closing the app) bypasses `handleClose`
+    // entirely. Mirrors Dashboard.tsx's own `onCloseRequested` handler
+    // (2026-09-01 CLAUDE.md entry): only intercepts the close when this
+    // window has an in-flight write of its own (`pendingSaveRef`) or the PM
+    // page is currently mounted (`pmFlushRef`) — a window with neither closes
+    // exactly as before, no added delay. When the PM page IS mounted its own
+    // `flushPersist` is a cheap no-op if it has nothing pending, so this
+    // never adds a meaningful delay even when there's nothing to flush there.
+    useEffect(() => {
+        let disposed = false;
+        let unlisten: (() => void) | undefined;
+        const win = getCurrentWindow();
+        Promise.resolve(win.onCloseRequested(async (event) => {
+            const pmPending = pmFlushRef.current;
+            const pending = pendingSaveRef.current;
+            if (!pmPending && !pending) return;
+            event.preventDefault();
+            await flushAllPending();
+            await win.close();
+        })).then(fn => { if (disposed) fn(); else unlisten = fn; });
+        return () => { disposed = true; if (unlisten) unlisten(); };
+    }, [flushAllPending]);
 
     // 🆕 2026-09-18 [bug fix]: must await commitModel's write landing on disk
     // before navigating to the PM page. The PM page's own hydration effect
@@ -1253,6 +1357,7 @@ export default function BuildModelWindow() {
                         await markModelComplete(pmPageModel.id);
                         setActivePage('overview');
                     }}
+                    registerFlush={registerPmFlush}
                 />
             ) : (
             <>

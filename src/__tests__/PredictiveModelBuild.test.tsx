@@ -936,6 +936,54 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
+    // 🆕 2026-09-29 [data-loss fix]: this page is a CHILD of BuildModelWindow
+    // (one OS window, not a separate one -- see this page's own `onBack` doc
+    // comment) — a native window close (titlebar X / Alt+F4 / OS shutdown)
+    // bypasses the Back/Finish flush covered by the describe block right
+    // above entirely, since neither button is what's driving the close.
+    // `registerFlush` hands the parent a live reference to this page's own
+    // `flushPersist` so it can be awaited from there instead. See
+    // BuildModelWindow.test.tsx's own `describe('close-flush ...')` for the
+    // integration side of this (using a mocked PredictiveModelBuild); these
+    // tests cover the real implementation's half of the contract.
+    describe('registerFlush prop (2026-09-29 data-loss fix)', () => {
+        it('calls registerFlush with a function that performs the pending write when invoked', async () => {
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            const registerFlush = vi.fn();
+            await renderHydrated({ registerFlush });
+            await act(async () => { await new Promise(r => setTimeout(r, 300)); }); // hydration's own write settles
+            mockUpdateWorkspaceData.mockClear();
+            expect(registerFlush).toHaveBeenCalled();
+            const flush = registerFlush.mock.calls[0][0]; // reads live refs internally -- any registered call works
+            expect(typeof flush).toBe('function');
+
+            fireEvent.click(screen.getByText('Switch to conditions')); // un-confirm ...
+            fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' })); // ... re-confirm: schedules a 250ms-debounced write, still pending
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled(); // not yet -- still inside the debounce window
+
+            await act(async () => { await flush(); }); // simulates BuildModelWindow awaiting this on a native close
+            expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1); // flushed immediately, without waiting out the debounce
+        });
+
+        it('registers null on unmount, so a stale flush is never called for a page that is no longer mounted', async () => {
+            const registerFlush = vi.fn();
+            const { unmount } = await renderHydrated({ registerFlush });
+            registerFlush.mockClear();
+            unmount();
+            expect(registerFlush).toHaveBeenCalledWith(null);
+        });
+
+        it('is entirely optional -- omitting it changes nothing about Back/Finish\'s own flush behavior', async () => {
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            const { onBack } = await renderHydrated(); // no registerFlush passed
+            await act(async () => { await new Promise(r => setTimeout(r, 300)); });
+            fireEvent.click(screen.getByTitle('Back to Build Model overview'));
+            await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
+        });
+    });
+
     describe('Finish button (2026-09-17: marks the model Complete on the overview list, replacing the old Preview/Save Model flow)', () => {
         // Feature 4-B (2026-09-24): Finish is behind the running-condition gate
         // (soft gate A) -- the same getBuildBlockReason the Overview's Build Model uses.

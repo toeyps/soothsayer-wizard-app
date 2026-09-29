@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { useEffect } from 'react';
 import { render, screen, fireEvent, act, cleanup, within, waitFor } from '@testing-library/react';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
+// 🆕 2026-09-29 [data-loss fix]: `onCloseRequested` — the close-flush effect
+// (mirrors Dashboard.test.tsx's own mock of the same Tauri API).
+// `mockCloseRequestedHandler` captures the registered handler so tests can
+// invoke it directly, simulating a native window close (titlebar X / Alt+F4
+// / OS shutdown) — a path that bypasses the toolbar's own Close button
+// (`handleClose`) entirely.
+let mockCloseRequestedHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
+const mockOnCloseRequested = vi.fn((handler: (event: { preventDefault: () => void }) => void | Promise<void>) => {
+    mockCloseRequestedHandler = handler;
+    return Promise.resolve(() => { mockCloseRequestedHandler = null; });
+});
 vi.mock('@tauri-apps/api/window', () => ({
-    getCurrentWindow: () => ({ close: mockClose }),
+    getCurrentWindow: () => ({ close: mockClose, onCloseRequested: (handler: any) => mockOnCloseRequested(handler) }),
 }));
 
 let listenCallbacks: Record<string, Array<(e: any) => void>> = {};
@@ -33,9 +45,25 @@ vi.mock('../workspaceManager', () => ({
 const predictiveModelBuildProps: any[] = [];
 const sensorAutocompleteProps: any[] = [];
 const sensorPickerModalProps: any[] = [];
+// 🆕 2026-09-29 [data-loss fix]: stands in for the real PM page's own
+// `flushPersist`, registered via `registerFlush` (see BuildModelWindow.tsx's
+// `pmFlushRef`/`registerPmFlush`) exactly like the real component does every
+// render. Lets this file's own close-flush tests assert that BuildModelWindow
+// awaits the PM page's pending write on a native close, without needing the
+// real component's internals — those are covered directly in
+// PredictiveModelBuild.test.tsx.
+const pmFlushMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('../components/windows/PredictiveModelBuild', () => ({
     default: (props: any) => {
         predictiveModelBuildProps.push(props);
+        // Mirrors the real component's own registration effect (mount: register
+        // `pmFlushMock`; unmount — e.g. Back/Finish navigating away — un-register)
+        // closely enough for this file's close-flush tests, without pulling in
+        // any of the real page's other internals.
+        useEffect(() => {
+            props.registerFlush?.(pmFlushMock);
+            return () => props.registerFlush?.(null);
+        }, [props.registerFlush]);
         return (
             <div data-testid="pm-page-mock">
                 <span>PM page for {props.modelId}</span>
@@ -158,6 +186,7 @@ beforeEach(() => {
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
+    pmFlushMock.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
         const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] } };
         return patch(prev);
@@ -395,7 +424,166 @@ describe('BuildModelWindow', () => {
         render(<BuildModelWindow />);
         await deliverData();
         fireEvent.click(screen.getByTitle('Close'));
-        expect(mockClose).toHaveBeenCalled();
+        await waitFor(() => expect(mockClose).toHaveBeenCalled());
+    });
+
+    // 🆕 2026-09-29 [data-loss fix]: real report — "changed a training period
+    // (or a Running Condition Filter value), closed the Build Model window,
+    // reopened it, the edit was gone." Root cause: every persist path in this
+    // file (`persist`, `persistRunningCondition`, `markModelComplete`,
+    // `dismissCategoryNotice`) is async but called WITHOUT awaiting it at
+    // every call site (deliberately, for UI responsiveness) — nothing used to
+    // track that in-flight write, so neither the toolbar's Close button nor a
+    // native close (titlebar X / Alt+F4 / OS shutdown) ever waited for it.
+    // Mirrors Dashboard.test.tsx's own `describe('close-flush ...')` block
+    // (that window's equivalent bug, already fixed on 2026-09-01).
+    describe('close-flush (a write in flight when the window closes must land before it actually closes)', () => {
+        it('a native close defers until a pending model-save write lands, then closes', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(mockCloseRequestedHandler).not.toBeNull();
+
+            let resolveUpdate!: (v: unknown) => void;
+            mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
+
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            const form = within(screen.getByTestId('add-model-form'));
+            fireEvent.change(form.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed Model' } });
+            fireEvent.click(form.getByText('Save changes')); // commitModel -> persist(), fire-and-forget by design
+
+            const preventDefault = vi.fn();
+            let closePromise!: Promise<void>;
+            await act(async () => {
+                closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
+                await Promise.resolve(); // let preventDefault's synchronous call land
+            });
+            expect(preventDefault).toHaveBeenCalledTimes(1); // blocks the close immediately
+            expect(mockClose).not.toHaveBeenCalled(); // not yet -- the write hasn't landed on disk
+
+            await act(async () => {
+                resolveUpdate({
+                    id: 'ws1',
+                    failureGroupState: {
+                        groups: [makeGroup()], models: [makeModel({ name: 'Renamed Model' })],
+                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [],
+                    },
+                });
+                await closePromise;
+            });
+            expect(mockClose).toHaveBeenCalledTimes(1); // then, and only then, the window closes
+        });
+
+        it('does not intercept the close at all once nothing is pending -- an already-saved window closes exactly as before, no added delay', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            expect(mockCloseRequestedHandler).not.toBeNull();
+
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(mockClose).not.toHaveBeenCalled(); // Tauri's own default handles an unintercepted close
+        });
+
+        it('also flushes the Running Condition Filter panel\'s own pending write (the exact edit named in the bug report)', async () => {
+            render(<BuildModelWindow />);
+            // Explicit `runningConditionNoneConfirmed: false` (rather than
+            // deliverData's usual "already configured, None confirmed" default)
+            // so the workspace reads as unconfigured -- the panel auto-opens by
+            // itself (same as `deliverUnconfigured` in the describe block above)
+            // and shows the "Add condition" button directly.
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, runningConditionFilters: [] } });
+
+            let resolveUpdate!: (v: unknown) => void;
+            mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
+            fireEvent.click(screen.getByText('Add condition')); // addRunningConditionFilter -> persistRunningCondition(), fire-and-forget
+
+            const preventDefault = vi.fn();
+            let closePromise!: Promise<void>;
+            await act(async () => {
+                closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
+                await Promise.resolve();
+            });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(mockClose).not.toHaveBeenCalled();
+
+            await act(async () => {
+                resolveUpdate({
+                    id: 'ws1',
+                    failureGroupState: {
+                        groups: [makeGroup()], models: [makeModel()],
+                        runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '1', value2: '' }],
+                        runningConditionCombine: 'and', runningConditionNoneConfirmed: false, rcLegacyNotice: null, runningConditionTimePeriods: [],
+                    },
+                });
+                await closePromise;
+            });
+            expect(mockClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('also flushes the PM page\'s own pending debounced write when it is open (a native close bypasses that page\'s own Back/Finish flush entirely)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
+
+            let resolveFlush!: () => void;
+            pmFlushMock.mockImplementationOnce(() => new Promise<void>((res) => { resolveFlush = res; }));
+
+            const preventDefault = vi.fn();
+            let closePromise!: Promise<void>;
+            await act(async () => {
+                closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
+                await Promise.resolve();
+            });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(mockClose).not.toHaveBeenCalled();
+
+            await act(async () => {
+                resolveFlush();
+                await closePromise;
+            });
+            expect(pmFlushMock).toHaveBeenCalled();
+            expect(mockClose).toHaveBeenCalledTimes(1);
+        });
+
+        it('un-registers the PM page\'s flush once that page is left (Back) -- closing afterward does not call a stale flush', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+            await act(async () => { fireEvent.click(screen.getByText('Mock Back')); });
+            pmFlushMock.mockClear();
+
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(pmFlushMock).not.toHaveBeenCalled();
+            expect(preventDefault).not.toHaveBeenCalled(); // nothing pending once the PM page is gone and its own write already landed
+        });
+
+        it('the toolbar\'s own Close button also awaits a pending write before calling the Tauri close API (same fix, button path instead of a native close)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            let resolveUpdate!: (v: unknown) => void;
+            mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
+
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            fireEvent.click(screen.getByText('Incomplete')); // toggleModelStatus -> persist(), fire-and-forget
+            fireEvent.click(screen.getByTitle('Close'));
+            await act(async () => { await Promise.resolve(); });
+            expect(mockClose).not.toHaveBeenCalled(); // handleClose is awaiting the pending write
+
+            await act(async () => {
+                resolveUpdate({
+                    id: 'ws1',
+                    failureGroupState: {
+                        groups: [makeGroup()], models: [makeModel({ status: true })],
+                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [],
+                    },
+                });
+            });
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+        });
     });
 
     describe('group cards are read-only headers (2026-08-31: "Edit details" — Name/Description/Recommendation — moved to Dashboard\'s Failure Groups tab entirely, per explicit user request)', () => {
