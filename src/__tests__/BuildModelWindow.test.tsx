@@ -502,6 +502,17 @@ describe('BuildModelWindow', () => {
             expect(cssBlock('.f4-srow-box')).toMatch(/border-radius:\s*10px/);
         });
 
+        it('the sticky footer draws its own accent-colored side/bottom border (regression: matching border-radius alone -- the previous item -- only keeps the footer\'s opaque background from squaring off the card\'s rounded corners when the footer is flush with the card\'s true bottom; `position: sticky` can also rest the footer PARTWAY up the row\'s own box whenever there is scroll slack below the row, which visually detaches the footer from the real border-bottom entirely -- reported again 2026-09-29 on the Individual tab, the shortest panel and so the one with the most slack)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+            expect(screen.getByText('Save changes').closest('.f4-foot')).not.toBeNull();
+            const rule = cssBlock('.f4-srow--open .f4-foot');
+            expect(rule).toMatch(/border-left:\s*1\.5px solid var\(--fgc\)/);
+            expect(rule).toMatch(/border-right:\s*1\.5px solid var\(--fgc\)/);
+            expect(rule).toMatch(/border-bottom:\s*1\.5px solid var\(--fgc\)/);
+        });
+
         it('the opened form\'s boundary is a real border wrapping the whole card (header + footer), not just a left accent bar (regression: an absolutely-positioned bar was anchored to the row\'s un-scrolled flow position and visually detached from the sticky footer once the page scrolled)', async () => {
             render(<BuildModelWindow />);
             await deliverData();

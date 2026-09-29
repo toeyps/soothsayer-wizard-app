@@ -4335,6 +4335,21 @@ body {
 .f4-ppill button { background: none; border: 0; color: var(--text-secondary); cursor: pointer; padding: 1px; display: flex; border-radius: 50%; }
 .f4-ppill button:hover { color: var(--text-primary); background: var(--hover-bg); }
 .f4-foot { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--card-bg); border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
+/* 2026-09-29: matching the footer's radius (above) only keeps its opaque
+   background from squaring off the card's rounded corners when the footer
+   sits flush at the card's true bottom (no scroll slack below the row).
+   `position: sticky` can also rest the footer PARTWAY up the row's own box
+   (its sticky travel is bounded by `.f4-srow-box`, but that box is usually
+   much taller than the visible scrollport once you count everything below
+   this row in the list) -- whenever that happens, the footer visually
+   detaches from the card's real border-bottom, which then sits scrolled out
+   of view with nothing connecting it, reading as "the border doesn't close
+   at the bottom" (reported again 2026-09-29, Individual tab -- shortest
+   panel, so the most scroll slack -- but reproducible for any kind at the
+   right scroll position; see docs/PROJECT_HANDOVER.md 2026-09-29). Giving
+   the footer its own matching side/bottom border means the row reads as a
+   closed rounded rectangle wherever the footer currently rests. */
+.f4-srow--open .f4-foot { border-left: 1.5px solid var(--fgc); border-right: 1.5px solid var(--fgc); border-bottom: 1.5px solid var(--fgc); }
 .f4-foot-reason { margin-right: auto; font-size: 0.7rem; color: var(--text-faint); display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .f4-foot-reason--block { color: var(--warn); }
 .f4-btn-save { font-size: 0.76rem; font-weight: 600; padding: 8px 22px; border-radius: 7px; border: 0; background: var(--accent-color); color: #06111f; cursor: pointer; }
