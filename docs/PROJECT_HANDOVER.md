@@ -2427,3 +2427,8 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **README.md**: แก้จุดที่ล้าสมัย (ปุ่ม Report/PNG export ที่ถูกเอาออกไปแล้ว 2026-09-17, หน้าต่าง SaveAs ที่ถูกลบไปแล้ว 2026-09-20) + เพิ่มหัวข้อ "Working with Claude Code on this project" ชี้ไปที่ agent 7 ตัวและเอกสาร orchestration
   - **Verified**: อ่านตรวจ diff เอง ไม่มี tsc/vitest ให้รัน (ไม่แตะโค้ดแอป) — ยังไม่เคยเรียก `notion-sync-agent` จริงสักครั้ง (dogfood รอบแรกคือ task นี้เอง)
   - ไฟล์: `.claude/agents/notion-sync-agent.md` (ใหม่), `CLAUDE.md`, `multi_agent_orchestration_design.md`, `README.md`
+
+- **🆕 2026-09-29 — 📌 กฎใหม่: ต้องถามผู้ใช้เองว่าจะตั้ง Notion เป็น Done ไหม**: ผู้ใช้แก้ว่ากฎเดิม (ห้ามตั้ง Done เอง) ทำให้เกิดปัญหาใหม่ — พอทำตามกฎแล้วปล่อยเงียบ ไม่มีใครถามกลับ รายการเลย "In progress" ค้างตลอดไป ทั้งที่ผู้ใช้ทดสอบแอปจริงผ่านแล้วก็ตาม เพราะผู้ใช้เองก็ลืมบอกให้ตั้ง Done เหมือนกัน
+  - **แก้**: CLAUDE.md ข้อ "Never set Done" เพิ่มว่าต้อง**ถามผู้ใช้เชิงรุกทันที**ที่เขายืนยันว่าทดสอบแอปจริงผ่านแล้วสำหรับ item นั้น ไม่ใช่รอให้เขาพูดเอง · `notion-sync-agent` เพิ่มกติกาเดียวกัน — ถ้า brief บอกว่าผู้ใช้ยืนยันแล้ว ให้พูดชัดใน HANDOFF's Note ว่าควรถามผู้ใช้ยืนยันตั้ง Done (agent เองยังไม่ตั้งเอง)
+  - เขียนเป็น memory ถาวรด้วย (`feedback_ask_before_marking_done.md`)
+  - ไฟล์: `CLAUDE.md`, `.claude/agents/notion-sync-agent.md`
