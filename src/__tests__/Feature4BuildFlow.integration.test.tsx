@@ -356,6 +356,10 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
             expect(screen.getByTestId('build-block-reason').textContent).toBe(pmReason);
             expect(openFullViewBtn().title).toBe(pmReason);
             expect(openFullViewBtn().disabled).toBe(true);
+            // Phase B footer: Mark complete / Train carry the SAME gate reason
+            // (not the generic "Train the model first" hint).
+            expect((screen.getByText('✓ Mark complete') as HTMLButtonElement).title).toBe(pmReason);
+            expect((screen.getByText('▶ Train model') as HTMLButtonElement).title).toBe(pmReason);
         });
     }
 
@@ -627,8 +631,19 @@ describe('reason text consistency', () => {
         openFirstRow();
         const footer = screen.getByTestId('build-block-reason').textContent;
         const markComplete = screen.getByText('✓ Mark complete') as HTMLButtonElement;
+        // Since Phase B, Mark complete is ALSO disabled for any never-trained
+        // model, so `disabled` alone no longer proves the gate is what blocks
+        // it — the title (the gate reason, not the "Train the model…" hint)
+        // does, and so does the Train button carrying the same reason.
         expect(markComplete.disabled).toBe(true);
         expect(footer).toBe(markComplete.title);
+        expect(markComplete.title).not.toMatch(/Train the model/);
+        const train = screen.getByText('▶ Train model') as HTMLButtonElement;
+        expect(train.disabled).toBe(true);
+        expect(train.title).toBe(footer);
+        // The results area lists the same single blocker, not "Not trained yet".
+        expect(within(screen.getByTestId('results-incomplete')).getByText('Pick a category')).toBeTruthy();
+        expect(screen.queryByText('Not trained yet')).toBeNull();
         const disk = readDisk().failureGroupState;
         expect(footer).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
     });
