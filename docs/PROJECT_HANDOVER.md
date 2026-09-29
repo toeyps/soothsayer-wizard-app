@@ -2460,3 +2460,8 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **Verified เพิ่มจากปกติ**: รัน `node -e postcss.parse(...)` ตรง + **`npx vite build` เต็มรูปแบบ** (ไม่ใช่แค่ tsc/vitest) ยืนยันว่า build ผ่านจริง และเปิดผ่าน preview (Vite frontend-only ผ่าน browser pane) ไม่มี CSS error overlay อีกแล้ว (error อื่นที่เห็นเป็นเรื่อง Tauri API ไม่มีในบราวเซอร์ธรรมดา ตามที่ README บอกไว้อยู่แล้ว ไม่เกี่ยวกับบั๊กนี้)
   - **บทเรียน**: ต่อไปนี้ก่อนส่งงานที่แก้ `App.css` เยอะๆ กลับมาว่า "เสร็จแล้ว" ควรรัน `npx vite build` (หรือให้ preview_start ผ่าน Browser pane) อย่างน้อยหนึ่งครั้งเป็นส่วนหนึ่งของการตรวจสอบ ไม่ใช่แค่ tsc/vitest
   - ไฟล์: `src/App.css` (1 บรรทัดคอมเมนต์)
+
+- **🆕 2026-09-29 — 🎨 Running Condition bar มองไม่ค่อยเห็นในแอปจริง — เพิ่มพื้นหลังไล่สี+เส้นเน้น**: ผู้ใช้ทดสอบ Phase A ในแอปจริง (`npm run tauri dev`) แล้วบอกว่าตอนแรกหาไม่เจอว่าแถบตั้งค่า Running Condition ระดับ workspace อยู่ตรงไหน — แถบเดิมพื้นหลังสีเดียวกับ toolbar รอบข้าง (`--card-bg`) เส้นขอบล่างบางๆ 1px และ label ตัวเล็กสีจาง กลืนไปกับพื้นหลังทั้งหมด
+  - **แก้**: เปลี่ยนพื้นหลังเป็นสีฟ้าอ่อน (`--blue-bg`) + เส้นขอบล่าง 2px สีฟ้า (`--blue-line`) ให้ดูเป็นโซนแยกจากส่วนอื่นชัดเจน, label ตัวหนาขึ้นและเปลี่ยนเป็นสี accent แทนสีจาง
+  - **Verified**: `npx vite build` ผ่าน (เรียนบทเรียนจากบั๊กคอมเมนต์ CSS ก่อนหน้านี้ในวันเดียวกัน), `BuildModelWindow.test.tsx` 67/67 ผ่าน — ยังไม่ได้ให้ผู้ใช้ยืนยันซ้ำในแอปจริงว่าสีนี้ชัดพอหรือยัง
+  - ไฟล์: `src/App.css`

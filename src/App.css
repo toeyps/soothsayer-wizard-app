@@ -4325,8 +4325,13 @@ body {
    running-condition summary bar, the two-pane grid, the left sensor
    list, the collapsible "Model settings" section, the Phase-A results
    placeholder, and the Running Condition edit modal. */
-.bmw-rcbar { display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--card-bg); flex-wrap: wrap; }
-.bmw-rcbar-lbl { font-size: 0.64rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); flex-shrink: 0; }
+/* 2026-09-29: the user tried the real app and couldn't find this bar at
+   first glance ("ตอนแรกผมหาไม่เจอเลยว่าส่วน global มันอยู่ตรงไหน") — it used
+   to blend into the surrounding toolbar (same --card-bg, a 1px hairline,
+   faint uppercase label). Given a tinted background + a visible accent
+   line so it reads as its own distinct zone, not just another row. */
+.bmw-rcbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 2px solid var(--blue-line); background: var(--blue-bg); flex-wrap: wrap; }
+.bmw-rcbar-lbl { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent-color); flex-shrink: 0; }
 .bmw-rcbar-rule { font-family: var(--mono); font-size: 0.72rem; color: var(--text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .bmw-wb { flex: 1; min-height: 0; display: grid; }
