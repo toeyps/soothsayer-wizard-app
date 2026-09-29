@@ -4319,9 +4319,9 @@ body {
 /* ── Build Model Workbench (Phase A layout, 2026-09-29) ──
    Replaces the old "Group by Failure Group / Component / Model Type"
    accordion overview with a master/detail layout (approved mockup
-   4jDz6AVCFMgTbxrGuFB9SN, Version 13). Reuses every existing f4-*/
-   model-* token and class it can (pills, tabs, readouts, chips, the
-   sticky footer) — these rules cover only what's genuinely new: the
+   4jDz6AVCFMgTbxrGuFB9SN, Version 13). Reuses every existing f4- and
+   model- prefixed token and class it can (pills, tabs, readouts, chips,
+   the sticky footer) — these rules cover only what's genuinely new: the
    running-condition summary bar, the two-pane grid, the left sensor
    list, the collapsible "Model settings" section, the Phase-A results
    placeholder, and the Running Condition edit modal. */
