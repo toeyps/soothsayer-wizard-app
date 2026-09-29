@@ -1,22 +1,29 @@
-import { useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, ChevronRight, Lock, CircleAlert, TriangleAlert, Search } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
+import { X, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Maximize2, Loader2, Activity, GitBranch, Layers } from "lucide-react";
+import { CsvRecord, FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
+import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from "../../utils/runningCondition";
+import { computeTrainFingerprint } from "../../utils/trainFingerprint";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
+import { useChartData } from "../../hooks/useChartData";
 import { conditionText } from "./periodDisplay";
-import { validatePeriods } from "../../utils/timePeriods";
+import { validatePeriods, toFilterRanges } from "../../utils/timePeriods";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel from "./RunningConditionPanel";
 import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
+import LineChart from "../charts/LineChart";
+import ResponsiveECharts from "../charts/ResponsiveECharts";
+import { ChartMarkLine } from "../charts/ChartTypes";
 
 interface BuildModelData {
     workspaceId: string;
@@ -135,6 +142,212 @@ const KIND_LABEL: Record<ModelKind, string> = {
     clustering: 'Clustering',
 };
 
+// ─── Build Model Workbench Phase B (Train in place) ───────────────────────
+// Shape returned by Rust's `compute_sensor_stats` — mirrors the identically-
+// named (and likewise un-exported) interface in PredictiveModelBuild.tsx;
+// duplicated rather than imported since that file doesn't export it.
+interface SensorStats {
+    mean: number;
+    sd: number;
+    min: number;
+    max: number;
+    count: number;
+    lower1: number;
+    upper1: number;
+    lower3: number;
+    upper3: number;
+}
+
+/** One model's cached Phase-B preview result, keyed by kind so the results
+ *  stage/expand-modal can render the right chart without re-deriving which
+ *  invoke produced it. Session-only — Phase B never writes a file, so this
+ *  is never persisted (only `lastTrainedAt`/`trainedFingerprint` are). */
+type TrainResult =
+    | { kind: 'individual'; stats: SensorStats }
+    | { kind: 'relationship'; result: RelationshipPreviewResult; predictorsAtApply: string[] }
+    | { kind: 'clustering'; preview: ClusteringPreview };
+
+interface TrainCacheEntry {
+    /** The fingerprint this result was computed against — lets a stale
+     *  auto-recompute effect tell "already have the current result" apart
+     *  from "have an old one that happens to still be cached". */
+    fingerprint: string;
+    result: TrainResult;
+}
+
+// Mirrors PredictiveModelBuild.tsx's own CLUSTER_PALETTE (not exported there).
+const CLUSTER_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6', '#ec4899', '#6366f1'];
+// Stable empty array for LineChart's unused row-based `data` prop (the chart
+// consumes the bounded `columnar` feed instead) — same convention as PM page.
+const EMPTY_RECORDS: CsvRecord[] = [];
+const RESULT_CHART_MAX_POINTS = 4000;
+
+/** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
+ *  fixed pattern, since this is a plain human-readable timestamp, not
+ *  something any other code parses back. */
+function formatTrainedAt(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Wire shape the three preview commands (`compute_sensor_stats`,
+ *  `preview_relationship_model`, `compute_clustering_preview`) expect for
+ *  `filter` — same `{timestamp_ranges, value_filters, combine}` (or `null`
+ *  for "no filter at all") that PredictiveModelBuild.tsx's own
+ *  `dashboardFilterPayload` memo builds, reimplemented here as a pure
+ *  function since that memo is local to that component. */
+function buildPreviewFilterPayload(
+    eff: { filters: WorkspaceSensorFilter[]; combine: 'and' | 'or'; noneConfirmed: boolean; periods: TimePeriod[] },
+    headers: string[] | null,
+) {
+    const rawFilters = eff.noneConfirmed ? [] : eff.filters;
+    const valueFilters = rawFilters
+        .filter(sf => isCompleteCondition(sf, headers))
+        .map(sf => ({
+            sensor: sf.sensor,
+            operation: sf.operation,
+            value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+            value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+        }));
+    const ranges = toFilterRanges(eff.periods);
+    const filterRanges = ranges.some(rg => rg.start === null && rg.end === null) ? [] : ranges;
+    if (valueFilters.length === 0 && filterRanges.length === 0) return null;
+    return { timestamp_ranges: filterRanges, value_filters: valueFilters, combine: eff.combine };
+}
+
+/** Relationship scatter option: Raw (blue) vs. Relation model output (red)
+ *  against the first fitted predictor — mirrors PredictiveModelBuild.tsx's
+ *  own `relScatterOption` memo, reimplemented as a pure function (that memo
+ *  is local to that component and not exported). Deliberately simplified:
+ *  the Workbench shows the first predictor only, with no X-axis switcher —
+ *  the full picker lives on "Open full view". */
+function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtApply: string[], targetSensor: string) {
+    const xRaw = result.predictor_raw;
+    const yRaw = result.target_raw;
+    const yPred = result.predicted;
+    if (!xRaw || !yRaw || !yPred || xRaw.length === 0 || predictorsAtApply.length === 0) return null;
+    const xSensor = predictorsAtApply[0];
+    const txtSecondary = '#94a3b8';
+    const gridLine = '#334155';
+    const rawPoints: [number, number][] = [];
+    const modelPoints: [number, number][] = [];
+    const n = Math.min(xRaw.length, yRaw.length, yPred.length);
+    for (let i = 0; i < n; i++) {
+        const xv = xRaw[i]?.[0];
+        if (typeof xv !== 'number' || !Number.isFinite(xv)) continue;
+        const yr = yRaw[i];
+        if (typeof yr === 'number' && Number.isFinite(yr)) rawPoints.push([xv, yr]);
+        const yp = yPred[i];
+        if (typeof yp === 'number' && Number.isFinite(yp)) modelPoints.push([xv, yp]);
+    }
+    const totalPoints = rawPoints.length + modelPoints.length;
+    const isLargeData = totalPoints > 2000;
+    const isHugeData = totalPoints > 20000;
+    const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
+    const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
+    const seriesCommon = {
+        type: 'scatter' as const, symbolSize, large: isLargeData, largeThreshold: 2000,
+        progressive: 5000, progressiveThreshold: 10000,
+        emphasis: { scale: !isHugeData, disabled: isHugeData }, silent: isHugeData,
+    };
+    return {
+        backgroundColor: 'transparent',
+        textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+        animation: !isLargeData,
+        tooltip: { trigger: 'item', backgroundColor: 'rgba(30,41,59,0.95)', borderColor: gridLine, textStyle: { color: '#f1f5f9' } },
+        legend: { show: false },
+        grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
+        dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
+        xAxis: { type: 'value', name: xSensor, nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: false } },
+        yAxis: { type: 'value', name: targetSensor, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } } },
+        series: [
+            { ...seriesCommon, name: 'Raw', data: rawPoints, itemStyle: { color: '#3b82f6', opacity: pointOpacity } },
+            { ...seriesCommon, name: 'Model', data: modelPoints, itemStyle: { color: '#f43f5e', opacity: pointOpacity } },
+        ],
+    };
+}
+
+/** Clustering scatter + per-cluster σ-ellipse option — mirrors
+ *  PredictiveModelBuild.tsx's own `clusteringScatterOption` memo (not
+ *  exported there), reimplemented as a pure function. */
+function buildClusteringScatterOption(preview: ClusteringPreview) {
+    const { first_sensor, second_sensor, clusters, n_rows } = preview;
+    if (!clusters || clusters.length === 0 || n_rows === 0) return null;
+    const txtSecondary = '#94a3b8';
+    const gridLine = '#334155';
+    const totalPoints = clusters.reduce((acc, c) => acc + c.xs.length, 0);
+    const isLargeData = totalPoints > 2000;
+    const isHugeData = totalPoints > 20000;
+    const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
+    const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
+    const ellipseCustomSeries = (
+        cluster: (typeof clusters)[number],
+        sigma: number,
+        opts: { stroke: string; fill?: string; lineWidth: number; lineDash?: number[]; opacity: number; name: string; z: number },
+    ) => {
+        const cx = cluster.ellipse.x_center;
+        const cy = cluster.ellipse.y_center;
+        const rx = cluster.ellipse.x_sd * sigma;
+        const ry = cluster.ellipse.y_sd * sigma;
+        const angleRad = (cluster.ellipse.angle_deg * Math.PI) / 180;
+        const cos = Math.cos(angleRad);
+        const sin = Math.sin(angleRad);
+        return {
+            type: 'custom' as const,
+            name: opts.name,
+            itemStyle: { color: opts.stroke },
+            data: [[cx, cy]],
+            z: opts.z,
+            renderItem: (params: any, api: any) => {
+                const polyPts: number[][] = [];
+                for (let theta = 0; theta < 2 * Math.PI; theta += Math.PI / 36) {
+                    const x = rx * Math.cos(theta);
+                    const y = ry * Math.sin(theta);
+                    polyPts.push(api.coord([cx + x * cos - y * sin, cy + x * sin + y * cos]));
+                }
+                return {
+                    type: 'polygon',
+                    shape: { points: polyPts },
+                    style: { fill: opts.fill ?? 'none', stroke: opts.stroke, lineWidth: opts.lineWidth, lineDash: opts.lineDash ?? [0, 0], opacity: opts.opacity },
+                    clipPath: { type: 'rect', shape: { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height } },
+                };
+            },
+        };
+    };
+    const scatterSeries: any[] = [];
+    const ellipseSeries: any[] = [];
+    clusters.forEach((cluster, i) => {
+        const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+        const seriesName = clusters.length === 1 ? 'Data' : `Cluster ${cluster.cluster_id}`;
+        const points: [number, number][] = [];
+        const n = Math.min(cluster.xs.length, cluster.ys.length);
+        for (let j = 0; j < n; j++) {
+            const xv = cluster.xs[j], yv = cluster.ys[j];
+            if (Number.isFinite(xv) && Number.isFinite(yv)) points.push([xv, yv]);
+        }
+        scatterSeries.push({
+            type: 'scatter' as const, name: seriesName, data: points, symbolSize, large: isLargeData, largeThreshold: 2000,
+            progressive: 5000, progressiveThreshold: 10000, emphasis: { scale: !isHugeData, disabled: isHugeData },
+            silent: isHugeData, itemStyle: { color, opacity: pointOpacity }, z: 1,
+        });
+        ellipseSeries.push(ellipseCustomSeries(cluster, 1, { name: `${seriesName} 1σ`, stroke: color, fill: `${color}1F`, lineWidth: 2, opacity: 1, z: 3 }));
+        ellipseSeries.push(ellipseCustomSeries(cluster, 3, { name: `${seriesName} 3σ`, stroke: color, lineWidth: 1.5, lineDash: [5, 5], opacity: 0.55, z: 2 }));
+    });
+    return {
+        backgroundColor: 'transparent',
+        textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
+        animation: !isLargeData,
+        tooltip: { trigger: 'item', backgroundColor: 'rgba(30,41,59,0.95)', borderColor: gridLine, textStyle: { color: '#f1f5f9' } },
+        legend: { show: false },
+        grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
+        dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
+        xAxis: { type: 'value', name: first_sensor, nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: false } },
+        yAxis: { type: 'value', name: second_sensor, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } } },
+        series: [...scatterSeries, ...ellipseSeries],
+    };
+}
+
 /**
  * The single Build Model window — a singleton (label `build-model`) opened
  * from the Failure Groups tab's "Build Model" button.
@@ -220,6 +433,34 @@ export default function BuildModelWindow() {
     /** "Model settings" collapse override per model id — absent = auto
      *  (open while incomplete, else collapsed). */
     const [settingsOpenOverride, setSettingsOpenOverride] = useState<Record<string, boolean>>({});
+
+    // ---- Train in place (Phase B) ----
+    /** Session-only cache of the last successful preview run per model id —
+     *  never persisted (Phase B writes only `lastTrainedAt`/`trainedFingerprint`
+     *  to the workspace; the actual chart data is cheap to recompute, same as
+     *  the PM page's own live queries). */
+    const [trainResults, setTrainResults] = useState<Record<string, TrainCacheEntry>>({});
+    /** Presence of a key = that model id currently has a preview run in
+     *  flight (explicit Train/Re-train click OR the silent auto-recompute on
+     *  reopen); absence = idle. There is no separate "done" value — a
+     *  finished run is represented by its entry landing in `trainResults`. */
+    const [trainStatus, setTrainStatus] = useState<Record<string, 'loading'>>({});
+    const [trainError, setTrainError] = useState<Record<string, string>>({});
+    /** Full-screen expand of the CURRENTLY selected model's result chart —
+     *  mirrors the PM page's own `expandedChart` modal pattern (there isn't a
+     *  clean way to share that page-local state across the window boundary,
+     *  so this is a separate, visually-identical implementation). */
+    const [resultExpanded, setResultExpanded] = useState(false);
+    // Never leave the modal open pointed at a model the user has since
+    // navigated away from (switching sensor or kind tab).
+    useEffect(() => { setResultExpanded(false); }, [selectedSensorKey, activeTab]);
+    // Esc closes it — same as the PM page's own `expandedChart` modal.
+    useEffect(() => {
+        if (!resultExpanded) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setResultExpanded(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [resultExpanded]);
 
     // ---- Predictive Model page — an in-window "next page" (not a spawned
     //      OS window) reached from the detail footer's "Open full view ↗"
@@ -336,6 +577,35 @@ export default function BuildModelWindow() {
         });
     }, [allModels]);
 
+    // A cached Phase-B preview (or an in-flight one) for a model that no
+    // longer exists (deleted on the Dashboard, or the model was re-pointed at
+    // a different workspace — see the `switched` reset below) must be thrown
+    // away, never written back anywhere.
+    useEffect(() => {
+        const ids = new Set(allModels.map(m => m.id));
+        setTrainResults(prev => {
+            const stale = Object.keys(prev).filter(id => !ids.has(id));
+            if (stale.length === 0) return prev;
+            const rest = { ...prev };
+            for (const id of stale) delete rest[id];
+            return rest;
+        });
+        setTrainStatus(prev => {
+            const stale = Object.keys(prev).filter(id => !ids.has(id));
+            if (stale.length === 0) return prev;
+            const rest = { ...prev };
+            for (const id of stale) delete rest[id];
+            return rest;
+        });
+        setTrainError(prev => {
+            const stale = Object.keys(prev).filter(id => !ids.has(id));
+            if (stale.length === 0) return prev;
+            const rest = { ...prev };
+            for (const id of stale) delete rest[id];
+            return rest;
+        });
+    }, [allModels]);
+
     // The sensor shown in the detail pane must always be one that still has
     // at least one model — reselects the first available sensor whenever the
     // current selection disappears (another window deleted it, or this is
@@ -379,6 +649,10 @@ export default function BuildModelWindow() {
                 setRcLegacyNotice(null);
                 setLegacyRemindLater(false);
                 setRcFilterOpen(false);
+                setTrainResults({});
+                setTrainStatus({});
+                setTrainError({});
+                setResultExpanded(false);
             }
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
@@ -627,13 +901,19 @@ export default function BuildModelWindow() {
     // Returns the `persist()` promise (rather than firing it and forgetting)
     // so `buildModel` below can await the write actually landing on disk
     // before navigating to the PM page.
+    /** The persistable fields a model's draft would write on Save — factored
+     *  out of `commitModel` so `runTrainClick` (Phase B) can compute the exact
+     *  same merged-with-draft model to train against, without waiting for a
+     *  `persist()` round-trip + re-render to see the fresh values. */
+    const draftFields = (m: FailureModel, d: ModelDraft): Partial<FailureModel> =>
+        m.kind === 'individual' ? { name: d.name.trim(), runningConditionMode: d.runningConditionMode } :
+        m.kind === 'relationship' ? { name: d.name.trim(), predictorSensors: d.predictors, relStiffness: d.stiffness, runningConditionMode: d.runningConditionMode } :
+        { name: d.name.trim(), ySensor: d.y, criteriaSensor: d.criteria, clusterRanges: d.criteria ? d.ranges : [], numClusters: d.numClusters, runningConditionMode: d.runningConditionMode };
+
     const commitModel = async (m: FailureModel) => {
         if (modelBlockReason(m) !== null) return;
         const d = draftOf(m);
-        const fields: Partial<FailureModel> =
-            m.kind === 'individual' ? { name: d.name.trim(), runningConditionMode: d.runningConditionMode } :
-            m.kind === 'relationship' ? { name: d.name.trim(), predictorSensors: d.predictors, relStiffness: d.stiffness, runningConditionMode: d.runningConditionMode } :
-            { name: d.name.trim(), ySensor: d.y, criteriaSensor: d.criteria, clusterRanges: d.criteria ? d.ranges : [], numClusters: d.numClusters, runningConditionMode: d.runningConditionMode };
+        const fields = draftFields(m, d);
         await persist((models, groups) => ({
             groups,
             models: models.map(x => x.id === m.id ? { ...x, ...fields } : x),
@@ -668,15 +948,139 @@ export default function BuildModelWindow() {
         })());
     };
 
+    /** "Trained" (the status pill, distinct from Complete): a successful
+     *  Phase-B preview run exists AND its fingerprint still matches the
+     *  model's current inputs AND the model isn't already Complete — see
+     *  `src/utils/trainFingerprint.ts` and the SPEC FINAL entry in
+     *  `docs/PROJECT_HANDOVER.md`. */
+    const isModelTrainedFresh = (m: FailureModel): boolean =>
+        !m.status && !!m.lastTrainedAt && m.trainedFingerprint === computeTrainFingerprint(m, gateFg);
+    /** Was trained at some point, but the model's inputs (or the effective
+     *  running condition) changed since — "Settings changed — re-train". */
+    const isModelStale = (m: FailureModel): boolean =>
+        !m.status && !!m.lastTrainedAt && m.trainedFingerprint !== computeTrainFingerprint(m, gateFg);
+
     const toggleModelStatus = (modelId: string) => {
         // Toward Complete only: an unconfigured model can't be marked Complete;
-        // going back to Incomplete is always allowed.
+        // going back to Incomplete is always allowed. Build Model Workbench
+        // Phase B adds a second requirement for Incomplete -> Complete: the
+        // model must have been Trained (fresh, not stale) first — a model
+        // can't be marked complete straight from "Incomplete config" or a
+        // stale preview (SPEC FINAL, footer rule 6). This does NOT change
+        // `markModelComplete` (the PM page's own "Finish" button) — that is
+        // a separate, unchanged path.
         const target = allModels.find(m => m.id === modelId);
-        if (target && !target.status && gateReasonOf(target) !== null) return;
+        if (target && !target.status && (gateReasonOf(target) !== null || !isModelTrainedFresh(target))) return;
         persist((models, groups) => ({
             groups,
             models: models.map(m => m.id === modelId ? { ...m, status: !m.status } : m),
         }));
+    };
+
+    /** Everything currently wrong with THIS model's own settings, plus (if
+     *  distinct from the category reason `missingItems` already covers) the
+     *  running-condition/period gate reason — feeds the results area's
+     *  "N items to fix" list. Reuses the exact same messaging `missingItems`
+     *  already surfaces in the collapsible Model settings section, per the
+     *  SPEC FINAL instruction not to invent a second wording for the same
+     *  thing. Each item carries its own "take me there" action. */
+    const incompleteItems = (m: FailureModel): { text: string; onClick: () => void }[] => {
+        const items = missingItems(m).map(text => ({
+            text,
+            onClick: () => setSettingsOpenOverride(prev => ({ ...prev, [m.id]: true })),
+        }));
+        const gr = gateReasonOf(m);
+        // Avoid double-reporting the category reason: `missingItems` already
+        // lists "Pick a category" when it's null; `gateReasonOf` returns the
+        // SAME `CATEGORY_BLOCK_REASON` text in that case, not a distinct one.
+        if (gr && categoryOf(m) !== null) items.push({ text: gr, onClick: () => setRcFilterOpen(true) });
+        return items;
+    };
+
+    /** Runs the read-only preview computation for ONE model (Phase B —
+     *  "the SAME preview computations the PM page already runs for
+     *  training/preview purposes": `compute_sensor_stats` / `preview_relationship_model` /
+     *  `compute_clustering_preview`). Never writes a `*_INFO_*.json` file —
+     *  that's the next phase. `opts.persistMeta` distinguishes an explicit
+     *  Train/Re-train click (writes `lastTrainedAt`/`trainedFingerprint` via
+     *  `persist()`, never a hand-built object literal) from the silent
+     *  auto-recompute that runs when reopening an already-Trained-and-fresh
+     *  model (session-only — nothing to persist, the fingerprint hasn't
+     *  changed). `merged` carries the exact inputs used, so a Train click can
+     *  pass the just-committed draft values without waiting for this
+     *  window's state to re-render first (see `runTrainClick`). */
+    const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<void> => {
+        const id = merged.id;
+        setTrainStatus(prev => ({ ...prev, [id]: 'loading' }));
+        setTrainError(prev => {
+            if (!(id in prev)) return prev;
+            const rest = { ...prev };
+            delete rest[id];
+            return rest;
+        });
+        try {
+            const eff = effectiveRunningCondition(merged, gateFg);
+            const filter = buildPreviewFilterPayload(eff, gateHeaders);
+            let result: TrainResult;
+            if (merged.kind === 'individual') {
+                const stats = await invoke<SensorStats>('compute_sensor_stats', { sensor: merged.targetSensor, filter });
+                result = { kind: 'individual', stats };
+            } else if (merged.kind === 'relationship') {
+                const r = await invoke<RelationshipPreviewResult>('preview_relationship_model', {
+                    predictors: merged.predictorSensors,
+                    target: merged.targetSensor,
+                    lambda: merged.relStiffness,
+                    filter,
+                });
+                if (r.error) throw new Error(r.error);
+                result = { kind: 'relationship', result: r, predictorsAtApply: [...merged.predictorSensors] };
+            } else {
+                const effClusters = merged.numClusters ?? 3;
+                const r = await invoke<ClusteringPreview>('compute_clustering_preview', {
+                    first_sensor: merged.xSensor,
+                    second_sensor: merged.ySensor,
+                    n_clusters: effClusters,
+                    criteria_sensor: merged.criteriaSensor ? merged.criteriaSensor : null,
+                    cluster_ranges: merged.criteriaSensor ? (merged.clusterRanges ?? []).slice(0, effClusters) : null,
+                    filter,
+                });
+                result = { kind: 'clustering', preview: r };
+            }
+            setTrainResults(prev => ({ ...prev, [id]: { fingerprint, result } }));
+            setTrainStatus(prev => {
+                const rest = { ...prev };
+                delete rest[id];
+                return rest;
+            });
+            if (opts.persistMeta) {
+                await persist((models, groups) => ({
+                    groups,
+                    models: models.map(x => x.id === id ? { ...x, lastTrainedAt: new Date().toISOString(), trainedFingerprint: fingerprint } : x),
+                }));
+            }
+        } catch (e) {
+            setTrainStatus(prev => {
+                const rest = { ...prev };
+                delete rest[id];
+                return rest;
+            });
+            setTrainError(prev => ({ ...prev, [id]: e instanceof Error ? e.message : String(e) }));
+        }
+    };
+
+    /** The footer's Train/Re-train button. Commits any pending draft edits
+     *  FIRST (same as "Open full view" already does via `buildModel` ->
+     *  `commitModel`) so a predictor/stiffness/etc. change made just before
+     *  clicking Train is what actually gets trained and fingerprinted —
+     *  never a stale, unsaved combination. */
+    const runTrainClick = async (m: FailureModel) => {
+        if (buildBlockReason(m) !== null) return;
+        if (trainStatus[m.id] === 'loading') return;
+        const d = draftOf(m);
+        const merged: FailureModel = { ...m, ...draftFields(m, d) };
+        if (m.id in drafts) await commitModel(m);
+        const fingerprint = computeTrainFingerprint(merged, gateFg);
+        await executeTrain(merged, fingerprint, { persistMeta: true });
     };
 
     /** Sets `status: true` unconditionally (unlike `toggleModelStatus`) —
@@ -752,13 +1156,84 @@ export default function BuildModelWindow() {
         trainModel(m.id);
     };
 
+    // Hoisted above the `if (loading)` guard (and therefore above every hook
+    // below it) so `individualChartQuery`/the auto-recompute effect can read
+    // `activeModel` — every hook in this component must run unconditionally
+    // on every render, so none of them can sit after an early return. These
+    // three lines are otherwise identical to the ones the render body below
+    // used to compute locally; nothing about their VALUE changed, only where
+    // they're computed.
+    const sensorGroupsAll = allSensorGroups(allModels);
+    const fullSensorMap = new Map(sensorGroupsAll.map(sg => [sg.key, sg]));
+    const detailModels = selectedSensorKey !== null ? (fullSensorMap.get(selectedSensorKey)?.models ?? []) : [];
+    const orderedDetail = KIND_ORDER.flatMap(k => detailModels.filter(m => m.kind === k));
+    const activeModel = orderedDetail.find(m => m.id === activeTab[selectedSensorKey ?? '']) ?? orderedDetail[0];
+
+    // ---- Individual chart's time-series feed (Phase B) ----------------
+    // Bounded columnar fetch via `get_chart_data`, same path PredictiveModelBuild.tsx's
+    // own `targetChartQuery` uses — only active once a successful
+    // `compute_sensor_stats` run exists for the currently active model, so
+    // switching sensors doesn't fire an unnecessary fetch for every kind tab.
+    const individualChartQuery = useMemo(() => {
+        if (!activeModel || activeModel.kind !== 'individual') return null;
+        const cached = trainResults[activeModel.id];
+        if (!cached || cached.result.kind !== 'individual') return null;
+        const eff = effectiveRunningCondition(activeModel, gateFg);
+        const rawFilters = eff.noneConfirmed ? [] : eff.filters;
+        const valueFilters = rawFilters
+            .filter(sf => isCompleteCondition(sf, gateHeaders))
+            .map(sf => ({
+                sensor: sf.sensor,
+                operation: sf.operation,
+                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
+                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
+            }));
+        const ranges = toFilterRanges(eff.periods);
+        const filterRanges = ranges.some(rg => rg.start === null && rg.end === null) ? [] : ranges;
+        return {
+            filter: {
+                sensors: [activeModel.targetSensor],
+                timestamp_start: null,
+                timestamp_end: null,
+                timestamp_ranges: filterRanges,
+                value_filters: valueFilters,
+            },
+            sampling: 'raw' as const,
+            operation: null,
+            maxPoints: RESULT_CHART_MAX_POINTS,
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, activeModel?.kind, activeModel?.targetSensor, trainResults, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
+    const { view: individualChartView } = useChartData(individualChartQuery);
+
+    // ---- Auto-recompute on reopen (Phase B, per explicit user decision) ---
+    // A model that is already Trained-and-fresh (per the WORKSPACE'S
+    // persisted `lastTrainedAt`/`trainedFingerprint`) shows its result
+    // immediately, with no click required — this silently re-runs the same
+    // read-only preview query in the background (cheap; same live query the
+    // PM page already runs on every mount) whenever the Workbench doesn't yet
+    // have a cached result for the CURRENT fingerprint (a fresh session, or
+    // this exact model wasn't open before). Never fires for a Complete model
+    // (status === true is not part of "Trained"), never persists anything
+    // (`persistMeta: false` — the fingerprint didn't change), and never fires
+    // while a run for this model is already in flight.
+    useEffect(() => {
+        if (!activeModel || activeModel.status) return;
+        if (buildBlockReason(activeModel) !== null) return;
+        const fp = computeTrainFingerprint(activeModel, gateFg);
+        if (!activeModel.lastTrainedAt || activeModel.trainedFingerprint !== fp) return;
+        const cached = trainResults[activeModel.id];
+        if (cached && cached.fingerprint === fp) return;
+        if (trainStatus[activeModel.id] === 'loading') return;
+        void executeTrain(activeModel, fp, { persistMeta: false });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed]);
+
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
     }
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
-    const sensorGroupsAll = allSensorGroups(allModels);
-    const fullSensorMap = new Map(sensorGroupsAll.map(sg => [sg.key, sg]));
     const totalModelsCount = allModels.length;
     const completeModelsCount = allModels.filter(m => m.status).length;
 
@@ -804,16 +1279,26 @@ export default function BuildModelWindow() {
                     <div className="f4-sr-tag">{keyTag}</div>
                 </div>
                 <div className="f4-kinds">
-                    {ordered.map(m => (
-                        <span
-                            key={m.id}
-                            data-testid={`sensor-kind-badge-${m.id}`}
-                            className={`f4-kb model-kind-icon--${m.kind}`}
-                            title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : 'Incomplete'}`}
-                        >
-                            {KIND_ABBREV[m.kind]}
-                        </span>
-                    ))}
+                    {ordered.map(m => {
+                        // Phase B status dot in the badge's corner: no dot =
+                        // never trained, blue = Trained (not stale, not
+                        // Complete), green = Complete. Stale reads as "no
+                        // dot" here (same as the pill) — the badge is just a
+                        // glance, the detail pane's own results area is
+                        // where "Settings changed" actually shows.
+                        const dot = m.status ? 'complete' : isModelTrainedFresh(m) ? 'trained' : null;
+                        return (
+                            <span
+                                key={m.id}
+                                data-testid={`sensor-kind-badge-${m.id}`}
+                                className={`f4-kb model-kind-icon--${m.kind}`}
+                                title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : dot === 'trained' ? 'Trained' : 'Incomplete'}`}
+                            >
+                                {KIND_ABBREV[m.kind]}
+                                {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
+                            </span>
+                        );
+                    })}
                 </div>
             </div>
         );
@@ -863,10 +1348,9 @@ export default function BuildModelWindow() {
         });
     };
 
-    // ---- Detail pane (Phase A) ----
-    const detailModels = selectedSensorKey !== null ? (fullSensorMap.get(selectedSensorKey)?.models ?? []) : [];
-    const orderedDetail = KIND_ORDER.flatMap(k => detailModels.filter(m => m.kind === k));
-    const activeModel = orderedDetail.find(m => m.id === activeTab[selectedSensorKey ?? '']) ?? orderedDetail[0];
+    // ---- Detail pane (Phase A) ---- `detailModels`/`orderedDetail`/
+    // `activeModel` are computed above (before the `if (loading)` guard —
+    // every hook needs them, see the comment there); reused here as-is.
 
     const renderModelSettingsFields = (m: FailureModel, d: ModelDraft) => (
         <>
@@ -1065,22 +1549,227 @@ export default function BuildModelWindow() {
         );
     };
 
-    const renderResultsStage = (m: FailureModel) => (
-        <div className="bmw-stage">
-            <div className="bmw-stage-empty" data-testid="results-placeholder">
-                {m.status ? 'Marked complete — open full view to see the chart.' : 'Not trained yet'}
+    /** The Phase-B chart+toolbar for a Trained-and-fresh model's cached
+     *  result — legend on the left, numeric readouts on the right, ⤢ expand.
+     *  Reuses the PM page's own `.pm-chart-card`/`.pm-chart-header`/
+     *  `.pm-legend-*`/`.pm-stats-*` classes (see PredictiveModelBuild.tsx)
+     *  rather than inventing a parallel set, composed into the "toolbar
+     *  above the chart" shape the SPEC FINAL results-area asks for. `expanded`
+     *  renders the chart alone (no card chrome) for the ⤢ modal. */
+    const renderResultChart = (m: FailureModel, entry: TrainCacheEntry, expanded = false) => {
+        if (entry.result.kind === 'individual') {
+            const s = entry.result.stats;
+            const hasChartData = (individualChartView?.timestamps.length ?? 0) > 0;
+            const markLines: ChartMarkLine[] = [
+                { sensor: m.targetSensor, y: s.mean, label: 'Mean', color: '#f1f5f9', lineStyle: 'solid' },
+                { sensor: m.targetSensor, y: s.upper1, label: '+1σ', color: '#f59e0b', lineStyle: 'solid' },
+                { sensor: m.targetSensor, y: s.lower1, label: '−1σ', color: '#f59e0b', lineStyle: 'solid' },
+                { sensor: m.targetSensor, y: s.upper3, label: '+3σ', color: '#f43f5e', lineStyle: 'dashed' },
+                { sensor: m.targetSensor, y: s.lower3, label: '−3σ', color: '#f43f5e', lineStyle: 'dashed' },
+            ];
+            return !hasChartData ? (
+                <div className="plot-placeholder pm-chart-placeholder"><Activity size={40} style={{ opacity: 0.2 }} aria-hidden="true" /><p>No data available for {m.targetSensor}</p></div>
+            ) : (
+                <LineChart
+                    data={EMPTY_RECORDS}
+                    columnar={{ timestamps: individualChartView!.timestamps, series: individualChartView!.series }}
+                    sensors={[m.targetSensor]}
+                    headers={individualChartView!.headers.length ? individualChartView!.headers : [m.targetSensor]}
+                    markLines={markLines}
+                    hideYSplitLine
+                />
+            );
+        }
+        if (entry.result.kind === 'relationship') {
+            const option = buildRelScatterOption(entry.result.result, entry.result.predictorsAtApply, m.targetSensor);
+            return option ? (
+                <ResponsiveECharts option={option} style={{ minHeight: expanded ? '100%' : '200px', height: expanded ? '100%' : undefined }} />
+            ) : (
+                <div className="plot-placeholder pm-chart-placeholder"><GitBranch size={40} style={{ opacity: 0.2 }} aria-hidden="true" /><p>No chart data</p></div>
+            );
+        }
+        const option = buildClusteringScatterOption(entry.result.preview);
+        return option ? (
+            <ResponsiveECharts option={option} style={{ minHeight: expanded ? '100%' : '200px', height: expanded ? '100%' : undefined }} />
+        ) : (
+            <div className="plot-placeholder pm-chart-placeholder"><Layers size={40} style={{ opacity: 0.2 }} aria-hidden="true" /><p>No chart data</p></div>
+        );
+    };
+
+    const renderResultToolbar = (m: FailureModel, entry: TrainCacheEntry) => {
+        if (entry.result.kind === 'individual') {
+            const s = entry.result.stats;
+            return (
+                <>
+                    <div className="pm-chart-legend">
+                        <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-accent" />Target</span>
+                        <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-warn" />±1σ</span>
+                        <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-danger pm-legend-dashed" />±3σ</span>
+                    </div>
+                    <div className="pm-stats-strip bmw-result-stats">
+                        <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{s.count.toLocaleString()}</span></div>
+                        <div className="pm-stats-item"><span className="pm-stats-label">Mean</span><span className="pm-stats-value">{s.mean.toFixed(3)}</span></div>
+                        <div className="pm-stats-item"><span className="pm-stats-label">1σ</span><span className="pm-stats-value">{s.lower1.toFixed(3)} – {s.upper1.toFixed(3)}</span></div>
+                        <div className="pm-stats-item"><span className="pm-stats-label">3σ</span><span className="pm-stats-value pm-stats-warn">{s.lower3.toFixed(3)} – {s.upper3.toFixed(3)}</span></div>
+                    </div>
+                </>
+            );
+        }
+        if (entry.result.kind === 'relationship') {
+            const r = entry.result.result;
+            const r2 = r.r2_per_step.length ? r.r2_per_step[r.r2_per_step.length - 1] : null;
+            const rmse2 = r.rmse2_per_step.length ? r.rmse2_per_step[r.rmse2_per_step.length - 1] : null;
+            return (
+                <>
+                    <div className="pm-chart-legend">
+                        <span className="pm-legend-dot"><span className="pm-legend-line" style={{ background: '#3b82f6' }} />Raw</span>
+                        <span className="pm-legend-dot"><span className="pm-legend-line" style={{ background: '#f43f5e' }} />Model</span>
+                    </div>
+                    <div className="pm-stats-strip bmw-result-stats">
+                        <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{r.predicted.length.toLocaleString()}</span></div>
+                        <div className="pm-stats-item"><span className="pm-stats-label">R²</span><span className="pm-stats-value">{r2 !== null ? r2.toFixed(4) : '—'}</span></div>
+                        <div className="pm-stats-item"><span className="pm-stats-label">2×RMSE</span><span className="pm-stats-value">{rmse2 !== null ? rmse2.toFixed(4) : '—'}</span></div>
+                        <div className="pm-stats-item"><span className="pm-stats-label">Stiffness</span><span className="pm-stats-value">{stiffnessLabel(m.relStiffness)}</span></div>
+                    </div>
+                </>
+            );
+        }
+        const preview = entry.result.preview;
+        const shares = preview.clusters.length > 1 ? (() => {
+            const sizes = preview.clusters.map(c => c.n_rows);
+            const total = sizes.reduce((a, b) => a + b, 0) || 1;
+            return { largest: Math.max(...sizes) / total * 100, smallest: Math.min(...sizes) / total * 100 };
+        })() : null;
+        return (
+            <>
+                <div className="pm-chart-legend">
+                    {preview.clusters.map((c, i) => (
+                        <span key={c.cluster_id} className="pm-legend-dot">
+                            <span className="pm-legend-line" style={{ background: CLUSTER_PALETTE[i % CLUSTER_PALETTE.length] }} />
+                            {preview.clusters.length === 1 ? 'Data' : `Cluster ${c.cluster_id}`}
+                        </span>
+                    ))}
+                </div>
+                <div className="pm-stats-strip bmw-result-stats">
+                    <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{preview.n_rows.toLocaleString()}</span></div>
+                    <div className="pm-stats-item"><span className="pm-stats-label">Clusters</span><span className="pm-stats-value">{preview.cluster_count}</span></div>
+                    {shares && (
+                        <div className="pm-stats-item"><span className="pm-stats-label">Largest / smallest</span><span className="pm-stats-value">{shares.largest.toFixed(0)}% / {shares.smallest.toFixed(0)}%</span></div>
+                    )}
+                </div>
+            </>
+        );
+    };
+
+    /** Results area state machine (SPEC FINAL, results-area rule 5):
+     *  Complete -> unchanged Phase-A placeholder · incomplete config/gate ->
+     *  "N items to fix" list with jump-to-field links (reuses `missingItems`'
+     *  wording) · running -> progress · Trained-and-fresh -> chart+toolbar ·
+     *  stale -> "Settings changed" · never trained -> "Not trained yet". */
+    const renderResultsStage = (m: FailureModel) => {
+        if (m.status) {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-placeholder">
+                        Marked complete — open full view to see the chart.
+                    </div>
+                </div>
+            );
+        }
+        const reason = buildBlockReason(m);
+        if (reason !== null) {
+            const items = incompleteItems(m);
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-incomplete" style={{ textAlign: 'left', alignItems: 'flex-start' }}>
+                        <div style={{ fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            {items.length} item{items.length === 1 ? '' : 's'} to fix before training
+                        </div>
+                        <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                            {items.map((it, i) => (
+                                <li key={i}>
+                                    <button type="button" className="bmw-fix-link" onClick={it.onClick}>{it.text}</button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            );
+        }
+        if (trainStatus[m.id] === 'loading') {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-loading">
+                        <Loader2 size={20} className="pm-spin" aria-hidden="true" /> Running…
+                    </div>
+                </div>
+            );
+        }
+        const err = trainError[m.id];
+        if (err) {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-error" style={{ color: 'var(--warn)' }}>
+                        Couldn't compute the preview: {err}
+                    </div>
+                </div>
+            );
+        }
+        if (!m.lastTrainedAt) {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-placeholder">Not trained yet</div>
+                </div>
+            );
+        }
+        if (isModelStale(m)) {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-stale">Settings changed — re-train to see the result.</div>
+                </div>
+            );
+        }
+        const entry = trainResults[m.id];
+        if (!entry) {
+            // Trained-and-fresh per the workspace's persisted fields, but the
+            // auto-recompute effect hasn't landed its first result in THIS
+            // session yet.
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-loading">
+                        <Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading the last result…
+                    </div>
+                </div>
+            );
+        }
+        return (
+            <div className="bmw-stage" style={{ flexDirection: 'column', gap: '10px' }}>
+                <div className="pm-chart-card" style={{ flex: 1, minHeight: 0 }} data-testid="results-chart">
+                    <div className="pm-chart-header">
+                        {renderResultToolbar(m, entry)}
+                        <button type="button" className="pm-chart-expand-btn" onClick={() => setResultExpanded(true)} title="Expand chart" aria-label="Expand chart">
+                            <Maximize2 size={14} />
+                        </button>
+                    </div>
+                    <div className="pm-chart-body">{renderResultChart(m, entry)}</div>
+                </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     const renderFooter = (m: FailureModel) => {
         const saveReason = modelBlockReason(m);
         const reason = buildBlockReason(m);
         const cat = categoryOf(m);
+        const trainedFresh = isModelTrainedFresh(m);
+        const stale = isModelStale(m);
+        const training = trainStatus[m.id] === 'loading';
+        const pillState: 'complete' | 'trained' | 'incomplete' = m.status ? 'complete' : trainedFresh ? 'trained' : 'incomplete';
+        const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
         return (
             <div className="f4-foot">
-                <span className={`model-status-pill model-status-pill--${m.status ? 'complete' : 'incomplete'}`} style={{ cursor: 'default' }}>
-                    {m.status ? 'Complete' : 'Incomplete'}
+                <span className={`model-status-pill model-status-pill--${pillState}`} style={{ cursor: 'default' }}>
+                    {pillLabel}
                 </span>
                 {reason ? (
                     <span data-testid="build-block-reason" className="f4-foot-reason f4-foot-reason--block">
@@ -1089,6 +1778,14 @@ export default function BuildModelWindow() {
                     </span>
                 ) : m.id in drafts ? (
                     <span data-testid="footer-status" className="f4-foot-reason">Unsaved changes to the {KIND_LABEL[m.kind]} model</span>
+                ) : m.status ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">
+                        {m.lastTrainedAt ? `Last trained ${formatTrainedAt(m.lastTrainedAt)}` : `${KIND_LABEL[m.kind]}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`}
+                    </span>
+                ) : trainedFresh ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">Check the chart, then mark it complete</span>
+                ) : stale ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">Settings changed — re-train</span>
                 ) : (
                     <span data-testid="footer-status" className="f4-foot-reason">{KIND_LABEL[m.kind]}{cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}</span>
                 )}
@@ -1104,6 +1801,24 @@ export default function BuildModelWindow() {
                 <button className="f4-btn-save" disabled={saveReason !== null} onClick={() => commitModel(m)}>
                     Save changes
                 </button>
+                {/* Train/Re-train — fixed position (SPEC FINAL footer rule 6): always
+                    this same slot, never moves around based on state. Nothing renders
+                    here at all once the model is Complete or Trained-and-fresh with no
+                    error — there is nothing further to do until settings change. A
+                    failed preview run (this session) still shows the button even
+                    though the persisted fields still say "fresh", so there's always a
+                    way to retry. */}
+                {!m.status && !(reason === null && trainedFresh && !training && !trainError[m.id]) && (
+                    <button
+                        type="button"
+                        className={reason !== null ? 'f4-btn f4-btn--plain f4-btn--small' : (stale || trainError[m.id]) ? 'bmw-btn-retrain bmw-btn-retrain--stale' : 'bmw-btn-retrain'}
+                        disabled={reason !== null || training}
+                        title={reason ?? undefined}
+                        onClick={() => runTrainClick(m)}
+                    >
+                        {training ? 'Training…' : (stale || trainError[m.id]) ? '↻ Re-train' : '▶ Train model'}
+                    </button>
+                )}
                 {m.status ? (
                     <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => toggleModelStatus(m.id)}>
                         Mark incomplete
@@ -1112,8 +1827,8 @@ export default function BuildModelWindow() {
                     <button
                         type="button"
                         className="bmw-btn-ok"
-                        disabled={gateReasonOf(m) !== null}
-                        title={gateReasonOf(m) ?? undefined}
+                        disabled={gateReasonOf(m) !== null || !trainedFresh}
+                        title={gateReasonOf(m) ?? (!trainedFresh ? 'Train the model and check the result first.' : undefined)}
                         onClick={() => toggleModelStatus(m.id)}
                     >
                         ✓ Mark complete
@@ -1455,6 +2170,28 @@ export default function BuildModelWindow() {
                             getDesc={getDesc}
                             getComponent={getComponent}
                         />
+                    </div>
+                </div>
+            )}
+
+            {/* Expand the active model's result chart — mirrors the PM page's
+                own `expandedChart` modal (same classes/shape), scoped to
+                whichever model the Workbench detail pane currently shows. */}
+            {resultExpanded && activeModel && trainResults[activeModel.id] && (
+                <div className="pm-chart-modal-backdrop" onClick={() => setResultExpanded(false)} role="dialog" aria-modal="true">
+                    <div className="pm-chart-modal-card" onClick={e => e.stopPropagation()}>
+                        <div className="pm-chart-modal-header">
+                            <div className="pm-chart-title-block">
+                                <div className="pm-chart-title">{KIND_LABEL[activeModel.kind]} result</div>
+                                <div className="pm-chart-subtitle">{modelDisplayLabel(activeModel)}</div>
+                            </div>
+                            <button className="pm-chart-modal-close" onClick={() => setResultExpanded(false)} title="Close (Esc)" aria-label="Close">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="pm-chart-modal-body">
+                            {renderResultChart(activeModel, trainResults[activeModel.id]!, true)}
+                        </div>
                     </div>
                 </div>
             )}

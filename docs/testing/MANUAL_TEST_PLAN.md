@@ -1,10 +1,10 @@
 # Wizard — Manual Test Plan
 
-> 249 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่
+> 251 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) — จุดสถานะในแท็บ Failure Groups ของ Dashboard (Phase C) ยังไม่ได้ทำ
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
-> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
+> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23, BMW-41, BMW-42) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
 >
 > เครื่องหมาย: 🆕 = ของที่เพิ่งทำ ยังไม่เคยมีคนกดจริง · 👀 = บั๊กที่เพิ่งแก้ หรือรายงานที่ยังไม่เคยตามไปดู · 🐍 = path เดียวที่เรียก Python sidecar
 
@@ -26,7 +26,7 @@
 - [MNG — Manage — ลบ special sensor](#mng) (15 ข้อ)
 - [EDT — Manage — แก้ไข special sensor](#edt) (27 ข้อ)
 - [FG — แท็บ Failure Groups](#fg) (8 ข้อ)
-- [BMW — หน้าต่าง Build Model](#bmw) (27 ข้อ)
+- [BMW — หน้าต่าง Build Model](#bmw) (29 ข้อ)
 - [PM — Predictive Model Build](#pm) (14 ข้อ)
 - [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (7 ข้อ)
 - [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (8 ข้อ)
@@ -1052,16 +1052,30 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ทุกชนิด: ดูสวิตช์ "Training data: Workspace | Custom" ท้ายฟอร์ม แล้วสลับแล้วกด Save changes
   - **คาดหวัง:** เลือก Stiffness/จำนวน cluster ได้ ค่าอยู่หลัง Save — สวิตช์ Workspace/Custom **แค่บันทึกโหมดเฉยๆ ในหน้านี้** (ยังไม่มีที่แก้ราย เงื่อนไข/ช่วงเวลาของ Custom ที่นี่ — ต้องไปแก้ที่หน้า PM เต็ม ผ่านปุ่ม "Open full view ↗" — ดู PM-27)
 
-- [ ] **BMW-41 — พื้นที่ผลลัพธ์ (ยังเป็น placeholder เฉยๆ ใน Phase A นี้)** 🆕
-  - เลือกโมเดลที่ยัง Incomplete
-  - มาร์กโมเดลหนึ่งเป็น Complete (ผ่านปุ่ม "✓ Mark complete")
-  - **คาดหวัง:** โมเดล Incomplete แสดงข้อความ "Not trained yet" กลางกรอบเส้นประ — โมเดล Complete แสดง "Marked complete — open full view to see the chart." — **ยังไม่มีกราฟ ตัวเลข หรือปุ่ม Train ใดๆ ที่นี่** (มากับ Phase B — อย่ารายงานว่าเป็นบั๊ก)
+- [ ] **BMW-43 — พื้นที่ผลลัพธ์: Train แล้วเห็นกราฟจริง (Phase B — เดิม BMW-41 เป็นแค่ placeholder)** 🆕
+  - เลือกโมเดล Individual ที่ตั้งค่าครบ (ยังไม่เคย Train) — ดูข้อความ "Not trained yet"
+  - กด "▶ Train model" ที่ footer — ระหว่างรอ ดูข้อความ "Running…"
+  - หลัง Train เสร็จ ดูกราฟ time series + เส้น Mean/±1σ/±3σ, แถบเล็กเหนือกราฟมี legend ซ้าย + ตัวเลข Rows/Mean/1σ/3σ ขวา + ปุ่ม ⤢
+  - ทำซ้ำกับโมเดล Relationship (ดู scatter Raw vs Model + R²/2×RMSE/Stiffness) และ Clustering (ดู scatter+วงรี σ + Rows/Clusters)
+  - กด ⤢ ดูกราฟขยายเต็มจอ แล้วปิดด้วย Esc หรือปุ่ม X
+  - ลองปิดโปรแกรมแล้วเปิดใหม่ ตั้งค่าโมเดลให้ไม่ครบ (เช่น ลบ predictor ของ Relationship ออกจนเหลือ 0) — ดูพื้นที่ผลลัพธ์เปลี่ยนเป็นลิสต์ "N items to fix before training" แต่ละบรรทัดกดได้ (พาไปเปิด Model settings หรือแผง Running Condition ตามเหตุผล)
+  - **คาดหวัง:** กราฟ/ตัวเลขแสดงเฉพาะผลจาก Train ล่าสุดที่ตรงกับค่าปัจจุบันเท่านั้น — ตั้งค่าไม่ครบ (รวมทั้งเหตุผล Running Condition gate) ต้องไม่โชว์กราฟเก่า ต้องโชว์ลิสต์สิ่งที่ต้องแก้แทน — Train **ไม่เขียนไฟล์ใดๆ** (พรีวิวอย่างเดียว เหมือนหน้า PM)
 
-- [ ] **BMW-42 — Footer: ป้ายสถานะอ่านอย่างเดียว + "Open full view ↗" + "Save changes" + "✓ Mark complete"/"Mark incomplete" (แทนป้ายสถานะที่กดสลับได้เองแบบเดิม)** 🆕
-  - ดู footer ของโมเดลที่เลือก: ป้าย Incomplete/Complete ทางซ้าย, ข้อความสถานะ, ปุ่ม 3 ปุ่มทางขวา
-  - ลองกดป้ายสถานะเอง (ควรกดไม่ติดเพราะไม่ใช่ปุ่มแล้ว)
-  - กด "✓ Mark complete" แล้วดูป้าย/ปุ่มเปลี่ยนเป็น "Mark incomplete"
-  - **คาดหวัง:** ป้ายสถานะเป็นข้อความอ่านอย่างเดียว (ไม่ใช่ปุ่ม) — การสลับ Complete/Incomplete ทำผ่าน**ปุ่มแยกต่างหาก**เท่านั้น ("✓ Mark complete" กดไม่ได้พร้อม tooltip เหตุผลถ้ายังติด Running Condition gate — ดู BMW-33 — ส่วน "Mark incomplete" กดได้เสมอ) — "Open full view ↗" = ปุ่มเดิมที่เคยชื่อ "Build Model →" (commit ฟอร์มอัตโนมัติก่อน navigate ไปหน้า PM เหมือนเดิมทุกอย่าง — ดู BMW-8/BMW-10) — "Save changes" ทำงานเหมือนเดิมทุกอย่าง
+- [ ] **BMW-44 — Footer: ป้ายสถานะ 3 แบบ (Incomplete/Trained/Complete) + ปุ่ม Train/Re-train ตำแหน่งตายตัว + Mark complete ต้อง Trained ก่อน (Phase B — เดิม BMW-42 มีแค่ 2 ป้าย ไม่มีปุ่ม Train)** 🆕
+  - เลือกโมเดลที่ตั้งค่าไม่ครบ — ดูปุ่ม "▶ Train model" เป็นสีเทา กดไม่ได้ พร้อม tooltip บอกเหตุผล
+  - ตั้งค่าให้ครบแล้ว Train สำเร็จ — ดูป้ายสถานะเปลี่ยนเป็น "Trained" (สีฟ้า) ปุ่ม Train หายไป เหลือแต่ "✓ Mark complete" ที่กดติดแล้ว ข้อความ footer เป็น "Check the chart, then mark it complete"
+  - แก้ค่าตั้งค่าโมเดล (เช่น เปลี่ยน predictor) แล้ว Save — ดูป้ายกลับเป็น "Incomplete" ปุ่มกลายเป็น "↻ Re-train" (เด่น) ข้อความ footer เป็น "Settings changed — re-train"
+  - กด "✓ Mark complete" — ดูป้ายเป็น "Complete" (เขียว) ข้อความ footer เป็น "Last trained <วันเวลา>"
+  - **คาดหวัง:** ก่อน Train (แม้ตั้งค่าครบ) "✓ Mark complete" ต้องกดไม่ติด พร้อม tooltip บอกให้ Train ก่อน — ปุ่ม Train/Re-train อยู่ตำแหน่งเดิมเสมอไม่ขยับ — "Open full view ↗"/"Save changes" ทำงานเหมือนเดิมทุกอย่าง (ดู BMW-8/BMW-10) — "Mark incomplete" กดได้เสมอเมื่อ Complete แล้ว
+
+- [ ] **BMW-45 — เปิดโมเดลที่เคย Train ไว้แล้วซ้ำ (ปิดโปรแกรม/สลับ sensor แล้วกลับมา) ต้องเห็นกราฟทันทีไม่ต้องกด Train ใหม่** 🆕
+  - Train โมเดลหนึ่งจนเห็นกราฟ แล้วสลับไปดู sensor อื่นในลิสต์ซ้าย จากนั้นสลับกลับมาที่โมเดลเดิม
+  - ปิดหน้าต่าง Build Model ทั้งหมด (หรือปิดทั้งแอป) แล้วเปิดใหม่ กลับมาเลือกโมเดลเดิมอีกครั้ง
+  - **คาดหวัง:** ทั้งสองกรณีเห็นกราฟทันที (คำนวณใหม่เงียบๆ เบื้องหลัง ไม่ต้องกดปุ่มใดๆ) ตราบใดที่ยังไม่แก้ค่าตั้งค่าอะไรหลัง Train ครั้งล่าสุด — ถ้าโมเดลถูกมาร์ก Complete แล้ว จะไม่คำนวณซ้ำอัตโนมัติ (โชว์ "Marked complete — open full view to see the chart." เหมือนเดิม)
+
+- [ ] **BMW-46 — จุดสถานะเล็กที่มุมป้าย I/R/C ในลิสต์ซ้าย (ไม่มีจุด/ฟ้า/เขียว)** 🆕
+  - ดูโมเดลที่ยังไม่เคย Train, โมเดลที่ Train แล้ว (Trained), และโมเดลที่ Complete ในลิสต์ซ้าย
+  - **คาดหวัง:** ยังไม่เคย Train = ไม่มีจุดสี, Trained (ไม่ Complete) = จุดสีฟ้าที่มุมป้าย, Complete = จุดสีเขียว — จุดนี้อยู่แค่ในหน้าต่าง Build Model เท่านั้น (แท็บ Failure Groups ของ Dashboard ยังไม่มีจุดนี้ — เป็น Phase C แยกต่างหาก)
 
 - [ ] **BMW-8 — กด "Open full view ↗" แล้วค่าที่เพิ่งแก้ (ยังไม่ได้กด Save) ต้องถูกบันทึกด้วย**
   - เปิดโมเดลตัวหนึ่งที่ข้อมูลครบอยู่แล้ว (กาง Model settings ถ้าพับอยู่)

@@ -4037,6 +4037,14 @@ body {
     color: var(--text-faint);
 }
 
+/* Build Model Workbench Phase B: third pill state, between Incomplete and
+   Complete -- a preview ran successfully and is still current (not stale),
+   but the model hasn't been marked Complete yet. */
+.model-status-pill--trained {
+    background: var(--accent-muted);
+    color: var(--accent-hi);
+}
+
 .model-open-pm {
     font-size: 0.76rem;
     color: var(--accent-hi);
@@ -4265,6 +4273,14 @@ body {
 .f4-sr-tag { font-family: var(--mono); font-size: 0.7rem; color: var(--text-secondary); flex-shrink: 0; }
 .f4-kinds { display: flex; gap: 4px; }
 .f4-kb { position: relative; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 0.62rem; font-weight: 700; flex-shrink: 0; }
+/* Build Model Workbench Phase B: small status dot in the kind badge's
+   corner (left sensor list only) -- no dot = never trained, blue = Trained
+   (not stale, not Complete), green = Complete. `.f4-kb` is already
+   `position: relative`, so this is a plain absolutely-positioned corner dot,
+   not the mis-scoped `.sensor-autocomplete-icon` mistake from earlier. */
+.f4-kb-dot { position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--card-bg); }
+.f4-kb-dot--trained { background: var(--accent-hi); }
+.f4-kb-dot--complete { background: var(--ok); }
 .f4-catseg { display: inline-flex; align-items: center; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 7px; padding: 2px; gap: 2px; }
 .f4-catseg button { font-size: 0.7rem; font-weight: 500; padding: 4px 10px; border-radius: 5px; border: 1px solid transparent; background: none; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .f4-catseg button:hover { color: var(--text-primary); }
@@ -4385,8 +4401,23 @@ body {
 
 .bmw-stage { flex: 1; min-height: 120px; padding: 16px 20px; display: flex; }
 .bmw-stage-empty { flex: 1; border: 1px dashed var(--border-strong); border-radius: 10px; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--text-faint); font-size: 0.78rem; }
+.bmw-stage-empty svg { margin: 0 auto 6px; display: block; }
 .bmw-btn-ok { font-size: 0.76rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 0; background: var(--ok); color: #04130a; cursor: pointer; white-space: nowrap; }
 .bmw-btn-ok:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Build Model Workbench Phase B: Train/Re-train (footer, fixed slot) and the
+   "N items to fix" links inside the results area's incomplete-config state. */
+.bmw-btn-retrain { font-size: 0.76rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 0; background: var(--accent-color); color: #06111f; cursor: pointer; white-space: nowrap; }
+.bmw-btn-retrain:hover { background: var(--accent-hi); }
+.bmw-btn-retrain:disabled { opacity: 0.4; cursor: not-allowed; }
+.bmw-btn-retrain--stale { background: var(--warn); color: #241a02; }
+.bmw-fix-link { background: none; border: 0; padding: 0; margin: 0; color: var(--warn); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.76rem; text-align: left; }
+.bmw-fix-link:hover { color: var(--text-primary); }
+/* Results area's Trained-and-fresh toolbar: reuses `.pm-stats-strip`'s
+   label/value styling but drops its own box chrome -- it sits inline next to
+   the legend inside `.pm-chart-header`, not as a separate boxed strip below
+   the chart the way PredictiveModelBuild.tsx's own stats strip does. */
+.bmw-result-stats { background: none; border: 0; padding: 0; gap: 16px; }
 
 .bmw-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; z-index: 50; padding: 20px; }
 .bmw-modal { width: min(720px, 100%); max-height: 85vh; overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }

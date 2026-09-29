@@ -37,6 +37,25 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
 }));
 
+// Build Model Workbench Phase B (Train in place) — same mocking pattern
+// PredictiveModelBuild.test.tsx already uses for the three preview commands
+// and the chart components they feed.
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+    invoke: (cmd: string, args?: unknown) => mockInvoke(cmd, args),
+}));
+
+const mockUseChartData = vi.fn();
+vi.mock('../hooks/useChartData', () => ({ useChartData: (q: unknown) => mockUseChartData(q) }));
+
+const lineChartProps: any[] = [];
+vi.mock('../components/charts/LineChart', () => ({
+    default: (props: any) => { lineChartProps.push(props); return <div data-testid="line-chart-mock" />; },
+}));
+vi.mock('../components/charts/ResponsiveECharts', () => ({
+    default: (props: any) => <div data-testid="echarts-mock" data-series-count={props.option?.series?.length ?? 0} />,
+}));
+
 // PredictiveModelBuild is a large, heavy component with its own dedicated
 // test file (PredictiveModelBuild.test.tsx) — stub it here so
 // BuildModelWindow's tests only need to assert the page-navigation wiring
@@ -83,6 +102,7 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
 }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
+import { computeTrainFingerprint } from '../utils/trainFingerprint';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 
@@ -110,6 +130,52 @@ function makeModel(overrides: Record<string, any> = {}) {
         runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
         ...overrides,
     };
+}
+
+/** Seeds a model as Trained-and-fresh (Phase B) — `lastTrainedAt` set plus a
+ *  `trainedFingerprint` computed the same way the real component does, so
+ *  `isModelTrainedFresh` reads true against whatever workspace shape the
+ *  test delivers `model` into. `fg` must match the OTHER failureGroupState
+ *  fields (`runningConditionFilters`/combine/periods/noneConfirmed) the test
+ *  actually delivers, since the fingerprint folds those in too — tests that
+ *  don't override the running-condition defaults can rely on the default
+ *  shown here (matches `deliverData`'s own fixture normalization: `and`
+ *  combine, no filters/periods, "No condition" confirmed). */
+function withTrained(model: Record<string, any>, fg: Record<string, any> = {
+    models: [model], runningConditionFilters: [], runningConditionCombine: 'and',
+    runningConditionTimePeriods: [], runningConditionNoneConfirmed: true,
+}) {
+    return {
+        ...model,
+        lastTrainedAt: '2026-09-29T03:00:00.000Z',
+        trainedFingerprint: computeTrainFingerprint(model as any, fg as any),
+    };
+}
+
+/** The default `mockUpdateWorkspaceData` implementation (see `beforeEach`)
+ *  always patches the SAME hard-coded, unchanging `prev` snapshot — fine for
+ *  tests that only inspect ONE write's return value, but wrong for a test
+ *  whose model id/kind doesn't match that hard-coded default AND that then
+ *  re-renders off a SECOND write (e.g. runTrainClick's commit-then-train,
+ *  two persist calls back to back): each call would independently start
+ *  from the same stale snapshot instead of building on the previous write.
+ *  This variant threads real state through repeated calls, like the
+ *  hand-rolled overrides a few existing tests already use (e.g. "a Complete
+ *  model shows Mark incomplete instead" below) — factored out since Phase B
+ *  needs it more than once. */
+function statefulUpdateMock(models: any[], extra: Record<string, any> = {}) {
+    let ws: any = {
+        id: 'ws1',
+        failureGroupState: {
+            groups: [makeGroup()], models,
+            runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [],
+            ...extra,
+        },
+    };
+    mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
+        ws = patch(ws);
+        return ws;
+    });
 }
 
 async function deliverData(overrides: Record<string, any> = {}) {
@@ -166,6 +232,7 @@ beforeEach(() => {
     listenCallbacks = {};
     predictiveModelBuildProps.length = 0;
     sensorPickerModalProps.length = 0;
+    lineChartProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
@@ -175,6 +242,26 @@ beforeEach(() => {
         return patch(prev);
     });
     mockLoadWorkspaceData.mockReset();
+    mockInvoke.mockReset().mockImplementation((cmd: string) => {
+        if (cmd === 'compute_sensor_stats') {
+            return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+        }
+        if (cmd === 'preview_relationship_model') {
+            return Promise.resolve({
+                request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
+                predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1], [2], [3]],
+            });
+        }
+        if (cmd === 'compute_clustering_preview') {
+            return Promise.resolve({
+                first_sensor: 'TAG1', second_sensor: 'TAG2', criteria_sensor: null, cluster_count: 1, n_rows: 3,
+                clusters: [{ cluster_id: 1, range: null, n_rows: 3, ellipse: { x_center: 1, y_center: 1, x_sd: 1, y_sd: 1, angle_deg: 0 }, xs: [1, 2, 3], ys: [1, 2, 3] }],
+            });
+        }
+        return Promise.resolve({});
+    });
+    mockUseChartData.mockReset().mockReturnValue({ view: null, loading: false, error: null });
 });
 
 afterEach(() => {
@@ -519,17 +606,185 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
     });
 
-    describe('results area (Phase A placeholder only)', () => {
-        it('shows "Not trained yet" for an incomplete model', async () => {
+    describe('results area', () => {
+        it('shows "Not trained yet" for a fully-configured model that has never been trained', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
         });
 
-        it('shows a "marked complete" message once the model is Complete', async () => {
+        it('shows a "marked complete" message once the model is Complete (chart never shows for a Complete model)', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
             expect(screen.getByTestId('results-placeholder').textContent).toMatch(/Marked complete/);
+        });
+
+        it('shows an "N items to fix" list for a model missing its own settings, with a link that opens Model settings', async () => {
+            const rel = makeModel({ kind: 'relationship', targetSensor: 'TAG1', predictorSensors: [] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            expect(screen.getByTestId('results-incomplete').textContent).toMatch(/1 item to fix before training/);
+            expect(screen.queryByTestId('add-model-form')).toBeTruthy(); // already open (incomplete auto-expands)
+            fireEvent.click(screen.getByText('Model settings')); // collapse it
+            expect(screen.queryByTestId('add-model-form')).toBeNull();
+            fireEvent.click(screen.getByText('Add at least 1 predictor'));
+            expect(screen.getByTestId('add-model-form')).toBeTruthy(); // link re-opened it
+        });
+
+        it('shows the running-condition gate reason in the "N items to fix" list, with a link that opens the Running Condition modal', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false } });
+            expect(screen.getByTestId('results-incomplete').textContent).toMatch(/1 item to fix before training/);
+            fireEvent.click(screen.getByText('Set a running condition first, or choose "No condition — use all rows".', { selector: '.bmw-fix-link' }));
+            expect(screen.getByRole('dialog', { name: 'Running Condition Filter' })).toBeTruthy();
+        });
+
+        it('runs compute_sensor_stats on "▶ Train model", shows the chart+toolbar, and persists lastTrainedAt/trainedFingerprint', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            await act(async () => {
+                fireEvent.click(screen.getByText('▶ Train model'));
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.objectContaining({ sensor: 'TAG1', filter: null }));
+            const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.models[0].lastTrainedAt).toBeTruthy();
+            expect(written.models[0].trainedFingerprint).toBeTruthy();
+            expect(screen.getByTestId('results-chart')).toBeTruthy();
+            expect(screen.getByText('Target')).toBeTruthy(); // legend
+            expect(screen.getByText('100')).toBeTruthy(); // Rows readout (mocked count)
+            // Nothing further to do — no Train button, only Mark complete.
+            expect(screen.queryByText('▶ Train model')).toBeNull();
+            expect((screen.getByText('✓ Mark complete') as HTMLButtonElement).disabled).toBe(false);
+            expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy();
+        });
+
+        it('runs preview_relationship_model for a Relationship model and shows R²/2×RMSE/Stiffness', async () => {
+            const rel = makeModel({ kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000 });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            statefulUpdateMock([rel]);
+            await act(async () => {
+                fireEvent.click(screen.getByText('▶ Train model'));
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            expect(mockInvoke).toHaveBeenCalledWith('preview_relationship_model', expect.objectContaining({ predictors: ['TAG2'], target: 'TAG1', lambda: 10_000 }));
+            expect(screen.getByTestId('echarts-mock')).toBeTruthy();
+            expect(screen.getByText('R²')).toBeTruthy();
+            expect(screen.getByText('2×RMSE')).toBeTruthy();
+            expect(screen.getByText('Loose')).toBeTruthy(); // stiffness label for 10_000
+        });
+
+        it('runs compute_clustering_preview for a Clustering model and shows Rows/Clusters', async () => {
+            const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 3 });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+            statefulUpdateMock([clu]);
+            await act(async () => {
+                fireEvent.click(screen.getByText('▶ Train model'));
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            expect(mockInvoke).toHaveBeenCalledWith('compute_clustering_preview', expect.objectContaining({ first_sensor: 'TAG1', second_sensor: 'TAG2' }));
+            expect(screen.getByTestId('echarts-mock')).toBeTruthy();
+            expect(screen.getByText('Clusters')).toBeTruthy();
+        });
+
+        it('commits an unsaved draft edit before training, so Train uses the just-edited settings', async () => {
+            const rel = makeModel({ kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            statefulUpdateMock([rel]);
+            openSettings();
+            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Edited before Train' } });
+            await act(async () => {
+                fireEvent.click(screen.getByText('▶ Train model'));
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            const results = mockUpdateWorkspaceData.mock.results;
+            const last = (await results[results.length - 1].value).failureGroupState.models[0];
+            expect(last.name).toBe('Edited before Train');
+            expect(last.lastTrainedAt).toBeTruthy();
+        });
+
+        it('going stale after a settings change: hides the chart, shows "Settings changed", and the footer button becomes "↻ Re-train"', async () => {
+            const trained = withTrained(makeModel());
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [{ ...trained, trainedFingerprint: 'stale-fingerprint-does-not-match' }] } });
+            await flush();
+            expect(screen.getByTestId('results-stale').textContent).toMatch(/Settings changed/);
+            expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy(); // pill reverts, "Trained" is only for fresh
+            expect(screen.getByText('↻ Re-train')).toBeTruthy();
+            expect(screen.getByText('Settings changed — re-train')).toBeTruthy(); // footer message
+            fireEvent.click(screen.getByText('↻ Re-train'));
+            await flush();
+            expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
+        });
+
+        it('shows an inline error and re-enables the button when the preview command rejects', async () => {
+            // Targeted rejection (not a blanket mockRejectedValueOnce) since
+            // `useDatasetTimeBounds` also calls `invoke` during mount — a
+            // once-rejection would land on THAT call instead of the Train
+            // click's `compute_sensor_stats`.
+            mockInvoke.mockImplementation((cmd: string) =>
+                cmd === 'compute_sensor_stats' ? Promise.reject(new Error('sidecar exploded')) : Promise.resolve({}));
+            render(<BuildModelWindow />);
+            await deliverData();
+            await act(async () => {
+                fireEvent.click(screen.getByText('▶ Train model'));
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            expect(screen.getByTestId('results-error').textContent).toMatch(/sidecar exploded/);
+            expect(screen.getByText('↻ Re-train')).toBeTruthy();
+        });
+
+        it('reopening an already-Trained-and-fresh model auto-recomputes and shows the chart with no click', async () => {
+            const trained = withTrained(makeModel());
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
+            expect(screen.getByTestId('results-chart')).toBeTruthy();
+            expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy();
+            // Nothing further to click — no Train button while fresh.
+            expect(screen.queryByText('▶ Train model')).toBeNull();
+            expect(screen.queryByText('↻ Re-train')).toBeNull();
+        });
+
+        it('never auto-recomputes a Complete model, even if its fingerprint still matches', async () => {
+            const trained = withTrained(makeModel({ status: true }));
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            expect(mockInvoke).not.toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
+            expect(screen.getByTestId('results-placeholder').textContent).toMatch(/Marked complete/);
+        });
+
+        it('"✓ Mark complete" is disabled until the model is Trained-and-fresh, even when the running-condition gate is satisfied', async () => {
+            render(<BuildModelWindow />);
+            await deliverData(); // fully configured, gate satisfied, but never trained
+            const markComplete = screen.getByText('✓ Mark complete') as HTMLButtonElement;
+            expect(markComplete.disabled).toBe(true);
+            expect(markComplete.title).toMatch(/Train the model/);
+        });
+    });
+
+    describe('left sensor list kind-badge status dot (Phase B)', () => {
+        it('shows no dot for a never-trained model, a blue dot for Trained, and a green dot for Complete', async () => {
+            const trained = withTrained(makeModel({ id: 'm-trained' }));
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
+            await flush();
+            expect(screen.getByTestId('sensor-kind-badge-dot-m-trained').className).toMatch(/f4-kb-dot--trained/);
+
+            cleanup();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'm-untrained' })] } });
+            expect(screen.queryByTestId('sensor-kind-badge-dot-m-untrained')).toBeNull();
+
+            cleanup();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'm-complete', status: true })] } });
+            expect(screen.getByTestId('sensor-kind-badge-dot-m-complete').className).toMatch(/f4-kb-dot--complete/);
         });
     });
 
@@ -584,7 +839,8 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
         it('"✓ Mark complete" / "Mark incomplete" reuse the same toggle as before, gated the same way', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()] }, runningConditionNoneConfirmed: true });
+            // Phase B: Mark complete also requires Trained-and-fresh now — seed that.
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [withTrained(makeModel())] }, runningConditionNoneConfirmed: true });
             fireEvent.click(screen.getByText('✓ Mark complete'));
             await flush();
             const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
@@ -815,7 +1071,8 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
         it('stamps every failure-group broadcast it sends with its workspace id', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
+            // Phase B: Mark complete also requires Trained-and-fresh now — seed that.
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [withTrained(makeModel())] } });
             fireEvent.click(screen.getByText('✓ Mark complete'));
             await flush();
             expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
@@ -985,7 +1242,8 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
         it('the toolbar\'s own Close button also awaits a pending write before calling the Tauri close API', async () => {
             render(<BuildModelWindow />);
-            await deliverData();
+            // Phase B: Mark complete also requires Trained-and-fresh now — seed that.
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [withTrained(makeModel())] } });
             let resolveUpdate!: (v: unknown) => void;
             mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
 

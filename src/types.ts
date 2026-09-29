@@ -213,6 +213,29 @@ export interface FailureModel extends PredictiveModelStateSlice {
     xSensor: string;
     /** Clustering only: the Y-axis sensor (acts as this model's "target"). */
     ySensor: string;
+    /** Build Model Workbench Phase B (2026-09-29 SPEC FINAL — see
+     *  `docs/PROJECT_HANDOVER.md`'s matching entry): ISO timestamp of the last
+     *  time this model's "Train" button ran the read-only preview computation
+     *  (`compute_sensor_stats` / `preview_relationship_model` /
+     *  `compute_clustering_preview`) — Phase B does NOT write any `*_INFO_*.json`
+     *  file, so this is not "trained" in the health-score sense, only "a preview
+     *  was computed and shown". `undefined` = never trained (or migrated from a
+     *  pre-Phase-B workspace — no back-write needed since `undefined` already
+     *  reads correctly as "never trained").
+     *
+     *  Both fields are optional and read together: "Trained" (the status pill,
+     *  distinct from "Complete") means `lastTrainedAt` is set AND
+     *  `trainedFingerprint === computeTrainFingerprint(model, fg)` (not stale)
+     *  AND `status !== true` — a `status: true` (Complete) model stays Complete
+     *  regardless of either field, per the spec ("Trained" only applies when
+     *  `status !== true`). See `src/utils/trainFingerprint.ts`. */
+    lastTrainedAt?: string;
+    /** Fingerprint of every input that would change the last preview run's
+     *  result — compare with a fresh `computeTrainFingerprint(model, fg)` call
+     *  to detect staleness (settings changed since the last Train click).
+     *  Produced by `computeTrainFingerprint` in `src/utils/trainFingerprint.ts`
+     *  — treat the string's shape as an implementation detail, never parse it. */
+    trainedFingerprint?: string;
 }
 
 export interface FailureGroupStateSlice {
