@@ -26,12 +26,15 @@ index.
    from the Dashboard's "Failure Groups" tab (create/rename/delete groups,
    assign sensors, track concept sensor / model type / notes / completion
    status per sensor), plus a quick-assign shortcut from the Sensor tab.
-4. **Predictive models** — train and export models per sensor, three ways:
+4. **Predictive models** — configure a model per sensor, three kinds:
    - **Individual** — per-sensor statistical boundaries (Rust).
    - **Clustering** — GMM ellipse fits split by a criteria sensor (Rust).
    - **Relationship** — sensor-to-sensor relationship model (Python sidecar,
      LinearGAM under the hood — surfaced in the UI as "Relation model" only).
-   - Results export to PNG reports.
+   - A model's Build page previews the fit against the configured Running
+     Condition and training time period(s); marking a model "Finish"/Complete
+     is a status flag today, not a trained-and-saved artifact — see
+     `CLAUDE.md`'s "Predictive models" section for the current state.
 5. **Workspaces** — every project (dataset selection, filters, chart
    settings, failure groups, model config) persists as a workspace you can
    reopen later from the Recent list.
@@ -53,7 +56,10 @@ Three tiers:
   Only invoked for that one model type.
 
 The app is multi-window: the main window (import → dashboard) plus secondary
-windows for Add Sensor, Predictive Model Build, and Save/Rename Workspace.
+OS windows for Add Sensor and Build Model (which hosts both the Failure
+Group overview and the Predictive Model Build page as an inline view, not a
+separate window). There is no standalone "Save As"/rename window — renaming
+a workspace happens inline on the Import page.
 
 ## Prerequisites
 
@@ -141,7 +147,7 @@ src/
 │  ├─ upload/              DataUploadPage (3-step: choose/create → name → upload+map)
 │  ├─ dashboard/           Dashboard, FailureGroupsPanel, SensorSelection, FilterPanel
 │  ├─ charts/              LineChart, ScatterChart, PairPlotChart/Cell
-│  ├─ windows/              secondary windows: AddSensor, PredictiveModelBuild, SaveAs (also serves Rename)
+│  ├─ windows/              secondary windows: AddSensor, BuildModelWindow (hosts PredictiveModelBuild inline)
 │  └─ reports/              PM report shared types (pmReportTypes.ts)
 ├─ hooks/                  data-fetching + Tauri-binding hooks (useChartData, useScatterSample, ...)
 ├─ types/commands.ts       shared payload types for Tauri command args/results
@@ -168,3 +174,15 @@ src-tauri/
 
 See [`CLAUDE.md`](CLAUDE.md) for the full list of conventions and anti-patterns
 this codebase relies on.
+
+## Working with Claude Code on this project
+
+This repo defines its own Claude Code sub-agents in `.claude/agents/`: a
+worker pipeline (`pm-agent`, `fe-ui-agent`, `fe-logic-agent`, `rust-agent`,
+`qa-agent`) for large, contract-clean features, plus two standalone agents
+used on essentially every task regardless of size — `ui-design-agent`
+(produces a clickable mockup before any UI code is written) and
+`notion-sync-agent` (keeps the user's Notion tracker in sync after a task
+finishes). See [`CLAUDE.md`](CLAUDE.md)'s "Agent Roles & File Ownership" for
+the current rules, and [`multi_agent_orchestration_design.md`](multi_agent_orchestration_design.md)
+for the full design and when (not) to reach for the worker pipeline.

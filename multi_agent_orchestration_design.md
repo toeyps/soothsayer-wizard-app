@@ -164,7 +164,7 @@ As a [role], I want [capability] so that [benefit].
 ## Step 2: Agent Definitions — อยู่ที่ `.claude/agents/*.md` แล้ว (ไม่ซ้ำเนื้อหาที่นี่)
 
 เนื้อหาเต็มของแต่ละ agent (role, tech context, file access, coding
-standards, HANDOFF format) อยู่ใน `.claude/agents/{pm,fe-ui,fe-logic,rust,qa}-agent.md`
+standards, HANDOFF format) อยู่ใน `.claude/agents/{pm,fe-ui,fe-logic,rust,qa,ui-design,notion-sync}-agent.md`
 โดยตรง — เป็น **source of truth ตัวเดียว** ที่ Claude Code โหลดจริงตอน
 spawn สรุปย่อ (ดูรายละเอียดในไฟล์จริง อย่าแก้ตารางนี้โดยไม่ sync กับไฟล์):
 
@@ -175,6 +175,16 @@ spawn สรุปย่อ (ดูรายละเอียดในไฟล
 | `fe-logic-agent` | `src/hooks/`, `src/types/`, `src/workspaceManager.ts` | `src/__tests__/` (its own hooks/types) |
 | `rust-agent`     | `src-tauri/src/`, `src-tauri/Cargo.toml`   | inline `#[cfg(test)]` in the same file     |
 | `qa-agent`       | —                                           | `src/__tests__/`, `src-tauri/tests/` (integration sweep) |
+| `ui-design-agent` (เพิ่ม 2026-09-24) | — (read-only บนโค้ด) | HTML mockup ใน scratchpad เท่านั้น — ออกแบบก่อนเขียนโค้ดจริง ไม่ implement ไม่ commit |
+| `notion-sync-agent` (เพิ่ม 2026-09-29) | — (ไม่เขียนไฟล์ในโปรเจกต์) | Notion page เท่านั้น — sync Notion ท้ายทุกงาน ไม่ตั้ง Status เป็น Done เอง |
+
+`ui-design-agent` และ `notion-sync-agent` **อยู่นอก worker pipeline** —
+เซสชันหลักเรียกใช้ตรงได้ทุกเมื่อ ไม่ต้องผ่าน pm-agent และไม่ขึ้นกับว่างานนั้น
+เข้าเกณฑ์ pipeline หรือไม่ (`ui-design-agent` มักถูกเรียกก่อนงานเล็กๆ ที่ไม่เข้า
+เกณฑ์ pipeline เลยด้วยซ้ำ — แค่ต้องออกแบบก่อนแก้โค้ดจริง; `notion-sync-agent`
+ถูกเรียกท้ายแทบทุกงานไม่ว่าเล็กหรือใหญ่ ตาม `CLAUDE.md`'s Post-task checklist —
+เพิ่มขึ้นเพราะขั้นตอนนี้เคยถูกลืมซ้ำหลายรอบทั้งที่สั่งไว้แล้ว การแยกเป็น
+agent ต่างหากทำให้ "ลืม sync Notion" ยากขึ้นกว่าการฝังไว้เป็นข้อย่อยในเช็กลิสต์)
 
 ---
 
@@ -257,14 +267,28 @@ sequenceDiagram
 
 ---
 
-## สถานะปัจจุบัน (2026-08-17)
+## สถานะปัจจุบัน (อัปเดต 2026-09-29 — เดิม 2026-08-17)
 
-- ✅ `.claude/agents/*.md` ทั้ง 5 ไฟล์ อัปเดตแล้วให้ตรงกับ design นี้ (test
-  co-location, qa-agent เป็น integration sweep, pm-agent มี sync-check
-  บังคับ)
+- ✅ `.claude/agents/*.md` ตอนนี้มี 7 ไฟล์: 5 ตัว worker pipeline เดิม
+  (`pm`/`fe-ui`/`fe-logic`/`rust`/`qa`) + `ui-design-agent` (เพิ่ม 2026-09-24)
+  + `notion-sync-agent` (เพิ่ม 2026-09-29) — สองตัวหลังอยู่นอก pipeline,
+  เรียกตรงจากเซสชันหลักได้ทุกเมื่อ ดูตารางด้านบน
 - ✅ `CLAUDE.md`'s "Agent Roles & File Ownership" sync กับตารางในเอกสารนี้แล้ว
-- ✅ ทดสอบแล้วว่า Agent tool มองเห็น agent ทั้ง 5 ตัวจริง (project path นิ่ง
-  แล้ว ไม่ติดปัญหา path-change-mid-session แบบที่เคยบันทึกไว้ก่อนหน้า)
-- ⬜ ยังไม่เคยลองรันจริงตาม design ที่แก้ใหม่นี้สักครั้ง — รอ feature ก้อน
-  ใหญ่ก้อนถัดไปที่เข้าเกณฑ์ (ดู "เมื่อไหร่ควรใช้" ด้านบน) เพื่อพิสูจน์ว่า
-  ใช้งานได้จริงตามที่ออกแบบ
+  รวมทั้ง 2 agent ใหม่และ pattern "main-session-as-orchestrator" ด้านล่าง
+- ✅ **พิสูจน์แล้วว่าใช้งานได้จริงตามที่ออกแบบ — Feature 4 (2026-09-24, ดู
+  `docs/planning/task.md` และ `docs/PROJECT_HANDOVER.md`)**: เป็นครั้งแรกที่
+  pipeline นี้ถูกใช้จริงหลัง design ใหม่นี้ (bullet "⬜ ยังไม่เคยลองรันจริง"
+  เดิมพิสูจน์แล้วว่าใช้ได้ — ลบทิ้ง) แต่ใช้ในรูปแบบที่ต่างจาก §Step 3 เดิม
+  เล็กน้อย: pm-agent ถูกเรียกครั้งเดียวเพื่อวางแผน/เขียน
+  `docs/planning/task.md` (spec ยาวมากจากการคุยออกแบบหลายรอบกับผู้ใช้ก่อนหน้า)
+  จากนั้น **เซสชันหลักเองทำหน้าที่ orchestrator ต่อ** — spawn
+  `fe-logic-agent`/`rust-agent`/`fe-ui-agent`/`qa-agent` ตรงทีละ phase โดยไม่
+  วน pm-agent อีกรอบ, รัน `tsc`/`vitest`/`cargo test` เองหลังทุก phase, เขียน
+  `docs/PROJECT_HANDOVER.md` entry เอง, และเรียก Notion sync เอง (ก่อนจะมี
+  `notion-sync-agent` — เป็นสาเหตุที่เพิ่ม agent ตัวนี้) — เป็น pattern ที่
+  เอกสารนี้บันทึกไว้เป็นทางการแล้วในหัวข้อ "main-session-as-orchestrator" ที่
+  `CLAUDE.md`'s Agent Roles section (ใช้เมื่อ spec เขียนเสร็จแล้วจริงๆ ไม่ต้อง
+  ให้ pm-agent วางแผนใหม่)
+- ⬜ ยังไม่เคยลองรูปแบบ pipeline แบบเต็ม (pm-agent เป็นคน spawn worker ทุก
+  phase เองตาม §Step 3/4 เป๊ะๆ) — ที่ใช้จริงมาทั้งหมดจนถึงตอนนี้เป็นแบบ
+  main-session-as-orchestrator ด้านบน ซึ่งก็ครอบคลุมกรณีใช้งานจริงส่วนใหญ่แล้ว
