@@ -182,6 +182,19 @@ const CLUSTER_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', 
 const EMPTY_RECORDS: CsvRecord[] = [];
 const RESULT_CHART_MAX_POINTS = 4000;
 
+/** Pure "is this exact model+fg pair Trained-and-fresh" check — just the
+ *  fingerprint equality Phase B's Train writes, no `status`/draft awareness
+ *  of its own. Shared by the Workbench's own `isModelTrainedFresh` (folds in
+ *  the live draft via `effectiveModelFor` + the `status` check) AND
+ *  `markModelComplete` (the PM page's own "Finish" button, checked directly
+ *  against the model/fg read fresh off DISK inside that write) so there is
+ *  exactly one definition of "trained", never two independently-maintained
+ *  ones (QA scope-gap fix, 2026-09-29 SPEC FINAL: "Mark complete replaces
+ *  Finish and should require a fresh trained result everywhere"). */
+function trainedFreshFor(m: FailureModel, fg: RunningConditionFg): boolean {
+    return !!m.lastTrainedAt && m.trainedFingerprint === computeTrainFingerprint(m, fg);
+}
+
 /** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
  *  fixed pattern, since this is a plain human-readable timestamp, not
  *  something any other code parses back. */
@@ -948,17 +961,30 @@ export default function BuildModelWindow() {
         })());
     };
 
+    /** The model Train/staleness checks should actually judge RIGHT NOW: the
+     *  persisted model, merged with any pending (unsaved) draft edit for it —
+     *  same merge `runTrainClick` commits on an actual Train. A draft change
+     *  to a fingerprinted field (stiffness, predictors, Y, cluster settings,
+     *  Workspace/Custom, …) must make the results area go stale and disable
+     *  Mark complete IMMEDIATELY, not only after Save/Train (QA fix,
+     *  2026-09-29 — "an unsaved draft edit after training leaves the old
+     *  chart up and Mark complete enabled"). The persisted
+     *  `trainedFingerprint` write itself only ever happens through
+     *  `runTrainClick`/`executeTrain`, never from this. */
+    const effectiveModelFor = (m: FailureModel): FailureModel =>
+        m.id in drafts ? { ...m, ...draftFields(m, draftOf(m)) } : m;
+
     /** "Trained" (the status pill, distinct from Complete): a successful
      *  Phase-B preview run exists AND its fingerprint still matches the
      *  model's current inputs AND the model isn't already Complete — see
      *  `src/utils/trainFingerprint.ts` and the SPEC FINAL entry in
      *  `docs/PROJECT_HANDOVER.md`. */
     const isModelTrainedFresh = (m: FailureModel): boolean =>
-        !m.status && !!m.lastTrainedAt && m.trainedFingerprint === computeTrainFingerprint(m, gateFg);
+        !m.status && trainedFreshFor(effectiveModelFor(m), gateFg);
     /** Was trained at some point, but the model's inputs (or the effective
      *  running condition) changed since — "Settings changed — re-train". */
     const isModelStale = (m: FailureModel): boolean =>
-        !m.status && !!m.lastTrainedAt && m.trainedFingerprint !== computeTrainFingerprint(m, gateFg);
+        !m.status && !!m.lastTrainedAt && !trainedFreshFor(effectiveModelFor(m), gateFg);
 
     const toggleModelStatus = (modelId: string) => {
         // Toward Complete only: an unconfigured model can't be marked Complete;
@@ -970,7 +996,7 @@ export default function BuildModelWindow() {
         // `markModelComplete` (the PM page's own "Finish" button) — that is
         // a separate, unchanged path.
         const target = allModels.find(m => m.id === modelId);
-        if (target && !target.status && (gateReasonOf(target) !== null || !isModelTrainedFresh(target))) return;
+        if (target && !target.status && (gateReasonOf(target) !== null || !isModelTrainedFresh(target) || trainError[modelId])) return;
         persist((models, groups) => ({
             groups,
             models: models.map(m => m.id === modelId ? { ...m, status: !m.status } : m),
@@ -1011,6 +1037,20 @@ export default function BuildModelWindow() {
      *  window's state to re-render first (see `runTrainClick`). */
     const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<void> => {
         const id = merged.id;
+        // 🆕 QA fix (2026-09-29): a Train can still be running when this
+        // window gets re-pointed at a different workspace (`build-model-data`
+        // for a new project). `persist()`'s write targets whatever
+        // `workspaceId` its OWN closure captured at call time, which is
+        // fine — but its `applyFg` call replaces this window's CURRENT
+        // in-memory state unconditionally, even though `workspaceIdRef`
+        // already points elsewhere by the time this resolves. Capture the
+        // workspace this run belongs to now, and refuse to write back (or
+        // touch any of this window's state) if it no longer matches once the
+        // preview actually finishes — "train ค้างแล้ว workspace เปลี่ยน →
+        // ทิ้งผล ไม่เขียนกลับ" (SPEC FINAL). A stray `trainStatus`/`trainResults`
+        // entry for the abandoned model id is harmless: the effect above
+        // already prunes any id no longer in the (now different) `allModels`.
+        const capturedWorkspaceId = workspaceIdRef.current;
         setTrainStatus(prev => ({ ...prev, [id]: 'loading' }));
         setTrainError(prev => {
             if (!(id in prev)) return prev;
@@ -1046,6 +1086,7 @@ export default function BuildModelWindow() {
                 });
                 result = { kind: 'clustering', preview: r };
             }
+            if (workspaceIdRef.current !== capturedWorkspaceId) return; // abandoned — see comment above
             setTrainResults(prev => ({ ...prev, [id]: { fingerprint, result } }));
             setTrainStatus(prev => {
                 const rest = { ...prev };
@@ -1059,6 +1100,7 @@ export default function BuildModelWindow() {
                 }));
             }
         } catch (e) {
+            if (workspaceIdRef.current !== capturedWorkspaceId) return; // abandoned — see comment above
             setTrainStatus(prev => {
                 const rest = { ...prev };
                 delete rest[id];
@@ -1072,16 +1114,31 @@ export default function BuildModelWindow() {
      *  FIRST (same as "Open full view" already does via `buildModel` ->
      *  `commitModel`) so a predictor/stiffness/etc. change made just before
      *  clicking Train is what actually gets trained and fingerprinted —
-     *  never a stale, unsaved combination. */
+     *  never a stale, unsaved combination. Only actually MERGES the draft
+     *  into the trained/fingerprinted model when a draft is genuinely
+     *  pending for it (QA fix, 2026-09-29 — "Train never sticks for some
+     *  models"): `draftFields`/`draftFromModel` re-derive/re-snap fields
+     *  (e.g. `snapStiffness`, or defaulting `clusterRanges` off the DEFAULT
+     *  when the model never had any) even with nothing to commit, which
+     *  could fingerprint a value that doesn't match what's actually stored —
+     *  stale the instant Train finishes, forever. With no pending draft,
+     *  train against the persisted `m` directly, unmodified. */
     const runTrainClick = async (m: FailureModel) => {
         if (buildBlockReason(m) !== null) return;
         if (trainStatus[m.id] === 'loading') return;
-        const d = draftOf(m);
-        const merged: FailureModel = { ...m, ...draftFields(m, d) };
-        if (m.id in drafts) await commitModel(m);
+        const hasDraft = m.id in drafts;
+        const merged = effectiveModelFor(m); // = m untouched when no draft is pending
+        if (hasDraft) await commitModel(m);
         const fingerprint = computeTrainFingerprint(merged, gateFg);
         await executeTrain(merged, fingerprint, { persistMeta: true });
     };
+
+    /** Text shown (and the reason `markModelComplete` blocks on) when the
+     *  gate itself passes but the model hasn't been Trained-and-fresh —
+     *  shared so the PM page's Finish path and the Workbench's own "✓ Mark
+     *  complete" button title never drift into two different wordings for
+     *  the same requirement. */
+    const NOT_TRAINED_BLOCK_REASON = 'Train the model, then check the result before marking it complete.';
 
     /** Sets `status: true` unconditionally (unlike `toggleModelStatus`) —
      *  used by the PM page's "Finish" button, where clicking it again should
@@ -1089,7 +1146,15 @@ export default function BuildModelWindow() {
      *  Un-marking a model still goes through the footer's own action button
      *  (`toggleModelStatus`). The gate is evaluated against what is on DISK
      *  inside the write (the PM page flushes its own edits first), never
-     *  against this window's possibly lagging copy. */
+     *  against this window's possibly lagging copy.
+     *  🆕 QA scope-gap fix (2026-09-29): "Finish" used to mark a model
+     *  Complete straight from the gate check alone, with no requirement that
+     *  it had ever been Train'd — a second, looser gate than the Workbench's
+     *  own "✓ Mark complete" button. SPEC FINAL says Mark complete replaces
+     *  Finish everywhere, so this now ALSO requires `trainedFreshFor` — the
+     *  exact same fingerprint-equality helper `isModelTrainedFresh` uses —
+     *  checked against the model/fg read fresh off disk, never a second,
+     *  independently-derived "is this trained" definition. */
     const markModelComplete = (modelId: string): Promise<void> => {
         if (!workspaceId) return Promise.resolve();
         setCompleteBlock(null);
@@ -1100,6 +1165,7 @@ export default function BuildModelWindow() {
                 const target = fg?.models?.find(m => m.id === modelId);
                 if (!target) return prev;
                 res.reason = getBuildBlockReason(target, fg, gateHeaders);
+                if (res.reason === null && !trainedFreshFor(target, fg)) res.reason = NOT_TRAINED_BLOCK_REASON;
                 if (res.reason !== null) return prev;
                 return withFailureGroupState(prev, { models: (fg?.models ?? []).map(m => m.id === modelId ? { ...m, status: true } : m) });
             });
@@ -1286,7 +1352,16 @@ export default function BuildModelWindow() {
                         // dot" here (same as the pill) — the badge is just a
                         // glance, the detail pane's own results area is
                         // where "Settings changed" actually shows.
-                        const dot = m.status ? 'complete' : isModelTrainedFresh(m) ? 'trained' : null;
+                        // 🆕 QA fix (2026-09-29): a model the GATE currently
+                        // blocks (e.g. its running-condition sensor vanished
+                        // from the dataset) or whose last preview attempt
+                        // errored in this session must not still read
+                        // "Trained" here just because its persisted
+                        // fingerprint happens to still match — same rule the
+                        // footer pill below now applies.
+                        const dot = m.status ? 'complete'
+                            : (isModelTrainedFresh(m) && !trainError[m.id] && buildBlockReason(m) === null) ? 'trained'
+                            : null;
                         return (
                             <span
                                 key={m.id}
@@ -1764,7 +1839,18 @@ export default function BuildModelWindow() {
         const trainedFresh = isModelTrainedFresh(m);
         const stale = isModelStale(m);
         const training = trainStatus[m.id] === 'loading';
-        const pillState: 'complete' | 'trained' | 'incomplete' = m.status ? 'complete' : trainedFresh ? 'trained' : 'incomplete';
+        // 🆕 QA fix (2026-09-29): a run that failed IN THIS SESSION — whether
+        // an explicit Re-train click or the silent auto-recompute on reopen —
+        // must override the happy-path pill/footer/Mark-complete-enabled
+        // state even though the PERSISTED fields still say "fresh" (nothing
+        // was written back on failure). Mirrors how a failed MANUAL Train
+        // already keeps the Train/Re-train button visible for retry without
+        // touching persisted fields — this just extends the same "in-session
+        // error overrides the happy path" treatment to the pill/footer text/
+        // Mark complete, which previously only looked at `trainedFresh`.
+        const hasSessionError = !!trainError[m.id];
+        const pillState: 'complete' | 'trained' | 'incomplete' =
+            m.status ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
         return (
             <div className="f4-foot">
@@ -1782,6 +1868,8 @@ export default function BuildModelWindow() {
                     <span data-testid="footer-status" className="f4-foot-reason">
                         {m.lastTrainedAt ? `Last trained ${formatTrainedAt(m.lastTrainedAt)}` : `${KIND_LABEL[m.kind]}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`}
                     </span>
+                ) : hasSessionError ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">Couldn't refresh the result — fix the problem, then re-train</span>
                 ) : trainedFresh ? (
                     <span data-testid="footer-status" className="f4-foot-reason">Check the chart, then mark it complete</span>
                 ) : stale ? (
@@ -1827,8 +1915,8 @@ export default function BuildModelWindow() {
                     <button
                         type="button"
                         className="bmw-btn-ok"
-                        disabled={gateReasonOf(m) !== null || !trainedFresh}
-                        title={gateReasonOf(m) ?? (!trainedFresh ? 'Train the model and check the result first.' : undefined)}
+                        disabled={gateReasonOf(m) !== null || !trainedFresh || hasSessionError}
+                        title={gateReasonOf(m) ?? (hasSessionError ? "Couldn't refresh the result — fix the problem, then re-train." : !trainedFresh ? NOT_TRAINED_BLOCK_REASON : undefined)}
                         onClick={() => toggleModelStatus(m.id)}
                     >
                         ✓ Mark complete

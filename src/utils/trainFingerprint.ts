@@ -1,5 +1,5 @@
 import type { FailureModel, TimePeriod, WorkspaceSensorFilter } from '../types';
-import { effectiveRunningCondition, type RunningConditionFg } from './runningCondition';
+import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from './runningCondition';
 
 /** Only the parts of a filter row that actually change what training rows get
  *  selected — `id` is a React key, not an input to the computation. */
@@ -33,23 +33,44 @@ function periodFingerprint(p: TimePeriod) {
  * notes, category, status, groupNos, id. `predictorSensors` is sorted so
  * reordering the same set of predictors isn't treated as a change; filter/period
  * `id`s are stripped for the same reason (see the two helpers above).
+ *
+ * Two kind-specific exclusions (QA fix, 2026-09-29 — see the "Train never
+ * sticks" / "opening full view makes a trained model stale" bugs in
+ * `docs/PROJECT_HANDOVER.md`'s matching entry): `clusterRanges` is dropped
+ * entirely whenever there is no criteria sensor (a range list is meaningless
+ * without one, so its exact shape — `[]`, 3 auto-divided defaults, whatever
+ * the PM page's own hydration happens to normalise it to on open — must
+ * never make an unrelated model go stale), and `targetSensor` is dropped for
+ * clustering specifically (that kind already fingerprints `ySensor`/`xSensor`
+ * /`criteriaSensor`; `targetSensor` there is a derived alias, not its own
+ * input, and the PM page's hydration writes `targetSensor = ySensor` on
+ * every open).
+ *
+ * Running-condition rows are also filtered to COMPLETE ones only
+ * (`isCompleteCondition`, the same filter `buildPreviewFilterPayload` /
+ * the PM page's `dashboardFilterPayload` already apply before sending
+ * anything to Rust) — an incomplete row (no sensor yet, or a value not
+ * filled in) isn't sent to Rust either, so it must not make every model
+ * that follows the workspace condition go stale the instant someone adds a
+ * blank row to it.
  */
 export function computeTrainFingerprint(model: FailureModel, fg: RunningConditionFg): string {
     const eff = effectiveRunningCondition(model, fg);
+    const hasCriteria = !!(model.criteriaSensor && model.criteriaSensor.trim());
     const payload = {
         kind: model.kind,
-        targetSensor: model.targetSensor,
+        targetSensor: model.kind === 'clustering' ? undefined : model.targetSensor,
         predictorSensors: [...model.predictorSensors].sort(),
         xSensor: model.xSensor,
         ySensor: model.ySensor,
         criteriaSensor: model.criteriaSensor,
-        clusterRanges: model.clusterRanges,
+        clusterRanges: hasCriteria ? model.clusterRanges : undefined,
         numClusters: model.numClusters,
         relStiffness: model.relStiffness,
         runningConditionMode: eff.mode,
         combine: eff.combine,
         noneConfirmed: eff.noneConfirmed,
-        filters: eff.filters.map(filterFingerprint),
+        filters: eff.filters.filter(f => isCompleteCondition(f)).map(filterFingerprint),
         periods: eff.periods.map(periodFingerprint),
     };
     return JSON.stringify(payload);

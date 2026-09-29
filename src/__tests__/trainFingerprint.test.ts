@@ -131,4 +131,53 @@ describe('computeTrainFingerprint', () => {
         });
         expect(computeTrainFingerprint(a, f)).not.toBe(computeTrainFingerprint(b, f));
     });
+
+    // ─── QA fixes, 2026-09-29 (see docs/PROJECT_HANDOVER.md's matching entry) ───
+
+    it('ignores clusterRanges entirely when there is no criteria sensor, for every kind (a range list is meaningless without one)', () => {
+        const noCriteriaA = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', criteriaSensor: '', clusterRanges: [] });
+        const noCriteriaB = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', criteriaSensor: '', clusterRanges: [{ min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 }] });
+        const f = fg();
+        expect(computeTrainFingerprint(noCriteriaA, f)).toBe(computeTrainFingerprint(noCriteriaB, f));
+
+        // Same for a non-clustering kind carrying a leftover/legacy clusterRanges value.
+        const indivA = mk({ id: 'm1', kind: 'individual', targetSensor: 'Y1', criteriaSensor: '', clusterRanges: [] });
+        const indivB = mk({ id: 'm1', kind: 'individual', targetSensor: 'Y1', criteriaSensor: '', clusterRanges: [{ min: 0, max: 50 }, { min: 50, max: 100 }] });
+        expect(computeTrainFingerprint(indivA, f)).toBe(computeTrainFingerprint(indivB, f));
+    });
+
+    it('still fingerprints clusterRanges once a criteria sensor is set', () => {
+        const a = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', criteriaSensor: 'C1', clusterRanges: [{ min: 0, max: 50 }, { min: 50, max: 100 }] });
+        const b = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', criteriaSensor: 'C1', clusterRanges: [{ min: 0, max: 60 }, { min: 60, max: 100 }] });
+        const f = fg();
+        expect(computeTrainFingerprint(a, f)).not.toBe(computeTrainFingerprint(b, f));
+    });
+
+    it('ignores targetSensor for clustering (derived from ySensor/xSensor, not its own input there)', () => {
+        const a = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', targetSensor: '' });
+        const b = mk({ id: 'm1', kind: 'clustering', xSensor: 'X1', ySensor: 'Y1', targetSensor: 'Y1' });
+        const f = fg();
+        expect(computeTrainFingerprint(a, f)).toBe(computeTrainFingerprint(b, f));
+    });
+
+    it('still fingerprints targetSensor for Individual/Relationship', () => {
+        const a = mk({ id: 'm1', kind: 'individual', targetSensor: 'Y1' });
+        const b = mk({ id: 'm1', kind: 'individual', targetSensor: 'Y2' });
+        const f = fg();
+        expect(computeTrainFingerprint(a, f)).not.toBe(computeTrainFingerprint(b, f));
+    });
+
+    it('ignores an incomplete running-condition row (no value filled in yet) — it is never sent to Rust either', () => {
+        const model = mk({ id: 'm1', kind: 'individual', targetSensor: 'Y1', runningConditionMode: 'workspace' });
+        const complete = fg({ runningConditionFilters: [condition()] });
+        const withBlankRowAdded = fg({ runningConditionFilters: [condition(), condition({ id: 'c2', sensor: '', value1: '' })] });
+        expect(computeTrainFingerprint(model, withBlankRowAdded)).toBe(computeTrainFingerprint(model, complete));
+    });
+
+    it('still fingerprints a "between" condition missing its second value as incomplete (dropped)', () => {
+        const model = mk({ id: 'm1', kind: 'individual', targetSensor: 'Y1', runningConditionMode: 'workspace' });
+        const noCondition = fg({ runningConditionFilters: [] });
+        const halfBetween = fg({ runningConditionFilters: [condition({ operation: 'between', value2: '' })] });
+        expect(computeTrainFingerprint(model, halfBetween)).toBe(computeTrainFingerprint(model, noCondition));
+    });
 });

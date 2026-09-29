@@ -369,6 +369,14 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
         // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
         expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
         expect(screen.getByTestId('rc-required-pill-inline')).toBeTruthy();
+        // 🆕 Phase B (2026-09-29): Finish now ALSO requires a fresh Trained
+        // result (SPEC FINAL scope-gap fix — "Mark complete replaces Finish
+        // everywhere") — train it from the Workbench before opening the full
+        // view, same as any other model would need to be.
+        closeRcModal();
+        selectSensorRow(0);
+        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
+        await settle(30);
         await openPmFor();
         expect(finishBtn().disabled).toBe(false);
         expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull(); // banner is Workspace-mode only
@@ -551,15 +559,26 @@ describe('(4) old time keys re-added by a stale writer', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('PM page edits made right before leaving the page', () => {
-    // KNOWN BUG (qa 2026-09-24) — flip to `it` once fixed. The PM page persists
-    // config through a 250 ms debounced effect whose cleanup is clearTimeout.
-    // Finish/Back call onFinish/onBack synchronously, which unmounts the page
-    // and cancels the pending write, so an edit made < 250 ms before (e.g. a
-    // period committed by the blur that clicking Finish itself causes) is lost.
-    it('a period edited and committed by clicking Finish is saved together with Complete', async () => {
+    // FIXED (qa 2026-09-24) — the PM page's 250 ms debounced persist is
+    // already flushed before `onFinish`/`onBack` navigate away (`handleFinish`
+    // awaits `flushPersist()` first), so a period committed by the very blur
+    // clicking Finish itself causes is never lost.
+    // 🆕 Phase B (2026-09-29): this same edit ALSO makes the model stale
+    // relative to what it was actually Trained with (a training period is a
+    // fingerprinted field) — Finish/Mark complete correctly stays blocked in
+    // that case rather than silently marking Complete with settings it was
+    // never trained against. The two behaviors are independent: the edit's
+    // own persistence (this test's original point) and Mark-complete's
+    // separate trained-and-fresh requirement (added this pass) are checked
+    // separately below.
+    it('a period edited and committed by clicking Finish is saved even though the edit itself now blocks Mark complete', async () => {
         const P = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P] })])));
         await mountBuildModel();
+        closeRcModal();
+        selectSensorRow(0);
+        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
+        await settle(30);
         await openPmFor();
         fireEvent.click(screen.getByTestId('period-toggle-1')); // sidebar period rows start collapsed
 
@@ -570,18 +589,30 @@ describe('PM page edits made right before leaving the page', () => {
         await settle(400);
 
         const m = readDisk().failureGroupState.models[0];
-        expect(m.status).toBe(true);
+        // The edit itself is never lost — BuildModelWindow's own flushPersist
+        // write (the period) is a separate write from markModelComplete's
+        // (status), so one blocking does not undo the other.
         expect(m.filterTimePeriods).toEqual([{ ...P, end: '2026-02-15T12:00' }]);
+        expect(m.status).toBe(false);
+        expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/Train the model/);
     });
 
-    // KNOWN BUG (qa 2026-09-24) — flip to `it` once fixed. Finish is enabled
-    // from the PM page's LIVE state, but `markModelComplete` re-checks the gate
-    // against the parent's STORED copy, which lags by the same 250 ms debounce.
-    // When the edit that satisfied the gate is < 250 ms old, Finish silently
-    // returns to the overview without marking Complete (and the edit is lost).
+    // FIXED (qa 2026-09-24) — `markModelComplete` re-checks the gate against
+    // whatever is on DISK inside its own write (never the parent's possibly-
+    // lagging in-memory copy), and the PM page's Finish button flushes its own
+    // pending debounced write before calling it — so an edit that satisfied
+    // the gate < 250 ms earlier is never dropped.
     it('Finish right after re-confirming Custom "No condition" marks the model Complete', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })])));
         await mountBuildModel();
+        // 🆕 Phase B (2026-09-29): train it first (still noneConfirmed:true —
+        // the same effective running condition the toggle dance below ends
+        // up back at) so Finish's new trained-and-fresh requirement is met
+        // once re-confirmed, same as any other model would need.
+        closeRcModal();
+        selectSensorRow(0);
+        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
+        await settle(30);
         await openPmFor();
         fireEvent.click(screen.getByText('Switch to conditions')); // un-confirm -> blocked
         await settle(400); // persisted + broadcast: the parent now stores "unset"

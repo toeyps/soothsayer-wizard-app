@@ -20,8 +20,12 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
  * Unit tests in BuildModelWindow.test.tsx mock the PM page and use a model
  * fixture with `clusterRanges: []`; this file uses the model shape the
  * Dashboard ACTUALLY creates (`makeDefaultModelForKind`: three default
- * cluster ranges, `targetSensor: ''` for clustering), which is what exposes
- * the round-trip problems documented by the `it.fails` tests below.
+ * cluster ranges, `targetSensor: ''` for clustering), which is what exposed
+ * the round-trip problems this file's tests documented as `it.fails`.
+ *
+ * 🆕 2026-09-29 (bug-fix pass): all 9 `it.fails` below are fixed and flipped
+ * to plain `it` — see each test's own "FIXED" comment for its root cause and
+ * `docs/PROJECT_HANDOVER.md`'s matching dated entry for the full set.
  */
 
 const h = vi.hoisted(() => ({
@@ -282,16 +286,17 @@ describe('(1) a model trained in the Workbench survives a round trip through the
         expect(markCompleteBtn().disabled).toBe(true);
     });
 
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. The PM page's
-    // hydration reads `targetSensor || ySensor` for a clustering model and,
-    // when `clusterRanges` is empty (what the Workbench's own Save/Train
-    // commit writes when no criteria sensor is set), keeps its auto-divided
-    // [0, 33.3, 66.7, 100] ranges. Its 250 ms baseline persist then writes
-    // BOTH back to the model record — and `computeTrainFingerprint` includes
-    // `targetSensor` and `clusterRanges` for every kind — so merely opening
-    // the full view and pressing Back (no edit at all) turns a Trained
-    // clustering model into "Settings changed — re-train".
-    it.fails('Clustering: opening the full view and pressing Back with no edit keeps it Trained', async () => {
+    // FIXED (qa 2026-09-29). The PM page's hydration reads `targetSensor ||
+    // ySensor` for a clustering model and, when `clusterRanges` is empty
+    // (what the Workbench's own Save/Train commit writes when no criteria
+    // sensor is set), keeps its auto-divided [0, 33.3, 66.7, 100] ranges. Its
+    // 250 ms baseline persist then writes BOTH back to the model record —
+    // `computeTrainFingerprint` (src/utils/trainFingerprint.ts) now drops
+    // `targetSensor` for clustering entirely (derived from ySensor/xSensor,
+    // not its own input) and drops `clusterRanges` whenever there's no
+    // criteria sensor (a range list is meaningless without one), so neither
+    // rewrite affects the fingerprint any more.
+    it('Clustering: opening the full view and pressing Back with no edit keeps it Trained', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', clusterRanges: [], rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();
@@ -302,13 +307,15 @@ describe('(1) a model trained in the Workbench survives a round trip through the
         expect(pill()).toBe('Trained');
     });
 
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. Same root cause for
-    // Individual/Relationship: their fingerprint also includes the
-    // clustering-only `clusterRanges`/`numClusters`. A model whose record has
-    // `clusterRanges: []` (the shape a v0.6.0 workspace stored — see
-    // Feature4BuildFlow's `v1Model`) gets the PM page's auto-divided ranges
-    // written back on open, so it goes stale without any user edit.
-    it.fails('Individual with an empty clusterRanges record: opening the full view and pressing Back keeps it Trained', async () => {
+    // FIXED (qa 2026-09-29). Same root cause for Individual/Relationship:
+    // their fingerprint used to include the clustering-only `clusterRanges`.
+    // A model whose record has `clusterRanges: []` (the shape a v0.6.0
+    // workspace stored — see Feature4BuildFlow's `v1Model`) gets the PM
+    // page's auto-divided ranges written back on open — `clusterRanges` is
+    // now dropped from the fingerprint whenever there's no criteria sensor
+    // (true for every Individual/Relationship model), so that rewrite no
+    // longer makes it go stale.
+    it('Individual with an empty clusterRanges record: opening the full view and pressing Back keeps it Trained', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1', clusterRanges: [] })])));
         await mountBuildModel();
         await clickTrain();
@@ -324,21 +331,16 @@ describe('(1) a model trained in the Workbench survives a round trip through the
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) a successful Train with no pending draft leaves the model Trained-and-fresh', () => {
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. `runTrainClick`
-    // ALWAYS fingerprints `{ ...m, ...draftFields(m, draftOf(m)) }`, even when
-    // there is no draft (so nothing is committed). For a clustering model with
-    // no criteria sensor `draftFields` yields `clusterRanges: []`, but the
-    // stored record keeps its 3 default ranges (Dashboard's
-    // `makeDefaultModelForKind`, or the PM page's persist when Y was picked
-    // there). The persisted fingerprint therefore never matches the stored
-    // model: the model is stale the instant Train finishes, Re-train repeats
-    // the same thing forever, and "✓ Mark complete" can never be enabled
-    // (unless the user happens to make some draft edit first). The Phase B
-    // handover says this was fixed ("use `m` directly when no draft is
-    // pending"), but the code still derives from the draft unconditionally;
-    // the unit tests don't catch it because their fixture uses
-    // `clusterRanges: []`.
-    it.fails('Clustering created on the Dashboard with Y picked in the full view (3 default cluster ranges, no criteria)', async () => {
+    // FIXED (qa 2026-09-29). `runTrainClick` used to ALWAYS fingerprint
+    // `{ ...m, ...draftFields(m, draftOf(m)) }`, even when there was no draft
+    // (so nothing was committed) — for a clustering model with no criteria
+    // sensor `draftFields` yields `clusterRanges: []`, but the stored record
+    // keeps its 3 default ranges (Dashboard's `makeDefaultModelForKind`, or
+    // the PM page's persist when Y was picked there). `runTrainClick` now
+    // only merges draft fields when a draft is actually pending for that
+    // model id (`effectiveModelFor`) — with no draft, it trains against the
+    // persisted `m` directly, unmodified.
+    it('Clustering created on the Dashboard with Y picked in the full view (3 default cluster ranges, no criteria)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();
@@ -348,11 +350,12 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
         expect(markCompleteBtn().disabled).toBe(false);
     });
 
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. Same root cause:
-    // `draftFromModel` snaps a legacy stiffness (e.g. the old default `1`) to
-    // 100 000, so the no-draft Train fingerprints 100 000 while the stored
-    // record (never committed) still says 1 -> stale immediately.
-    it.fails('Relationship with a legacy (non-preset) stiffness', async () => {
+    // FIXED (qa 2026-09-29). Same root cause: `draftFromModel` snaps a
+    // legacy stiffness (e.g. the old default `1`) to 100 000, so the no-draft
+    // Train used to fingerprint 100 000 while the stored record (never
+    // committed) still said 1 -> stale immediately. Fixed by the same
+    // `runTrainClick`/`effectiveModelFor` change above.
+    it('Relationship with a legacy (non-preset) stiffness', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'], relStiffness: 1 })])));
         await mountBuildModel();
         await clickTrain();
@@ -492,15 +495,15 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Pump Temp');
     });
 
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. `executeTrain`
-    // finishes with `persist(...)`, whose closure captured the OLD
-    // `workspaceId`; `persist` then calls `applyFg(next.failureGroupState)`
-    // unconditionally, so the old project's models/running condition replace
-    // the new project's in this window (workspaceIdRef already says ws2).
-    // Any later in-memory-based write (e.g. adding a running-condition row,
-    // which sends the whole in-memory filter list) would then carry the old
-    // project's data into the new workspace file.
-    it.fails('workspace switched mid-train: the window keeps showing ONLY the new workspace\'s models', async () => {
+    // FIXED (qa 2026-09-29). `executeTrain` used to finish with
+    // `persist(...)`, whose closure captured the OLD `workspaceId`; `persist`
+    // then called `applyFg(next.failureGroupState)` unconditionally, so the
+    // old project's models/running condition replaced the new project's in
+    // this window (workspaceIdRef already said ws2). `executeTrain` now
+    // captures `workspaceIdRef.current` when the run starts and discards the
+    // result (no `persist`/state update at all) if it no longer matches
+    // `workspaceIdRef.current` once the preview resolves.
+    it('workspace switched mid-train: the window keeps showing ONLY the new workspace\'s models', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         writeDisk(wsState(currentFg([dashModel({ id: 'w2', tag: 'TAG3' })]), 'ws2'), WS2_FILE);
         await mountBuildModel();
@@ -517,10 +520,11 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         expect(screen.queryAllByTestId('sensor-row-label').map(e => e.textContent)).toEqual(['Motor Current']);
     });
 
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. Same path: the
-    // abandoned run still writes lastTrainedAt/trainedFingerprint into the
-    // OLD workspace's file after the window was re-pointed away from it.
-    it.fails('workspace switched mid-train: the abandoned result is NOT written back to the old workspace', async () => {
+    // FIXED (qa 2026-09-29). Same path: the abandoned run used to still
+    // write lastTrainedAt/trainedFingerprint into the OLD workspace's file
+    // after the window was re-pointed away from it — see the workspace-guard
+    // fix above.
+    it('workspace switched mid-train: the abandoned result is NOT written back to the old workspace', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         writeDisk(wsState(currentFg([dashModel({ id: 'w2', tag: 'TAG3' })]), 'ws2'), WS2_FILE);
         await mountBuildModel();
@@ -540,15 +544,17 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(5) pill / footer / Mark complete agree with the results area', () => {
-    // KNOWN BUG (qa 2026-09-29) — flip to `it` once fixed. "Trained" is
-    // judged only from the STORED model, so an unsaved draft edit to a
-    // fingerprinted field (stiffness, predictors, Y, clusters, Workspace/
-    // Custom…) after training leaves the old chart on screen and "✓ Mark
-    // complete" enabled. SPEC FINAL results-area rule: "แก้ค่าหลัง train →
-    // ซ่อนกราฟเก่า แสดง 'Settings changed — re-train to see the result'".
-    // Clicking Mark complete then Save changes stores a Complete model whose
-    // settings are not the ones it was trained with.
-    it.fails('an unsaved stiffness change after training hides the old chart and blocks Mark complete', async () => {
+    // FIXED (qa 2026-09-29). "Trained" used to be judged only from the
+    // STORED model, so an unsaved draft edit to a fingerprinted field
+    // (stiffness, predictors, Y, clusters, Workspace/Custom…) after training
+    // left the old chart on screen and "✓ Mark complete" enabled. SPEC FINAL
+    // results-area rule: "แก้ค่าหลัง train → ซ่อนกราฟเก่า แสดง 'Settings
+    // changed — re-train to see the result'". `isModelTrainedFresh`/
+    // `isModelStale` now compute the fingerprint against `effectiveModelFor`
+    // (the persisted model merged with any pending draft), so this is live
+    // the instant the draft changes — the persisted `trainedFingerprint`
+    // write itself still only ever happens through Train.
+    it('an unsaved stiffness change after training hides the old chart and blocks Mark complete', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'] })])));
         await mountBuildModel();
         await clickTrain();
@@ -561,11 +567,13 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         expect(markCompleteBtn().disabled).toBe(true);
     });
 
-    // KNOWN BUG (qa 2026-09-29, low) — flip to `it` once fixed. When the
-    // silent auto-recompute on reopen fails, the results area shows the error
-    // (no chart) but the footer still says "Check the chart, then mark it
-    // complete", the pill says Trained, and Mark complete is enabled.
-    it.fails('a failed auto-recompute on reopen does not tell the user to "check the chart" or allow Mark complete', async () => {
+    // FIXED (qa 2026-09-29, low). When the silent auto-recompute on reopen
+    // fails, the results area correctly showed the error (no chart), but the
+    // footer still said "Check the chart, then mark it complete", the pill
+    // said Trained, and Mark complete was enabled. The footer/pill/Mark-
+    // complete-enabled logic now all check `trainError[m.id]` the same way a
+    // failed MANUAL Train run already did for the Train/Re-train button.
+    it('a failed auto-recompute on reopen does not tell the user to "check the chart" or allow Mark complete', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
         await clickTrain();
@@ -579,12 +587,15 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         expect(markCompleteBtn().disabled).toBe(true);
     });
 
-    // KNOWN BUG (qa 2026-09-29, low) — flip to `it` once fixed. The
-    // fingerprint does not change when the gate starts blocking for a reason
-    // outside the stored inputs (here: the condition's sensor disappears from
-    // the dataset). The results area then lists "1 item to fix before
-    // training" while the pill and the left-list dot still say Trained.
-    it.fails('when the gate blocks a previously trained model, the pill does not still say "Trained"', async () => {
+    // FIXED (qa 2026-09-29, low). The fingerprint does not (and by design
+    // should not) change when the gate starts blocking for a reason outside
+    // the stored inputs (here: the condition's sensor disappears from the
+    // dataset) — the results area already correctly lists "1 item to fix
+    // before training" for that case. The pill and the left-list dot now
+    // also consult the gate (`buildBlockReason`/`getBuildBlockReason`)
+    // directly, instead of relying only on the fingerprint, so they no
+    // longer still say Trained while the results area disagrees.
+    it('when the gate blocks a previously trained model, the pill does not still say "Trained"', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND] })));
         await mountBuildModel();
         await clickTrain();

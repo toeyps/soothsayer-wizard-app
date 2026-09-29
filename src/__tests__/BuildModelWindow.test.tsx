@@ -868,13 +868,30 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
 
         it('the PM page\'s Finish control marks the model Complete and returns to the overview (unchanged, markModelComplete is one-directional)', async () => {
+            // 🆕 QA scope-gap fix (2026-09-29): Finish now ALSO requires the
+            // model be Trained-and-fresh, the same as the Workbench's own
+            // "✓ Mark complete" — seed that, same pattern as the Workbench
+            // button's own tests above.
+            const trained = withTrained(makeModel());
+            statefulUpdateMock([trained]);
             render(<BuildModelWindow />);
-            await deliverData();
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
             await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
             fireEvent.click(screen.getByText('Mock Finish'));
             await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(state.failureGroupState.models[0].status).toBe(true);
+        });
+
+        it('the PM page\'s Finish control does NOT mark a never-trained model Complete (same gate as "✓ Mark complete")', async () => {
+            render(<BuildModelWindow />);
+            await deliverData(); // fully configured, gate satisfied, but never trained
+            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
+            fireEvent.click(screen.getByText('Mock Finish'));
+            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(state.failureGroupState.models[0].status).toBe(false);
+            expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/Train the model/);
         });
     });
 
