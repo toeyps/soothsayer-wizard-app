@@ -4074,11 +4074,6 @@ body {
     font-family: var(--mono);
 }
 
-.model-component-readout--placeholder {
-    color: var(--text-faint);
-    font-style: italic;
-    font-family: 'Inter', sans-serif;
-}
 
 
 /* =====================================================================
@@ -4257,30 +4252,12 @@ body {
 .f4-cmsg--bad { color: var(--danger); }
 .f4-cmsg--ovl { color: var(--warn); }
 
-/* sensor row (Failure Group view) - merged-fg-opus.html */
-.f4-fg { border: 1px solid var(--border); border-radius: 10px; container-type: inline-size; }
-.f4-fg--dashed { border-style: dashed; }
-.f4-fg-count { font-size: 0.72rem; color: var(--text-faint); flex-shrink: 0; white-space: nowrap; }
-.f4-srow { border-top: 1px solid var(--border); }
-.f4-srow-box { border: 1.5px solid transparent; border-radius: 10px; }
-.f4-srow--open .f4-srow-box { border-color: var(--fgc); margin: 6px 8px; }
-.f4-srow-head { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; }
-.f4-srow-head:hover { background: var(--hover-bg); }
-.f4-srow--open .f4-srow-head:hover { background: none; }
-.f4-srow-head:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: -2px; }
-.f4-chev { color: var(--text-faint); transition: transform 0.15s; flex-shrink: 0; }
-.f4-srow--open .f4-chev { transform: rotate(90deg); }
-.f4-sr-main { min-width: 0; }
+/* sensor identity (shared by the Workbench's left-list rows and detail
+   header — see .bmw-srow/.bmw-dhead below for the layout those sit in). */
 .f4-sr-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.f4-sr-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .f4-sr-tag { font-family: var(--mono); font-size: 0.7rem; color: var(--text-secondary); flex-shrink: 0; }
-.f4-sr-prog { font-size: 0.68rem; color: var(--text-faint); white-space: nowrap; }
-.f4-sr-side { display: flex; align-items: center; gap: 12px; }
-.f4-chip-also { display: inline-flex; align-items: center; gap: 4px; background: none; color: var(--text-secondary); border: 1px solid var(--border-strong); font-weight: 600; flex-shrink: 0; }
 .f4-kinds { display: flex; gap: 4px; }
 .f4-kb { position: relative; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 0.62rem; font-weight: 700; flex-shrink: 0; }
-.f4-kb-st { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--card-bg); background: var(--surface-hi); box-shadow: inset 0 0 0 1px var(--text-faint); }
-.f4-kb-st--done { background: var(--perf); box-shadow: none; }
 .f4-catseg { display: inline-flex; align-items: center; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 7px; padding: 2px; gap: 2px; }
 .f4-catseg button { font-size: 0.7rem; font-weight: 500; padding: 4px 10px; border-radius: 5px; border: 1px solid transparent; background: none; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .f4-catseg button:hover { color: var(--text-primary); }
@@ -4289,22 +4266,12 @@ body {
 .f4-catseg--unset { border-color: oklch(0.78 0.14 75 / 0.7); box-shadow: 0 0 0 3px oklch(0.78 0.14 75 / 0.12); }
 .f4-cat-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 0.66rem; font-weight: 600; color: var(--warn); padding: 0 6px 0 5px; white-space: nowrap; }
 .f4-req-note { font-size: 0.66rem; color: var(--warn); }
-@container (max-width: 600px) {
-    .f4-srow-head { grid-template-columns: 16px minmax(0, 1fr); row-gap: 8px; }
-    .f4-sr-side { grid-column: 2; justify-content: space-between; }
-    .f4-sr-prog { display: none; }
-}
-.f4-sr-body { border-top: 1px solid var(--border); }
-.f4-shared { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; padding: 12px 14px; }
-@container (max-width: 720px) { .f4-shared { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .f4-shared .f4-fld-fg { grid-column: 1 / -1; } }
-@container (max-width: 480px) { .f4-shared { grid-template-columns: minmax(0, 1fr); } }
 .f4-fld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .f4-fld > label, .f4-lbl { font-size: 0.68rem; font-weight: 600; color: var(--text-secondary); }
 .f4-readout { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 8px; border-radius: 6px; background: var(--chip-bg); border: 1px solid var(--border); font-size: 0.74rem; color: var(--text-primary); }
 .f4-readout span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .f4-readout svg { flex-shrink: 0; color: var(--text-faint); }
 .f4-hint { font-size: 0.64rem; color: var(--text-faint); }
-.f4-fgchips { display: flex; flex-wrap: wrap; gap: 4px; }
 .f4-fgchip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: var(--chip-bg); border: 1px solid var(--border); max-width: 100%; min-width: 0; }
 .f4-fgchip i { width: 6px; height: 6px; border-radius: 2px; flex-shrink: 0; }
 .f4-fgchip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4318,43 +4285,25 @@ body {
 .f4-sdot--done { background: var(--perf); box-shadow: none; }
 .f4-dirty { font-size: 0.62rem; color: var(--accent-hi); font-weight: 600; }
 .f4-tabs-spacer { flex: 1; }
-.f4-st-wrap { align-self: center; display: flex; align-items: center; gap: 6px; padding-left: 8px; }
 @container (max-width: 480px) {
     .f4-tab-l { display: none; }
     .f4-tabs { padding: 0 6px; }
-    .f4-st-lbl { display: none; }
 }
-.f4-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
-.f4-kind-note { font-size: 0.7rem; color: var(--text-faint); }
 .f4-move-note { font-size: 0.66rem; color: var(--accent-hi); background: var(--accent-muted); border-radius: 6px; padding: 6px 8px; }
-.f4-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
-@container (max-width: 480px) { .f4-two { grid-template-columns: minmax(0, 1fr); } }
 .f4-pchips { display: flex; flex-wrap: wrap; gap: 4px; }
 .f4-ppill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; font-size: 0.68rem; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--chip-bg); border: 1px solid var(--border); }
 .f4-ppill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .f4-ppill button { background: none; border: 0; color: var(--text-secondary); cursor: pointer; padding: 1px; display: flex; border-radius: 50%; }
 .f4-ppill button:hover { color: var(--text-primary); background: var(--hover-bg); }
+/* Sticky per-model footer, reused unchanged by the Workbench's detail pane
+   (see .bmw-detail below) -- still sticky/bottom-radiused for the same
+   reason it always was: a tall panel above it must not push the footer's
+   own buttons out of the visible area. */
 .f4-foot { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--card-bg); border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
-/* 2026-09-29: matching the footer's radius (above) only keeps its opaque
-   background from squaring off the card's rounded corners when the footer
-   sits flush at the card's true bottom (no scroll slack below the row).
-   `position: sticky` can also rest the footer PARTWAY up the row's own box
-   (its sticky travel is bounded by `.f4-srow-box`, but that box is usually
-   much taller than the visible scrollport once you count everything below
-   this row in the list) -- whenever that happens, the footer visually
-   detaches from the card's real border-bottom, which then sits scrolled out
-   of view with nothing connecting it, reading as "the border doesn't close
-   at the bottom" (reported again 2026-09-29, Individual tab -- shortest
-   panel, so the most scroll slack -- but reproducible for any kind at the
-   right scroll position; see docs/PROJECT_HANDOVER.md 2026-09-29). Giving
-   the footer its own matching side/bottom border means the row reads as a
-   closed rounded rectangle wherever the footer currently rests. */
-.f4-srow--open .f4-foot { border-left: 1.5px solid var(--fgc); border-right: 1.5px solid var(--fgc); border-bottom: 1.5px solid var(--fgc); }
 .f4-foot-reason { margin-right: auto; font-size: 0.7rem; color: var(--text-faint); display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .f4-foot-reason--block { color: var(--warn); }
 .f4-btn-save { font-size: 0.76rem; font-weight: 600; padding: 8px 22px; border-radius: 7px; border: 0; background: var(--accent-color); color: #06111f; cursor: pointer; }
-.f4-btn-pm { font-size: 0.76rem; font-weight: 600; padding: 8px 14px; border-radius: 7px; border: 0; background: var(--accent-muted); color: var(--accent-hi); cursor: pointer; white-space: nowrap; }
-.f4-btn-save:disabled, .f4-btn-pm:disabled { opacity: 0.4; cursor: not-allowed; }
+.f4-btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* category-normalisation notice */
 .f4-notice { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid oklch(0.78 0.14 75 / 0.35); background: oklch(0.78 0.14 75 / 0.07); font-size: 0.74rem; color: var(--text-secondary); }
@@ -4366,3 +4315,74 @@ body {
 .f4-notice-x { align-self: start; font-size: 0.7rem; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-hi); color: var(--text-primary); cursor: pointer; }
 .f4-strike { text-decoration: line-through; color: var(--text-faint); }
 .sensor-picker-trigger--req { border-color: oklch(0.78 0.14 75 / 0.6) !important; }
+
+/* ── Build Model Workbench (Phase A layout, 2026-09-29) ──
+   Replaces the old "Group by Failure Group / Component / Model Type"
+   accordion overview with a master/detail layout (approved mockup
+   4jDz6AVCFMgTbxrGuFB9SN, Version 13). Reuses every existing f4-*/
+   model-* token and class it can (pills, tabs, readouts, chips, the
+   sticky footer) — these rules cover only what's genuinely new: the
+   running-condition summary bar, the two-pane grid, the left sensor
+   list, the collapsible "Model settings" section, the Phase-A results
+   placeholder, and the Running Condition edit modal. */
+.bmw-rcbar { display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--card-bg); flex-wrap: wrap; }
+.bmw-rcbar-lbl { font-size: 0.64rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); flex-shrink: 0; }
+.bmw-rcbar-rule { font-family: var(--mono); font-size: 0.72rem; color: var(--text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.bmw-wb { flex: 1; min-height: 0; display: grid; }
+.bmw-side { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.bmw-side-top { padding: 12px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--border); }
+.bmw-prog { display: flex; flex-direction: column; gap: 5px; font-size: 0.72rem; color: var(--text-secondary); }
+.bmw-prog-row { display: flex; justify-content: space-between; }
+.bmw-prog-bar { height: 5px; border-radius: 99px; background: var(--input-bg); overflow: hidden; display: flex; }
+.bmw-prog-bar span { display: block; height: 100%; }
+.bmw-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.bmw-chip { font: inherit; font-size: 0.7rem; border: 1px solid var(--border-strong); background: none; color: var(--text-secondary); padding: 3px 9px; border-radius: 99px; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
+.bmw-chip:hover { color: var(--text-primary); }
+.bmw-chip--on { background: var(--accent-muted); border-color: transparent; color: var(--accent-hi); font-weight: 600; }
+.bmw-groupby { display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; color: var(--text-faint); }
+.bmw-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.bmw-list-grp { padding: 10px 14px 4px; display: flex; align-items: center; gap: 7px; font-size: 0.66rem; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.bmw-list-grp i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.bmw-srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 14px; cursor: pointer; border-left: 2px solid transparent; }
+.bmw-srow:hover { background: var(--hover-bg); }
+.bmw-srow--sel { background: var(--accent-muted); border-left-color: var(--accent-color); }
+.bmw-srow:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: -2px; }
+.bmw-srow-empty { padding: 8px 14px 10px; font-size: 0.72rem; color: var(--text-faint); font-style: italic; }
+
+.bmw-detail { display: flex; flex-direction: column; min-height: 0; container-type: inline-size; }
+.bmw-dhead { padding: 14px 20px 12px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.bmw-dhead h3 { margin: 0; font-size: 1rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bmw-dmeta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 5px; }
+.bmw-iconbtn { font: inherit; width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--input-bg); color: var(--text-secondary); cursor: pointer; display: grid; place-items: center; flex-shrink: 0; }
+.bmw-iconbtn:hover { color: var(--text-primary); }
+.bmw-empty-detail { flex: 1; display: grid; place-items: center; color: var(--text-faint); font-size: 0.8rem; padding: 24px; text-align: center; }
+
+.bmw-sets { border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+.bmw-sets-h { font: inherit; width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 20px; background: none; border: 0; color: var(--text-primary); cursor: pointer; text-align: left; font-size: 0.76rem; }
+.bmw-sets-h:hover { background: var(--hover-bg); }
+.bmw-sets-chev { color: var(--text-faint); transition: transform 0.15s; display: inline-flex; flex-shrink: 0; }
+.bmw-sets--open .bmw-sets-chev { transform: rotate(90deg); }
+.bmw-sets-sum { color: var(--text-secondary); font-family: var(--mono); font-size: 0.7rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bmw-sets-sp { flex: 1; }
+.bmw-sets-body { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; padding: 2px 20px 14px 38px; }
+.bmw-step { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; height: 28px; }
+.bmw-step button { font: inherit; background: var(--input-bg); border: 0; color: var(--text-primary); width: 26px; height: 100%; cursor: pointer; }
+.bmw-step button:hover { background: var(--hover-bg); }
+.bmw-step span { min-width: 28px; text-align: center; font-family: var(--mono); font-size: 0.76rem; }
+
+.bmw-stage { flex: 1; min-height: 120px; padding: 16px 20px; display: flex; }
+.bmw-stage-empty { flex: 1; border: 1px dashed var(--border-strong); border-radius: 10px; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--text-faint); font-size: 0.78rem; }
+.bmw-btn-ok { font-size: 0.76rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 0; background: var(--ok); color: #04130a; cursor: pointer; white-space: nowrap; }
+.bmw-btn-ok:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.bmw-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; z-index: 50; padding: 20px; }
+.bmw-modal { width: min(720px, 100%); max-height: 85vh; overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
+.bmw-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.82rem; font-weight: 600; }
+.bmw-modal-x { background: none; border: 0; color: var(--text-secondary); cursor: pointer; display: flex; padding: 4px; border-radius: 6px; }
+.bmw-modal-x:hover { color: var(--text-primary); background: var(--hover-bg); }
+
+@container (max-width: 720px) {
+    .bmw-dhead { grid-template-columns: auto minmax(0, 1fr); }
+    .bmw-dhead > div[role="group"] { grid-column: 1 / -1; }
+}

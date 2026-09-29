@@ -160,11 +160,25 @@ async function settle(ms = 0) {
     await act(async () => { await new Promise(r => setTimeout(r, ms)); });
 }
 
-/** Mount the window; a stand-in for Dashboard answers its data request. */
+/** Mount the window; a stand-in for Dashboard answers its data request.
+ *  Waits for the Workbench's one-line Running Condition bar (2026-09-29
+ *  Phase A — the always-visible inline "Running Condition Filter" panel this
+ *  used to wait for now only exists inside the "Edit…" modal). */
 async function mountBuildModel() {
     render(<BuildModelWindow />);
-    await waitFor(() => expect(screen.queryByText('Running Condition Filter')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('rc-bar')).toBeTruthy());
     await settle(30);
+}
+
+/** The "Edit…" modal wrapping RunningConditionPanel (auto-opens at hydration
+ *  when the workspace running condition is unset). */
+const rcModal = () => screen.queryByRole('dialog', { name: 'Running Condition Filter' });
+/** Close the modal the way a user must before touching the Workbench behind
+ *  it (its backdrop covers the whole window in the real app). No-op if closed. */
+function closeRcModal() {
+    const d = rcModal();
+    if (d) fireEvent.click(within(d).getByLabelText('Close'));
+    expect(rcModal()).toBeNull();
 }
 
 /** Another window (Dashboard / PM) writes the slice and broadcasts it. */
@@ -176,12 +190,18 @@ async function otherWindowWrites(patch: Record<string, unknown>, origin = 'dashb
     await settle(10);
 }
 
-const openFirstRow = () => fireEvent.click(screen.getAllByTestId('sensor-row-label')[0]);
+/** Select a sensor in the Workbench's left list (the detail pane then shows
+ *  its first model tab — Individual when it has one). */
+const selectSensorRow = (rowIndex = 0) => fireEvent.click(screen.getAllByTestId('sensor-row-label')[rowIndex]);
+const openFirstRow = () => { closeRcModal(); selectSensorRow(0); };
 const finishBtn = () => screen.getByText('Finish').closest('button') as HTMLButtonElement;
+/** Detail footer's "Open full view ↗" (was the accordion row's "Build Model →"). */
+const openFullViewBtn = () => screen.getByText('Open full view ↗') as HTMLButtonElement;
 
 async function openPmFor(rowIndex = 0) {
-    fireEvent.click(screen.getAllByTestId('sensor-row-label')[rowIndex]);
-    await act(async () => { fireEvent.click(screen.getByText('Build Model →')); });
+    closeRcModal();
+    selectSensorRow(rowIndex);
+    await act(async () => { fireEvent.click(openFullViewBtn()); });
     await waitFor(() => expect(screen.getByText('Finish')).toBeTruthy());
     await settle(30);
 }
@@ -263,6 +283,11 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         // What the user sees is the stored result.
         expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy();
         expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
+        // Workbench (Phase A): the always-visible Running Condition bar says
+        // Required, and the unset workspace auto-opened the Edit… modal, which
+        // holds the same RunningConditionPanel the old inline card showed.
+        expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
+        expect(rcModal()).toBeTruthy();
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         expect(screen.getAllByLabelText('Period 1 end').map(e => (e as HTMLInputElement).value)).toContain('2026-06-30T23:59');
         openFirstRow();
@@ -279,6 +304,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
     it('the migrated legacy period is exactly what the PM page sends to Rust once the gate is satisfied', async () => {
         writeDisk(V1);
         await mountBuildModel();
+        closeRcModal(); // auto-opened (unset workspace); the banner sits behind it
         fireEvent.click(screen.getByText('Keep using all data'));
         await settle(30);
         expect(readDisk().failureGroupState.rcLegacyNotice).toBeNull();
@@ -328,14 +354,17 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
             fireEvent.click(screen.getByTitle('Back to Build Model overview'));
             await settle(10);
             expect(screen.getByTestId('build-block-reason').textContent).toBe(pmReason);
-            expect((screen.getByText('Build Model →') as HTMLButtonElement).title).toBe(pmReason);
+            expect(openFullViewBtn().title).toBe(pmReason);
+            expect(openFullViewBtn().disabled).toBe(true);
         });
     }
 
     it('a Custom model with its own configured list can Build and Finish while the workspace is unset, and Finish marks it Complete on disk', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND] })])));
         await mountBuildModel();
-        expect(screen.getByTestId('rc-required-pill')).toBeTruthy(); // workspace itself is unset
+        // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
+        expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
+        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         await openPmFor();
         expect(finishBtn().disabled).toBe(false);
         expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull(); // banner is Workspace-mode only
@@ -504,7 +533,8 @@ describe('(4) old time keys re-added by a stale writer', () => {
         h.invokes.length = 0;
         const rows = screen.getAllByTestId('sensor-row-label');
         fireEvent.click(rows[rows.length - 1]); // TAG2 row
-        await act(async () => { fireEvent.click(screen.getAllByText('Build Model →').slice(-1)[0]); });
+        expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Pump Temp'); // detail pane is TAG2's
+        await act(async () => { fireEvent.click(openFullViewBtn()); });
         await waitFor(() => expect(screen.getByText('Finish')).toBeTruthy());
         await settle(30);
         expect(lastInvoke('compute_sensor_stats')!.args.filter.timestamp_ranges).toEqual([{ start: Q.start, end: Q.end }]);
@@ -583,17 +613,23 @@ describe('a brand-new workspace (never opened before Feature 4)', () => {
 });
 
 describe('reason text consistency', () => {
-    // KNOWN BUG (cosmetic, qa 2026-09-24) — flip to `it` once fixed. For a
-    // missing category the Overview footer shows `modelBlockReason`'s text
-    // ("...sensor header", no period) while the status pill, `trainModel`,
-    // `markModelComplete` and the PM Finish button use `getBuildBlockReason`
-    // ("...sensor header."), so the two surfaces disagree on the same model.
+    // FIXED (was a cosmetic known bug, qa 2026-09-24). For a missing category the
+    // Overview footer used to show `modelBlockReason`'s text ("...sensor
+    // header", no period) while the status control, `trainModel`,
+    // `markModelComplete` and the PM Finish button used `getBuildBlockReason`
+    // ("...sensor header."), so the two surfaces disagreed on the same model.
+    // Workbench (Phase A, 2026-09-29): the clickable status pill that carried
+    // the gate reason as its tooltip was replaced by the separate
+    // "✓ Mark complete" button, which carries the same `gateReasonOf` title.
     it('Overview Build reason and the shared gate reason are the same string for a model without a category', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', category: null })], { runningConditionNoneConfirmed: true })));
         await mountBuildModel();
         openFirstRow();
         const footer = screen.getByTestId('build-block-reason').textContent;
-        const pill = within(screen.getByTestId('add-model-form')).getByText('Incomplete') as HTMLButtonElement;
-        expect(footer).toBe(pill.title);
+        const markComplete = screen.getByText('✓ Mark complete') as HTMLButtonElement;
+        expect(markComplete.disabled).toBe(true);
+        expect(footer).toBe(markComplete.title);
+        const disk = readDisk().failureGroupState;
+        expect(footer).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
     });
 });

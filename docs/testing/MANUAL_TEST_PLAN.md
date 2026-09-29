@@ -1,10 +1,10 @@
 # Wizard — Manual Test Plan
 
-> 245 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที)
+> 249 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
-> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
+> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
 >
 > เครื่องหมาย: 🆕 = ของที่เพิ่งทำ ยังไม่เคยมีคนกดจริง · 👀 = บั๊กที่เพิ่งแก้ หรือรายงานที่ยังไม่เคยตามไปดู · 🐍 = path เดียวที่เรียก Python sidecar
 
@@ -26,7 +26,7 @@
 - [MNG — Manage — ลบ special sensor](#mng) (15 ข้อ)
 - [EDT — Manage — แก้ไข special sensor](#edt) (27 ข้อ)
 - [FG — แท็บ Failure Groups](#fg) (8 ข้อ)
-- [BMW — หน้าต่าง Build Model](#bmw) (18 ข้อ)
+- [BMW — หน้าต่าง Build Model](#bmw) (27 ข้อ)
 - [PM — Predictive Model Build](#pm) (14 ข้อ)
 - [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (7 ข้อ)
 - [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (8 ข้อ)
@@ -1014,158 +1014,173 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
 
 ## BMW
 
-### หน้าต่าง Build Model
+### หน้าต่าง Build Model — Build Model Workbench (Phase A, 2026-09-29)
+
+> 🆕 **2026-09-29 — Overview ทั้งหน้าถูกสร้างใหม่เป็น "Workbench"** (มอคอัปอนุมัติ: Build Model Workbench Version 13): ซ้ายเป็นลิสต์ sensor เลือกได้ (ค้นหา + filter chip + Group by Failure Group/Component), ขวาเป็น detail pane ของ sensor ที่เลือก (หัว + แท็บ I/R/C + "Model settings" พับได้ + พื้นที่ผลลัพธ์ + footer) แทนการ์ด accordion เดิมที่กดแถวแล้วกางฟอร์มลงมาใต้แถว — **ตัด "Group by Model Type" ออกทั้งหมด** (ดู BMW-6 เดิม, ลบแล้ว) — แผง Running Condition Filter ย้ายจากที่แสดงค้างตลอดเวลาไปอยู่หลังปุ่ม "Edit…" ของแถบสรุปบรรทัดเดียวใต้หัวหน้าต่าง — **เฟสนี้ยังไม่มีปุ่ม Train / กราฟผลลัพธ์จริง** (พื้นที่ผลลัพธ์เป็นข้อความ placeholder เท่านั้น — มากับ Phase B) และยังไม่มีจุดสถานะสีที่ชิป I/R/C ของลิสต์ซ้าย (มากับ Phase C) ข้อที่เขียนใหม่ทั้งหมดในรอบนี้ทำเครื่องหมาย 🆕 ไว้อีกครั้ง แม้บางข้อจะมี id เดิม
 
 - [ ] **BMW-1 — เลือกกลุ่มได้หลายกลุ่ม**
-  - ติ๊กให้โมเดลอยู่ 2 กลุ่มพร้อมกัน
-  - **คาดหวัง:** ทำได้ (many-to-many) และไม่ไปสร้างโมเดลซ้ำอีกใบ
+  - ให้ sensor ตัวเดียวมีโมเดลอยู่ 2 Failure Group พร้อมกัน (ติ๊กที่ Dashboard แท็บ Sensor)
+  - **คาดหวัง:** ทำได้ (many-to-many) ไม่สร้างโมเดลซ้ำอีกใบ — ในลิสต์ซ้ายเมื่อ Group by Failure Group จะเห็น sensor นี้**ขึ้นแถวเดียวกันซ้ำในทั้งสองกลุ่ม** แต่คลิกแถวไหนก็เปิด detail pane เดียวกัน (ทุกโมเดลของ sensor นั้น ไม่ใช่เฉพาะของกลุ่มที่คลิก)
 
 - [ ] **BMW-2 — Not in Group**
   - เอาโมเดลออกจากทุกกลุ่มจริง
-  - **คาดหวัง:** ตกไปอยู่ Not in Group ซึ่งเป็นถังพิเศษหมายเลข 0 (ลบไม่ได้)
+  - **คาดหวัง:** ตกไปอยู่หัวข้อ "Not in Group" ในลิสต์ซ้าย (Group by Failure Group) ซึ่งเป็นถังพิเศษหมายเลข 0 (ลบไม่ได้ และแสดงเสมอแม้ไม่มี sensor อยู่ในนั้น)
 
-- [ ] **BMW-15 — ตั้งค่าโมเดลในแถว sensor: ฟิลด์ร่วมครั้งเดียว + แท็บต่อชนิด (ไม่มี Category ในฟอร์มแล้ว)** 🆕
-  - กดที่แถว sensor ที่มีโมเดลมากกว่า 1 ชนิดเพื่อกางออก
-  - ดูส่วนบน: Target sensor (ล็อก), Component (คำนวณจาก sensor อัตโนมัติ), Failure groups (อ่านอย่างเดียว)
-  - สลับแท็บ Individual / Relationship / Clustering: Individual ตั้ง Model name — Relationship ตั้ง Model name + Predictor sensors — Clustering ตั้ง Model name + Y sensor / Criteria sensor + cluster ranges (X sensor ล็อก)
-  - แก้ค่าในแท็บหนึ่งแล้วสลับไปอีกแท็บและสลับกลับ
-  - กด Save changes ในแท็บที่แก้
-  - **คาดหวัง:** ฟิลด์ร่วมขึ้นครั้งเดียวไม่ซ้ำต่อโมเดล — แท็บที่แก้ค้างไว้ยังไม่ Save ขึ้นป้าย "edited" และค่าที่พิมพ์ค้างไม่หายตอนสลับแท็บ — Save changes บันทึกเฉพาะโมเดลของแท็บนั้น (โมเดลอื่นของ sensor เดียวกันไม่ถูกแตะ) และแถวยังเปิดอยู่หลัง Save — ชนิดโมเดลเปลี่ยนที่นี่ไม่ได้ — **ไม่มีช่อง Category ในฟอร์มอีกแล้ว** (ดู BMW-20) — หน้าตา: ฟิลด์ร่วมเรียงเป็น 3 คอลัมน์ (หดเป็น 2/1 คอลัมน์ตามความกว้างของการ์ด) ช่อง Target มีไอคอนกุญแจ + ข้อความ "Locked. Set when the models were created." — แถบแท็บมีตัวอักษรชนิด (I/R/C) + จุดสถานะ แท็บที่เลือกมีเส้นใต้สีตามชนิด และมีป้าย "Status" ชิดขวาของแถบ — แถบล่างซ้ายบอก "Kind · Category" / "Unsaved changes to the … model" / เหตุผลที่ยังกดไม่ได้ (สีเหลือง มีไอคอน) — Individual มีข้อความ "Individual has no other settings here. Everything else is set on its Build page." — Relationship ที่ยังไม่มี predictor กรอบช่องเป็นสีเหลือง + "No predictors yet. A Relation model needs at least one." และเมื่อเลือกแล้วขึ้น "N selected. Edit predictors…" — Clustering ที่ยังไม่มี Y ขึ้น "Required"
-
-- [ ] **BMW-4 — sync สองทางกับ Dashboard (ทั้งสองทิศทาง)** 🆕
+- [ ] **BMW-4 — sync สองทางกับ Dashboard (ทั้งสองทิศทาง)**
   - เปิดหน้าต่าง Build Model ค้างไว้
   - **ไปแก้กลุ่มที่ Dashboard** (เช่น ติ๊ก sensor เข้า/ออกจากกลุ่ม, สร้างกลุ่มใหม่, ลบโมเดล) โดยไม่ปิดหน้าต่าง Build Model
   - ดูหน้าต่าง Build Model
-  - แล้วลองแก้บางอย่างที่ Build Model (เช่น กดป้าย Incomplete) แล้วดูแผง Failure Groups ที่ Dashboard
-  - **คาดหวัง:** **ทั้งสองฝั่งอัปเดตทันทีโดยไม่ต้องปิดเปิดหน้าต่าง** ไม่มีฝั่งไหนเขียนทับของอีกฝั่ง (เดิม Dashboard ไม่ส่งการเปลี่ยนแปลงไปให้ Build Model จึงเห็นข้อมูลเก่าจนกว่าจะเปิดใหม่)
+  - แล้วลองแก้บางอย่างที่ Build Model (เช่น กด "✓ Mark complete" ที่ footer) แล้วดูแผง Failure Groups ที่ Dashboard
+  - **คาดหวัง:** ทั้งสองฝั่งอัปเดตทันทีโดยไม่ต้องปิดเปิดหน้าต่าง ไม่มีฝั่งไหนเขียนทับของอีกฝั่ง
 
 - [ ] **BMW-5 — สลับ workspace ขณะหน้าต่างเปิดอยู่**
   - เปิด Build Model **และ Add Special Sensor** ค้างไว้
   - กลับหน้า Import แล้วเปิด workspace อื่น
-  - **คาดหวัง:** ทั้งสองหน้าต่างปิดเองอัตโนมัติ ไม่ค้างชี้ข้อมูลของ workspace เก่า (เดิมปิดเฉพาะ Build Model — Add Special Sensor ค้างแล้วส่ง sensor ของโปรเจกต์เก่าเข้าโปรเจกต์ใหม่)
+  - **คาดหวัง:** ทั้งสองหน้าต่างปิดเองอัตโนมัติ ไม่ค้างชี้ข้อมูลของ workspace เก่า
 
-- [ ] **BMW-6 — ปุ่ม "Group by Model Type" (ตัวเลือกที่ 3 ต่อจาก Failure Group / Component)** 🆕
-  - ให้มีโมเดลอย่างน้อย 1 ตัวของแต่ละชนิด Individual / Relationship / Clustering
-  - กดปุ่ม "Group by Model Type" มุมขวาบน
-  - **คาดหวัง:** เห็น section แยกตาม **Individual → Relationship → Clustering เรียงลำดับตายตัวเสมอ** (ไม่ใช่เรียงตามตัวอักษรหรือลำดับที่สร้าง) — kind ไหนไม่มีโมเดลเลยต้องไม่มี section ว่างโผล่ขึ้นมา และแต่ละแถวยังมี FG chip ของตัวเอง (เหมือนตอน "Group by Component")
+- [ ] **BMW-28 — Detail pane: หัว sensor + แท็บ I/R/C + "Model settings" พับได้ (แทนฟอร์ม accordion เดิมทั้งหมด)** 🆕
+  - เลือก sensor ที่มีโมเดลมากกว่า 1 ชนิดจากลิสต์ซ้าย
+  - ดูหัว detail pane: ชื่อ sensor, tag สีจาง mono, ชิป Component, ชิป Failure Group (มีจุดสี) — และสวิตช์ Performance/Condition มุมขวา
+  - ดูแถบแท็บใต้หัว: ตัวอักษรชนิด (I/R/C) + จุดสถานะเล็ก + ชื่อชนิด ต่อโมเดลที่มีจริงเท่านั้น
+  - กด "Model settings" เพื่อพับ/กาง แล้วสลับแท็บไปมา แก้ค่าในแท็บหนึ่งแล้วสลับไปแท็บอื่นและสลับกลับ
+  - **คาดหวัง:** หัว + แท็บใช้ร่วมกันทุกชนิดของ sensor นั้น (ไม่ซ้ำต่อโมเดล) — สลับแท็บไม่ทำให้ค่าที่พิมพ์ค้างในแท็บอื่นหาย และแท็บที่แก้ค้างไว้ยังไม่ Save ขึ้นป้าย "edited" — "Model settings" **กางเองอัตโนมัติเมื่อโมเดลนั้นยังตั้งค่าไม่ครบ** (พร้อมป้าย "N to fix") และ**พับเองพร้อมสรุปบรรทัดเดียว**เมื่อครบแล้ว (ชื่อ · predictors/Y · stiffness/clusters · data scope) — กดพับ/กางเองได้เสมอไม่ว่าสถานะไหน — ชนิดโมเดลเปลี่ยนที่นี่ไม่ได้ ไม่มีช่อง Category ในฟอร์ม (Category อยู่ที่หัว pane เท่านั้น — ดู BMW-32)
 
-- [ ] **BMW-17 — ปุ่ม "Build Model →" ต่อจาก Save changes + ปิดจนกว่ากรอกครบ และ sensor ต้องมี Category ก่อน** 🆕
-  - เปิดแก้โมเดลที่ข้อมูลยังไม่ครบ (เช่น Relationship ที่ยังไม่เลือก predictor สักตัว)
-  - เปิดแถว sensor ที่ยังไม่ได้เลือก Category ที่หัวแถว
-  - ดูตำแหน่ง สถานะ และข้อความข้างปุ่ม Build Model / Save changes
-  - **คาดหวัง:** ปุ่ม **"Build Model →" อยู่ต่อจาก "Save changes" ที่มุมล่างขวาของแท็บ** และต้อง **จางลงกดไม่ได้เหมือนปุ่ม Save changes เป๊ะ ๆ** พร้อม tooltip/ข้อความบอกเหตุผล — ถ้ายังไม่มี Category ต้องขึ้น **"Pick a category on the sensor header."** (ข้อความเหมือนกันทุกที่ ทั้งข้อความข้างปุ่ม tooltip ป้ายสถานะ และปุ่ม Finish) และปุ่มทั้งสองกดไม่ได้จนกว่าจะเลือกที่หัว sensor — **ถ้ายังดูสีเข้มเหมือนกดได้ทั้งที่ข้อมูลยังไม่ครบ ให้รายงานทันที** — **ถ้าข้อมูลครบและมี Category แล้ว แต่ workspace ยังไม่ได้ตั้ง Running Condition (หรือยังไม่ได้กด "No condition") ปุ่ม Build Model ต้องจางกดไม่ได้ พร้อมเหตุผล "Set a running condition first, or choose "No condition — use all rows"." ทั้งใน tooltip และข้อความข้างปุ่ม ส่วนปุ่ม Save changes ยังกดได้** (ดู BMW-23)
+- [ ] **BMW-40 — ฟิลด์ใหม่ใน Model settings: Stiffness (Relationship), จำนวน cluster (Clustering), และสวิตช์ Workspace/Custom (ทุกชนิด)** 🆕
+  - กาง Model settings ของโมเดล Relationship — ดูตัวเลือก Stiffness 4 ระดับ (Very loose/Loose/Standard/Strict)
+  - กาง Model settings ของโมเดล Clustering — ดูปุ่ม −/+ ปรับจำนวน cluster ข้าง Y sensor / Criteria sensor
+  - กาง Model settings ของโมเดล Individual — ดูป้ายนิ่ง "1σ + 3σ · automatic" (ไม่มีปุ่มปรับ)
+  - ทุกชนิด: ดูสวิตช์ "Training data: Workspace | Custom" ท้ายฟอร์ม แล้วสลับแล้วกด Save changes
+  - **คาดหวัง:** เลือก Stiffness/จำนวน cluster ได้ ค่าอยู่หลัง Save — สวิตช์ Workspace/Custom **แค่บันทึกโหมดเฉยๆ ในหน้านี้** (ยังไม่มีที่แก้ราย เงื่อนไข/ช่วงเวลาของ Custom ที่นี่ — ต้องไปแก้ที่หน้า PM เต็ม ผ่านปุ่ม "Open full view ↗" — ดู PM-27)
 
-- [ ] **BMW-8 — กด Build Model แล้วค่าที่เพิ่งแก้ (ยังไม่ได้กด Save) ต้องถูกบันทึกด้วย** 🆕
-  - เปิดแก้โมเดลตัวหนึ่งที่ข้อมูลครบอยู่แล้ว
+- [ ] **BMW-41 — พื้นที่ผลลัพธ์ (ยังเป็น placeholder เฉยๆ ใน Phase A นี้)** 🆕
+  - เลือกโมเดลที่ยัง Incomplete
+  - มาร์กโมเดลหนึ่งเป็น Complete (ผ่านปุ่ม "✓ Mark complete")
+  - **คาดหวัง:** โมเดล Incomplete แสดงข้อความ "Not trained yet" กลางกรอบเส้นประ — โมเดล Complete แสดง "Marked complete — open full view to see the chart." — **ยังไม่มีกราฟ ตัวเลข หรือปุ่ม Train ใดๆ ที่นี่** (มากับ Phase B — อย่ารายงานว่าเป็นบั๊ก)
+
+- [ ] **BMW-42 — Footer: ป้ายสถานะอ่านอย่างเดียว + "Open full view ↗" + "Save changes" + "✓ Mark complete"/"Mark incomplete" (แทนป้ายสถานะที่กดสลับได้เองแบบเดิม)** 🆕
+  - ดู footer ของโมเดลที่เลือก: ป้าย Incomplete/Complete ทางซ้าย, ข้อความสถานะ, ปุ่ม 3 ปุ่มทางขวา
+  - ลองกดป้ายสถานะเอง (ควรกดไม่ติดเพราะไม่ใช่ปุ่มแล้ว)
+  - กด "✓ Mark complete" แล้วดูป้าย/ปุ่มเปลี่ยนเป็น "Mark incomplete"
+  - **คาดหวัง:** ป้ายสถานะเป็นข้อความอ่านอย่างเดียว (ไม่ใช่ปุ่ม) — การสลับ Complete/Incomplete ทำผ่าน**ปุ่มแยกต่างหาก**เท่านั้น ("✓ Mark complete" กดไม่ได้พร้อม tooltip เหตุผลถ้ายังติด Running Condition gate — ดู BMW-33 — ส่วน "Mark incomplete" กดได้เสมอ) — "Open full view ↗" = ปุ่มเดิมที่เคยชื่อ "Build Model →" (commit ฟอร์มอัตโนมัติก่อน navigate ไปหน้า PM เหมือนเดิมทุกอย่าง — ดู BMW-8/BMW-10) — "Save changes" ทำงานเหมือนเดิมทุกอย่าง
+
+- [ ] **BMW-8 — กด "Open full view ↗" แล้วค่าที่เพิ่งแก้ (ยังไม่ได้กด Save) ต้องถูกบันทึกด้วย**
+  - เปิดโมเดลตัวหนึ่งที่ข้อมูลครบอยู่แล้ว (กาง Model settings ถ้าพับอยู่)
   - แก้ field บางอย่าง (เช่น Model name) โดย**ไม่กด Save changes**
-  - กด "Build Model →" ทันที
-  - กด Back กลับมาหน้า Overview แล้วเปิดแก้โมเดลเดิมอีกครั้ง
-  - **คาดหวัง:** ค่าที่เพิ่งแก้ไว้ต้องถูกบันทึกแล้ว (ปุ่ม Build Model จะ commit ฟอร์มให้อัตโนมัติก่อน navigate ไปหน้า train เสมอ) — **ไม่ใช่ค่าเก่าที่ยังไม่ได้ Save** ซึ่งจะทำให้ train ด้วยข้อมูลผิดแบบเงียบ ๆ
+  - กด "Open full view ↗" ทันที
+  - กด Back กลับมาหน้า Overview แล้วเปิดโมเดลเดิมอีกครั้ง
+  - **คาดหวัง:** ค่าที่เพิ่งแก้ไว้ต้องถูกบันทึกแล้ว (ปุ่มนี้ commit ฟอร์มให้อัตโนมัติก่อน navigate ไปหน้า train เสมอ) — ไม่ใช่ค่าเก่าที่ยังไม่ได้ Save
 
-- [ ] **BMW-9 — ปุ่ม "Add predictors…" เปิด popup ค้นหาได้และจัดกลุ่มตาม Component (เดิมเป็น dropdown แทรกในหน้า เปลี่ยนเป็น popup 2026-09-22 — ดู BMW-13)**
-  - เปิดแก้โมเดล Relationship ที่หน้า Overview
+- [ ] **BMW-9 — ปุ่ม "Add predictors…" เปิด popup ค้นหาได้และจัดกลุ่มตาม Component**
+  - เลือก sensor ที่มีโมเดล Relationship จากลิสต์ซ้าย กาง Model settings ถ้าพับอยู่
   - คลิกปุ่ม "Add predictors…" ที่ช่อง Predictor sensors
   - พิมพ์ค้นหาด้วย tag และด้วยคำใน description ใน popup
   - เลือก predictor 2-3 ตัว กด OK แล้วดูชิปที่ขึ้นนอก popup กด x บนชิปเพื่อเอาออกทีละตัว
-  - **คาดหวัง:** popup แบ่งรายการเป็นกลุ่มตามชื่อ Component (เรียงตามตัวอักษร ตัวที่ไม่มี component ไปอยู่ "Uncategorized"), พิมพ์ค้นหาแล้วกรองทั้งรายการได้, target ของโมเดลไม่โผล่ในตัวเลือก, ปุ่ม Save/Build Model ยังกดไม่ได้จนกว่าจะมี predictor อย่างน้อย 1 ตัว
+  - **คาดหวัง:** popup แบ่งรายการเป็นกลุ่มตามชื่อ Component (เรียงตามตัวอักษร ตัวที่ไม่มี component ไปอยู่ "Uncategorized"), พิมพ์ค้นหาแล้วกรองทั้งรายการได้, target ของโมเดลไม่โผล่ในตัวเลือก, ปุ่ม Save/Open full view ยังกดไม่ได้จนกว่าจะมี predictor อย่างน้อย 1 ตัว
 
-- [ ] **BMW-13 — Predictor popup: เลือกได้หลายตัวก่อนกด OK, พับ/กางกลุ่มได้, Cancel/Esc ไม่บันทึกอะไรเลย** 🆕
+- [ ] **BMW-13 — Predictor popup: เลือกได้หลายตัวก่อนกด OK, พับ/กางกลุ่มได้, Cancel/Esc ไม่บันทึกอะไรเลย**
   - เปิด popup "Add predictors…" ดูว่ากลุ่ม Component แต่ละกลุ่มเริ่มต้น**พับอยู่**
   - กดหัวกลุ่มเพื่อกาง แล้วติ๊กเลือกหลายตัวในกลุ่มเดียวกันและต่างกลุ่ม (ยังไม่กด OK)
   - ลองพิมพ์ค้นหา ดูว่ากลุ่มที่มีผลลัพธ์ตรงกางออกให้เองโดยไม่ต้องกดหัวกลุ่ม
   - กด Cancel (หรือกด Esc หรือคลิกนอก popup) แล้วเปิด popup ใหม่อีกครั้ง
-  - **คาดหวัง:** ติ๊กได้มากกว่า 1 ตัวสะสมไว้ก่อนกด OK (ตัวนับ "N selected" ที่มุมล่างเพิ่มตามที่ติ๊ก), กลุ่มเริ่มพับเสมอจนกว่าจะกดเปิดเองหรือพิมพ์ค้นหา, Cancel/Esc/คลิกนอก popup **ไม่มีผลอะไรกับ predictor ที่เลือกไว้เดิมเลย** — เปิด popup ใหม่ต้องกลับไปเป็นค่าที่เคย OK ไว้ล่าสุด ไม่ใช่ค่าที่เพิ่งติ๊กค้างไว้ตอนยกเลิก
+  - **คาดหวัง:** ติ๊กได้มากกว่า 1 ตัวสะสมไว้ก่อนกด OK, กลุ่มเริ่มพับเสมอจนกว่าจะกดเปิดเองหรือพิมพ์ค้นหา, Cancel/Esc/คลิกนอก popup **ไม่มีผลอะไรกับ predictor ที่เลือกไว้เดิมเลย**
 
-- [ ] **BMW-14 — Clustering: Y sensor และ Criteria sensor เปลี่ยนจาก dropdown ธรรมดา เป็น popup แบบเดียวกัน แต่เลือกได้ตัวเดียว (เพิ่ม 2026-09-22)** 🆕
-  - เปิดแก้โมเดล Clustering ที่หน้า Overview ดูช่อง "Y sensor (target)" และ "Criteria sensor (optional)"
+- [ ] **BMW-14 — Clustering: Y sensor และ Criteria sensor เป็น popup เลือกได้ตัวเดียว**
+  - เลือก sensor ที่มีโมเดล Clustering กาง Model settings ดูช่อง "Y sensor (target)" และ "Criteria sensor (optional)"
   - คลิกช่อง Y sensor เลือก sensor 1 ตัว
   - คลิกช่อง Criteria sensor ดูว่ามีตัวเลือก "None" ให้ด้วยไหม แล้วเลือก sensor 1 ตัว
-  - **คาดหวัง:** ทั้งสองช่องเปิด popup ค้นหา+จัดกลุ่มตาม Component แบบเดียวกับ Predictor sensors — แต่**คลิกเลือกแล้ว popup ปิดทันที ไม่มีปุ่ม OK/Cancel และไม่ติ๊กได้มากกว่า 1 ตัว** (X sensor ที่อยู่ข้างๆ ยังคงล็อกไว้เหมือนเดิม ไม่ใช่ popup) — ช่อง Criteria sensor มีแถว "None" ให้เลือกล้างค่าได้ ช่อง Y sensor ไม่มี
+  - **คาดหวัง:** ทั้งสองช่องเปิด popup ค้นหา+จัดกลุ่มตาม Component — คลิกเลือกแล้ว popup ปิดทันที ไม่มีปุ่ม OK/Cancel และไม่ติ๊กได้มากกว่า 1 ตัว (X sensor ข้างๆ ยังล็อกไว้เหมือนเดิม) — ช่อง Criteria sensor มีแถว "None" ให้เลือกล้างค่าได้ ช่อง Y sensor ไม่มี
 
-- [ ] **BMW-10 — Predictor ที่เลือกไว้ต้องตามไปที่หน้า Build Model ครบ** 🆕
-  - เปิดแก้โมเดล Relationship แล้วเลือก predictor 2-3 ตัว (ยังไม่กด Save)
-  - กด "Build Model →" ทันที
+- [ ] **BMW-10 — Predictor ที่เลือกไว้ต้องตามไปที่หน้า Build Model ครบ**
+  - เลือก predictor 2-3 ตัวในโมเดล Relationship (ยังไม่กด Save)
+  - กด "Open full view ↗" ทันที
   - ดูส่วน Predictor sensors ที่หน้า PM
-  - **คาดหวัง:** predictor ที่เพิ่งเลือกอยู่ครบและตัวเลขนับถูก — **ต้องไม่ขึ้น "No predictors selected"** (เคยเป็นบั๊ก race: หน้า PM อ่านไฟล์ก่อนที่การบันทึกจะเสร็จ ทำได้ไม่ทุกครั้ง ให้ลองซ้ำหลายรอบ)
+  - **คาดหวัง:** predictor ที่เพิ่งเลือกอยู่ครบและตัวเลขนับถูก — ต้องไม่ขึ้น "No predictors selected"
 
-- [ ] **BMW-18 — Running Condition Filter: บังคับตั้งก่อน (Required) + เลือก "Filter by condition" หรือ "No condition" + sensor picker popup + AND/OR (แทน BMW-11; ช่วงเวลาย้ายไป BMW-25)** 🆕
-  - เปิด workspace ที่ยังไม่เคยตั้ง Running Condition เลย (มีโมเดลแล้วหรือยังไม่มีก็ได้)
-  - ดูแผง "Running Condition Filter" ด้านบนหน้า Overview
-  - ตั้ง **Training periods** อย่างน้อย 1 ช่วง (ดู BMW-25) — ช่วงเวลาอย่างเดียว**ไม่ถือว่าตั้งเงื่อนไขแล้ว**
-  - ในแผงมีตัวเลือก **"Filter by condition | No condition"** — เลือก "Filter by condition" แล้วกด "Add condition" คลิกช่อง sensor ต้องเปิด popup ค้นหา+จัดกลุ่มตาม Component (เลือกได้ทุก sensor) ตั้ง operation และค่า
-  - เพิ่มเงื่อนไขที่ 2 แล้วสลับปุ่ม "Match" AND/OR — ดูข้อความสรุปตอนพับแผง
-  - ลองเว้น "ค่า" ว่างไว้ / เลือก sensor ที่ไม่มีในไฟล์ข้อมูล แล้วดูว่ายังขึ้น Required อยู่
-  - กด "No condition" แล้วกลับมากด "Filter by condition"
-  - ปิดเปิดโปรแกรมแล้วกลับมาดูแผง
-  - **คาดหวัง:** ตอนยังไม่ตั้งอะไร แผงมี**ป้าย "Required" สีเหลือง กรอบสีเหลือง เปิดแผงให้เองครั้งเดียวตอนเปิดหน้า** และข้อความสีเหลืองใต้ชื่อแผง "Not set — add a condition that tells running from idle, or choose "No condition — use all rows"." (ไอคอนแผงเป็นสีเหลืองด้วย) — เมื่อพับแผง บรรทัดใต้ชื่อแสดง**ช่วงเวลา 2 ช่วงแรกเป็นชิป (เช่น "1 Jan – 28 Feb 2025") + "+N more"** ตามด้วยสรุปเงื่อนไข และป้ายขวา "N conditions" (น้ำเงิน) / "No condition" (เทา) / "Required" (เหลือง) / "Fix period" (แดง เมื่อมีช่วงเวลาผิด) — เมื่อกางแผงมีหัวข้อ "Running condition" พร้อมข้อความ "required to build · applied inside the periods above", ปุ่มสลับกว้างเต็มแถว, "Match AND/OR" พร้อมข้อความ "value conditions only; periods always combine with OR", แถวเงื่อนไขเป็นการ์ดแสดงชื่อ sensor + (TAG) สีจาง, และกล่องสรุป "Row is used when ( P1 OR P2 ) AND ( … )" (OR/AND เป็นชิปเล็ก) ปิดท้าย "Default for every model — override per model on its own Build page." — เมื่อยังไม่ตั้ง ใต้แผงมีบรรทัด "⚠ N of M models can't be built yet …" — มีเงื่อนไขที่กรอกครบอย่างน้อย 1 แถว (sensor อยู่ในไฟล์ + มีค่า, ถ้า between ต้องมีทั้งสองค่า) **หรือ**กด "No condition" ถึงจะหายป้าย Required — "No condition" ซ่อนรายการเงื่อนไขและมีข้อความว่า **เงื่อนไขที่เคยบันทึกไว้ยังอยู่แต่ไม่ถูกนำมาใช้** (ไม่ลบทิ้ง) แล้วกลับมา "Filter by condition" เงื่อนไขเดิมกลับมา — เพิ่มเงื่อนไขใหม่ขณะเลือก "No condition" ไม่ได้ (ต้องสลับกลับก่อน) และทั้งสองอย่างไม่ค้างพร้อมกัน — เลือก/เปลี่ยน sensor ได้จริง, สลับ AND/OR มีผลกับสรุป, Training periods + เงื่อนไขเป็น**ค่าเริ่มต้นของทุกโมเดล** (โมเดลที่ตั้ง Custom จะไม่ตาม — ดู PM-27), ค่าอยู่ครบหลังปิดเปิด — เงื่อนไขนี้**ไม่กระทบกราฟ/ตารางของ Dashboard** เลย
+- [ ] **BMW-34 — แถบ "Running condition" บรรทัดเดียว + ปุ่ม "Edit…" เปิด popup แผงเดิม** 🆕
+  - เปิด workspace ที่ยังไม่เคยตั้ง Running Condition เลย
+  - ดูแถบ "Running condition" ใต้หัวหน้าต่าง (เหนือลิสต์ซ้าย/detail pane)
+  - กดปุ่ม "Edit…" (หรือรอให้ popup เปิดเองถ้า workspace ยังไม่ตั้ง)
+  - ตั้ง Training periods + เงื่อนไข (เนื้อหาในนี้เหมือนแผงเดิมทุกอย่าง — ดู BMW-25) แล้วปิด popup ด้วยปุ่ม X มุมขวาบน
+  - **คาดหวัง:** แถบบรรทัดเดียวมี 3 ส่วน: ป้าย "Required" (เหลือง) / "✓ Set" (เขียว), ข้อความสรุปเงื่อนไข+จำนวน periods แบบ mono ตัดด้วย … เมื่อยาวเกิน, ปุ่ม "Edit…" — กด Edit เปิด popup ลอยกลางจอ (ไม่ใช่แผงฝังอยู่กับที่เหมือนเดิม) ที่มีแผง Running Condition Filter เดิมทั้งชุดข้างใน — popup **เปิดเองอัตโนมัติครั้งเดียว**ตอนโหลด workspace ที่ยังไม่ได้ตั้งอะไรเลย — ปิด popup ด้วยปุ่ม X หรือคลิกพื้นหลังนอกกรอบได้ — ค่าที่ตั้งในนี้**ไม่กระทบกราฟ/ตารางของ Dashboard**เลยเหมือนเดิม
 
-- [ ] **BMW-16 — ป้ายสถานะ Complete / Incomplete ต่อโมเดลแต่ละแท็บ** 🆕
-  - ที่หัวแถว sensor ดูจุดสถานะบนชิป I / R / C และข้อความ "k of n complete"
-  - กางแถว เปิดแท็บของโมเดลหนึ่ง แล้วกดป้าย "Incomplete" ที่มุมขวาของแถบแท็บ (ข้างคำว่า Status)
-  - กดอีกครั้ง
-  - ดูที่ Group by Component / Model Type (แถวต่อโมเดล) ว่าป้ายยังกดสลับได้ที่หัวแถว
-  - **คาดหวัง:** สลับ Incomplete ⇄ Complete ได้เฉพาะโมเดลของแท็บนั้น (ชนิดอื่นของ sensor เดียวกันไม่เปลี่ยน) จุดสีบนชิปและ "k of n complete" อัปเดตทันที และค่าอยู่ต่อหลังปิดเปิดโปรแกรม (ปุ่ม Finish ในหน้า PM ตั้งเป็น Complete ทางเดียว — ดู PM-22)
-
-- [ ] **BMW-19 — หนึ่งแถวต่อ sensor ต่อกลุ่ม (Group by Failure Group)** 🆕
-  - ให้ sensor ตัวเดียวมี Individual + Relationship + Clustering ในกลุ่มเดียวกัน (สร้างที่ Dashboard แท็บ Sensor)
-  - ดูการ์ดของกลุ่มที่หน้า Overview
-  - เพิ่ม/ลบชนิดโมเดลที่ Dashboard แล้วดูแถวอีกครั้ง
-  - ให้ sensor เดียวกันอยู่ 2 กลุ่ม โดยกลุ่มหนึ่งมีแค่ Individual
-  - **คาดหวัง:** ขึ้น**แถวเดียว**ต่อ sensor ต่อกลุ่ม การ์ดกลุ่มมีข้อความมุมขวา "N sensors · M models" — หัวแถวแบ่งเป็น 3 ส่วน: ซ้ายคือคำอธิบาย sensor บรรทัดเดียวตัดด้วย … พร้อมบรรทัดใต้ชื่อ = tag ตัวอักษร mono + ชิป Component + ชิป "also in FG-n" (มีไอคอนลิงก์ เอาเมาส์ชี้เห็นคำอธิบาย) + "k of n complete" / ขวาคือชิป I R C **เฉพาะชนิดที่มีจริง** (กดชิปเพื่อเปิดแถวที่แท็บนั้น จุดสีเขียวมุมชิป = Complete) และตัวเลือก Category (หน้าต่างแคบ หัวแถวหดเป็น 2 บรรทัด) (ไม่มีช่องว่างหรือเส้นประของชนิดที่ไม่มี) — **Clustering จัดเข้าแถวตาม X sensor** (เปลี่ยน Y แล้วแถวไม่ย้าย) — ฟิลด์ Failure groups ในแถวที่กางออกเป็นชิปอ่านอย่างเดียว และเขียน "I only" เป็นแท็กเล็กต่อท้ายชื่อกลุ่มที่มีโมเดลไม่ครบทุกชนิด — การสร้าง/ลบโมเดลยังทำได้ที่ Dashboard เท่านั้น
-
-- [ ] **BMW-20 — Category ตั้งครั้งเดียวที่หัว sensor: บันทึกทันที มีผลกับทุกโมเดลของ sensor นั้นทุกกลุ่ม + เตือนถ้ากระทบกลุ่มอื่น** 🆕
-  - ที่หัวแถว sensor กด Performance หรือ Condition
-  - ให้ sensor นั้นอยู่หลายกลุ่ม แล้วกดเปลี่ยน Category
-  - ปิดหน้าต่าง Build Model เปิดใหม่ และดูแถวของ sensor เดียวกันในอีกกลุ่ม
-  - ดูที่ Group by Component / Model Type
-  - **คาดหวัง:** บันทึกทันทีโดยไม่มีปุ่ม Save และโมเดลทุกชนิดของ sensor นั้น**ทุกกลุ่ม**เปลี่ยนตาม — sensor ที่อยู่หลายกลุ่มขึ้นข้อความเตือนว่า Category นี้ใช้กับทุกกลุ่มไหนบ้าง (sensor ที่อยู่กลุ่มเดียวไม่เตือน) — **ไม่มีสถานะ "Mixed" ที่ใดเลย** — ยังไม่เลือก Category กรอบตัวเลือกเรืองสีเหลืองและมีป้าย "Set category" อยู่ข้างใน (Performance เมื่อเลือกแล้วเป็นสีเขียว, Condition สีม่วง) — มุมมอง Component / Model Type แสดง Category เป็นชิปอ่านอย่างเดียว พร้อมลิงก์ "Change in Failure Group view" ที่พากลับมาแถว sensor นั้น
-
-- [ ] **BMW-21 — แจ้งเตือนครั้งเดียวเมื่อระบบปรับ Category ของ workspace เก่าให้ตรงกัน** 🆕
-  - ใช้ workspace เก่าที่ sensor เดียวกันมีโมเดลคนละ Category (เช่น Individual = Performance แต่ Relationship = Condition) เปิด Build Model
-  - ดูแถบเหลืองด้านบนรายการ
-  - กด Dismiss แล้วปิดเปิดโปรแกรม เปิด Build Model ใหม่
-  - **คาดหวัง:** ขึ้นแถบเหลือง "Category made consistent for N sensor(s)" ลิสต์**ต่อ sensor** บอกว่าใช้ Category ของโมเดลชนิดไหน ("taken from its Individual model") และโมเดลที่ถูกปรับจาก (ขีดฆ่า) → เป็นอะไร ปิดท้าย "If that's wrong, change it on the sensor's header." (ตามลำดับ Individual ก่อน Relationship ก่อน Clustering) และค่าใหม่ถูก**บันทึกลงไฟล์ตั้งแต่เปิดครั้งแรก** — กด Dismiss แล้วหายและไม่กลับมาอีกแม้ปิดเปิดโปรแกรม — workspace ที่ Category ตรงกันอยู่แล้วต้องไม่ขึ้นแถบนี้เลย
-
-- [ ] **BMW-22 — โมเดลใหม่ที่สร้างจาก Dashboard สืบทอด Category ของ sensor** 🆕
-  - ตั้ง Category ให้ sensor ที่ Build Model (เช่น Condition)
-  - ที่ Dashboard แท็บ Sensor เพิ่มโมเดลชนิดอื่นให้ sensor เดียวกัน (เช่น เพิ่ม Relationship) หรือเพิ่มเข้ากลุ่มอื่น
-  - เปิด Build Model ดูแถวนั้น
-  - **คาดหวัง:** โมเดลใหม่ใช้ Category เดียวกับ sensor ทันที (ไม่ต้องตั้งใหม่ ไม่ขึ้น "Pick a category") — sensor ที่ยังไม่เคยตั้ง Category โมเดลใหม่ยังไม่มี Category ให้เลือกที่หัวแถว
-
-- [ ] **BMW-23 — ด่านบังคับ Running Condition: Build Model / ป้ายสถานะ Complete / Finish ถูกล็อกจนกว่าจะตั้ง (soft gate A)** 🆕
-  - ใช้ workspace ที่ **ยังไม่ตั้ง** Running Condition และมีโมเดลอย่างน้อย 2 ตัวของ sensor เดียวกัน (Incomplete ทั้งคู่)
-  - ดูหัวแถว sensor และแท็บของแต่ละโมเดล
-  - เปิดแถว กด "Build Model →" และลองกดป้าย Incomplete
-  - สลับไป "Group by Component" ดูป้ายและป้ายสถานะ
-  - ที่แผง Running Condition ตั้งเงื่อนไขที่กรอกครบ 1 แถว (หรือกด "No condition") แล้วกลับมาดูซ้ำ
-  - **คาดหวัง:** ใต้แผง Running Condition มีบรรทัดเตือน "⚠ N of M models can't be built yet — they follow the workspace or have no condition of their own." (หายเมื่อ workspace ตั้งแล้ว) — หัวแถว sensor มีป้ายเหลือง **"N blocked"** (นับเฉพาะโมเดลที่ยัง Incomplete), แต่ละแท็บ/แถวโมเดลมีป้าย **"Needs condition"** — โมเดลที่ Complete อยู่แล้วแต่ยังไม่มีเงื่อนไข ขึ้น **"Legacy · all data"** แทน (ป้ายสีเทา ไม่ใช่คำเตือน — ส่วนป้ายอื่นเป็นสีเหลือง) — ถ้าเหตุที่ถูกล็อกคือ**ยังไม่มี Category** ป้ายเป็น **"Needs category"** และถ้า**ช่วงเวลาผิด (สิ้นสุดก่อนเริ่ม)** เป็น **"Fix periods"** (เอาเมาส์ชี้ป้ายเห็นเหตุผลเต็ม) — ปุ่ม "Build Model →" กดไม่ได้พร้อมเหตุผล (Save changes ยังกดได้) — ป้ายสถานะกดเปลี่ยนเป็น **Complete ไม่ได้** (จางพร้อม tooltip เหตุผล) แต่เปลี่ยนจาก Complete กลับเป็น Incomplete ได้เสมอ — พอตั้งเงื่อนไขแล้วป้ายทั้งหมดหาย ปุ่ม/ป้ายกดได้ และกด Build Model เข้าหน้า PM ได้ — โมเดลที่ตั้ง Custom ต้องมีเงื่อนไขของตัวเอง (หรือกด No condition ในหน้า PM) ถึงจะผ่าน แม้ workspace จะตั้งแล้ว
-
-- [ ] **BMW-24 — Workspace เก่าที่มีโมเดลอยู่แล้วแต่ไม่เคยตั้ง Running Condition: แบนเนอร์ 3 ปุ่ม** 🆕
-  - เปิด workspace เก่า (สร้างก่อนฟีเจอร์นี้) ที่มีโมเดลแล้วและไม่เคยตั้ง Running Condition
-  - ดูแบนเนอร์สีน้ำเงิน "New: running condition is now required for every model." **เหนือ**แผง Running Condition (บอกจำนวนโมเดลที่ Complete แล้วว่าเทรนด้วยข้อมูลทั้งหมด และยังคงเป็น Complete)
-  - ลองปุ่ม "Remind me later" แล้วปิดโปรแกรม เปิดใหม่
-  - ลองปุ่ม "Set a condition" แล้วตั้งเงื่อนไขที่กรอกครบ
-  - เปิด workspace เก่าอีกอันแล้วกด "Keep using all data"
-  - **คาดหวัง:** แบนเนอร์มี 3 ปุ่ม — "Remind me later" ซ่อนแบนเนอร์แค่ในรอบที่เปิดอยู่ (**ไม่บันทึก** เปิดโปรแกรมใหม่แบนเนอร์กลับมา) — "Set a condition" เปิดแผง Running Condition ให้ และแบนเนอร์หายเมื่อตั้งเงื่อนไขครบแล้ว **และไม่กลับมาอีกแม้ลบเงื่อนไขทีหลัง** — "Keep using all data" = ยืนยัน No condition แบนเนอร์หายถาวร โมเดลที่ Complete อยู่แล้วไม่ถูกแตะ — workspace ใหม่ที่ยังไม่มีโมเดลต้อง**ไม่**เห็นแบนเนอร์นี้ และ workspace ที่ตั้งเงื่อนไขไว้แล้วก็ไม่เห็น
-- [ ] **BMW-25 — Training periods ในแผง Running Condition Filter: หลายช่วงเวลา (แทน Time start/end ช่วงเดียว)** 🆕
-  - เปิดแผง "Running Condition Filter" ที่หน้า Overview ดูหัวข้อ **"Training periods"** — ตอนยังไม่มีช่วงเวลาต้องเห็นข้อความว่าไม่จำกัดเวลา (ใช้ทั้งชุดข้อมูล) กับปุ่ม **"Add period"**
+- [ ] **BMW-25 — Training periods ในแผง Running Condition Filter (เนื้อหาไม่เปลี่ยน — เข้าถึงผ่านปุ่ม Edit… แล้ว ดู BMW-34)**
+  - เปิด popup ผ่านปุ่ม "Edit…" ที่แถบ Running condition ดูหัวข้อ **"Training periods"** — ตอนยังไม่มีช่วงเวลาต้องเห็นข้อความว่าไม่จำกัดเวลา กับปุ่ม **"Add period"**
   - กด "Add period" ครั้งแรก แล้วกดอีกครั้ง — ดูช่วงที่สองที่เพิ่มมาเอง
-  - แก้วันที่ของช่วงหนึ่งให้เรียงสลับกัน (เช่น ช่วงที่ 1 ให้เริ่มหลังช่วงที่ 2) โดยพิมพ์ค่าแล้วยังไม่กดที่อื่น จากนั้นคลิกออกจากช่อง (หรือกด Enter)
+  - แก้วันที่ของช่วงหนึ่งให้เรียงสลับกัน แล้วคลิกออกจากช่อง (หรือกด Enter)
   - แก้ให้สองช่วงเหลื่อมกัน แล้วกด **"Merge into one"**
   - แก้ช่วงหนึ่งให้วันสิ้นสุดอยู่**ก่อน**วันเริ่ม
-  - ปล่อยวันเริ่มของช่วงแรกว่าง และวันสิ้นสุดของช่วงสุดท้ายว่าง / ลองปล่อยว่างในช่วงที่อยู่กลาง
-  - เพิ่มช่วงจนครอบคลุมข้อมูลทั้งไฟล์ แล้วดูปุ่ม Add period
-  - กดกากบาทลบช่วงจนหมด แล้วปิดเปิดโปรแกรมกลับมาดูแผง
-  - **คาดหวัง:** ช่วงที่ 1 ที่เพิ่มครั้งแรกเริ่มที่วันแรกของข้อมูลและจบสิ้นเดือนนั้น เวลา 23:59 · ช่วงถัดไปเริ่ม**วันถัดจากวันสิ้นสุดของช่วงก่อนหน้า** และจบ 23:59 ของสิ้นเดือนนั้น (ไม่เกินวันสุดท้ายของข้อมูล) · **ระหว่างพิมพ์แถวไม่กระโดด — เรียงตามเวลาเมื่อคลิกออกจากช่อง/กด Enter เท่านั้น** · ช่วงที่เหลื่อมกันมี**คำเตือน + ปุ่ม "Merge into one" (ไม่ได้บล็อก)** กดแล้วรวมเป็นช่วงเดียว (ต้นสุด–ปลายสุด) · ช่วงที่วันสิ้นสุดก่อนวันเริ่มมีข้อความสีแดงใต้แถว และ**กด Build Model / Finish ไม่ได้** จนกว่าจะแก้ (ดู BMW-23) · วันว่างใช้ได้เฉพาะ**วันเริ่มของช่วงแรก ("Start of data")** และ**วันสิ้นสุดของช่วงสุดท้าย ("End of data")** ที่อื่นขึ้น error · ปุ่ม Add period กดไม่ได้เมื่อช่วงเวลาครอบคลุมข้อมูลทั้งหมดแล้ว (หรือช่วงสุดท้ายเปิดปลาย) · ลบหมด = ไม่จำกัดเวลา · ช่วงเวลาอยู่ครบหลังปิดเปิดโปรแกรม · แถวข้อมูลถูกนำมาใช้ถ้าอยู่ใน**ช่วงใดช่วงหนึ่ง (OR)** และผ่านเงื่อนไขค่า sensor (AND ระหว่างสองกลุ่ม) · ช่วงเวลานี้**ไม่กระทบกราฟ/ตารางของ Dashboard** (กราฟยังไม่มีแถบแสดงช่วง — เลื่อนไว้ทีหลัง) · หน้าตา: หัวข้อ "Training periods" มีตัวเลขจำนวนช่วงและข้อความ "optional · a row inside any period is used · none = full dataset" — มี**แถบไทม์ไลน์** เหนือรายการ พร้อมข้อความ "N of M days used" และเดือน-ปีซ้าย/ขวา (ขีดทะแยง = ส่วนที่ไม่ได้ใช้, สีฟ้า = ช่วงที่ใช้, ช่วงเหลื่อมเป็นลายเหลือง-ฟ้า, ช่วงที่ผิดเป็นสีแดง) — แต่ละช่วงเป็นการ์ดมีเลขลำดับ ช่องวันที่เริ่ม → สิ้นสุดพร้อมไอคอนปฏิทิน จำนวนวัน (เช่น "59 d") และปุ่ม × — ช่วงแรกมีปุ่ม ⟵ ในช่องเริ่ม / ช่วงสุดท้ายมีปุ่ม ⟶ ในช่องสิ้นสุด กดแล้วเป็นกล่องเส้นประ "Start of data" / "End of data" พร้อมปุ่ม "Set date" ที่ใส่วันที่กลับ — คำเตือนช่วงเหลื่อมบอกจำนวนวัน ("Overlaps period 1 by 12 d — rows in both are used once.") และช่วงผิดมี "End is before start — pick an end after … This period is ignored and building is blocked until fixed." — ยังไม่มีช่วงเวลา: กล่องเส้นประ "No limit — the full dataset (N days) is used." พร้อมปุ่ม "+ Add period"
+  - ปล่อยวันเริ่มของช่วงแรกว่าง และวันสิ้นสุดของช่วงสุดท้ายว่าง
+  - กดกากบาทลบช่วงจนหมด แล้วปิดเปิดโปรแกรมกลับมาเปิด popup ดูอีกครั้ง
+  - **คาดหวัง:** ช่วงที่ 1 เริ่มที่วันแรกของข้อมูลและจบสิ้นเดือนนั้น เวลา 23:59 · ช่วงถัดไปเริ่มวันถัดจากวันสิ้นสุดของช่วงก่อนหน้า · ระหว่างพิมพ์แถวไม่กระโดด — เรียงตามเวลาเมื่อคลิกออกจากช่อง/กด Enter เท่านั้น · ช่วงเหลื่อมกันมีคำเตือน + ปุ่ม "Merge into one" (ไม่บล็อก) · ช่วงที่วันสิ้นสุดก่อนวันเริ่มมีข้อความสีแดงใต้แถว และกด "Open full view"/"✓ Mark complete" ไม่ได้จนกว่าจะแก้ (ดู BMW-33) · วันว่างใช้ได้เฉพาะวันเริ่มของช่วงแรก/วันสิ้นสุดของช่วงสุดท้าย · ลบหมด = ไม่จำกัดเวลา · ค่าอยู่ครบหลังปิดเปิดโปรแกรม
 
-- [ ] **BMW-26 — Workspace ที่สร้างใหม่ต้องไม่ขึ้นแบนเนอร์ "legacy" (แก้บั๊ก QA 2026-09-24)** 🆕
+- [ ] **BMW-36 — ลิสต์ซ้าย: ช่องค้นหา + filter chip (All / Needs setup / Complete)** 🆕
+  - พิมพ์ในช่องค้นหา ด้วยคำใน description และด้วย tag
+  - กด chip "Needs setup" (sensor ที่มีโมเดลติด gate หรือฟิลด์ไม่ครบ) แล้วกด "Complete" (sensor ที่ทุกโมเดลเป็น Complete) แล้วกลับมา "All"
+  - **คาดหวัง:** ค้นหากรองด้วยทั้ง description และ tag ได้ — แต่ละ chip มีตัวเลขนับกำกับ และกรองลิสต์ตามจริง — chip ที่กำลังเลือกอยู่เน้นสี — **ยังไม่มี chip "To train"/"Trained" ในเฟสนี้** (มากับ Phase B — อย่ารายงานว่าขาด)
+
+- [ ] **BMW-37 — Group by: Failure group | Component (ตัด Model Type ออกแล้ว)** 🆕
+  - สลับปุ่ม "Group by" ระหว่าง "Failure group" และ "Component" เหนือลิสต์ซ้าย
+  - **คาดหวัง:** มีแค่ 2 ตัวเลือกนี้เท่านั้น — **ไม่มีตัวเลือก "Model Type" อีกต่อไป** — สลับไป Component แล้ว sensor ที่ไม่มี target sensor ต้องอยู่ใต้หัวข้อ "Uncategorized" — เลือก sensor จากมุมมองไหนก็ได้ detail pane เดียวกัน (ไม่ scope ตามมุมมอง)
+
+- [ ] **BMW-38 — ซ่อน/แสดงลิสต์ซ้ายด้วยไอคอน ⇤/⇥ ที่หัว detail pane** 🆕
+  - กดไอคอน ⇤ มุมซ้ายบนของ detail pane
+  - กดไอคอน ⇥ เพื่อแสดงกลับ
+  - **คาดหวัง:** ลิสต์ซ้ายหายไปทั้งแถบ detail pane ขยายเต็มความกว้าง — กดอีกครั้งกลับมาเหมือนเดิม โดย sensor ที่เลือกอยู่ไม่เปลี่ยน
+
+- [ ] **BMW-30 — status pill เป็นข้อความอ่านอย่างเดียว การสลับ Complete/Incomplete ย้ายไปปุ่มใน footer** 🆕
+  - ดูป้ายสถานะที่ footer ของแต่ละแท็บ (I/R/C)
+  - กด "✓ Mark complete" แล้วสลับแท็บไปโมเดลอื่นของ sensor เดียวกัน
+  - **คาดหวัง:** ป้ายสถานะไม่ใช่ปุ่มกดสลับได้เองแล้ว (ดู BMW-42) — สลับ Complete ⇄ Incomplete เฉพาะโมเดลของแท็บนั้น (ชนิดอื่นของ sensor เดียวกันไม่เปลี่ยน) และค่าอยู่ต่อหลังปิดเปิดโปรแกรม (ปุ่ม Finish ในหน้า PM ยังคงตั้งเป็น Complete ทางเดียว — ดู PM-22)
+
+- [ ] **BMW-31 — หนึ่งแถวต่อ sensor ต่อ Failure Group ในลิสต์ซ้าย (แทนการ์ด accordion เดิม)** 🆕
+  - ให้ sensor ตัวเดียวมี Individual + Relationship + Clustering ในกลุ่มเดียวกัน
+  - ดูลิสต์ซ้าย (Group by Failure Group)
+  - เพิ่ม/ลบชนิดโมเดลที่ Dashboard แล้วดูแถวอีกครั้ง
+  - ให้ sensor เดียวกันอยู่ 2 กลุ่ม โดยกลุ่มหนึ่งมีแค่ Individual
+  - **คาดหวัง:** ขึ้นแถวเดียวต่อ sensor ต่อกลุ่ม ในหัวข้อกลุ่มของตัวเอง — แถวมีคำอธิบาย sensor บรรทัดเดียวตัดด้วย … tag ตัวอักษร mono ใต้ชื่อ และชิปตัวอักษรชนิด I/R/C **เฉพาะชนิดที่มีจริง** (ไม่มีจุดสีที่มุมชิปในเฟสนี้ — ดู BMW-41 ผลลัพธ์/สถานะจริงยังอยู่ Phase B/C) — คลิกแถวเพื่อเลือกเข้า detail pane — **Clustering จัดเข้าแถวตาม X sensor** (เปลี่ยน Y แล้วแถวไม่ย้าย) — การสร้าง/ลบโมเดลยังทำได้ที่ Dashboard เท่านั้น (ไม่มีปุ่ม Add model ที่นี่)
+
+- [ ] **BMW-32 — Category ตั้งครั้งเดียวที่หัว detail pane: บันทึกทันที มีผลกับทุกโมเดลของ sensor นั้นทุกกลุ่ม + เตือนถ้ากระทบกลุ่มอื่น** 🆕
+  - เลือก sensor จากลิสต์ซ้าย กด Performance หรือ Condition ที่มุมขวาของหัว detail pane
+  - ให้ sensor นั้นอยู่หลายกลุ่ม แล้วกดเปลี่ยน Category
+  - เลือก sensor เดียวกันจากแถวของอีกกลุ่ม (Group by Failure Group) หรือจากมุมมอง Component
+  - **คาดหวัง:** บันทึกทันทีโดยไม่มีปุ่ม Save และโมเดลทุกชนิดของ sensor นั้นทุกกลุ่มเปลี่ยนตาม — sensor ที่อยู่หลายกลุ่มขึ้นข้อความเตือนว่า Category นี้ใช้กับทุกกลุ่มไหนบ้าง — **ไม่มีสถานะ "Mixed" ที่ใดเลย** — ยังไม่เลือก Category กรอบตัวเลือกเรืองสีเหลืองพร้อมป้าย "Set category" (Performance เป็นสีเขียว, Condition สีม่วงเมื่อเลือกแล้ว) — เลือก sensor เดียวกันจากมุมมอง/กลุ่มไหนก็เห็น Category เดียวกันเสมอที่หัว detail pane (ไม่มีชิปอ่านอย่างเดียวแยกอีกต่อไป เพราะหัว pane ควบคุมได้โดยตรงไม่ว่าจะมาจากมุมมองไหน)
+
+- [ ] **BMW-21 — แจ้งเตือนครั้งเดียวเมื่อระบบปรับ Category ของ workspace เก่าให้ตรงกัน**
+  - ใช้ workspace เก่าที่ sensor เดียวกันมีโมเดลคนละ Category เปิด Build Model
+  - ดูแถบเหลืองเหนือลิสต์ซ้าย/detail pane
+  - กด Dismiss แล้วปิดเปิดโปรแกรม เปิด Build Model ใหม่
+  - **คาดหวัง:** ขึ้นแถบเหลือง "Category made consistent for N sensor(s)" ลิสต์ต่อ sensor บอกว่าใช้ Category ของโมเดลชนิดไหน และค่าใหม่ถูกบันทึกลงไฟล์ตั้งแต่เปิดครั้งแรก — กด Dismiss แล้วหายไม่กลับมาอีก — workspace ที่ Category ตรงกันอยู่แล้วไม่ขึ้นแถบนี้
+
+- [ ] **BMW-22 — โมเดลใหม่ที่สร้างจาก Dashboard สืบทอด Category ของ sensor**
+  - ตั้ง Category ให้ sensor ที่ Build Model
+  - ที่ Dashboard แท็บ Sensor เพิ่มโมเดลชนิดอื่นให้ sensor เดียวกัน หรือเพิ่มเข้ากลุ่มอื่น
+  - เปิด Build Model ดูแถวนั้น
+  - **คาดหวัง:** โมเดลใหม่ใช้ Category เดียวกับ sensor ทันที (ไม่ต้องตั้งใหม่) — sensor ที่ยังไม่เคยตั้ง Category โมเดลใหม่ยังไม่มี Category
+
+- [ ] **BMW-33 — ด่านบังคับ Running Condition: "Open full view" / "✓ Mark complete" ถูกล็อกจนกว่าจะตั้ง (soft gate A, เนื้อหาเดิม — ตำแหน่ง/ชื่อปุ่มเปลี่ยน)** 🆕
+  - ใช้ workspace ที่ **ยังไม่ตั้ง** Running Condition และมีโมเดลอย่างน้อย 2 ตัวของ sensor เดียวกัน (Incomplete ทั้งคู่)
+  - เลือก sensor นั้นจากลิสต์ซ้าย ดูแท็บของแต่ละโมเดล
+  - กด "Open full view ↗" และลองกด "✓ Mark complete"
+  - สลับ Group by เป็น Component ดูป้ายเดิมยังอยู่
+  - เปิดแถบ Running condition (ปุ่ม Edit…) ตั้งเงื่อนไขที่กรอกครบ 1 แถว (หรือกด "No condition") แล้วกลับมาดูซ้ำ
+  - **คาดหวัง:** เหนือลิสต์ซ้ายมีบรรทัดเตือน "⚠ N of M models can't be built yet …" (หายเมื่อ workspace ตั้งแล้ว) — แต่ละแท็บมีป้าย **"Needs condition"** (เหลือง) หรือ **"Legacy · all data"** (เทา, โมเดลที่ Complete อยู่แล้ว) หรือ **"Needs category"** / **"Fix periods"** แล้วแต่สาเหตุ — ปุ่ม "Open full view ↗" กดไม่ได้พร้อมเหตุผล (Save changes ยังกดได้) — "✓ Mark complete" กดไม่ได้พร้อม tooltip เหตุผล แต่ "Mark incomplete" กดได้เสมอ — พอตั้งเงื่อนไขแล้วป้ายทั้งหมดหาย ปุ่มกดได้หมด — โมเดลที่ตั้ง Custom ต้องมีเงื่อนไขของตัวเอง (หรือกด No condition ในหน้า PM) ถึงจะผ่าน แม้ workspace จะตั้งแล้ว
+
+- [ ] **BMW-24 — Workspace เก่าที่มีโมเดลอยู่แล้วแต่ไม่เคยตั้ง Running Condition: แบนเนอร์ 3 ปุ่ม**
+  - เปิด workspace เก่า (สร้างก่อนฟีเจอร์นี้) ที่มีโมเดลแล้วและไม่เคยตั้ง Running Condition
+  - ดูแบนเนอร์สีน้ำเงิน "New: running condition is now required for every model." เหนือแถบ Running condition (บอกจำนวนโมเดลที่ Complete แล้วว่าเทรนด้วยข้อมูลทั้งหมด)
+  - ลองปุ่ม "Remind me later" แล้วปิดโปรแกรม เปิดใหม่
+  - ลองปุ่ม "Set a condition" (เปิด popup Edit…) แล้วตั้งเงื่อนไขที่กรอกครบ
+  - เปิด workspace เก่าอีกอันแล้วกด "Keep using all data"
+  - **คาดหวัง:** แบนเนอร์มี 3 ปุ่ม — "Remind me later" ซ่อนแค่รอบที่เปิดอยู่ (ไม่บันทึก) — "Set a condition" เปิด popup Running Condition ให้ และแบนเนอร์หายเมื่อตั้งเงื่อนไขครบแล้ว **และไม่กลับมาอีก** — "Keep using all data" = ยืนยัน No condition แบนเนอร์หายถาวร — workspace ใหม่ที่ยังไม่มีโมเดลต้องไม่เห็นแบนเนอร์นี้
+
+- [ ] **BMW-26 — Workspace ที่สร้างใหม่ต้องไม่ขึ้นแบนเนอร์ "legacy"**
   - สร้าง workspace ใหม่ นำเข้าข้อมูล สร้าง Failure Group และสร้างโมเดลจาก Dashboard แล้วเปิด Build Model
-  - **คาดหวัง:** ไม่มีแบนเนอร์ "Models built so far trained on all rows" (แบนเนอร์นี้ต้องขึ้นเฉพาะ workspace เก่าที่มีโมเดลก่อนมีด่านบังคับ) — ยังเห็นป้าย "Required" ที่แผง Running Condition ตามปกติ
+  - **คาดหวัง:** ไม่มีแบนเนอร์ legacy — ยังเห็นป้าย "Required" ที่แถบ Running condition ตามปกติ
 
-- [ ] **BMW-27 — ชื่อ model ห้ามซ้ำกับ model อื่นของ sensor เดียวกัน (ชื่อ default ยังเป็นชื่อ sensor)** 🆕
-  - เปิด Build Model → Overview เลือก sensor ที่มีหลายชนิด (เช่น Individual + Relationship) เปิดแท็บ Relationship ให้ช่อง Model name เป็นชื่อเดียวกับโมเดล Individual ของ sensor นั้น (พิมพ์เอง — ตัวพิมพ์เล็กใหญ่/เว้นวรรคหน้าหลังไม่มีผล)
+- [ ] **BMW-27 — ชื่อ model ห้ามซ้ำกับ model อื่นของ sensor เดียวกัน (ชื่อ default ยังเป็นชื่อ sensor)**
+  - เลือก sensor ที่มีหลายชนิด (เช่น Individual + Relationship) กาง Model settings ของแท็บ Relationship ให้ช่อง Model name เป็นชื่อเดียวกับโมเดล Individual ของ sensor นั้น (พิมพ์เอง)
   - กดปุ่ม "Use '…'" แล้วลองพิมพ์ชื่อนั้นใน sensor อื่นด้วย
-  - **คาดหวัง:** ชื่อ default ตอนสร้างโมเดลยังเป็นชื่อ sensor เหมือนเดิม · เมื่อชื่อซ้ำขึ้นข้อความสีเหลืองใต้ช่อง "Same name as this sensor's Individual model — give it a different name…" + ปุ่ม "Use 'ชื่อ (Relationship)'" · **Save changes และ Build Model กดไม่ได้** พร้อมเหตุผล · กดปุ่มแล้วชื่อเปลี่ยนตามที่เสนอ ข้อความหาย ปุ่มกลับมากดได้ · ชื่อเดียวกันใน sensor อื่นไม่ถูกเตือน · โมเดลเก่าที่ชื่อซ้ำอยู่แล้วและไม่ได้แก้ชื่อ ไม่ถูกบล็อกหรือเปลี่ยนชื่อ · ช่องชื่อว่างยังขึ้นเหตุผลเดิม (Fill in the required fields)
+  - **คาดหวัง:** ชื่อ default ตอนสร้างโมเดลยังเป็นชื่อ sensor เหมือนเดิม · เมื่อชื่อซ้ำขึ้นข้อความสีเหลืองใต้ช่อง + ปุ่ม "Use 'ชื่อ (Relationship)'" · Save changes และ Open full view กดไม่ได้พร้อมเหตุผล · กดปุ่มแล้วชื่อเปลี่ยนตามที่เสนอ ข้อความหาย ปุ่มกลับมากดได้ · ชื่อเดียวกันใน sensor อื่นไม่ถูกเตือน · โมเดลเก่าที่ชื่อซ้ำอยู่แล้วและไม่ได้แก้ชื่อ ไม่ถูกบล็อกหรือเปลี่ยนชื่อ
 
 ---
 

@@ -166,11 +166,26 @@ async function mountBoth() {
             <div data-testid="build-model-window"><BuildModelWindow /></div>
         </>,
     );
-    await waitFor(() => expect(screen.queryByText('Running Condition Filter')).toBeTruthy());
+    // Workbench (2026-09-29 Phase A): wait for the one-line Running Condition
+    // bar — the inline "Running Condition Filter" panel now lives only in the
+    // Edit… modal (auto-opened when the workspace condition is unset).
+    await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-bar')).toBeTruthy());
     await settle(350); // hydration write-back + Dashboard's on-mount autosave
 }
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
+/** Select TAG1 under FG-1 in the Workbench's left list; the detail pane's
+ *  header then carries the per-sensor Category switch (was inside the old
+ *  accordion row `sensor-row-fg:1:tag1`). */
+const selectTag1InFg1 = () => {
+    const row = bmw().getByTestId('sensor-list-row-fg:1-tag1');
+    fireEvent.click(row);
+    expect(row.getAttribute('aria-pressed')).toBe('true');
+};
+const tag1CategorySwitch = () => {
+    expect(bmw().getByTestId('sensor-list-row-fg:1-tag1').getAttribute('aria-pressed')).toBe('true');
+    return within(bmw().getByRole('group', { name: 'Category' }));
+};
 /** Dashboard's mirror stops hearing the Build Model window (lost IPC). */
 const dropBuildModelBroadcasts = () => {
     h.drop = (event, payload) => event === 'failure-group-state-changed' && payload?.origin === 'build-model';
@@ -200,8 +215,8 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
     });
 
     async function setTag1ToCondition() {
-        const row = bmw().getByTestId('sensor-row-fg:1:tag1');
-        await act(async () => { fireEvent.click(within(row).getByText('Condition')); });
+        selectTag1InFg1();
+        await act(async () => { fireEvent.click(tag1CategorySwitch().getByText('Condition')); });
         await settle(20);
         expect(diskModels().map(m => m.category)).toEqual(['condition', 'condition']);
     }
@@ -232,8 +247,10 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
             models = diskModels();
             expect(models.every(m => m.category === 'condition')).toBe(true);
 
-            // The Build Model window shows one category for the sensor, no Mixed.
-            await waitFor(() => expect(within(bmw().getByTestId('sensor-row-fg:1:tag1')).getByText('Condition').getAttribute('aria-pressed')).toBe('true'));
+            // The Build Model window shows one category for the sensor, no Mixed
+            // (detail header's Category switch for the still-selected TAG1).
+            await waitFor(() => expect(tag1CategorySwitch().getByText('Condition').getAttribute('aria-pressed')).toBe('true'));
+            expect(tag1CategorySwitch().getByText('Performance').getAttribute('aria-pressed')).toBe('false');
         });
     }
 
