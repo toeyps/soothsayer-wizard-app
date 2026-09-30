@@ -75,3 +75,31 @@ export function computeTrainFingerprint(model: FailureModel, fg: RunningConditio
     };
     return JSON.stringify(payload);
 }
+
+/**
+ * Pure "is this exact model+fg pair Trained-and-fresh" check — just the
+ * fingerprint equality Phase B's Train writes (`lastTrainedAt` set AND
+ * `trainedFingerprint` still matching a fresh `computeTrainFingerprint`
+ * call), no `status`/draft awareness of its own.
+ *
+ * Moved here from `BuildModelWindow.tsx` (2026-09-30, Phase C of the Build
+ * Model Workbench redesign — see `docs/PROJECT_HANDOVER.md`'s SPEC FINAL
+ * entry) so it has exactly one definition, shared by every reader instead of
+ * being redefined per file: `BuildModelWindow.tsx`'s own `isModelTrainedFresh`
+ * (component-level, folds in the live draft via `effectiveModelFor` + the
+ * `status` check) and `markModelComplete` (the PM page's own "Finish"
+ * button, checked directly against the model/fg read fresh off disk inside
+ * that write) both import this as `trainedFreshFor`; `FailureGroupsPanel.tsx`
+ * (Dashboard's Sensor panel → Failure Groups tab) imports it directly to
+ * color the status dot on each sensor row's I/R/C badge. None of these
+ * callers duplicate the equality check itself any more.
+ *
+ * A caller that also needs to match the app's "Trained" pill/dot exactly
+ * (not just fingerprint-fresh) must additionally check `!model.status` and
+ * `getBuildBlockReason(model, fg, headers) === null` — this function alone
+ * only answers the fingerprint-equality question, the same narrow scope it
+ * had as `trainedFreshFor`.
+ */
+export function isModelTrainedFresh(model: FailureModel, fg: RunningConditionFg): boolean {
+    return !!model.lastTrainedAt && model.trainedFingerprint === computeTrainFingerprint(model, fg);
+}

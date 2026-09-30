@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, Play, ChevronRight } from 'lucide-react';
-import { FailureGroup, FailureModel, ModelKind, SensorMetadata } from '../../types';
+import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { groupModelsBySensor, modelSensorKey, type SensorModelGroup } from '../../utils/modelGrouping';
+import { getBuildBlockReason, type RunningConditionFg } from '../../utils/runningCondition';
+import { isModelTrainedFresh } from '../../utils/trainFingerprint';
 
 // Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
 // for the model-kind badge's tooltip (see renderModelRow below).
@@ -16,6 +18,18 @@ interface FailureGroupsPanelProps {
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
     sensorMetadata: SensorMetadata[] | null;
+    /** Workspace running-condition state (everything BuildModelWindow.tsx's
+     *  own `gateFg` carries except `models` — Dashboard's `fgExtra` mirror is
+     *  exactly this shape already). Combined with `fgModels` above (spread
+     *  in as `models`) to answer the same "is this model's build gate
+     *  blocked" / "is this model trained-and-fresh" questions the Workbench
+     *  answers for its own status pill/dot — see `dotStatusFor` below. */
+    runningConditionFg: Omit<FailureGroupStateSlice, 'groups' | 'models'>;
+    /** Dataset headers (Dashboard's `allSensorTags`), or `null` when none
+     *  loaded yet — same `gateHeaders` role as BuildModelWindow.tsx's own,
+     *  needed so `getBuildBlockReason` can tell a configured-but-now-missing
+     *  running-condition sensor apart from a merely-unconfigured one. */
+    datasetHeaders: string[] | null;
     getGroupColor: (groupNo: number) => string;
     /** Saves Name + Description + Recommendation together — 2026-08-31:
      *  moved here from Build Model window entirely, per explicit user
@@ -47,12 +61,22 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * Groups tab. Each card shows the group's name/ID and every model inside it
  * — the model's own name if one was set, otherwise the target sensor's
  * description — so the whole group is scannable at a glance, plus a delete
- * button per model. Complete/Incomplete status is deliberately NOT shown
- * here (only in the Build Model window) per explicit user request. Each
- * card also has its own "Edit details" toggle (Name + Description +
- * Recommendation together) — moved here from Build Model window entirely
- * (2026-08-31, "ส่วนของ edit detail ต้องอยู่ที่ dashboard ด้วย"), not
- * duplicated between the two.
+ * button per model. Each card also has its own "Edit details" toggle (Name +
+ * Description + Recommendation together) — moved here from Build Model
+ * window entirely (2026-08-31, "ส่วนของ edit detail ต้องอยู่ที่ dashboard
+ * ด้วย"), not duplicated between the two.
+ *
+ * 2026-09-30 (Phase C of the Build Model Workbench redesign, SPEC FINAL):
+ * a small status DOT now sits at the corner of each sensor row's existing
+ * I/R/C kind badge — no dot = never trained, blue = Trained (not stale, not
+ * Complete), green = Complete (`status === true`). No new row or text is
+ * added (this was deliberately NOT shown at all before this date; the user
+ * approved changing that rule specifically to add just the dot, see
+ * `docs/PROJECT_HANDOVER.md`'s SPEC FINAL entry) — see `dotStatusFor` below.
+ * It reuses the exact same "trained" definition BuildModelWindow.tsx's own
+ * dot/pill use (`isModelTrainedFresh` from `utils/trainFingerprint.ts`,
+ * combined with the same `getBuildBlockReason` gate) so the two views can
+ * never disagree about whether a model reads as Trained.
  *
  * 2026-08-31: model creation and deletion both live entirely on Dashboard
  * now, per explicit user request — this panel handles deletion (a trash
@@ -67,7 +91,7 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  * Sensor tab, not this panel).
  */
 export default function FailureGroupsPanel({
-    fgGroups, fgModels, sensorMetadata, getGroupColor,
+    fgGroups, fgModels, sensorMetadata, runningConditionFg, datasetHeaders, getGroupColor,
     onUpdateGroupDetails, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel,
 }: FailureGroupsPanelProps) {
     // "Edit details" panel — Name + Description + Recommendation together,
@@ -92,6 +116,26 @@ export default function FailureGroupsPanel({
     const [newGroupError, setNewGroupError] = useState('');
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+
+    // `RunningConditionFg` needs `models` too (category derivation falls back
+    // to it when a model's own `category` is null) — `fgModels` is already a
+    // separate top-level prop here, so it's spread in rather than asking the
+    // caller to pass it twice.
+    const fg: RunningConditionFg = { ...runningConditionFg, models: fgModels };
+
+    // Same "Trained" definition as BuildModelWindow.tsx's own status
+    // pill/dot (`isModelTrainedFresh` + the `getBuildBlockReason` gate) —
+    // see this file's top-level doc comment. A model that's fingerprint-
+    // fresh but blocked by an unrelated gate reason (e.g. a running-
+    // condition sensor missing from the dataset) reads as 'none' here too,
+    // never 'trained', so the two views never disagree (Phase B's
+    // "gate blocks a model that's still fingerprint-fresh" bug fix, mirrored
+    // here per the Phase C brief).
+    const dotStatusFor = (m: FailureModel): 'none' | 'trained' | 'complete' => {
+        if (m.status) return 'complete';
+        if (getBuildBlockReason(m, fg, datasetHeaders) !== null) return 'none';
+        return isModelTrainedFresh(m, fg) ? 'trained' : 'none';
+    };
     // Model name if the user set one; otherwise the target sensor's
     // description (clustering's "target" is its Y sensor, same convention
     // as component derivation elsewhere); falls back to the raw tag, then a
@@ -189,16 +233,31 @@ export default function FailureGroupsPanel({
                             {label}
                         </span>
                     </button>
-                    {kinds.map(k => (
-                        <span
-                            key={k}
-                            className={`model-kind-icon model-kind-icon--${k}`}
-                            title={KIND_LABEL[k]}
-                            style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.56rem', flexShrink: 0 }}
-                        >
-                            {k.charAt(0).toUpperCase()}
-                        </span>
-                    ))}
+                    {kinds.map(k => {
+                        // One model per (sensor, kind) across the whole
+                        // workspace (Dashboard.tsx's `toggleSensorGroupKind`/
+                        // `findKindIn` enforce this) — `sg.models` here is
+                        // already scoped to this one FG, so at most one match.
+                        const kindModel = sg.models.find(m => m.kind === k);
+                        const dot = kindModel ? dotStatusFor(kindModel) : 'none';
+                        return (
+                            <span
+                                key={k}
+                                className={`model-kind-icon model-kind-icon--${k}`}
+                                title={KIND_LABEL[k]}
+                                style={{ position: 'relative', width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.56rem', flexShrink: 0 }}
+                            >
+                                {k.charAt(0).toUpperCase()}
+                                {dot !== 'none' && (
+                                    <span
+                                        data-testid={`fg-kind-badge-dot-${groupNo}-${sg.key}-${k}`}
+                                        className={`f4-kb-dot f4-kb-dot--${dot}`}
+                                        aria-hidden="true"
+                                    />
+                                )}
+                            </span>
+                        );
+                    })}
                 </div>
                 {open && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', margin: '4px 0 2px 15px', paddingLeft: '8px', borderLeft: '1px solid var(--border)' }}>

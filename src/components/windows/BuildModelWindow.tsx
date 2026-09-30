@@ -12,7 +12,7 @@ import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory,
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
 import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from "../../utils/runningCondition";
-import { computeTrainFingerprint } from "../../utils/trainFingerprint";
+import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useChartData } from "../../hooks/useChartData";
@@ -181,19 +181,6 @@ const CLUSTER_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', 
 // consumes the bounded `columnar` feed instead) — same convention as PM page.
 const EMPTY_RECORDS: CsvRecord[] = [];
 const RESULT_CHART_MAX_POINTS = 4000;
-
-/** Pure "is this exact model+fg pair Trained-and-fresh" check — just the
- *  fingerprint equality Phase B's Train writes, no `status`/draft awareness
- *  of its own. Shared by the Workbench's own `isModelTrainedFresh` (folds in
- *  the live draft via `effectiveModelFor` + the `status` check) AND
- *  `markModelComplete` (the PM page's own "Finish" button, checked directly
- *  against the model/fg read fresh off DISK inside that write) so there is
- *  exactly one definition of "trained", never two independently-maintained
- *  ones (QA scope-gap fix, 2026-09-29 SPEC FINAL: "Mark complete replaces
- *  Finish and should require a fresh trained result everywhere"). */
-function trainedFreshFor(m: FailureModel, fg: RunningConditionFg): boolean {
-    return !!m.lastTrainedAt && m.trainedFingerprint === computeTrainFingerprint(m, fg);
-}
 
 /** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
  *  fixed pattern, since this is a plain human-readable timestamp, not
@@ -1154,7 +1141,11 @@ export default function BuildModelWindow() {
      *  Finish everywhere, so this now ALSO requires `trainedFreshFor` — the
      *  exact same fingerprint-equality helper `isModelTrainedFresh` uses —
      *  checked against the model/fg read fresh off disk, never a second,
-     *  independently-derived "is this trained" definition. */
+     *  independently-derived "is this trained" definition. (2026-09-30: that
+     *  helper now lives in `src/utils/trainFingerprint.ts` as the exported
+     *  `isModelTrainedFresh`, imported here under this file's existing local
+     *  name `trainedFreshFor` — one definition, not two, also reused directly
+     *  by `FailureGroupsPanel.tsx`'s status dot.) */
     const markModelComplete = (modelId: string): Promise<void> => {
         if (!workspaceId) return Promise.resolve();
         setCompleteBlock(null);

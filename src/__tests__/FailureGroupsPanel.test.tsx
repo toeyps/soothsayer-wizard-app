@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
-import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
+import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata } from '../types';
+import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -29,6 +30,8 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsP
         fgGroups: [notInGroup, groupA],
         fgModels: [makeModel()],
         sensorMetadata,
+        runningConditionFg: {},
+        datasetHeaders: null,
         getGroupColor: () => 'blue',
         onUpdateGroupDetails: vi.fn(),
         onDeleteGroup: vi.fn(),
@@ -121,6 +124,65 @@ describe('FailureGroupsPanel', () => {
         expect(screen.queryByText('C', { selector: '.model-kind-icon' })).toBeNull(); // no Clustering model -> no chip
         expect(individualBadge.className).toContain('model-kind-icon--individual');
         expect(relationshipBadge.className).toContain('model-kind-icon--relationship');
+    });
+
+    // Phase C of the Build Model Workbench redesign (2026-09-30, SPEC FINAL):
+    // a small status dot at the corner of the I/R/C badge — no dot = never
+    // trained, blue = Trained (fingerprint fresh, not Complete), green =
+    // Complete. Reuses the exact same `isModelTrainedFresh` +
+    // `getBuildBlockReason` combination BuildModelWindow.tsx's own dot/pill
+    // use, so the two views can never disagree.
+    describe('status dot on the I/R/C badge', () => {
+        const badgeFor = (letter: string) => screen.getByText(letter, { selector: '.model-kind-icon' });
+        const dotOn = (badge: HTMLElement) => badge.querySelector('.f4-kb-dot');
+
+        it('shows no dot when the model has never been trained', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ status: false })] })} />);
+            expect(dotOn(badgeFor('I'))).toBeNull();
+        });
+
+        it('shows a blue "trained" dot when the model has a fresh trained fingerprint, is not Complete, and is not gate-blocked', () => {
+            const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true };
+            const model = makeModel({ status: false, category: 'performance', runningConditionMode: 'workspace' });
+            const fg = { ...runningConditionFg, models: [model] };
+            const trained = {
+                ...model,
+                lastTrainedAt: '2026-09-30T00:00:00.000Z',
+                trainedFingerprint: computeTrainFingerprint(model, fg),
+            };
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [trained], runningConditionFg, datasetHeaders: null })} />);
+            const dot = dotOn(badgeFor('I'));
+            expect(dot).not.toBeNull();
+            expect(dot!.className).toContain('f4-kb-dot--trained');
+        });
+
+        it('shows a green "complete" dot when status is true, regardless of fingerprint freshness', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ status: true })] })} />);
+            const dot = dotOn(badgeFor('I'));
+            expect(dot).not.toBeNull();
+            expect(dot!.className).toContain('f4-kb-dot--complete');
+        });
+
+        it('does NOT show the blue dot for a fingerprint-fresh model that is blocked by an unrelated gate reason (running-condition sensor missing from the dataset) — mirrors BuildModelWindow.tsx\'s Phase B gate-consistency fix', () => {
+            const runningConditionFg: Partial<FailureGroupStateSlice> = {
+                runningConditionFilters: [{ id: 'c1', sensor: 'TEMP1', operation: 'greater_than', value1: '10', value2: '' }],
+                runningConditionCombine: 'and',
+            };
+            const model = makeModel({ status: false, category: 'performance', runningConditionMode: 'workspace' });
+            // computeTrainFingerprint doesn't check header presence (it only
+            // cares whether a condition row is filled in), so this fingerprint
+            // is genuinely "fresh" by the fingerprint-equality definition even
+            // though the sensor is about to be reported missing below.
+            const fg = { ...runningConditionFg, models: [model] };
+            const trained = {
+                ...model,
+                lastTrainedAt: '2026-09-30T00:00:00.000Z',
+                trainedFingerprint: computeTrainFingerprint(model, fg),
+            };
+            // TEMP1 (the running-condition sensor) is absent from the dataset headers.
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [trained], runningConditionFg, datasetHeaders: ['OTHER_SENSOR'] })} />);
+            expect(dotOn(badgeFor('I'))).toBeNull();
+        });
     });
 
     it('a trash icon per model row calls onDeleteModel immediately, with no confirmation dialog (2026-08-31: model deletion now lives entirely on Dashboard, per explicit user request)', () => {
