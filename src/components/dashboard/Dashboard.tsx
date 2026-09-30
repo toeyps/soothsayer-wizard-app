@@ -402,9 +402,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             .then((next) => {
                 // The result may differ from what the click computed from the
                 // mirror (another window wrote first) — adopt what is durable.
+                // 🆕 2026-09-30 [bug fix, found in Feature 4's Workbench QA
+                // sweep]: this used to only adopt `groups`/`models`, leaving
+                // `fgExtra` (the workspace running condition) on its old
+                // in-memory value. If a Build Model window changed the
+                // running condition without its broadcast landing here yet,
+                // the NEXT Dashboard FG write (rename/create/delete/toggle —
+                // anything going through this function) would re-read fresh
+                // groups/models but still compute the status dot against the
+                // STALE running condition, showing a since-invalidated model
+                // as Trained. Adopt the whole slice, same as the broadcast
+                // listener right below already does.
                 if (next?.failureGroupState) {
-                    setFgGroups(next.failureGroupState.groups);
-                    setFgModels(next.failureGroupState.models);
+                    const { groups, models, ...rest } = next.failureGroupState;
+                    setFgGroups(groups);
+                    setFgModels(models);
+                    setFgExtra(rest);
                 }
                 // Tell any open Build Model window (a separate OS window that
                 // otherwise only sees Dashboard's edits when it is next
