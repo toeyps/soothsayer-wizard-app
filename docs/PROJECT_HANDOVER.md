@@ -2574,3 +2574,10 @@ cd src-tauri && cargo test --test predictive_model_tests # integration เท่
   - **ยืนยันแยกต่างหาก**: ช่องเงื่อนไข value (sensor/operator/ค่า) ใน Running Condition ไม่เสี่ยงบั๊กนี้ เพราะ commit ทุกครั้งที่พิมพ์อยู่แล้ว (ไม่ใช่ blur-only แบบ date field)
   - **Verified**: `tsc` สะอาด, `vite build` ผ่าน, vitest **1372/1373** (เหลือ 1 known gap เดิมจาก QA รอบก่อน)
   - ไฟล์: `src/components/windows/PredictiveModelBuild.tsx`, `src/__tests__/PredictiveModelBuild.test.tsx`
+
+- **🆕 2026-09-30 (ต่อ) — 🎨 แก้ layout ของ Model settings จริงจัง (รอบแรกยังไม่พอ)**: ผู้ใช้ส่งภาพจริงของแท็บ Clustering ชี้ว่ายังไม่สวย/ไม่เป็นระเบียบ — Training data ลอยเดี่ยวๆ อยู่แถวล่างสุดแยกจากฟิลด์อื่นอย่างเห็นได้ชัด
+  - **สาเหตุ**: การแก้รอบก่อน (`76ed7df`) ให้ `.bmw-sets-kind` เป็น `flex: 1 1 100%` เพื่อ "กันไม่ให้ Clustering เบียดฟิลด์" แต่ผลข้างเคียงคือมันบังคับตัวเองขึ้นแถวใหม่เสมอ แล้วดัน Training data ที่ตามหลังมันไปแถวที่ 3 แยกออกไปอีก — ที่จริง Model name ที่ดูเหมือน "อยู่แถวเดียวลอยๆ" ก็เป็นผลข้างเคียงเดียวกัน ไม่ใช่ความตั้งใจ
+  - **แก้จริง**: เปลี่ยน `.bmw-sets-kind` เป็น `display: contents` (ไม่มีกล่อง layout ของตัวเองเลย เป็นแค่ตัวจัดกลุ่มใน JSX) ทำให้ Model name, ฟิลด์เฉพาะชนิด (X/Y/Criteria/Clusters) และ Training data ไหลรวมเป็น**แถวเดียวกัน** ขึ้นบรรทัดใหม่เฉพาะตอนหน้าต่างแคบจริงๆ เท่านั้น ไม่ใช่บังคับตัดบรรทัดเอง
+  - **Verified**: `vite build` ผ่าน, tsc สะอาด, vitest 1372/1373 (เทสต์เดิมที่เช็ค CSS อัปเดตให้ตรงกับ contract ใหม่)
+  - **ยังไม่ได้ยืนยันจากภาพจริงอีกรอบ** — รอผู้ใช้เปิดแอปดูอีกครั้ง
+  - ไฟล์: `src/App.css`, `src/__tests__/BuildModelWindow.test.tsx`

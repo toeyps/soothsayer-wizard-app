@@ -4394,22 +4394,21 @@ body {
 .bmw-sets-sum { color: var(--text-secondary); font-family: var(--mono); font-size: 0.7rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bmw-sets-sp { flex: 1; }
 .bmw-sets-body { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; padding: 2px 20px 14px 38px; }
-/* 🆕 2026-09-30 (issues 2/3): the Model settings row used to give every field
-   an ad-hoc, one-off inline width — Model name capped at 200px with no
-   ceiling for growth (truncated a real long sensor name off-screen, no
-   ellipsis/tooltip), and the kind-specific fields (Individual: 1, Relationship:
-   2, Clustering: up to 5) sat directly in `.bmw-sets-body` alongside Model
-   name and Training data, so the row's shape changed completely per kind and
-   Clustering's 5 fields got crushed narrower than their own content instead
-   of wrapping cleanly. Now: Model name and Training data are the two fields
-   every kind shares, same width/treatment in all three (`.f4-fld--name` /
-   `.f4-fld--traindata` below); everything kind-specific lives inside one
-   `.bmw-sets-kind` wrapper (itself flex-wrap) so it forms its own row(s) —
-   Clustering's extra fields fall onto a second line instead of squeezing. */
-.f4-fld--name { flex: 1 1 260px; min-width: 220px; max-width: 440px; }
+/* 🆕 2026-09-30 (issues 2/3, redesigned same day after the first pass still
+   looked disorganized in the real app — see the screenshot the user sent:
+   `.bmw-sets-kind`'s old `flex: 1 1 100%` forced it onto its own full-width
+   row, which in turn pushed Training data onto a THIRD, visually orphaned
+   row below it with a conspicuous gap — Model name ended up alone on row 1
+   only as a side effect, not by design. Fix: `.bmw-sets-kind` is now
+   `display: contents` — a pure JSX/semantic grouping with NO layout effect
+   of its own, so its children become ordinary flex items of `.bmw-sets-body`
+   directly, in ONE flow: Model name, then the kind-specific fields, then
+   Training data, wrapping to a second line only when the window is
+   genuinely too narrow to fit them — never a forced break. */
+.f4-fld--name { flex: 1 1 260px; min-width: 220px; max-width: 380px; }
 .f4-fld--traindata { flex: 0 0 170px; min-width: 170px; }
-.bmw-sets-kind { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; flex: 1 1 100%; }
-.bmw-sets-kind .f4-fld { flex: 0 1 150px; min-width: 140px; }
+.bmw-sets-kind { display: contents; }
+.bmw-sets-kind .f4-fld, .bmw-sets-body > .f4-fld:not(.f4-fld--name):not(.f4-fld--traindata) { flex: 0 1 150px; min-width: 140px; }
 .bmw-sets-kind .f4-fld--grow { flex: 1 1 260px; min-width: 220px; }
 .bmw-step { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; height: 28px; }
 .bmw-step button { font: inherit; background: var(--input-bg); border: 0; color: var(--text-primary); width: 26px; height: 100%; cursor: pointer; }

@@ -662,9 +662,15 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
 
         it('App.css gives Model name room to grow and Training data a fixed shared width', () => {
-            expect(cssBlock('.f4-fld--name')).toMatch(/max-width:\s*440px/);
+            expect(cssBlock('.f4-fld--name')).toMatch(/max-width:\s*380px/);
             expect(cssBlock('.f4-fld--traindata')).toMatch(/flex:\s*0 0 170px/);
-            expect(cssBlock('.bmw-sets-kind')).toMatch(/flex-wrap:\s*wrap/);
+            // 🆕 2026-09-30 (redesign): `.bmw-sets-kind` is now `display: contents`
+            // — a pure grouping wrapper with no layout box of its own — so Model
+            // name, the kind-specific fields and Training data all wrap together
+            // as ONE row in `.bmw-sets-body`, instead of the group forcing
+            // itself (and Training data after it) onto separate lines.
+            expect(cssBlock('.bmw-sets-kind')).toMatch(/display:\s*contents/);
+            expect(cssBlock('.bmw-sets-body')).toMatch(/flex-wrap:\s*wrap/);
         });
     });
 
