@@ -17,10 +17,11 @@ import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaM
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useChartData } from "../../hooks/useChartData";
 import { conditionText } from "./periodDisplay";
-import { validatePeriods, toFilterRanges } from "../../utils/timePeriods";
+import { validatePeriods, toFilterRanges, newPeriodId } from "../../utils/timePeriods";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel from "./RunningConditionPanel";
-import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
+import PredictiveModelBuild, { SensorPickerModal, SensorAutocomplete } from "./PredictiveModelBuild";
+import TimePeriodsEditor from "./TimePeriodsEditor";
 import LineChart from "../charts/LineChart";
 import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
@@ -118,6 +119,14 @@ interface ModelDraft {
     stiffness: number;
     numClusters: number;
     runningConditionMode: 'workspace' | 'custom';
+    /** Custom running-condition editor (2026-09-30 port) — unlike the PM
+     *  page's own version of these four fields (plain component state,
+     *  autosaved), these live in the draft so they follow the same
+     *  Save-changes flow as every other field here (SPEC FINAL decision #2). */
+    customFilters: WorkspaceSensorFilter[];
+    customCombine: 'and' | 'or';
+    customNoneConfirmed: boolean;
+    customPeriods: TimePeriod[];
 }
 
 const draftFromModel = (m: FailureModel): ModelDraft => ({
@@ -129,6 +138,10 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
     stiffness: snapStiffness(m.relStiffness ?? STIFFNESS_DEFAULT),
     numClusters: m.numClusters ?? 3,
     runningConditionMode: m.runningConditionMode ?? 'workspace',
+    customFilters: m.customRunningConditionFilters ?? [],
+    customCombine: m.customRunningConditionCombine ?? 'and',
+    customNoneConfirmed: m.customRunningConditionNoneConfirmed ?? false,
+    customPeriods: m.filterTimePeriods ?? [],
 });
 
 // Fixed order (not alphabetical) -- I/R/C is a small, natural taxonomy, not
@@ -236,24 +249,29 @@ function buildPreviewFilterPayload(
 }
 
 /** Relationship scatter option: Raw (blue) vs. Relation model output (red)
- *  against the first fitted predictor — mirrors PredictiveModelBuild.tsx's
- *  own `relScatterOption` memo, reimplemented as a pure function (that memo
- *  is local to that component and not exported). Deliberately simplified:
- *  the Workbench shows the first predictor only, with no X-axis switcher —
- *  the full picker lives on "Open full view". */
-function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtApply: string[], targetSensor: string) {
+ *  against a chosen fitted predictor — mirrors PredictiveModelBuild.tsx's
+ *  own `relScatterOption`/`effectiveScatterX` pair, reimplemented as a pure
+ *  function (that memo is local to that component and not exported).
+ *  🆕 2026-09-30: `xSensor` (the model's persisted `scatterXSensor`) picks
+ *  which fitted predictor's column plots on the X-axis; falls back to the
+ *  first fitted predictor when unset or no longer in the cached fit (a
+ *  predictor removed since the last Train), same fallback rule as the PM
+ *  page's `effectiveScatterX`. */
+function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtApply: string[], targetSensor: string, xSensor?: string) {
     const xRaw = result.predictor_raw;
     const yRaw = result.target_raw;
     const yPred = result.predicted;
     if (!xRaw || !yRaw || !yPred || xRaw.length === 0 || predictorsAtApply.length === 0) return null;
-    const xSensor = predictorsAtApply[0];
+    const xIdx = xSensor ? predictorsAtApply.indexOf(xSensor) : -1;
+    const effectiveXIdx = xIdx >= 0 ? xIdx : 0;
+    const effectiveXSensor = predictorsAtApply[effectiveXIdx];
     const txtSecondary = '#94a3b8';
     const gridLine = '#334155';
     const rawPoints: [number, number][] = [];
     const modelPoints: [number, number][] = [];
     const n = Math.min(xRaw.length, yRaw.length, yPred.length);
     for (let i = 0; i < n; i++) {
-        const xv = xRaw[i]?.[0];
+        const xv = xRaw[i]?.[effectiveXIdx];
         if (typeof xv !== 'number' || !Number.isFinite(xv)) continue;
         const yr = yRaw[i];
         if (typeof yr === 'number' && Number.isFinite(yr)) rawPoints.push([xv, yr]);
@@ -278,7 +296,7 @@ function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtAp
         legend: { show: false },
         grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
-        xAxis: { type: 'value', name: xSensor, nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: false } },
+        xAxis: { type: 'value', name: effectiveXSensor, nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: false } },
         yAxis: { type: 'value', name: targetSensor, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } } },
         series: [
             { ...seriesCommon, name: 'Raw', data: rawPoints, itemStyle: { color: '#3b82f6', opacity: pointOpacity } },
@@ -495,6 +513,18 @@ export default function BuildModelWindow() {
      *  per render, so it survives whichever window writes the file first. */
     const [categoryNotice, setCategoryNotice] = useState<CategoryChange[] | null>(null);
     const [categoryWarn, setCategoryWarn] = useState<{ key: string; text: string } | null>(null);
+    /** 🆕 2026-09-30: "Copied N periods and M conditions from Workspace" note
+     *  for the Custom running-condition editor, keyed per model id — mirrors
+     *  PredictiveModelBuild.tsx's own `seedNote`, session-only (never
+     *  persisted), shown once per model per switch-to-Custom that actually
+     *  copied something. */
+    const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number } | null>>({});
+    /** Clustering's criteria-sensor stats (drives the cluster-range slider's
+     *  [min, max] bounds) — scoped to whichever model is currently active,
+     *  refetched whenever its (draft-aware) criteria sensor or effective
+     *  training-scope filter changes. Mirrors PredictiveModelBuild.tsx's own
+     *  `criteriaStats` effect; `null` while unset/loading, same as there. */
+    const [criteriaStats, setCriteriaStats] = useState<SensorStats | null>(null);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
@@ -587,6 +617,14 @@ export default function BuildModelWindow() {
     // meanwhile) must not linger.
     useEffect(() => {
         setDrafts(prev => {
+            const ids = new Set(allModels.map(m => m.id));
+            const stale = Object.keys(prev).filter(id => !ids.has(id));
+            if (stale.length === 0) return prev;
+            const rest = { ...prev };
+            for (const id of stale) delete rest[id];
+            return rest;
+        });
+        setSeedNoteFor(prev => {
             const ids = new Set(allModels.map(m => m.id));
             const stale = Object.keys(prev).filter(id => !ids.has(id));
             if (stale.length === 0) return prev;
@@ -913,7 +951,16 @@ export default function BuildModelWindow() {
         if (m.kind === 'relationship') parts.push(stiffnessLabel(d.stiffness));
         else if (m.kind === 'clustering') parts.push(`${d.numClusters} clusters`);
         else parts.push('1σ + 3σ');
-        parts.push(d.runningConditionMode === 'custom' ? 'Custom data' : 'Workspace data');
+        // 🆕 2026-09-30: Custom now has its own editable conditions/periods
+        // (see `switchRunningConditionMode` / the "Training data" field
+        // below), so the collapsed summary shows what's actually configured
+        // instead of a flat "Custom data" that never changed.
+        if (d.runningConditionMode === 'custom') {
+            const condLabel = d.customNoneConfirmed ? 'no cond' : `${d.customFilters.length} cond`;
+            parts.push(`Custom · ${condLabel} · ${d.customPeriods.length} period${d.customPeriods.length === 1 ? '' : 's'}`);
+        } else {
+            parts.push('Workspace data');
+        }
         return parts.join(' · ');
     };
 
@@ -923,11 +970,23 @@ export default function BuildModelWindow() {
     /** The persistable fields a model's draft would write on Save — factored
      *  out of `commitModel` so `runTrainClick` (Phase B) can compute the exact
      *  same merged-with-draft model to train against, without waiting for a
-     *  `persist()` round-trip + re-render to see the fresh values. */
-    const draftFields = (m: FailureModel, d: ModelDraft): Partial<FailureModel> =>
-        m.kind === 'individual' ? { name: d.name.trim(), runningConditionMode: d.runningConditionMode } :
-        m.kind === 'relationship' ? { name: d.name.trim(), predictorSensors: d.predictors, relStiffness: d.stiffness, runningConditionMode: d.runningConditionMode } :
-        { name: d.name.trim(), ySensor: d.y, criteriaSensor: d.criteria, clusterRanges: d.criteria ? d.ranges : [], numClusters: d.numClusters, runningConditionMode: d.runningConditionMode };
+     *  `persist()` round-trip + re-render to see the fresh values.
+     *  🆕 2026-09-30: the custom running-condition editor fields are common
+     *  to every kind (same as `runningConditionMode` already was), so they're
+     *  folded into `base` rather than repeated per branch. */
+    const draftFields = (m: FailureModel, d: ModelDraft): Partial<FailureModel> => {
+        const base: Partial<FailureModel> = {
+            name: d.name.trim(),
+            runningConditionMode: d.runningConditionMode,
+            customRunningConditionFilters: d.customFilters,
+            customRunningConditionCombine: d.customCombine,
+            customRunningConditionNoneConfirmed: d.customNoneConfirmed,
+            filterTimePeriods: d.customPeriods,
+        };
+        if (m.kind === 'individual') return base;
+        if (m.kind === 'relationship') return { ...base, predictorSensors: d.predictors, relStiffness: d.stiffness };
+        return { ...base, ySensor: d.y, criteriaSensor: d.criteria, clusterRanges: d.criteria ? d.ranges : [], numClusters: d.numClusters };
+    };
 
     const commitModel = async (m: FailureModel) => {
         if (modelBlockReason(m) !== null) return;
@@ -943,6 +1002,56 @@ export default function BuildModelWindow() {
             delete rest[m.id];
             return rest;
         });
+    };
+
+    /** 🆕 2026-09-30: the Custom running-condition editor's Workspace/Custom
+     *  switch — ported from PredictiveModelBuild.tsx's own
+     *  `handleRunningConditionModeChange` (see that file's own comment), but
+     *  adapted to this window's draft model: everything it touches
+     *  (`runningConditionMode`, `customFilters`/`customCombine`/
+     *  `customPeriods`) is a DRAFT field, so a switch here (and any seeding it
+     *  triggers) is staged, not written until Save changes — the seed check
+     *  itself ("does this model already have its own custom rows") reads the
+     *  CURRENT draft (which starts out as the model's own stored fields via
+     *  `draftFromModel`, then whatever the user has since edited) rather than
+     *  a separate, PM-page-style piece of component state — same data, this
+     *  window just keeps it in `drafts` instead of a dedicated `useState`. */
+    const switchRunningConditionMode = (m: FailureModel, mode: 'workspace' | 'custom') => {
+        if (mode === 'workspace') {
+            patchDraft(m, { runningConditionMode: 'workspace' });
+            setSeedNoteFor(prev => (m.id in prev ? { ...prev, [m.id]: null } : prev));
+            return;
+        }
+        const d = draftOf(m);
+        const patch: Partial<ModelDraft> = { runningConditionMode: 'custom' };
+        let copiedConditions = 0;
+        let copiedPeriods = 0;
+        if (d.customFilters.length === 0 && runningConditionFilters.length > 0) {
+            copiedConditions = runningConditionFilters.length;
+            patch.customFilters = runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }));
+            patch.customCombine = runningConditionCombine;
+        }
+        if (d.customPeriods.length === 0 && runningConditionTimePeriods.length > 0) {
+            copiedPeriods = runningConditionTimePeriods.length;
+            patch.customPeriods = runningConditionTimePeriods.map(p => ({ ...p, id: newPeriodId() }));
+        }
+        patchDraft(m, patch);
+        if (copiedConditions > 0 || copiedPeriods > 0) {
+            setSeedNoteFor(prev => ({ ...prev, [m.id]: { periods: copiedPeriods, conditions: copiedConditions } }));
+        }
+    };
+
+    /** 🆕 2026-09-30: the Relationship result chart's X-axis switcher —
+     *  writes immediately (per the approved mockup's decision #1: it's a
+     *  view choice for the chart, not a model parameter like predictors/
+     *  stiffness/training-scope, so it doesn't belong in the draft/Save-
+     *  changes flow those use). Same immediate-write shape as `changeCategory`
+     *  above — a direct `persist()` call, not a `patchDraft`. */
+    const changeScatterX = (modelId: string, xSensor: string) => {
+        void persist((models, groups) => ({
+            groups,
+            models: models.map(x => x.id === modelId ? { ...x, scatterXSensor: xSensor } : x),
+        }));
     };
 
     /** The detail header's category control: writes EVERY model of that
@@ -1316,6 +1425,42 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed]);
 
+    // ---- Clustering cluster-range slider bounds (2026-09-30 port) ---------
+    // Mirrors PredictiveModelBuild.tsx's own `criteriaStats` effect: fetches
+    // `compute_sensor_stats` for the criteria sensor so the slider can span
+    // its REAL data range instead of an abstract 0-100 scale. Draft-aware (the
+    // criteria sensor and the training-scope filter both read through
+    // `draftOf`/`effectiveModelFor`, same as the live fingerprint check
+    // above) so editing the criteria picker or the Workspace/Custom switch
+    // before Save still moves the slider immediately — decision #3 (SPEC
+    // FINAL) says this uses "the model's own training-scope filter, same
+    // scope Train uses", which for an unsaved draft edit IS the draft's
+    // scope, not last-saved. `criteriaFilterKey` collapses everything that
+    // could change the resolved filter payload into one string so the effect
+    // doesn't need a long, easy-to-miss dependency list of individual draft
+    // sub-fields.
+    const criteriaSensorForActive = (activeModel && activeModel.kind === 'clustering') ? draftOf(activeModel).criteria : '';
+    const criteriaFilterKey = useMemo(() => {
+        if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) return '';
+        const merged = effectiveModelFor(activeModel);
+        const eff = effectiveRunningCondition(merged, gateFg);
+        return JSON.stringify(buildPreviewFilterPayload(eff, gateHeaders));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
+    useEffect(() => {
+        if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) {
+            setCriteriaStats(null);
+            return;
+        }
+        let cancelled = false;
+        const filter = criteriaFilterKey ? JSON.parse(criteriaFilterKey) : null;
+        invoke<SensorStats>('compute_sensor_stats', { sensor: criteriaSensorForActive, filter })
+            .then(s => { if (!cancelled) setCriteriaStats(s); })
+            .catch(() => { if (!cancelled) setCriteriaStats(null); });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey]);
+
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
     }
@@ -1447,6 +1592,138 @@ export default function BuildModelWindow() {
     // ---- Detail pane (Phase A) ---- `detailModels`/`orderedDetail`/
     // `activeModel` are computed above (before the `if (loading)` guard —
     // every hook needs them, see the comment there); reused here as-is.
+
+    /** Cluster-range slider (2026-09-30 port of PredictiveModelBuild.tsx's
+     *  own ~L2862-3013) — colored `CLUSTER_PALETTE` segments spanning the
+     *  criteria sensor's REAL [min, max] (`criteriaStats`, fetched by the
+     *  effect above), N-1 draggable boundary handles, read-only value pills
+     *  below. Drag reads/writes through `patchDraft` (the draft, not
+     *  component state, per this window's own edit model) — `startSplitDrag`
+     *  re-reads `draftOf(m).ranges` on every mousemove rather than closing
+     *  over a stale `d.ranges` snapshot from the render that started the
+     *  drag, since a drag session outlives any single render. Only ever
+     *  called for the CURRENTLY ACTIVE model (via `renderModelSettingsFields`
+     *  below), so `criteriaStats` (scoped to `activeModel`) is always the
+     *  right sensor's stats for whichever `m`/`d` this renders. */
+    const renderClusterRangeSlider = (m: FailureModel, d: ModelDraft) => {
+        const disabled = d.numClusters <= 1 || !d.criteria;
+        if (disabled) {
+            return (
+                <div className="pm-cluster-slider pm-cluster-slider--empty" data-testid="cluster-slider-empty">
+                    {d.numClusters <= 1
+                        ? 'One cluster — every row goes in. No ranges to set.'
+                        : !d.criteria
+                        ? 'Pick a criteria sensor above to define cluster ranges.'
+                        : '—'}
+                </div>
+            );
+        }
+        if (!criteriaStats) {
+            return (
+                <div className="pm-cluster-slider pm-cluster-slider--empty" data-testid="cluster-slider-loading">
+                    <Loader2 size={12} className="pm-spin" aria-hidden="true" /> Loading {sensorLabel(d.criteria)} range…
+                </div>
+            );
+        }
+        if (criteriaStats.min === criteriaStats.max) {
+            return (
+                <div className="pm-cluster-slider pm-cluster-slider--empty" data-testid="cluster-slider-constant">
+                    {sensorLabel(d.criteria)} has a constant value ({criteriaStats.min}) — cannot partition.
+                </div>
+            );
+        }
+        const lo = criteriaStats.min;
+        const hi = criteriaStats.max;
+        const span = hi - lo;
+        const fmt = (v: number | null) =>
+            v == null ? '—' : Math.abs(v) >= 100 ? v.toFixed(1) : Math.abs(v) >= 10 ? v.toFixed(2) : v.toFixed(3);
+        const pctOf = (v: number) => Math.max(0, Math.min(100, ((v - lo) / span) * 100));
+        const ranges = d.ranges;
+
+        const startSplitDrag = (idx: number, e: React.MouseEvent) => {
+            e.preventDefault();
+            const track = (e.currentTarget.parentElement) as HTMLDivElement | null;
+            if (!track) return;
+            const rect = track.getBoundingClientRect();
+            const onMove = (moveEvt: MouseEvent) => {
+                const x = moveEvt.clientX - rect.left;
+                const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+                const value = lo + (pct / 100) * span;
+                const current = draftOf(m).ranges;
+                const leftBound = current[idx]?.min ?? lo;
+                const rightBound = current[idx + 1]?.max ?? hi;
+                const eps = span * 0.001;
+                const clamped = Math.max(leftBound + eps, Math.min(rightBound - eps, value));
+                const next = current.map((r, i) => {
+                    if (i === idx) return { ...r, max: clamped };
+                    if (i === idx + 1) return { ...r, min: clamped };
+                    return r;
+                });
+                patchDraft(m, { ranges: next });
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        };
+
+        return (
+            <div className="pm-cluster-slider" data-testid="cluster-slider">
+                <div className="pm-cluster-slider-header">
+                    <span className="pm-cluster-slider-bound">{fmt(lo)}</span>
+                    <span className="pm-cluster-slider-sensor">{d.criteria}</span>
+                    <span className="pm-cluster-slider-bound">{fmt(hi)}</span>
+                </div>
+                <div className="pm-cluster-slider-track">
+                    {ranges.map((r, i) => {
+                        const segLo = r.min ?? lo;
+                        const segHi = r.max ?? hi;
+                        const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+                        return (
+                            <div
+                                key={`seg-${i}`}
+                                className="pm-cluster-slider-segment"
+                                style={{ left: `${pctOf(segLo)}%`, width: `${pctOf(segHi) - pctOf(segLo)}%`, background: color }}
+                                title={`Cluster ${i + 1}: ${fmt(segLo)} – ${fmt(segHi)}`}
+                            >
+                                <span className="pm-cluster-slider-seg-label">#{i + 1}</span>
+                            </div>
+                        );
+                    })}
+                    {ranges.slice(0, -1).map((r, i) => {
+                        const splitVal = r.max ?? hi;
+                        return (
+                            <div
+                                key={`handle-${i}`}
+                                className="pm-cluster-slider-handle"
+                                style={{ left: `${pctOf(splitVal)}%` }}
+                                onMouseDown={e => startSplitDrag(i, e)}
+                                role="slider"
+                                aria-label={`Split between cluster ${i + 1} and ${i + 2}`}
+                                aria-valuemin={lo}
+                                aria-valuemax={hi}
+                                aria-valuenow={splitVal}
+                                title={`${fmt(splitVal)}`}
+                            />
+                        );
+                    })}
+                </div>
+                <div className="pm-cluster-slider-values">
+                    {ranges.map((r, i) => {
+                        const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+                        return (
+                            <span key={`pill-${i}`} className="pm-cluster-slider-pill">
+                                <span className="pm-cluster-range-dot" style={{ background: color }} />
+                                #{i + 1}: {fmt(r.min)} – {fmt(r.max)}
+                            </span>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
 
     const renderModelSettingsFields = (m: FailureModel, d: ModelDraft) => (
         <>
@@ -1598,34 +1875,23 @@ export default function BuildModelWindow() {
                             <button type="button" aria-label="More clusters" onClick={() => patchDraft(m, { numClusters: Math.min(8, d.numClusters + 1) })}>+</button>
                         </span>
                     </div>
-                    {d.criteria && (
-                        <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '240px' }}>
-                            <span className="f4-lbl">Cluster ranges</span>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                {d.ranges.map((r, i) => (
-                                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '16px minmax(0,1fr) minmax(0,1fr)', gap: '6px', alignItems: 'center' }}>
-                                        <b style={{ fontSize: '0.68rem', color: 'var(--text-faint)', fontWeight: 500 }}>{i + 1}</b>
-                                        <input
-                                            type="number"
-                                            className="fg-inspector-input"
-                                            value={r.min ?? ''}
-                                            placeholder="min"
-                                            aria-label={`Cluster ${i + 1} min`}
-                                            onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, min: e.target.value === '' ? null : Number(e.target.value) } : row) })}
-                                        />
-                                        <input
-                                            type="number"
-                                            className="fg-inspector-input"
-                                            value={r.max ?? ''}
-                                            placeholder="max"
-                                            aria-label={`Cluster ${i + 1} max`}
-                                            onChange={e => patchDraft(m, { ranges: d.ranges.map((row, idx) => idx === i ? { ...row, max: e.target.value === '' ? null : Number(e.target.value) } : row) })}
-                                        />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                    {/* 🆕 2026-09-30 [cluster-range slider port]: always shown
+                        now (was `{d.criteria && (...)}` — hidden entirely with
+                        no criteria sensor), matching the PM page's own
+                        always-visible-with-empty-state behavior (SPEC/design
+                        decision #3) — `renderClusterRangeSlider` covers every
+                        empty state (no criteria sensor, N<=1, loading,
+                        constant-value sensor) itself, same wording as the PM
+                        page's own slider. */}
+                    <div className="f4-fld f4-fld--grow">
+                        <span className="f4-lbl">
+                            Cluster ranges
+                            {(d.numClusters <= 1 || !d.criteria) && (
+                                <span className="pm-field-hint-inline"> · requires criteria sensor + N≥2</span>
+                            )}
+                        </span>
+                        {renderClusterRangeSlider(m, d)}
+                    </div>
                 </>
             )}
             </div>
@@ -1635,11 +1901,154 @@ export default function BuildModelWindow() {
             <div className="f4-fld f4-fld--traindata">
                 <span className="f4-lbl">Training data</span>
                 <div className="f4-seg">
-                    <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => patchDraft(m, { runningConditionMode: 'workspace' })}>Workspace</button>
-                    <button type="button" className={d.runningConditionMode === 'custom' ? 'on' : undefined} onClick={() => patchDraft(m, { runningConditionMode: 'custom' })}>Custom</button>
+                    <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'workspace')}>Workspace</button>
+                    <button type="button" className={d.runningConditionMode === 'custom' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'custom')}>Custom</button>
                 </div>
-                <div className="f4-hint">Custom edits its own conditions on the full Build page.</div>
+                {d.runningConditionMode === 'workspace' && (
+                    <div className="f4-hint">Follows the workspace Running condition above.</div>
+                )}
             </div>
+
+            {/* 🆕 2026-09-30 [Custom running-condition editor port]: a direct
+                port of PredictiveModelBuild.tsx's own Custom section (periods
+                via TimePeriodsEditor, conditions via SensorPickerModal
+                single+mutedTag, AND/OR via .f4-seg--andor, "No condition" via
+                .f4-nofilter) — SPEC decision #2 says this is bound to the
+                draft/Save-changes flow, unlike the PM page's own autosaved
+                version, so every field below reads/writes `d`/`patchDraft`,
+                never its own component state. Sibling of `.f4-fld--traindata`
+                (not nested inside it — the narrow 170px field has no room for
+                this), `flex: 1 1 100%` (App.css `.rc-custom`) so it wraps
+                onto its own full-width row in flex mode, and spans every
+                column in Clustering's grid mode. */}
+            {d.runningConditionMode === 'custom' && (
+                <div className="rc-custom" data-testid="custom-rc-editor">
+                    {seedNoteFor[m.id] && (
+                        <div data-testid="pm-seed-note" className="f4-seed">
+                            <span>
+                                Copied <b>{seedNoteFor[m.id]!.periods} period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
+                            </span>
+                            <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNoteFor(prev => ({ ...prev, [m.id]: null }))}><X size={12} /></button>
+                        </div>
+                    )}
+
+                    <div className="f4-side-blk" data-testid="custom-periods">
+                        <div className="f4-slabel">
+                            <span>Training periods <span className="f4-count">{d.customPeriods.length}</span></span>
+                        </div>
+                        <div className="rc-scroll">
+                            <TimePeriodsEditor compact periods={d.customPeriods} onChange={periods => patchDraft(m, { customPeriods: periods })} bounds={datasetBounds} />
+                        </div>
+                    </div>
+
+                    <div className="f4-side-blk">
+                        <div className="f4-slabel">
+                            <span>Running condition</span>
+                            {!d.customNoneConfirmed && (
+                                <div className="f4-seg f4-seg--andor" role="group" aria-label="Match">
+                                    {(['and', 'or'] as const).map(mode => (
+                                        <button
+                                            key={mode}
+                                            type="button"
+                                            className={d.customCombine === mode ? 'on' : undefined}
+                                            aria-pressed={d.customCombine === mode}
+                                            onClick={() => patchDraft(m, { customCombine: mode })}
+                                        >
+                                            {mode.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {d.customNoneConfirmed ? (
+                            <div className="f4-nofilter">
+                                <span className="f4-pill f4-pill--ok">✓ No condition — all rows</span>
+                                <div data-testid="custom-none-warning" className="f4-note" style={{ fontSize: '11px' }}>
+                                    Idle periods stay in training.{d.customFilters.length > 0 && ' Saved conditions are kept but not applied.'}
+                                </div>
+                                <div className="f4-acts">
+                                    <button type="button" className="f4-btn f4-btn--small" onClick={() => patchDraft(m, { customNoneConfirmed: false })}>Switch to conditions</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                {d.customFilters.length === 0 && (
+                                    <div role="alert" data-testid="custom-condition-required" className="f4-callout f4-callout--compact">
+                                        <div><b>Required.</b> Add at least one condition, or confirm that this machine always runs.</div>
+                                    </div>
+                                )}
+                                <div className="rc-scroll">
+                                    {d.customFilters.map(f => (
+                                        <div key={f.id} className="f4-cond f4-cond--compact">
+                                            <div className="f4-cond-s">
+                                                <SensorPickerModal
+                                                    sensors={allSensors}
+                                                    getDesc={getDesc}
+                                                    getComponent={getComponent}
+                                                    single
+                                                    mutedTag
+                                                    value={f.sensor}
+                                                    onSelect={sensor => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, sensor } : x) })}
+                                                    noun="sensor"
+                                                />
+                                            </div>
+                                            <select
+                                                className="f4-cond-o"
+                                                aria-label="Operator"
+                                                value={f.operation}
+                                                onChange={e => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, operation: e.target.value as WorkspaceSensorFilter['operation'] } : x) })}
+                                            >
+                                                <option value="greater_than">&gt;</option>
+                                                <option value="less_than">&lt;</option>
+                                                <option value="between">between</option>
+                                                <option value="equals">=</option>
+                                            </select>
+                                            <input
+                                                type="number"
+                                                className="f4-cond-v"
+                                                value={f.value1}
+                                                onChange={e => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, value1: e.target.value } : x) })}
+                                                placeholder="val"
+                                            />
+                                            {f.operation === 'between' && (
+                                                <input
+                                                    type="number"
+                                                    className="f4-cond-v"
+                                                    value={f.value2}
+                                                    onChange={e => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, value2: e.target.value } : x) })}
+                                                    placeholder="max"
+                                                />
+                                            )}
+                                            <button type="button" className="f4-x" onClick={() => patchDraft(m, { customFilters: d.customFilters.filter(x => x.id !== f.id) })} title="Remove condition" aria-label="Remove condition">
+                                                <X size={11} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="f4-acts">
+                                    <button
+                                        type="button"
+                                        className="f4-btn f4-btn--small"
+                                        disabled={allSensors.length === 0}
+                                        onClick={() => patchDraft(m, {
+                                            customNoneConfirmed: false,
+                                            customFilters: [...d.customFilters, {
+                                                id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                                                sensor: allSensors[0] ?? '', operation: 'greater_than', value1: '', value2: '',
+                                            }],
+                                        })}
+                                    >
+                                        + Add condition
+                                    </button>
+                                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => patchDraft(m, { customNoneConfirmed: true })}>No condition — use all rows</button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                    <div className="f4-foot-note">Only this model · the workspace default is untouched.</div>
+                </div>
+            )}
         </>
     );
 
@@ -1657,7 +2066,10 @@ export default function BuildModelWindow() {
                     {missing.length > 0 && <span data-testid="settings-to-fix" className="f4-pill f4-pill--warn">{missing.length} to fix</span>}
                 </button>
                 {isOpen && (
-                    <div data-testid="add-model-form" className="bmw-sets-body">
+                    <div
+                        data-testid="add-model-form"
+                        className={`bmw-sets-body${m.kind === 'clustering' ? ' bmw-sets-body--clustering' : ''}`}
+                    >
                         {renderModelSettingsFields(m, d)}
                     </div>
                 )}
@@ -1697,7 +2109,7 @@ export default function BuildModelWindow() {
             );
         }
         if (entry.result.kind === 'relationship') {
-            const option = buildRelScatterOption(entry.result.result, entry.result.predictorsAtApply, m.targetSensor);
+            const option = buildRelScatterOption(entry.result.result, entry.result.predictorsAtApply, m.targetSensor, m.scatterXSensor);
             return option ? (
                 <ResponsiveECharts option={option} style={{ minHeight: expanded ? '100%' : '200px', height: expanded ? '100%' : undefined }} />
             ) : (
@@ -1733,14 +2145,39 @@ export default function BuildModelWindow() {
         }
         if (entry.result.kind === 'relationship') {
             const r = entry.result.result;
+            const predictorsAtApply = entry.result.predictorsAtApply;
             const r2 = r.r2_per_step.length ? r.r2_per_step[r.r2_per_step.length - 1] : null;
             const rmse2 = r.rmse2_per_step.length ? r.rmse2_per_step[r.rmse2_per_step.length - 1] : null;
+            // 🆕 2026-09-30 [X-axis switcher port]: the same fallback rule as
+            // `buildRelScatterOption` (and the PM page's own
+            // `effectiveScatterX`) — whatever the model's persisted
+            // `scatterXSensor` is, as long as it's still one of the fitted
+            // predictors, else the first fitted predictor — so the dropdown
+            // never shows a blank/invalid selection.
+            const effectiveXSensor = (m.scatterXSensor && predictorsAtApply.includes(m.scatterXSensor))
+                ? m.scatterXSensor : predictorsAtApply[0];
             return (
                 <>
                     <div className="pm-chart-legend">
                         <span className="pm-legend-dot"><span className="pm-legend-line" style={{ background: '#3b82f6' }} />Raw</span>
                         <span className="pm-legend-dot"><span className="pm-legend-line" style={{ background: '#f43f5e' }} />Model</span>
                     </div>
+                    {predictorsAtApply.length > 0 && (
+                        // Decision #1 (SPEC): writes immediately via
+                        // `changeScatterX` — a view choice for the chart, not
+                        // a draft/Save-changes model parameter.
+                        <div className="pm-scatter-x-selector">
+                            <label>X-axis:</label>
+                            <SensorAutocomplete
+                                sensors={predictorsAtApply}
+                                getDesc={getDesc}
+                                value={effectiveXSensor}
+                                onSelect={xSensor => changeScatterX(m.id, xSensor)}
+                                placeholder="Select X-axis sensor..."
+                                style={{ minWidth: '180px' }}
+                            />
+                        </div>
+                    )}
                     <div className="pm-stats-strip bmw-result-stats">
                         <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{r.predicted.length.toLocaleString()}</span></div>
                         <div className="pm-stats-item"><span className="pm-stats-label">R²</span><span className="pm-stats-value">{r2 !== null ? r2.toFixed(4) : '—'}</span></div>

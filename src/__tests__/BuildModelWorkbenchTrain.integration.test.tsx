@@ -637,3 +637,68 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         expect(markCompleteBtn().disabled).toBe(false);
     });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// (6) 🆕 2026-09-30: the Custom running-condition editor ported INTO the
+// Workbench (previously only settable on the full PM page). Every test above
+// only ever exercises a model whose custom fields were already pre-set on
+// disk before mount — none of them actually TYPE into the new editor and
+// then Train, which is exactly the path most likely to expose a stale-draft/
+// gate-ordering bug (the gate reads the PERSISTED model, not the draft — see
+// `gateReasonOf`/`buildBlockReason` — so a model that starts out gate-
+// satisfied in Workspace mode must stay clickable through Train even after
+// switching to Custom in the draft, then commit-and-train against the NEWLY
+// TYPED condition, not an empty pre-set list).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('(6) a Custom running-condition edited live in the Workbench (not pre-set) actually feeds Train', () => {
+    it('switching to Custom, adding a condition and typing a value, then Train commits the draft and trains against the typed condition', async () => {
+        // Starts out in Workspace mode with the workspace gate already
+        // satisfied (currentFg's default `runningConditionNoneConfirmed:
+        // true`) — so the Train button is enabled from the start, same as
+        // every other model in this file; nothing about Custom mode is
+        // persisted yet.
+        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
+        await mountBuildModel();
+        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
+        // Nothing to seed from (the workspace has no conditions of its own,
+        // only "No condition" confirmed), so no seed note and an empty list.
+        expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+
+        fireEvent.click(screen.getByText('+ Add condition'));
+        fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '42' } });
+
+        await clickTrain();
+
+        // The draft (mode + the just-typed condition) was committed to disk
+        // before training, not silently dropped.
+        const saved = diskModel('i1');
+        expect(saved.runningConditionMode).toBe('custom');
+        expect(saved.customRunningConditionFilters).toHaveLength(1);
+        expect(saved.customRunningConditionFilters[0]).toMatchObject({ sensor: 'TAG1', operation: 'greater_than', value1: '42' });
+
+        // And Train actually queried Rust with THAT condition, not an empty
+        // filter (which the old, always-satisfied-in-Workspace-mode gate
+        // would have silently done if the commit-before-train ordering were
+        // wrong).
+        const statsCall = h.invokes.find(c => c.cmd === 'compute_sensor_stats');
+        expect(statsCall?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG1', operation: 'greater_than', value1: 42, value2: null }]);
+
+        expect(diskFresh('i1')).toBe(true);
+        expect(pill()).toBe('Trained');
+        expect(markCompleteBtn().disabled).toBe(false);
+    });
+
+    it('the collapsed "Model settings" summary reflects the live-edited Custom condition/period counts, not a stale "Custom data" label', async () => {
+        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
+        await mountBuildModel();
+        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        fireEvent.click(screen.getByText('+ Add condition'));
+        fireEvent.click(screen.getByText('No condition — use all rows'));
+        fireEvent.click(screen.getByText('Model settings')); // collapse
+        expect(screen.getByText(/Custom · no cond · 0 periods/)).toBeTruthy();
+    });
+});

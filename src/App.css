@@ -4415,6 +4415,52 @@ body {
 .bmw-step button:hover { background: var(--hover-bg); }
 .bmw-step span { min-width: 28px; text-align: center; font-family: var(--mono); font-size: 0.76rem; }
 
+/* 🆕 2026-09-30 [cluster-range slider port, alignment fix]: Clustering is the
+   one kind whose 7 fields (name, X, Y, criteria, clusters, cluster ranges,
+   training data) regularly wrap onto a 2nd row even at a comfortable window
+   width — under plain flex-wrap each row's items have DIFFERENT flex-basis
+   values, so row 2's items never line up under row 1's (reads as two
+   unrelated stacked rows, not a grid — user-reported "ไม่สมมาตรกันเลย").
+   Individual/Relationship are NOT touched: they already fit on one row after
+   the `display: contents` fix above, so they have no row-2 to misalign.
+   Field DOM order is unchanged (name, X, Y, criteria, clusters, ranges,
+   training) — grid auto-placement fills left-to-right, top-to-bottom into
+   the 4 tracks below in that same order, so this is a pure CSS addition, no
+   JSX restructuring — applied via one conditional class on `.bmw-sets-body`
+   (`m.kind === 'clustering' ? ' bmw-sets-body--clustering' : ''`). */
+.bmw-sets-body--clustering {
+    display: grid;
+    grid-template-columns: minmax(200px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr);
+    align-items: start;
+}
+/* Cluster ranges is the one field wider than one track — spans columns 2-3,
+   pushing Training data to column 4 on the same row-2 grid line Criteria
+   sensor sits on in row 1. */
+.bmw-sets-body--clustering .f4-fld--grow { grid-column: span 2; }
+/* The Custom running-condition editor spans every column, whichever layout
+   mode `.bmw-sets-body` is in. */
+.bmw-sets-body--clustering .rc-custom { grid-column: 1 / -1; }
+/* Narrow window (a resized Build Model window, or the sidebar-width PM
+   page): collapse to one column — trivially "aligned" since a 1-column stack
+   has nothing to misalign against. `.bmw-detail`'s own `container-type:
+   inline-size` makes this a container query against the detail pane's own
+   width, not the OS window's. */
+@container (max-width: 620px) {
+    .bmw-sets-body--clustering { grid-template-columns: 1fr; }
+    .bmw-sets-body--clustering .f4-fld--grow { grid-column: 1; }
+}
+
+/* 🆕 2026-09-30 [Custom running-condition editor port]: a full-width sibling
+   of every other Model settings field — the narrow 170px `.f4-fld--traindata`
+   field has no room for a periods list + a conditions list, so this wraps
+   onto its own row (flex mode) or spans every grid column (clustering mode,
+   see `.bmw-sets-body--clustering .rc-custom` above) instead. */
+.rc-custom { flex: 1 1 100%; display: grid; gap: 10px; border-top: 1px dashed var(--border-strong); padding-top: 12px; margin-top: 2px; }
+/* Long condition/period lists scroll WITHIN the panel instead of growing the
+   whole settings panel (SPEC decision) — reused for both the periods editor
+   and the conditions list. */
+.rc-scroll { display: grid; gap: 6px; max-height: 190px; overflow-y: auto; padding-right: 4px; }
+
 .bmw-stage { flex: 1; min-height: 120px; padding: 16px 20px; display: flex; }
 .bmw-stage-empty { flex: 1; border: 1px dashed var(--border-strong); border-radius: 10px; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--text-faint); font-size: 0.78rem; }
 .bmw-stage-empty svg { margin: 0 auto 6px; display: block; }

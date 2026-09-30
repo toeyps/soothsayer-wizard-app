@@ -53,7 +53,13 @@ vi.mock('../components/charts/LineChart', () => ({
     default: (props: any) => { lineChartProps.push(props); return <div data-testid="line-chart-mock" />; },
 }));
 vi.mock('../components/charts/ResponsiveECharts', () => ({
-    default: (props: any) => <div data-testid="echarts-mock" data-series-count={props.option?.series?.length ?? 0} />,
+    default: (props: any) => (
+        <div
+            data-testid="echarts-mock"
+            data-series-count={props.option?.series?.length ?? 0}
+            data-x-axis-name={props.option?.xAxis?.name ?? ''}
+        />
+    ),
 }));
 
 // PredictiveModelBuild is a large, heavy component with its own dedicated
@@ -62,6 +68,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 // (props passed in, onBack switching pages), not PM's own internals.
 const predictiveModelBuildProps: any[] = [];
 const sensorPickerModalProps: any[] = [];
+const sensorAutocompleteProps: any[] = [];
 const pmFlushMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('../components/windows/PredictiveModelBuild', () => ({
     default: (props: any) => {
@@ -97,6 +104,24 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
                 placeholder={`Add ${props.noun}…`}
                 onChange={e => props.onConfirm([...props.selected, e.target.value])}
             />
+        );
+    },
+    // 🆕 2026-09-30 [X-axis switcher]: minimal stand-in for the real
+    // search-dropdown component (its own search/group/select behavior is
+    // tested directly against the real implementation in
+    // PredictiveModelBuild.test.tsx) — a plain `<select>` is enough to
+    // assert BuildModelWindow's own wiring (options = the sensors passed in,
+    // current value, `onSelect` fires on change).
+    SensorAutocomplete: (props: any) => {
+        sensorAutocompleteProps.push(props);
+        return (
+            <select
+                aria-label={props.placeholder ?? 'X-axis'}
+                value={props.value ?? ''}
+                onChange={e => props.onSelect(e.target.value)}
+            >
+                {props.sensors.map((s: string) => <option key={s} value={s}>{s}</option>)}
+            </select>
         );
     },
 }));
@@ -232,6 +257,7 @@ beforeEach(() => {
     listenCallbacks = {};
     predictiveModelBuildProps.length = 0;
     sensorPickerModalProps.length = 0;
+    sensorAutocompleteProps.length = 0;
     lineChartProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
@@ -1496,5 +1522,221 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getAllByText('Pump').length).toBeGreaterThan(0);
             expect(screen.queryByText('Uncategorized')).toBeNull();
         });
+    });
+});
+
+// 🆕 2026-09-30 — Custom running-condition editor, Relationship X-axis
+// switcher, Clustering cluster-range slider (mockups
+// NHHcRb7pib9d5wwXqyZEDN + XidcSEavkVnzLvSibRdDzQ, ported into the Workbench).
+describe('Custom running-condition editor (2026-09-30 port)', () => {
+    it('switching to Custom seeds from the workspace conditions/periods once, shows the seed note, and Save changes persists the edited fields', async () => {
+        const ws = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }];
+        const periods = [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }];
+        render(<BuildModelWindow />);
+        await deliverData({
+            failureGroupState: {
+                groups: [makeGroup()], models: [makeModel()],
+                runningConditionFilters: ws, runningConditionCombine: 'and', runningConditionTimePeriods: periods,
+            },
+        });
+        statefulUpdateMock([makeModel()], { runningConditionFilters: ws, runningConditionCombine: 'and', runningConditionTimePeriods: periods });
+        openSettings();
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied.*1 period.*1 condition/);
+        expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('5');
+
+        fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '9' } });
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve();
+        });
+        const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+        const saved = state.failureGroupState.models[0];
+        expect(saved.runningConditionMode).toBe('custom');
+        expect(saved.customRunningConditionFilters[0].value1).toBe('9');
+        expect(saved.filterTimePeriods[0].start).toBe('2026-01-01T00:00');
+    });
+
+    it('switching back to Workspace and forward to Custom again does not re-seed once the custom list is non-empty', async () => {
+        const ws = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }];
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: ws } });
+        openSettings();
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        expect(screen.getByTestId('pm-seed-note')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+        expect(screen.queryByTestId('custom-rc-editor')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        // The previously-seeded condition is still there (the switch back to
+        // Workspace never discarded it) and, because the draft's own custom
+        // list is no longer empty, this second switch does not re-seed (no
+        // note this time).
+        expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('5');
+        expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+    });
+
+    it('"No condition — use all rows", the AND/OR toggle, and the collapsed summary line ("Custom · N cond · M periods")', async () => {
+        render(<BuildModelWindow />);
+        await deliverData(); // no workspace conditions/periods set — nothing to seed
+        openSettings();
+        fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+        expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+
+        fireEvent.click(screen.getByText('+ Add condition'));
+        fireEvent.click(screen.getByText('+ Add condition'));
+        const orBtn = screen.getByRole('button', { name: 'OR' });
+        fireEvent.click(orBtn);
+        expect(orBtn.className).toBe('on');
+
+        fireEvent.click(screen.getByText('No condition — use all rows'));
+        expect(screen.getByText('✓ No condition — all rows')).toBeTruthy();
+
+        // Collapse "Model settings" back and check the summary line.
+        fireEvent.click(screen.getByText('Model settings'));
+        expect(screen.getByText(/Custom · no cond · 0 periods/)).toBeTruthy();
+    });
+});
+
+describe('Relationship X-axis switcher (2026-09-30 port)', () => {
+    it('defaults to the first fitted predictor, changes the chart X-axis immediately (no draft/Save needed), and persists scatterXSensor', async () => {
+        const rel = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'], scatterXSensor: '' });
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'preview_relationship_model') {
+                return Promise.resolve({
+                    request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
+                    predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                    target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1, 10], [2, 20], [3, 30]],
+                });
+            }
+            return Promise.resolve({});
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        statefulUpdateMock([rel]);
+        await act(async () => {
+            fireEvent.click(screen.getByText('▶ Train model'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+        const select = screen.getByLabelText('Select X-axis sensor...') as HTMLSelectElement;
+        expect(select.value).toBe('TAG2');
+        expect(screen.getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('TAG2');
+        expect(screen.queryByText(/Unsaved changes/)).toBeNull();
+
+        fireEvent.change(select, { target: { value: 'TAG3' } });
+        await flush();
+        expect(screen.getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('TAG3');
+        const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+        expect(state.failureGroupState.models[0].scatterXSensor).toBe('TAG3');
+        // Still no draft — this was a direct, immediate write.
+        expect(screen.queryByText(/Unsaved changes/)).toBeNull();
+    });
+
+    it('falls back to the first predictor when the saved scatterXSensor is no longer among the fitted predictors', async () => {
+        const rel = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], scatterXSensor: 'TAG3-removed' });
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'preview_relationship_model') {
+                return Promise.resolve({
+                    request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
+                    predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                    target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1], [2], [3]],
+                });
+            }
+            return Promise.resolve({});
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        statefulUpdateMock([rel]);
+        await act(async () => {
+            fireEvent.click(screen.getByText('▶ Train model'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+        expect(screen.getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('TAG2');
+    });
+});
+
+describe('Cluster-range slider (2026-09-30 port)', () => {
+    it('is always visible: shows the "no criteria sensor" empty state when none is picked, and never fetches stats for it', async () => {
+        const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: '', numClusters: 3 });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        expect(screen.getByTestId('cluster-slider-empty').textContent).toMatch(/Pick a criteria sensor/);
+        expect(mockInvoke).not.toHaveBeenCalledWith('compute_sensor_stats', expect.objectContaining({ sensor: '' }));
+    });
+
+    it('shows the "one cluster" empty state when numClusters <= 1, even with a criteria sensor set', async () => {
+        const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3', numClusters: 1 });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        await flush();
+        expect(screen.getByTestId('cluster-slider-empty').textContent).toMatch(/One cluster/);
+    });
+
+    it('shows a loading state while criteria stats are in flight, then the slider once they resolve', async () => {
+        let resolveStats: (v: unknown) => void = () => {};
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'compute_sensor_stats') return new Promise(res => { resolveStats = res; });
+            return Promise.resolve({});
+        });
+        const clu = makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 2, clusterRanges: [{ min: 0, max: 5 }, { min: 5, max: 10 }],
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        await flush();
+        expect(screen.getByTestId('cluster-slider-loading')).toBeTruthy();
+        await act(async () => {
+            resolveStats({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+            await Promise.resolve(); await Promise.resolve();
+        });
+        expect(screen.getByTestId('cluster-slider')).toBeTruthy();
+    });
+
+    it('shows the "constant value" empty state when the criteria sensor has min === max', async () => {
+        mockInvoke.mockImplementation((cmd: string) => {
+            if (cmd === 'compute_sensor_stats') return Promise.resolve({ mean: 1, sd: 0, min: 1, max: 1, count: 10, lower1: 1, upper1: 1, lower3: 1, upper3: 1 });
+            return Promise.resolve({});
+        });
+        const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3', numClusters: 2 });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        await flush();
+        expect(screen.getByTestId('cluster-slider-constant').textContent).toMatch(/constant value \(1\)/);
+    });
+
+    it("renders segments/handles spanning the criteria sensor's real [min, max], and dragging a handle moves the cluster boundary", async () => {
+        const clu = makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 2, clusterRanges: [{ min: 0, max: 5 }, { min: 5, max: 10 }],
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        await flush(); // compute_sensor_stats resolves with the default beforeEach {min:0,max:10,...}
+        expect(screen.getByTestId('cluster-slider')).toBeTruthy();
+        expect(screen.getByText('#1: 0.000 – 5.000')).toBeTruthy();
+        expect(screen.getByText('#2: 5.000 – 10.00')).toBeTruthy();
+
+        const handle = screen.getByRole('slider');
+        const track = handle.parentElement as HTMLElement;
+        vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+            left: 0, width: 200, top: 0, height: 30, right: 200, bottom: 30, x: 0, y: 0, toJSON: () => ({}),
+        } as DOMRect);
+        fireEvent.mouseDown(handle);
+        fireEvent.mouseMove(document, { clientX: 160 }); // 80% of 200px -> value 8 of [0, 10]
+        fireEvent.mouseUp(document);
+        expect(screen.getByText('#1: 0.000 – 8.000')).toBeTruthy();
+        expect(screen.getByText('#2: 8.000 – 10.00')).toBeTruthy();
+    });
+
+    it('App.css gives Clustering its own row-aligned grid and a scrollable Custom running-condition editor', () => {
+        expect(cssBlock('.bmw-sets-body--clustering')).toMatch(/display:\s*grid/);
+        expect(cssBlock('.rc-scroll')).toMatch(/overflow-y:\s*auto/);
+        expect(cssBlock('.rc-custom')).toMatch(/flex:\s*1 1 100%/);
     });
 });
