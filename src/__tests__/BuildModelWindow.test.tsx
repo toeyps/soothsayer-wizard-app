@@ -606,10 +606,99 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
     });
 
+    // 🆕 2026-09-30 (issues 2/3): the row used to give Model name an
+    // uncapped-below/no-cap-above `minWidth: 200px` inline style (a long real
+    // sensor name — "GENERATOR BEARING METAL TEMPERATURE" style — rendered far
+    // narrower than its text with no ellipsis/tooltip), and every kind's own
+    // fields sat directly alongside Model name/Training data in one flex row
+    // with ad hoc one-off inline widths, so the row's shape looked completely
+    // different per kind ("ไม่สวยเลย มันดูไม่เท่ากันซักช่อง" — not even one
+    // column matches). Fixed with shared classes in App.css: `.f4-fld--name` /
+    // `.f4-fld--traindata` give Model name and Training data the same width
+    // treatment in every kind, and `.bmw-sets-kind` wraps everything
+    // kind-specific into its own group so Clustering's extra fields fall onto
+    // their own line instead of being crushed into one row built for 3.
+    describe('Model settings row layout (issues 2/3, 2026-09-30)', () => {
+        it('Model name has a title attribute (full text on hover) and the shared width class, in every kind', async () => {
+            const longName = 'GENERATOR BEARING METAL TEMPERATURE DRIVE END';
+            for (const kind of ['individual', 'relationship', 'clustering'] as const) {
+                const m = makeModel({
+                    id: `m-${kind}`, kind, name: longName,
+                    ...(kind === 'relationship' ? { predictorSensors: ['TAG2'] } : {}),
+                    ...(kind === 'clustering' ? { xSensor: 'TAG1', ySensor: 'TAG2', targetSensor: '' } : {}),
+                });
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [m] } });
+                openSettings();
+                const nameInput = screen.getByDisplayValue(longName) as HTMLInputElement;
+                expect(nameInput.title).toBe(longName);
+                expect(nameInput.closest('.f4-fld')?.className).toContain('f4-fld--name');
+                cleanup();
+            }
+        });
+
+        it('Training data is the shared, fixed-width field and always renders after every kind-specific field', async () => {
+            const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG2', clusterRanges: [{ min: 0, max: 100 }] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+            openSettings();
+            const form = screen.getByTestId('add-model-form');
+            const fields = within(form).getAllByText(/^(Model name|X sensor|Y sensor \(target\)|Criteria sensor \(optional\)|Clusters|Cluster ranges|Training data)$/);
+            expect(fields[fields.length - 1].textContent).toBe('Training data');
+            const trainingDataFld = screen.getByText('Training data').closest('.f4-fld');
+            expect(trainingDataFld?.className).toContain('f4-fld--traindata');
+        });
+
+        it('every kind-specific field lives inside the shared .bmw-sets-kind wrapper, distinct from Model name / Training data', async () => {
+            const rel = makeModel({ kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            openSettings();
+            const kindGroup = screen.getByText('Predictor sensors (≥ 1)').closest('.bmw-sets-kind');
+            expect(kindGroup).toBeTruthy();
+            expect(within(kindGroup as HTMLElement).getByText('Stiffness')).toBeTruthy();
+            // Model name and Training data are siblings of the group, not inside it.
+            expect(kindGroup!.contains(screen.getByText('Training data'))).toBe(false);
+        });
+
+        it('App.css gives Model name room to grow and Training data a fixed shared width', () => {
+            expect(cssBlock('.f4-fld--name')).toMatch(/max-width:\s*440px/);
+            expect(cssBlock('.f4-fld--traindata')).toMatch(/flex:\s*0 0 170px/);
+            expect(cssBlock('.bmw-sets-kind')).toMatch(/flex-wrap:\s*wrap/);
+        });
+    });
+
     describe('results area', () => {
         it('shows "Not trained yet" for a fully-configured model that has never been trained', async () => {
             render(<BuildModelWindow />);
             await deliverData();
+            expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
+        });
+
+        // 🆕 2026-09-30 (issue 4): `renderResultsStage` checks `buildBlockReason`
+        // (the gate) before `!m.lastTrainedAt` BY DESIGN (SPEC FINAL's own
+        // results-area rule 5: "incomplete config/gate" outranks "never
+        // trained") — so a workspace whose running condition never actually
+        // persisted (issue 1) can never show "Not trained yet": the gate stays
+        // blocked forever and the user only ever sees "N items to fix". This
+        // test proves that once the Edit… modal's own write actually lands
+        // (same modal issue 1 fixes), the gate clears and "Not trained yet"
+        // appears immediately — confirming issue 4 was never a second,
+        // independent ordering bug.
+        it('a model stuck on "N items to fix" shows "Not trained yet" the moment the running-condition gate actually clears', async () => {
+            let disk: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, runningConditionFilters: [], rcLegacyNotice: null } };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: disk.failureGroupState });
+            expect(screen.getByTestId('results-incomplete')).toBeTruthy();
+            expect(screen.queryByTestId('results-placeholder')).toBeNull();
+
+            fireEvent.click(screen.getByText('Edit…'));
+            fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
+            await flush();
+            fireEvent.click(screen.getByLabelText('Close'));
+
+            expect(screen.queryByTestId('results-incomplete')).toBeNull();
             expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
         });
 
@@ -1229,6 +1318,94 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 await closePromise;
             });
             expect(mockClose).toHaveBeenCalledTimes(1);
+        });
+
+        // 🆕 2026-09-30 [issue 1, repeat report] — `TimePeriodsEditor`'s date
+        // fields commit to the parent on blur/Enter ONLY (never per keystroke,
+        // see that file's own top comment), so typing a period edit and then
+        // closing the Edit… modal WITHOUT the input separately losing focus
+        // first (e.g. clicking straight from the date field to the X button)
+        // used to discard the keystroke entirely: `setRcFilterOpen(false)`
+        // just unmounted the panel, `onCommit` never ran, `onPeriodsChange`
+        // never fired, nothing was ever tracked in `pendingSaveRef`. These two
+        // tests exercise exactly that "type, don't blur, close" sequence —
+        // the fix is `flushFocusedInput()` (forces the blur synchronously
+        // before the close proceeds), called from both close paths below.
+        describe('a Running Condition period edit that never naturally blurs before closing (issue 1 root cause)', () => {
+            const seededPeriod = { id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
+            function deliverWithPeriod() {
+                return deliverData({
+                    failureGroupState: {
+                        groups: [makeGroup()], models: [makeModel()],
+                        runningConditionNoneConfirmed: false,
+                        runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
+                        runningConditionTimePeriods: [seededPeriod],
+                    },
+                });
+            }
+
+            it('(a) survives closing the modal itself via X — write fires, and the value is still there on reopen', async () => {
+                render(<BuildModelWindow />);
+                await deliverWithPeriod();
+                fireEvent.click(screen.getByText('Edit…'));
+                const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+                // A real user's mouse click moves focus to the field first —
+                // reproduce that (fireEvent.change alone does not) — then type,
+                // WITHOUT ever separately blurring/pressing Enter before the
+                // very next thing the user does: click the X.
+                endField.focus();
+                fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
+                expect(document.activeElement).toBe(endField); // still focused, nothing committed it yet
+
+                fireEvent.click(screen.getByLabelText('Close'));
+                await flush();
+
+                const lastWrite = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+                expect(lastWrite.failureGroupState.runningConditionTimePeriods[0].end).toBe('2024-02-15T12:00');
+
+                fireEvent.click(screen.getByText('Edit…'));
+                expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
+            });
+
+            it('(b) survives a native whole-window close (titlebar X / Alt+F4) requested right after typing', async () => {
+                render(<BuildModelWindow />);
+                await deliverWithPeriod();
+                fireEvent.click(screen.getByText('Edit…'));
+                const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+                endField.focus();
+                fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
+                expect(document.activeElement).toBe(endField);
+
+                let resolveUpdate!: (v: unknown) => void;
+                mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
+
+                const preventDefault = vi.fn();
+                let closePromise!: Promise<void>;
+                await act(async () => {
+                    // Without the fix: the edit never reaches `persistRunningCondition`,
+                    // `pendingSaveRef` stays empty, `preventDefault` is never called,
+                    // and the window closes immediately — silently dropping the edit.
+                    closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
+                    await Promise.resolve();
+                });
+                expect(preventDefault).toHaveBeenCalledTimes(1);
+                expect(mockClose).not.toHaveBeenCalled();
+
+                await act(async () => {
+                    resolveUpdate({
+                        id: 'ws1',
+                        failureGroupState: {
+                            groups: [makeGroup()], models: [makeModel()],
+                            runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
+                            runningConditionCombine: 'and', runningConditionNoneConfirmed: false, rcLegacyNotice: null,
+                            runningConditionTimePeriods: [{ ...seededPeriod, end: '2024-02-15T12:00' }],
+                        },
+                    });
+                    await closePromise;
+                });
+                expect(mockClose).toHaveBeenCalledTimes(1);
+                expect(mockUpdateWorkspaceData).toHaveBeenCalled();
+            });
         });
 
         it('also flushes the PM page\'s own pending debounced write when it is open', async () => {

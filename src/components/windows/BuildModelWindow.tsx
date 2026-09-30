@@ -182,6 +182,25 @@ const CLUSTER_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', 
 const EMPTY_RECORDS: CsvRecord[] = [];
 const RESULT_CHART_MAX_POINTS = 4000;
 
+/** 🆕 2026-09-30 [data-loss fix, repeat report]: `TimePeriodsEditor`'s date
+ *  fields only commit an edit to the parent (`onPeriodsChange` ->
+ *  `persistRunningCondition`, tracked in `pendingSaveRef`) on blur / Enter —
+ *  never per keystroke, by design, so rows don't jump around mid-type (see
+ *  that file's own top comment). The Running Condition Filter modal's own
+ *  close paths (the X button, backdrop click) used to just call
+ *  `setRcFilterOpen(false)` directly — a plain state update, not a real DOM
+ *  focus change — so a half-typed date that never naturally blurred (e.g. a
+ *  test's `fireEvent.change` with no following `fireEvent.blur`, or, per the
+ *  user's real report, some real click paths) unmounted the editor without
+ *  its `onCommit` ever firing, silently discarding the edit. Calling this
+ *  before any close path (the modal's own, and the whole window's) forces
+ *  that commit synchronously and unconditionally — a no-op when nothing
+ *  relevant is focused. */
+function flushFocusedInput(): void {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
+}
+
 /** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
  *  fixed pattern, since this is a plain human-readable timestamp, not
  *  something any other code parses back. */
@@ -1179,7 +1198,12 @@ export default function BuildModelWindow() {
     // 🆕 2026-09-29 [data-loss fix]: awaits every in-flight write before
     // actually closing the window. See `flushAllPending` above and the
     // `onCloseRequested` effect below for the native-close equivalent.
+    // 🆕 2026-09-30: `flushFocusedInput()` first, so a half-typed Running
+    // Condition period date (blur/Enter-committed only, see that function's
+    // own comment) is forced to commit — and lands in `pendingSaveRef` below
+    // — even if this button click didn't happen to blur it naturally first.
     const handleClose = async () => {
+        flushFocusedInput();
         await flushAllPending();
         await getCurrentWindow().close();
     };
@@ -1193,6 +1217,12 @@ export default function BuildModelWindow() {
         let unlisten: (() => void) | undefined;
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
+            // 🆕 2026-09-30: same reasoning as `handleClose` above — a native
+            // close (titlebar X, Alt+F4, OS shutdown) must not be able to
+            // bypass a period edit that never naturally blurred. Read
+            // `pmPending`/`pending` AFTER this, not before, so a write this
+            // call itself just kicked off is included below.
+            flushFocusedInput();
             const pmPending = pmFlushRef.current;
             const pending = pendingSaveRef.current;
             if (!pmPending && !pending) return;
@@ -1420,12 +1450,19 @@ export default function BuildModelWindow() {
 
     const renderModelSettingsFields = (m: FailureModel, d: ModelDraft) => (
         <>
-            <div className="f4-fld" style={{ minWidth: '200px' }}>
+            {/* 🆕 2026-09-30 (issue 2/3 fix): a fixed, generous width shared by
+                all three kinds — was `minWidth: 200px` with no cap, which let
+                a long real sensor name (e.g. "GENERATOR BEARING METAL
+                TEMPERATURE") render far narrower than its text, scrolling
+                off-screen with no ellipsis/tooltip. `.f4-fld--name` (App.css)
+                grows with available space up to a real cap instead. */}
+            <div className="f4-fld f4-fld--name">
                 <label>Model name</label>
                 <input
                     className="fg-inspector-input"
                     value={d.name}
                     placeholder="e.g. Bearing vibration model"
+                    title={d.name || undefined}
                     style={d.name.trim() ? undefined : { borderColor: 'var(--warn-line)' }}
                     onChange={e => patchDraft(m, { name: e.target.value })}
                 />
@@ -1449,6 +1486,16 @@ export default function BuildModelWindow() {
                 })()}
             </div>
 
+            {/* 🆕 2026-09-30 (issue 3 fix): every kind's OWN fields (as opposed
+                to Model name / Training data, which are shared and always
+                the same shape) live in one wrapping group so they read as a
+                consistent block across Individual/Relationship/Clustering
+                instead of each kind cramming a different field count into
+                the same single flex row. `.bmw-sets-kind` (App.css) is
+                itself flex-wrap, so Clustering's 4-5 fields fall onto a
+                second line rather than being squeezed narrower than their
+                content — see that class's own comment for the exact widths. */}
+            <div className="bmw-sets-kind">
             {m.kind === 'individual' && (
                 <div className="f4-fld">
                     <span className="f4-lbl">Boundary</span>
@@ -1459,7 +1506,7 @@ export default function BuildModelWindow() {
 
             {m.kind === 'relationship' && (
                 <>
-                    <div className="f4-fld" style={{ flex: 1, minWidth: '260px' }}>
+                    <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
                         <span className="f4-lbl">Predictor sensors (≥ 1)</span>
                         <SensorPickerModal
                             sensors={allSensors}
@@ -1552,7 +1599,7 @@ export default function BuildModelWindow() {
                         </span>
                     </div>
                     {d.criteria && (
-                        <div className="f4-fld" style={{ flex: 1, minWidth: '240px' }}>
+                        <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '240px' }}>
                             <span className="f4-lbl">Cluster ranges</span>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 {d.ranges.map((r, i) => (
@@ -1581,8 +1628,11 @@ export default function BuildModelWindow() {
                     )}
                 </>
             )}
+            </div>
 
-            <div className="f4-fld">
+            {/* Always last, same fixed width in all three kinds (issue 3 fix) —
+                `.f4-fld--traindata` (App.css). */}
+            <div className="f4-fld f4-fld--traindata">
                 <span className="f4-lbl">Training data</span>
                 <div className="f4-seg">
                     <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => patchDraft(m, { runningConditionMode: 'workspace' })}>Workspace</button>
@@ -2215,11 +2265,17 @@ export default function BuildModelWindow() {
             )}
 
             {rcFilterOpen && (
-                <div className="bmw-modal-backdrop" role="presentation" onClick={() => setRcFilterOpen(false)}>
+                // 🆕 2026-09-30 [data-loss fix]: both close paths call
+                // `flushFocusedInput()` first — see that function's own
+                // comment. Without it, typing a period date then closing via
+                // X/backdrop (without the input separately losing focus
+                // first) unmounted `TimePeriodsEditor` before its
+                // blur-only commit ever ran, silently dropping the edit.
+                <div className="bmw-modal-backdrop" role="presentation" onClick={() => { flushFocusedInput(); setRcFilterOpen(false); }}>
                     <div className="bmw-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running Condition Filter">
                         <div className="bmw-modal-head">
                             <span>Running Condition Filter</span>
-                            <button type="button" className="bmw-modal-x" onClick={() => setRcFilterOpen(false)} aria-label="Close">
+                            <button type="button" className="bmw-modal-x" onClick={() => { flushFocusedInput(); setRcFilterOpen(false); }} aria-label="Close">
                                 <X size={16} />
                             </button>
                         </div>
