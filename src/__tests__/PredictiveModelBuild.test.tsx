@@ -934,6 +934,43 @@ describe('PredictiveModelBuild', () => {
             fireEvent.click(screen.getByText('Finish'));
             await waitFor(() => expect(order).toEqual(['write', 'finish']));
         });
+
+        // 🆕 2026-09-30 [data-loss fix, same root cause as BuildModelWindow's
+        // Running Condition modal]: `TimePeriodsEditor` commits a typed date
+        // to state only on blur/Enter — never per keystroke, so it doesn't
+        // jump around mid-type. The test right above proves the debounced
+        // WRITE gets flushed before Back/Finish, but that write only exists
+        // once `setFilterTimePeriods` has actually fired. Clicking Back the
+        // instant after typing, before the field naturally loses focus,
+        // meant the edit had never reached React state at all — nothing to
+        // flush. `handleBack`/`handleFinish` now blur the focused element
+        // first so its own commit-on-blur handler runs before the flush
+        // check.
+        it('Back commits an in-progress (not yet blurred) Custom period edit before leaving', async () => {
+            const P1 = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
+            const onDiskModel = makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: [P1] });
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [onDiskModel] } });
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [onDiskModel] } }));
+            vi.useFakeTimers();
+            const { onBack } = await renderHydrated();
+            await act(async () => { await vi.advanceTimersByTimeAsync(300); }); // hydration's own write settles
+            expandAllPeriods();
+            mockUpdateWorkspaceData.mockClear();
+
+            const end = screen.getByLabelText('Period 1 end');
+            end.focus(); // must actually be document.activeElement for flushFocusedInput's blur() to reach it
+            fireEvent.change(end, { target: { value: '2026-02-15T12:00' } }); // typed, deliberately NOT blurred
+            fireEvent.click(screen.getByTitle('Back to Build Model overview'));
+            await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+            vi.useRealTimers(); // restore before any `waitFor` — it polls with real timers
+
+            expect(onBack).toHaveBeenCalledTimes(1);
+            const last = mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1];
+            const state = await last.value;
+            const saved = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+            expect(saved.filterTimePeriods).toEqual([{ ...P1, end: '2026-02-15T12:00' }]);
+        });
     });
 
     // 🆕 2026-09-29 [data-loss fix]: this page is a CHILD of BuildModelWindow

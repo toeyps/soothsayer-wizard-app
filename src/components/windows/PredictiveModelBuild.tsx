@@ -1074,13 +1074,28 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     // model being edited changed) so the parent never calls a flush for a
     // page that's no longer mounted.
     useEffect(() => () => { registerFlush?.(null); }, [registerFlush]);
+    // 🆕 2026-09-30 [same root cause as BuildModelWindow's Running Condition
+    // modal, see its own `flushFocusedInput` comment]: `TimePeriodsEditor`
+    // (this page's own Custom training-period editor) commits a typed date
+    // to `filterTimePeriods` only on blur/Enter. Clicking Back/Finish right
+    // after typing, before that field naturally loses focus, meant
+    // `persistPendingRef.current` was still false — nothing to flush,
+    // because the edit had never even reached React state. Blur the
+    // focused element first so its commit-on-blur handler runs, THEN check
+    // whether there's now something pending to flush.
+    const flushFocusedInput = () => {
+        const el = document.activeElement;
+        if (el instanceof HTMLElement && el !== document.body) el.blur();
+    };
     // Nothing pending -> leave synchronously; otherwise write first, then leave.
     const handleBack = async () => {
+        flushFocusedInput();
         if (persistPendingRef.current) await flushPersist();
         onBack();
     };
     const handleFinish = async () => {
         if (finishBlockReason !== null) return;
+        flushFocusedInput();
         if (persistPendingRef.current) await flushPersist();
         await onFinish();
     };
