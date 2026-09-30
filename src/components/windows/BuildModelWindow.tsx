@@ -885,7 +885,22 @@ export default function BuildModelWindow() {
         runningConditionTimePeriods, runningConditionNoneConfirmed,
     };
     const gateHeaders = allSensors.length ? allSensors : null;
-    const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(m, gateFg, gateHeaders);
+    // 🆕 2026-09-30 QA fix (bug 3): judge the DRAFT-merged model
+    // (`effectiveModelFor`, defined below — closures resolve it fine, it's
+    // only ever CALLED after the component's synchronous render body has
+    // defined it), not the persisted one. `getBuildBlockReason` reads
+    // `runningConditionMode`/`customRunningConditionFilters`/
+    // `filterTimePeriods` straight off whatever model it's given; passing
+    // the persisted model meant the gate was blind to a pending Custom-mode
+    // switch/edit — Train (and "Open full view") could commit a draft that
+    // switched to Custom with no condition set (or an invalid period) and
+    // train with `filter: null` (every row), exactly what this gate exists
+    // to prevent. Staleness (`isModelTrainedFresh`/`isModelStale`) already
+    // reads through `effectiveModelFor` for the same reason — this makes the
+    // gate check live-reactive the same way, in both directions (blocks a
+    // draft that just broke the condition; unblocks one that just fixed it,
+    // without waiting for Save).
+    const gateReasonOf = (m: FailureModel): string | null => getBuildBlockReason(effectiveModelFor(m), gateFg, gateHeaders);
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(m, gateFg, gateHeaders);
     const legacyCompleteCount = allModels.filter(m => m.status).length;
@@ -1134,7 +1149,22 @@ export default function BuildModelWindow() {
         // Avoid double-reporting the category reason: `missingItems` already
         // lists "Pick a category" when it's null; `gateReasonOf` returns the
         // SAME `CATEGORY_BLOCK_REASON` text in that case, not a distinct one.
-        if (gr && categoryOf(m) !== null) items.push({ text: gr, onClick: () => setRcFilterOpen(true) });
+        // 🆕 2026-09-30 QA fix (bug 4): this link used to always open the
+        // WORKSPACE Running Condition modal (`setRcFilterOpen(true)`) — for
+        // a Custom-mode model that fixes nothing, since Custom's own
+        // condition/period editor lives inline in this model's own Model
+        // settings section (the port above), not in that modal. Route a
+        // Custom-mode model's link there instead (same action `missingItems`
+        // above already uses to jump to a missing field).
+        if (gr && categoryOf(m) !== null) {
+            const isCustom = draftOf(m).runningConditionMode === 'custom';
+            items.push({
+                text: gr,
+                onClick: () => isCustom
+                    ? setSettingsOpenOverride(prev => ({ ...prev, [m.id]: true }))
+                    : setRcFilterOpen(true),
+            });
+        }
         return items;
     };
 
@@ -1448,8 +1478,19 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
     useEffect(() => {
+        // 🆕 2026-09-30 QA fix (bug 1): `criteriaStats` is ONE piece of state
+        // shared by every model (scoped to whichever model is active, not
+        // per-model) — it used to only get cleared when there's no criteria
+        // sensor at all, so switching to a DIFFERENT clustering model (or
+        // sensor) while a fetch is in flight left the PREVIOUS model's
+        // resolved stats sitting there: the slider rendered with the wrong
+        // [min, max] (and a live handle a drag could write onto the wrong
+        // scale) until the new fetch happened to land. Reset unconditionally
+        // at the top, before the early-return AND before kicking off a new
+        // fetch, so every model/sensor change shows the loading state until
+        // its OWN stats resolve.
+        setCriteriaStats(null);
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) {
-            setCriteriaStats(null);
             return;
         }
         let cancelled = false;
@@ -1460,6 +1501,67 @@ export default function BuildModelWindow() {
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey]);
+
+    // ---- Clustering auto-divide (2026-09-30 QA fix, bug 2) -----------------
+    // The PM page auto-divides `clusterRanges` across the criteria sensor's
+    // REAL [min, max] whenever the criteria sensor or the cluster count
+    // changes (`PredictiveModelBuild.tsx`'s own `divisionKey` effect). The
+    // Workbench port (above) carried the slider's RENDERING but not this
+    // effect, so picking a criteria sensor on a Dashboard-created model left
+    // the abstract 0-100 default ranges in place — on a sensor whose real
+    // data is e.g. 500-900, every segment collapses to the left edge, and
+    // the handles can't fix it (each is clamped between its neighbours, and
+    // there's no handle at all for the outer min/max). The +/- cluster-count
+    // stepper had the same gap: it changed `numClusters` alone, with nothing
+    // keeping `ranges.length` in sync, so Train could send N-1 or N+1
+    // `cluster_ranges` for `n_clusters: N`.
+    //
+    // Ported with one deliberate difference from the PM page's own version:
+    // the PM page's `prevDivisionKeyRef` starts at `''`, so the very first
+    // time ANY already-configured model's stats resolve, it unconditionally
+    // recomputes (and — on the PM page, which has no separate draft concept
+    // — immediately WRITES) an equal division, discarding whatever
+    // (possibly intentional, non-equal) ranges were already saved. Doing
+    // that literally here would create a phantom, unprompted DRAFT (and
+    // "Unsaved changes" state) on every already-configured clustering model
+    // the instant its stats finish loading, merely from opening it — and
+    // would overwrite an already-correct saved custom split with a fresh
+    // equal one. Anchoring the "previous key" on the PERSISTED model's own
+    // (criteria, numClusters) pair instead means this only fires once the
+    // draft has actually DIVERGED from what's saved — which can only happen
+    // via `patchDraft` (the criteria picker or the +/- stepper), i.e. a real
+    // user edit — or the array length itself is out of sync with
+    // `numClusters` (legacy/mismatched data), which self-heals immediately
+    // either way.
+    const persistedClusterKeyForActive = (activeModel && activeModel.kind === 'clustering')
+        ? `${activeModel.criteriaSensor ?? ''}::${activeModel.numClusters ?? 3}`
+        : '';
+    const numClustersForActive = (activeModel && activeModel.kind === 'clustering') ? draftOf(activeModel).numClusters : 0;
+    const clusterRangesLenForActive = (activeModel && activeModel.kind === 'clustering') ? draftOf(activeModel).ranges.length : 0;
+    const prevClusterDivisionKeyRef = useRef<Record<string, string>>({});
+    useEffect(() => {
+        if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) return;
+        if (numClustersForActive <= 0) return;
+        const divisionKey = `${criteriaSensorForActive}::${numClustersForActive}`;
+        const prevKey = prevClusterDivisionKeyRef.current[activeModel.id] ?? persistedClusterKeyForActive;
+        const keyChanged = divisionKey !== prevKey;
+        const lengthMismatch = clusterRangesLenForActive !== numClustersForActive;
+        if (!keyChanged && !lengthMismatch) return;
+        // Wait for real stats unless the length is already wrong — there's
+        // no valid range set to show in the meantime for a mismatch, so it
+        // can't wait (same tradeoff the PM page's own effect makes).
+        if (!criteriaStats && !lengthMismatch) return;
+        prevClusterDivisionKeyRef.current[activeModel.id] = divisionKey;
+        const lo = criteriaStats?.min ?? 0;
+        const hi = criteriaStats?.max ?? 100;
+        const step = (hi - lo) / numClustersForActive;
+        const ranges = Array.from({ length: numClustersForActive }, (_, i) => ({
+            min: lo + step * i,
+            max: lo + step * (i + 1),
+        }));
+        patchDraft(activeModel, { ranges });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, criteriaSensorForActive, numClustersForActive, clusterRangesLenForActive, criteriaStats, persistedClusterKeyForActive]);
 
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;

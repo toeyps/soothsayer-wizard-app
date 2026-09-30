@@ -38,11 +38,20 @@ export function renameTagInRecord<T>(record: Record<string, T>, oldTag: string, 
 }
 
 /**
- * Rename every occurrence of `oldTag` across a Failure Group model's seven
- * sensor-bearing fields (see `specialSensorDeps.ts`'s `MODEL_SENSOR_FIELDS`
- * for the read-only version of this same list — kept separate here because
- * each field needs a different write-back shape: scalar, flat array, or an
- * array of objects).
+ * Rename every occurrence of `oldTag` across a Failure Group model's sensor-
+ * bearing fields (see `specialSensorDeps.ts`'s `MODEL_SENSOR_FIELDS` for the
+ * read-only version of this same list — kept separate here because each
+ * field needs a different write-back shape: scalar, flat array, or an array
+ * of objects).
+ *
+ * 🆕 2026-09-30 (QA fix, Build Model Workbench Custom running-condition
+ * editor): also rewrites `customRunningConditionFilters` — each model's own
+ * per-condition `sensor` field (2026-09-23's per-model Workspace/Custom
+ * override). This gap pre-dates that feature (the field just didn't exist
+ * before), but stayed invisible until Custom conditions became editable
+ * in-app (this same QA pass, ported into `BuildModelWindow.tsx`'s
+ * Workbench) — before that, nothing ever wrote a real sensor tag into it
+ * that a rename would need to catch up with.
  */
 export function renameTagInModels(models: FailureModel[], oldTag: string, newTag: string): FailureModel[] {
     const target = key(oldTag);
@@ -55,6 +64,9 @@ export function renameTagInModels(models: FailureModel[], oldTag: string, newTag
         ySensor: swap(m.ySensor),
         criteriaSensor: swap(m.criteriaSensor),
         scatterXSensor: swap(m.scatterXSensor),
+        customRunningConditionFilters: (m.customRunningConditionFilters ?? []).map(f =>
+            f.sensor && key(f.sensor) === target ? { ...f, sensor: newTag } : f,
+        ),
     }));
 }
 

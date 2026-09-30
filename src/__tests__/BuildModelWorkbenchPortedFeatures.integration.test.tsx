@@ -549,13 +549,14 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
         expect(header.textContent).toContain('TAG1');
     });
 
-    it.fails('KNOWN BUG: while the newly selected model\'s stats are loading, its slider shows the PREVIOUS model\'s [min, max] instead of the loading state', async () => {
-        // Root cause: the `criteriaStats` effect in BuildModelWindow.tsx never
-        // clears `criteriaStats` when it starts a new fetch (only when there is
-        // no criteria sensor at all), and `criteriaStats` is one piece of state
-        // shared by every model — so c3's slider renders with c1's TAG2 bounds
-        // [0, 10] and header "TAG1" until TAG1's reply lands. Fix: reset it to
-        // null at the top of the effect (or key it by model id + sensor).
+    it('FIXED (2026-09-30): while the newly selected model\'s stats are loading, its slider shows the loading state, never the PREVIOUS model\'s [min, max]', async () => {
+        // Was: the `criteriaStats` effect in BuildModelWindow.tsx never
+        // cleared `criteriaStats` when it started a new fetch (only when
+        // there was no criteria sensor at all), and `criteriaStats` is one
+        // piece of state shared by every model — so c3's slider rendered
+        // with c1's TAG2 bounds [0, 10] and header "TAG1" until TAG1's reply
+        // landed. Fixed by resetting it to null at the top of the effect,
+        // unconditionally, before the early return and before the new fetch.
         writeDisk(wsState([C1(), C3()]));
         await mountBuildModel();
         selectRow('TAG1');
@@ -569,11 +570,13 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
         expect(bmw().getByTestId('cluster-slider-loading')).toBeTruthy();
     });
 
-    it.fails('KNOWN BUG: dragging in that window rewrites the new model\'s ranges on the previous model\'s scale', async () => {
-        // Consequence of the bug above: the handles are live, and a drag maps
-        // the pointer through c1's [0, 10] — pulling c3's first split from
-        // 600 down to its left clamp (500.x) although the user dragged to the
-        // MIDDLE of the track. The draft (and Save) then carry the bad value.
+    it('FIXED (2026-09-30): dragging while the new model\'s stats are still loading is a no-op — no live handle to drag on the wrong scale', async () => {
+        // Was: a consequence of the bug above — the handles stayed live
+        // during the stale-stats window, and a drag mapped the pointer
+        // through c1's [0, 10] — pulling c3's first split from 600 down to
+        // its left clamp (500.x) although the user dragged to the MIDDLE of
+        // the track. Now the loading state (no `role="slider"` at all) shows
+        // instead, so there's nothing to drag until c3's own stats resolve.
         writeDisk(wsState([C1(), C3()]));
         await mountBuildModel();
         selectRow('TAG1');
@@ -626,17 +629,16 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('(5a) cluster-range slider: ranges are never re-divided to the criteria sensor\'s real range', () => {
-    it.fails('KNOWN BUG (regression vs. the Phase A number inputs): picking a criteria sensor in the Workbench leaves the abstract 0-100 default ranges, which the slider cannot move into the sensor\'s real range', async () => {
-        // The PM page auto-divides `clusterRanges` across the criteria
+    it('FIXED (2026-09-30): picking a criteria sensor in the Workbench auto-divides the ranges into the sensor\'s real range', async () => {
+        // Was: the PM page auto-divides `clusterRanges` across the criteria
         // sensor's [min, max] whenever the criteria sensor or the cluster
         // count changes (PredictiveModelBuild.tsx `divisionKey` effect). The
         // Workbench port copied the slider but not that effect, so a
         // Dashboard-created model (ranges 0-33/33-66/66-100) given a criteria
-        // sensor whose data is 500-900 gets three zero-width segments pinned
-        // at the left edge. The slider can't fix it: each handle is clamped
-        // between its neighbours (0..66), and the outer min/max have no handle
-        // at all. The Phase A min/max <input>s this replaced could at least be
-        // typed into. Save/Train then use 0-100 ranges on 500-900 data.
+        // sensor whose data is 500-900 got three zero-width segments pinned
+        // at the left edge, with no way to fix it via the slider. Fixed by
+        // porting the same auto-divide effect (anchored to the persisted
+        // model's own key — see BuildModelWindow.tsx's own comment on why).
         h.stats.TAG3 = { ...DEFAULT_STATS, min: 500, max: 900 };
         writeDisk(wsState([dashModel({ id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2' })]));
         await mountBuildModel();
@@ -649,11 +651,12 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
         expect(ranges.every((r: any) => r.min >= 500 && r.max <= 900)).toBe(true);
     });
 
-    it.fails('KNOWN BUG: stepping the cluster count does not add/remove a range, so N clusters show N-1 or N+1 segments', async () => {
-        // Same missing auto-divide: `numClusters` 3 -> 4 leaves 3 ranges, and
-        // Train then sends 3 `cluster_ranges` with `n_clusters: 4`
+    it('FIXED (2026-09-30): stepping the cluster count resizes the ranges array to match', async () => {
+        // Was the same missing auto-divide: `numClusters` 3 -> 4 left 3
+        // ranges, and Train then sent 3 `cluster_ranges` with `n_clusters: 4`
         // (`executeTrain` slices, it never pads). The PM page keeps
-        // `clusterRanges.length === numClusters` as an invariant.
+        // `clusterRanges.length === numClusters` as an invariant; the ported
+        // auto-divide effect now enforces the same invariant here.
         writeDisk(wsState([dashModel({
             id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
             clusterRanges: [{ min: 0, max: 3 }, { min: 3, max: 6 }, { min: 6, max: 10 }],
@@ -667,16 +670,15 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
 });
 
 describe('(5b) the running-condition gate judges the PERSISTED model, not the pending Custom draft', () => {
-    it.fails('KNOWN BUG: with the Custom editor showing "Required" (no condition, not confirmed), Train still runs — on ALL rows', async () => {
-        // `runTrainClick`/the footer gate on `buildBlockReason(m)` ->
-        // `gateReasonOf(m)`, which reads the persisted model (Workspace mode,
-        // configured). The pending draft switched to Custom with nothing set;
-        // Train commits it and trains with `filter: null` (every row, idle
-        // periods included) — exactly what soft gate A exists to prevent. The
-        // model then shows "1 item to fix" right after training. Same hole for
-        // an INVALID custom period typed in the draft (toFilterRanges drops it
-        // -> no time limit). Staleness already uses `effectiveModelFor`; the
-        // gate should too.
+    it('FIXED (2026-09-30): with the Custom editor showing "Required" (no condition, not confirmed), Train is blocked — nothing runs', async () => {
+        // Was: `runTrainClick`/the footer gate on `buildBlockReason(m)` ->
+        // `gateReasonOf(m)` read the persisted model (Workspace mode,
+        // configured) instead of the draft. The pending draft switched to
+        // Custom with nothing set; Train committed it and trained with
+        // `filter: null` (every row, idle periods included) — exactly what
+        // soft gate A exists to prevent. Fixed by routing `gateReasonOf`
+        // through `effectiveModelFor`, the same draft-aware merge staleness
+        // already used.
         writeDisk(wsState([dashModel({ id: 'i1' })]));
         await mountBuildModel();
         openSettings();
@@ -688,7 +690,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         expect(statsCalls('TAG1')).toHaveLength(0);
     });
 
-    it.fails('KNOWN BUG (same root cause, mirror case): a persisted-but-unconfigured Custom model stays blocked after the user fills in a condition in the Workbench, until Save', async () => {
+    it('FIXED (2026-09-30, same root cause, mirror case): a persisted-but-unconfigured Custom model unblocks as soon as the user fills in a condition in the Workbench, without needing Save first', async () => {
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom' })]));
         await mountBuildModel();
         openSettings();
@@ -698,10 +700,12 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         expect((bmw().getByText('▶ Train model') as HTMLButtonElement).disabled).toBe(false);
     });
 
-    it.fails('KNOWN BUG: for a Custom-mode model, the results area\'s "fix" link opens the WORKSPACE Running Condition modal, which cannot fix it', async () => {
-        // `incompleteItems` always wires the gate reason to setRcFilterOpen(true).
-        // Now that Custom is editable in the Workbench, a Custom-mode model's
-        // link should open its own Model settings / Custom editor instead.
+    it('FIXED (2026-09-30): for a Custom-mode model, the results area\'s "fix" link opens this model\'s OWN Model settings / Custom editor, not the workspace modal', async () => {
+        // Was: `incompleteItems` always wired the gate reason to
+        // `setRcFilterOpen(true)` (the workspace modal), which fixes nothing
+        // for a Custom-mode model — its own condition/period editor lives
+        // inline in Model settings. Fixed by branching on the draft's
+        // `runningConditionMode`.
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom' })]));
         await mountBuildModel();
         const results = within(bmw().getByTestId('results-incomplete'));

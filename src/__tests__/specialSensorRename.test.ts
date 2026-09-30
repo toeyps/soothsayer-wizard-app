@@ -110,6 +110,34 @@ describe('renameTagInModels', () => {
         const [renamed] = renameTagInModels([model], 'OLD', 'NEW');
         expect(renamed.targetSensor).toBe('NEW');
     });
+
+    // 🆕 2026-09-30 (QA fix): customRunningConditionFilters (2026-09-23's
+    // per-model Workspace/Custom override) was never rewritten by a rename —
+    // this gap pre-dated the Workbench's own Custom editor and only became
+    // visible once that editor made these conditions actually editable in
+    // the app (also this QA pass).
+    it('renames a matching sensor inside customRunningConditionFilters, case-insensitively, and leaves other conditions alone', () => {
+        const model = makeModel({
+            runningConditionMode: 'custom',
+            customRunningConditionFilters: [
+                { id: 'c1', sensor: 'old', operation: 'greater_than', value1: '5', value2: '' },
+                { id: 'c2', sensor: 'OTHER', operation: 'less_than', value1: '9', value2: '' },
+            ],
+        });
+        const [renamed] = renameTagInModels([model], 'OLD', 'NEW');
+        expect(renamed.customRunningConditionFilters).toEqual([
+            { id: 'c1', sensor: 'NEW', operation: 'greater_than', value1: '5', value2: '' },
+            { id: 'c2', sensor: 'OTHER', operation: 'less_than', value1: '9', value2: '' },
+        ]);
+    });
+
+    it('never renames an empty customRunningConditionFilters sensor field', () => {
+        const model = makeModel({
+            customRunningConditionFilters: [{ id: 'c1', sensor: '', operation: 'greater_than', value1: '5', value2: '' }],
+        });
+        const [renamed] = renameTagInModels([model], 'OLD', 'NEW');
+        expect(renamed.customRunningConditionFilters[0].sensor).toBe('');
+    });
 });
 
 describe('renameTagInRunningConditionFilters', () => {
