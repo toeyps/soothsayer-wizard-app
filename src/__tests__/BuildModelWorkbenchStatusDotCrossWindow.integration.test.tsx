@@ -206,7 +206,16 @@ function dashDot(groupNo: number, key = 'tag1', kind = 'individual'): string {
     // The sensor row must exist, otherwise "no dot" would pass vacuously.
     expect(dash().getByTestId(`fg-sensor-row-${groupNo}:${key}`)).toBeTruthy();
     const el = screen.getByTestId('dashboard-window').querySelector(`[data-testid="fg-kind-badge-dot-${groupNo}-${key}-${kind}"]`);
-    return el?.className.match(/f4-kb-dot--(\w+)/)?.[1] ?? 'none';
+    if (!el) return 'none';
+    // Final visual-refresh QA sweep (2026-10-02): a dot element that is
+    // present but no longer carries an `f4-kb-dot--<state>` class (e.g. a
+    // later reskin finishing Phase 2's hybrid migration to `.kind-badge-dot`)
+    // must fail loudly here — it used to be read back as 'none', which would
+    // make every "no dot" assertion in this file pass vacuously. Build
+    // Model's own dot (`bmwDot` below) already maps an unknown class to '?'.
+    const state = el.className.match(/f4-kb-dot--(\w+)/)?.[1];
+    expect(state, `Dashboard dot present without an f4-kb-dot--<state> class: "${el.className}"`).toBeDefined();
+    return state!;
 }
 
 /** Build Model left-list dot(s) for one model id — the same model can render
