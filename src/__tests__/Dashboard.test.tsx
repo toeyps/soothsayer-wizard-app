@@ -1329,6 +1329,124 @@ describe('Dashboard', () => {
         });
     });
 
+    // QA sweep, visual refresh Phase 1 (a4d3604): the colour and pin-Y-axis
+    // editors moved from inline blocks under each Selected Sensor row to
+    // `AnchoredPopover` (portaled into #wizard-portal-root, closes itself on
+    // any scroll/resize). These pin the seam between Dashboard's own
+    // open/close state and that shared component.
+    describe('Selected Sensor popovers through Portal (visual refresh Phase 1)', () => {
+        const openPops = () => Array.from(document.querySelectorAll<HTMLElement>('#wizard-portal-root .sensor-popover'));
+        const renderOne = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+
+        it('both popovers render into the portal root, outside the Dashboard container', () => {
+            const { container } = renderOne();
+            fireEvent.click(screen.getByTitle('Change line color'));
+            expect(openPops()).toHaveLength(1);
+            expect(container.contains(openPops()[0])).toBe(false);
+            fireEvent.click(screen.getByTitle('Change line color')); // close
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            expect(container.contains(screen.getByPlaceholderText('min'))).toBe(false);
+        });
+
+        it('clicking inside the colour popover recolours without closing it or hiding the sensor', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByText('set-color'));
+            fireEvent.click(screen.getByText('set-color'));
+            expect(openPops()).toHaveLength(1);
+            const lastChart = last(chartProps.filter((p) => p.chartType === 'line'));
+            expect(lastChart.sensorColors.TAG1).toBe('#abcdef');
+            // Still visible: the row's checkbox keeps its "Hide from chart" title.
+            expect((screen.getByTitle('Hide from chart') as HTMLInputElement).checked).toBe(true);
+        });
+
+        it('typing into / clicking the axis popover\'s inputs does not close it; Apply does', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            const min = screen.getByPlaceholderText('min');
+            fireEvent.click(min);
+            fireEvent.change(min, { target: { value: '1' } });
+            fireEvent.click(screen.getByText('Pin Y-axis')); // the popover's own heading
+            expect(openPops()).toHaveLength(1);
+            fireEvent.click(screen.getByText('Apply'));
+            expect(openPops()).toHaveLength(0);
+        });
+
+        it('a scroll closes the axis popover via closeAxisEditor, so ONE click on the pin button reopens it (not a toggle-closed no-op)', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            expect(screen.getByPlaceholderText('min')).toBeTruthy();
+            fireEvent.scroll(document.body);
+            expect(screen.queryByPlaceholderText('min')).toBeNull();
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            expect(screen.getByPlaceholderText('min')).toBeTruthy();
+        });
+
+        it('a resize closes the colour popover and ONE click on the swatch reopens it', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent(window, new Event('resize'));
+            expect(openPops()).toHaveLength(0);
+            fireEvent.click(screen.getByTitle('Change line color'));
+            expect(openPops()).toHaveLength(1);
+        });
+
+        it('removing the sensor while its axis popover is open closes it (existing prune effect still reaches the portaled popover)', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            fireEvent.click(screen.getByTitle('Remove from plot'));
+            expect(openPops()).toHaveLength(0);
+            fireEvent.click(screen.getByText('select-tag1')); // re-add
+            expect(screen.queryByPlaceholderText('min')).toBeNull();
+        });
+
+        // ── Known bugs (recorded, not fixed) ──
+
+        // Chromium fires a `scroll` event on an <input> whose content
+        // scrolls horizontally — verified for this sweep with a 64px
+        // number input (exactly the min/max fields' width): typing
+        // "1013250" queued a scroll event on the input. AnchoredPopover's
+        // window `capture: true` scroll listener treats it like a page
+        // scroll and closes the popover mid-typing; closeAxisEditor then
+        // drops the draft, since reopening re-seeds it from the saved range.
+        it.fails('typing a long number into the axis popover\'s 64px min field (the input scrolls) does not close it', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            const min = screen.getByPlaceholderText('min');
+            fireEvent.change(min, { target: { value: '1013250' } });
+            fireEvent.scroll(min); // what Chromium dispatches once the digits overflow
+            expect(screen.queryByPlaceholderText('min')).not.toBeNull();
+        });
+
+        // colorPickerFor is never cleared when its sensor is removed (only
+        // axisEditorFor is, in the selectedSensors prune effect), and the
+        // captured anchor rect is kept too. Re-adding the sensor later
+        // re-renders the popover immediately, at a stale fixed screen
+        // position captured from a button that may no longer be there.
+        // (Inline, the same stale state re-opened the picker under its own
+        // row; portaled, it now floats wherever the old click happened.)
+        it.fails('removing a sensor with its colour popover open, then re-adding it, does not resurrect the popover', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Remove from plot'));
+            expect(openPops()).toHaveLength(0);
+            fireEvent.click(screen.getByText('select-tag1'));
+            expect(openPops()).toHaveLength(0);
+        });
+
+        // Colour and axis popovers are independent state, so both can be
+        // open for the same row. Inline they stacked under the row; now both
+        // are `position: fixed` at the same `top` (adjacent buttons in one
+        // row), right-aligned 28px apart, so the 230px axis popover covers
+        // most of the 180px colour picker.
+        it.fails('only one Selected Sensor popover is open at a time (two fixed popovers from one row overlap)', () => {
+            renderOne();
+            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            expect(openPops()).toHaveLength(1);
+        });
+    });
+
     describe('alarm setpoint lines', () => {
         it('toggling an alarm line surfaces it as a markLine on the Chart', () => {
             mockUseChartData.mockReturnValue({
