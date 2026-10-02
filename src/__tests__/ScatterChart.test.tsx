@@ -128,7 +128,10 @@ describe('ScatterChart', () => {
         // preserve, so this must match the canvas's own ratio to fill the
         // whole chart area instead of showing black bars on the sides.
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
-        expect(opts.backgroundColor).toEqual([0.058, 0.094, 0.165, 1.0]);
+        // Visual refresh (2026-10-02): recoloured from a leftover navy
+        // slate-900 to match the app's own `--card-bg` — see ScatterChart.tsx's
+        // matching comment.
+        expect(opts.backgroundColor).toEqual([0.0627, 0.0627, 0.0706, 1.0]);
     });
 
     it('debounces resize-driven WebGL recreation (regression: a split-pane drag used to destroy+recreate the context on every single ResizeObserver tick)', () => {

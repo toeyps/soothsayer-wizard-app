@@ -34,33 +34,33 @@ const labelStyle: React.CSSProperties = {
 const addBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '0.25rem',
     padding: '0.2rem 0.4rem', background: 'var(--accent-muted)',
-    border: '1px solid var(--accent-color)', borderRadius: '4px',
+    border: '1px solid var(--accent-color)', borderRadius: '6px',
     color: 'var(--accent-color)', fontSize: '0.65rem', fontWeight: 500,
 };
 
 const filterRowStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.4rem',
+    display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem',
     background: 'var(--chip-bg)', border: '1px solid var(--border)',
-    borderRadius: '6px',
+    borderRadius: '8px',
 };
 
 const sensorSelectStyle: React.CSSProperties = {
     flex: 1, minWidth: 0, padding: '0.25rem 0.3rem',
     background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '4px', color: 'var(--text-primary)', fontSize: '0.7rem',
+    borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.7rem',
     outline: 'none', cursor: 'pointer',
 };
 
 const opSelectStyle: React.CSSProperties = {
     padding: '0.25rem 0.3rem', background: 'var(--accent-muted)',
-    border: '1px solid var(--accent-color)', borderRadius: '4px',
+    border: '1px solid var(--accent-color)', borderRadius: '6px',
     color: 'var(--accent-color)', fontSize: '0.65rem', fontWeight: 600,
     outline: 'none', cursor: 'pointer', flexShrink: 0,
 };
 
 const valInputStyle: React.CSSProperties = {
     width: '60px', padding: '0.25rem 0.3rem', background: 'var(--input-bg)',
-    border: '1px solid var(--border)', borderRadius: '4px',
+    border: '1px solid var(--border)', borderRadius: '6px',
     color: 'var(--text-primary)', fontSize: '0.7rem', outline: 'none',
     flexShrink: 0,
 };
@@ -68,19 +68,20 @@ const valInputStyle: React.CSSProperties = {
 const removeBtnStyle: React.CSSProperties = {
     background: 'transparent', border: 'none', color: 'var(--text-secondary)',
     cursor: 'pointer', padding: '0.15rem', flexShrink: 0, display: 'flex',
+    borderRadius: '6px',
 };
 
 const clearBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     gap: '0.3rem', padding: '0.3rem', background: 'transparent',
-    border: '1px dashed var(--border)', borderRadius: '4px',
+    border: '1px dashed var(--border)', borderRadius: '6px',
     color: 'var(--text-secondary)', fontSize: '0.65rem', cursor: 'pointer',
 };
 
 const applyBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     gap: '0.35rem', padding: '0.4rem 0.75rem',
-    background: 'var(--accent-color)', border: 'none', borderRadius: '6px',
+    background: 'var(--accent-color)', border: 'none', borderRadius: '8px',
     color: '#fff', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
 };
 

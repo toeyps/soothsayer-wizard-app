@@ -108,6 +108,19 @@ describe('HighlightsPanel', () => {
             expect(onRecolorTimeHighlight).toHaveBeenCalledWith('h1', '#123456');
         });
 
+        // Visual refresh (2026-10-02): this popover now renders through
+        // `AnchoredPopover`/`Portal` (escapes this panel's own scrolling,
+        // same reasoning as every other popover in the visual-refresh
+        // spec) instead of expanding inline, flexbox-aligned, below the
+        // swatch. `AnchoredPopover` is left-aligned to its anchor by
+        // default (no `width` prop passed here) — i.e. its `left` lines up
+        // with the swatch's own left edge, preserving the original
+        // regression fix's intent ("left-aligned, under the swatch", not
+        // right-aligned and disconnected from a left-side swatch).
+        // `AnchoredPopover.test.tsx` covers the positioning arithmetic
+        // itself in detail; this just pins that HighlightsPanel calls it
+        // the left-aligned way, not the right-aligned (`width`-bearing) way
+        // SensorSelection/Dashboard use for their right-side icon buttons.
         it('opens the ColorPlatePicker left-aligned, under the swatch button that triggers it (regression: it opened right-aligned, disconnected from the left-side swatch)', () => {
             const timeHighlights: TimeHighlight[] = [
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
@@ -116,8 +129,12 @@ describe('HighlightsPanel', () => {
 
             fireEvent.click(screen.getByTitle('Change colour'));
             const pickerButton = screen.getByText('set-color-#ff0000');
-            const pickerWrap = pickerButton.parentElement?.parentElement as HTMLElement; // button -> pickerBoxStyle div -> pickerWrapStyle div
-            expect(pickerWrap.style.justifyContent).toBe('flex-start');
+            const popover = pickerButton.closest('.sensor-popover') as HTMLElement;
+            expect(popover).toBeTruthy();
+            // Left-aligned to the (zeroed, in jsdom) anchor rect's own left
+            // edge — NOT right-aligned-and-clamped (which `width`-bearing
+            // popovers compute as `max(8, right - width)`, e.g. "8px").
+            expect(popover.style.left).toBe('0px');
         });
 
         it('shows the "applies to Line and Scatter, not Pair Plot" scope note', () => {

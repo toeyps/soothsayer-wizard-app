@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, FolderPlus, X, Pencil, Trash2, Check, Bell }
 import { SensorMetadata, FailureGroup, FailureModel, ModelKind, AlarmLevel } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { ALARM_LEVELS, ALARM_LABELS, isCriticalAlarmLevel, alarmLevelColor, hasAlarmSetpoints } from '../../utils/alarmLevels';
+import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 
 
 
@@ -96,6 +97,14 @@ export default function SensorSelection({
     // inline "new group" input. A sensor can belong to more than one group,
     // so this is a toggleable checklist, not a single-select assignment.
     const [groupMenuFor, setGroupMenuFor] = useState<string | null>(null);
+    // Viewport-relative rect of the 📁 button that opened the currently-open
+    // group menu — captured once, when the menu opens (see AnchoredPopover's
+    // own docstring for why this isn't tracked live). Visual-refresh-only:
+    // the menu itself now renders through a floating `AnchoredPopover`
+    // instead of expanding inline within the scrolling sensor list, per the
+    // locked SPEC FINAL decision that every popover here must escape the
+    // list's own clipping.
+    const [groupMenuAnchor, setGroupMenuAnchor] = useState<PopoverAnchorRect | null>(null);
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
     // Which sensor's alarm-setpoint checkbox list is open. Closed by default
@@ -104,6 +113,8 @@ export default function SensorSelection({
     // way to reveal the checkboxes. Checking a sensor into the chart does
     // NOT auto-open this — the user explicitly asked for click-only.
     const [alarmPanelFor, setAlarmPanelFor] = useState<string | null>(null);
+    // Same idea as `groupMenuAnchor` above, for the 🔔 alarm-setpoints popover.
+    const [alarmPanelAnchor, setAlarmPanelAnchor] = useState<PopoverAnchorRect | null>(null);
     // Which group (by `no`) is being renamed inline, and its draft text.
     // Group identity is global, so this isn't scoped to a particular sensor —
     // only one group can be mid-rename across the whole panel at a time.
@@ -298,51 +309,43 @@ export default function SensorSelection({
                             onChange={() => handleSensorToggle(sensor)}
                             onClick={(e) => e.stopPropagation()}
                         />
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} style={{ cursor: 'pointer', fontWeight: 500 }}>
-                                {meta ? (
-                                    <>
-                                        {meta.description}
-                                        {meta.unit && (
-                                            <span style={{ marginLeft: '6px', fontSize: '0.8em', color: 'var(--text-secondary)', fontWeight: 400 }}>
-                                                ({meta.unit})
-                                            </span>
-                                        )}
-                                    </>
-                                ) : sensor}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} style={{ cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{meta ? meta.description : sensor}</span>
+                                {meta?.unit && <span className="unit-badge">{meta.unit}</span>}
                             </label>
                             {meta && (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                    {meta.tag} • {meta.unit}
-                                </span>
+                                <span className="sensor-row-tag">{meta.tag}</span>
                             )}
                         </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
                         {hasAlarms && (
                             <button
-                                onClick={(e) => { e.stopPropagation(); setAlarmPanelFor(alarmOpen ? null : sensor); }}
-                                title="Alarm setpoints"
-                                style={{
-                                    background: alarmOpen ? 'var(--hover-bg)' : 'none',
-                                    border: 'none', borderRadius: '4px',
-                                    color: 'var(--text-secondary)',
-                                    cursor: 'pointer', padding: '4px', display: 'flex',
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (alarmOpen) { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }
+                                    else { setAlarmPanelAnchor(e.currentTarget.getBoundingClientRect()); setAlarmPanelFor(sensor); }
                                 }}
+                                title="Alarm setpoints"
+                                className={`row-action-btn${alarmOpen ? ' on' : ''}`}
                             >
                                 <Bell size={14} />
                             </button>
                         )}
                         <button
-                            onClick={(e) => { e.stopPropagation(); setGroupMenuFor(menuOpen ? null : sensor); }}
-                            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setGroupMenuFor(sensor); }}
-                            title="Add to failure group"
-                            style={{
-                                background: menuOpen ? 'var(--hover-bg)' : 'none',
-                                border: 'none', borderRadius: '4px',
-                                color: 'var(--text-secondary)',
-                                cursor: 'pointer', padding: '4px', display: 'flex',
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (menuOpen) { setGroupMenuFor(null); setGroupMenuAnchor(null); }
+                                else { setGroupMenuAnchor(e.currentTarget.getBoundingClientRect()); setGroupMenuFor(sensor); }
                             }}
+                            onContextMenu={(e) => {
+                                e.preventDefault(); e.stopPropagation();
+                                setGroupMenuAnchor(e.currentTarget.getBoundingClientRect());
+                                setGroupMenuFor(sensor);
+                            }}
+                            title="Add to failure group"
+                            className={`row-action-btn${menuOpen ? ' on' : ''}`}
                         >
                             <FolderPlus size={14} />
                         </button>
@@ -393,45 +396,48 @@ export default function SensorSelection({
                     </div>
                 )}
                 {hasAlarms && alarmOpen && (
-                    <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '26px', marginTop: '4px' }}
+                    <AnchoredPopover
+                        anchorRect={alarmPanelAnchor}
+                        onRequestClose={() => { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }}
+                        width={220}
                     >
-                        {ALARM_LEVELS.map(({ level, metaKey }) => {
-                            const value = meta?.[metaKey];
-                            if (value === undefined) return null;
-                            const checked = alarmLinesEnabled[sensor]?.includes(level) ?? false;
-                            const critical = isCriticalAlarmLevel(level);
-                            return (
-                                <label
-                                    key={level}
-                                    style={{
-                                        display: 'flex', alignItems: 'center', gap: '6px',
-                                        fontSize: '0.75rem', cursor: 'pointer',
-                                        fontWeight: critical ? 600 : 400,
-                                        color: alarmLevelColor(level),
-                                    }}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={() => onToggleAlarmLine(sensor, level)}
-                                    />
-                                    {ALARM_LABELS[level]} ({value})
-                                </label>
-                            );
-                        })}
-                    </div>
+                        <div className="fg-menu-heading">Alarm setpoints</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            {ALARM_LEVELS.map(({ level, metaKey }) => {
+                                const value = meta?.[metaKey];
+                                if (value === undefined) return null;
+                                const checked = alarmLinesEnabled[sensor]?.includes(level) ?? false;
+                                const critical = isCriticalAlarmLevel(level);
+                                return (
+                                    <label
+                                        key={level}
+                                        style={{
+                                            display: 'flex', alignItems: 'center', gap: '6px',
+                                            fontSize: '0.75rem', cursor: 'pointer',
+                                            fontWeight: critical ? 600 : 400,
+                                            color: alarmLevelColor(level),
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => onToggleAlarmLine(sensor, level)}
+                                        />
+                                        {ALARM_LABELS[level]} ({value})
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    </AnchoredPopover>
                 )}
                 {menuOpen && (
-                    <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                            marginTop: '6px', marginLeft: '26px',
-                            padding: '8px', background: 'var(--input-bg)', border: '1px solid var(--border)',
-                            borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '2px',
-                        }}
+                    <AnchoredPopover
+                        anchorRect={groupMenuAnchor}
+                        onRequestClose={() => { setGroupMenuFor(null); setGroupMenuAnchor(null); }}
+                        width={290}
+                        style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
                     >
+                        <div className="fg-menu-heading">Add to failure group</div>
                         {fgGroups.filter(g => g.no !== 0).map(g => {
                             const isEditing = editingGroupNo === g.no;
                             if (isEditing) {
@@ -546,7 +552,7 @@ export default function SensorSelection({
                                 <div style={{ fontSize: '0.68rem', color: 'var(--danger)', marginTop: '3px' }}>{newGroupError}</div>
                             )}
                         </div>
-                    </div>
+                    </AnchoredPopover>
                 )}
             </div>
         );
@@ -585,28 +591,23 @@ export default function SensorSelection({
             <div className="sensor-list-widget flex-1 min-h-0 overflow-y-auto">
                 {groupedSensors.map(([component, compSensors]) => {
                     const expanded = isComponentExpanded(component);
+                    // "selected / total" (e.g. "2 / 8") once at least one
+                    // sensor in this component is on the chart — matching
+                    // the approved prototype's own counter exactly, which
+                    // hides the "0 / " prefix rather than showing it
+                    // (a bare total reads the same as "nothing selected
+                    // yet" without needing the extra "0 /" noise).
+                    const selectedInGroup = compSensors.filter(s => selectedSensors.includes(s)).length;
                     return (
                         <div key={component}>
                             <div
                                 onClick={() => toggleComponentExpanded(component)}
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    padding: '8px 10px',
-                                    cursor: 'pointer',
-                                    fontWeight: 600,
-                                    fontSize: '0.8rem',
-                                    letterSpacing: '0.03em',
-                                    textTransform: 'uppercase',
-                                    borderBottom: '1px solid var(--border)',
-                                    userSelect: 'none',
-                                }}
+                                className="component-group-header"
                             >
                                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 <span style={{ flex: 1 }}>{component}</span>
-                                <span style={{ color: 'var(--text-faint)', fontWeight: 400, textTransform: 'none' }}>
-                                    {compSensors.length}
+                                <span className="component-group-count">
+                                    {selectedInGroup > 0 ? <><b>{selectedInGroup}</b> / {compSensors.length}</> : compSensors.length}
                                 </span>
                             </div>
                             {expanded && compSensors.map(sensor => renderSensorRow(sensor))}

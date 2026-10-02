@@ -25,6 +25,7 @@ import SensorSelection from './SensorSelection';
 import FailureGroupsPanel from './FailureGroupsPanel';
 import HighlightsPanel from './HighlightsPanel';
 import ColorPlatePicker from './ColorPlatePicker';
+import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
 import { useChartData } from '../../hooks/useChartData';
@@ -949,6 +950,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const toggleColorPicker = useCallback((sensor: string) => {
         setColorPickerFor(prev => (prev === sensor ? null : sensor));
     }, []);
+    // Viewport-relative rect of the swatch button that opened the colour
+    // picker — visual-refresh-only (see AnchoredPopover's docstring): the
+    // picker now renders through a floating popover instead of expanding
+    // inline within the Selected Sensor list, so it can escape that list's
+    // own clipping.
+    const [colorPickerAnchor, setColorPickerAnchor] = useState<PopoverAnchorRect | null>(null);
 
     // Inline "pin Y-axis scale" editor — one sensor's min/max fields open at
     // a time, directly under its row in the Selected Sensor tab.
@@ -957,6 +964,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [axisDraftMax, setAxisDraftMax] = useState('');
 
     const [axisEditorError, setAxisEditorError] = useState<string | null>(null);
+    // Same idea as `colorPickerAnchor` above, for the pin-Y-axis popover.
+    const [axisEditorAnchor, setAxisEditorAnchor] = useState<PopoverAnchorRect | null>(null);
 
     const openAxisEditor = useCallback((sensor: string) => {
         const existing = sensorAxisRange[sensor];
@@ -969,6 +978,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const closeAxisEditor = useCallback(() => {
         setAxisEditorFor(null);
         setAxisEditorError(null);
+        setAxisEditorAnchor(null);
     }, []);
 
     // The pin icon is the only way in — clicking it again while its own
@@ -2453,25 +2463,31 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             {isLine && (
                                                 <>
                                                     <button
-                                                        onClick={() => toggleColorPicker(sensor)}
+                                                        onClick={(e) => {
+                                                            const opening = colorPickerFor !== sensor;
+                                                            toggleColorPicker(sensor);
+                                                            setColorPickerAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                                        }}
                                                         title="Change line color"
+                                                        className="row-action-btn"
                                                         style={{
                                                             background: colorPickerFor === sensor ? `${currentColor}33` : 'none',
-                                                            border: 'none', borderRadius: '4px',
                                                             color: currentColor,
-                                                            cursor: 'pointer', padding: '4px', display: 'flex',
                                                         }}
                                                     >
                                                         <Pipette size={14} />
                                                     </button>
                                                     <button
-                                                        onClick={() => toggleAxisEditor(sensor)}
+                                                        onClick={(e) => {
+                                                            const opening = axisEditorFor !== sensor;
+                                                            toggleAxisEditor(sensor);
+                                                            setAxisEditorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                                        }}
                                                         title={isPinned ? 'Y-axis scale pinned to a fixed range — click to edit, click again to close' : 'Pin the Y-axis to a fixed min/max range'}
+                                                        className="row-action-btn"
                                                         style={{
                                                             background: isPinned ? `${currentColor}33` : 'none',
-                                                            border: 'none', borderRadius: '4px',
                                                             color: currentColor,
-                                                            cursor: 'pointer', padding: '4px', display: 'flex',
                                                         }}
                                                     >
                                                         <LineChartIcon size={14} />
@@ -2481,80 +2497,76 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             <button
                                                 onClick={() => removeSensor(sensor)}
                                                 title="Remove from plot"
-                                                style={{
-                                                    background: 'none', border: 'none', color: currentColor,
-                                                    cursor: 'pointer', padding: '4px', display: 'flex',
-                                                }}
+                                                className="row-action-btn"
+                                                style={{ color: currentColor }}
                                             >
                                                 <Trash2 size={14} />
                                             </button>
                                         </div>
                                     </div>
                                     {isLine && colorPickerFor === sensor && (
-                                        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 10px 8px' }}>
-                                            <div style={{
-                                                padding: '10px',
-                                                background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                                borderRadius: '6px', width: '160px',
-                                            }}>
-                                                <ColorPlatePicker
-                                                    color={currentColor}
-                                                    onChange={(hex) => setSensorColor(sensor, hex)}
-                                                />
-                                            </div>
-                                        </div>
+                                        <AnchoredPopover
+                                            anchorRect={colorPickerAnchor}
+                                            onRequestClose={() => { setColorPickerFor(null); setColorPickerAnchor(null); }}
+                                            width={180}
+                                        >
+                                            <ColorPlatePicker
+                                                color={currentColor}
+                                                onChange={(hex) => setSensorColor(sensor, hex)}
+                                            />
+                                        </AnchoredPopover>
                                     )}
                                     {isLine && axisEditorFor === sensor && (
-                                        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 10px 8px' }}>
-                                            <div style={{
-                                                padding: '8px 10px',
-                                                background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                                borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px',
-                                            }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
-                                                    <span style={{ color: 'var(--text-secondary)' }}>Y-axis:</span>
-                                                    <input
-                                                        type="number"
-                                                        placeholder="min"
-                                                        value={axisDraftMin}
-                                                        onChange={(e) => setAxisDraftMin(e.target.value)}
-                                                        style={{
-                                                            width: '64px', padding: '2px 4px',
-                                                            background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                                            borderRadius: '4px', color: 'var(--text-primary)',
-                                                            fontSize: '0.75rem', outline: 'none',
-                                                        }}
-                                                    />
-                                                    <span style={{ color: 'var(--text-secondary)' }}>–</span>
-                                                    <input
-                                                        type="number"
-                                                        placeholder="max"
-                                                        value={axisDraftMax}
-                                                        onChange={(e) => setAxisDraftMax(e.target.value)}
-                                                        style={{
-                                                            width: '64px', padding: '2px 4px',
-                                                            background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                                            borderRadius: '4px', color: 'var(--text-primary)',
-                                                            fontSize: '0.75rem', outline: 'none',
-                                                        }}
-                                                    />
-                                                    <button className="text-btn" onClick={applyAxisEditor}>Apply</button>
-                                                    {isPinned && (
-                                                        <button
-                                                            className="text-btn"
-                                                            onClick={() => { clearSensorFixedRange(sensor); closeAxisEditor(); }}
-                                                        >
-                                                            Unpin
-                                                        </button>
-                                                    )}
-                                                </div>
-                                                {axisEditorError && (
-                                                    <span style={{ fontSize: '0.7rem', color: 'var(--danger, #ef4444)' }}>
-                                                        {axisEditorError}
-                                                    </span>
+                                        <AnchoredPopover
+                                            anchorRect={axisEditorAnchor}
+                                            onRequestClose={closeAxisEditor}
+                                            width={230}
+                                            style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
+                                        >
+                                            <div className="fg-menu-heading">Pin Y-axis</div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
+                                                <span style={{ color: 'var(--text-secondary)' }}>Y-axis:</span>
+                                                <input
+                                                    type="number"
+                                                    placeholder="min"
+                                                    value={axisDraftMin}
+                                                    onChange={(e) => setAxisDraftMin(e.target.value)}
+                                                    style={{
+                                                        width: '64px', padding: '2px 4px',
+                                                        background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                                        borderRadius: '4px', color: 'var(--text-primary)',
+                                                        fontSize: '0.75rem', outline: 'none',
+                                                    }}
+                                                />
+                                                <span style={{ color: 'var(--text-secondary)' }}>–</span>
+                                                <input
+                                                    type="number"
+                                                    placeholder="max"
+                                                    value={axisDraftMax}
+                                                    onChange={(e) => setAxisDraftMax(e.target.value)}
+                                                    style={{
+                                                        width: '64px', padding: '2px 4px',
+                                                        background: 'var(--input-bg)', border: '1px solid var(--border)',
+                                                        borderRadius: '4px', color: 'var(--text-primary)',
+                                                        fontSize: '0.75rem', outline: 'none',
+                                                    }}
+                                                />
+                                                <button className="text-btn" onClick={applyAxisEditor}>Apply</button>
+                                                {isPinned && (
+                                                    <button
+                                                        className="text-btn"
+                                                        onClick={() => { clearSensorFixedRange(sensor); closeAxisEditor(); }}
+                                                    >
+                                                        Unpin
+                                                    </button>
                                                 )}
                                             </div>
-                                        </div>
+                                            {axisEditorError && (
+                                                <span style={{ fontSize: '0.7rem', color: 'var(--danger, #ef4444)' }}>
+                                                    {axisEditorError}
+                                                </span>
+                                            )}
+                                        </AnchoredPopover>
                                     )}
                                 </div>
                             );

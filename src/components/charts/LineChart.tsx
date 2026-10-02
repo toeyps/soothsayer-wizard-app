@@ -400,12 +400,21 @@ function LineChart({
         };
     }, []);
 
-    const txtPrimary  = '#f1f5f9';
-    const txtSecondary = '#94a3b8';
-    const gridLine    = '#334155';
-    const markLabelBg = 'rgba(15,23,42,0.82)';
-    const tooltipBg   = 'rgba(30,41,59,0.9)';
-    const tooltipBorder = '#334155';
+    // Visual refresh (2026-10-02): these used to be a leftover slate-blue
+    // palette (Tailwind slate-100/400/700, e.g. `#334155`) that predated
+    // the app's Linear/Vercel-style dark refresh and never matched its
+    // neutral gray tokens (`--text-primary`/`--text-secondary`/
+    // `--border-strong`/`--pop` in App.css). ECharts renders to canvas, so
+    // it can't read CSS custom properties directly — these are the same
+    // literal values those tokens resolve to, kept in sync by eye rather
+    // than at runtime. Look only: same axis labels, grid lines, tag
+    // callouts and tooltip, just recoloured to match the rest of the app.
+    const txtPrimary  = '#ededef';
+    const txtSecondary = '#8c8c94';
+    const gridLine    = '#2a2a30';
+    const markLabelBg = 'rgba(23, 23, 28, 0.85)';
+    const tooltipBg   = 'rgba(23, 23, 28, 0.92)';
+    const tooltipBorder = 'rgba(255, 255, 255, 0.12)';
 
     const option = useMemo(() => {
         // xData is computed once above (shared with the click handler) —

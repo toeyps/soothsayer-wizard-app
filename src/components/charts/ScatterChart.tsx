@@ -18,8 +18,13 @@ import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaM
 export { RANGE_PALETTE };
 
 // WebGL can't read CSS custom properties, so the canvas clear color is a
-// plain constant here (dark slate-900, matching `--card-bg`).
-const CANVAS_BG: [number, number, number, number] = [0.058, 0.094, 0.165, 1.0];
+// plain constant here. Visual refresh (2026-10-02): this used to be
+// Tailwind's slate-900 (`#0f172a`), a navy-tinted dark that never actually
+// matched the app's own `--card-bg` (#101012, a neutral near-black) the
+// old comment claimed it did — visibly off-palette next to the rest of the
+// now-refreshed dark UI. Recomputed from `--card-bg` itself: #101012 ->
+// (16, 16, 18) / 255.
+const CANVAS_BG: [number, number, number, number] = [0.0627, 0.0627, 0.0706, 1.0];
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
 /** Base point colour — the app's standard indigo accent at low alpha

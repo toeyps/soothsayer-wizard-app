@@ -1,7 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import SensorSelection from '../components/dashboard/SensorSelection';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
+
+afterEach(() => {
+    cleanup();
+    // AnchoredPopover (via Portal) appends a shared container straight to
+    // document.body that outlives the component tree — see Portal.test.tsx's
+    // own identical cleanup for why this matters across tests.
+    document.getElementById('wizard-portal-root')?.remove();
+});
 
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmH: 90 },
@@ -52,6 +60,23 @@ describe('SensorSelection', () => {
         render(<SensorSelection {...makeProps()} />);
         expect(screen.getByText('2')).toBeTruthy(); // Pump: TAG1+TAG2
         expect(screen.getByText('1')).toBeTruthy(); // Uncategorized: TAG3
+    });
+
+    // Visual refresh (2026-10-02): the component header's counter reads
+    // "selected / total" (e.g. "2 / 8") once at least one sensor in that
+    // component is on the chart — not an "N on chart" label, per the
+    // locked SPEC FINAL decision. With nothing selected (the test above)
+    // it still reads as a bare total — matching the approved prototype's
+    // own counter, which hides the "0 / " prefix.
+    it('once a sensor is selected, the component counter reads "selected / total"', () => {
+        render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
+        // "1" (selected) bolded, " / 2" (total) — getByText matches the
+        // whole element's normalized text content, so look at the
+        // `.component-group-count` element itself rather than a bare "1".
+        const counts = document.querySelectorAll('.component-group-count');
+        const pumpCount = Array.from(counts).find(el => el.textContent === '1 / 2');
+        expect(pumpCount).toBeTruthy();
+        expect(pumpCount?.querySelector('b')?.textContent).toBe('1');
     });
 
     it('components start collapsed — sensor rows are hidden until the header is clicked', () => {
@@ -198,6 +223,21 @@ describe('SensorSelection', () => {
             fireEvent.click(screen.getByRole('checkbox', { name: /High \(90\)/ }));
             expect(onToggleAlarmLine).toHaveBeenCalledWith('TAG1', 'H');
         });
+
+        // Visual refresh (2026-10-02): this popover now renders through
+        // `AnchoredPopover`/`Portal` instead of expanding inline within the
+        // scrolling sensor list, so it can't be clipped by the list's own
+        // overflow — see docs/PROJECT_HANDOVER.md's 2026-09-30 SPEC FINAL
+        // entry ("popover ทุกตัว ... ต้องเรนเดอร์ผ่าน portal").
+        it('renders outside the scrolling sensor list (via Portal), not nested inside it', () => {
+            const { container } = render(<SensorSelection {...makeProps()} />);
+            expandPump();
+            fireEvent.click(screen.getByTitle('Alarm setpoints'));
+            const listEl = container.querySelector('.sensor-list-widget') as HTMLElement;
+            expect(listEl.querySelector('.sensor-popover')).toBeNull();
+            const portalRoot = document.getElementById('wizard-portal-root');
+            expect(portalRoot?.querySelector('.sensor-popover')).not.toBeNull();
+        });
     });
 
     // 2026-08-31 redesign: a sensor's membership is now per (group, kind)
@@ -283,6 +323,16 @@ describe('SensorSelection', () => {
         });
     });
 
+    // Visual refresh (2026-10-02): the unit sits right after the sensor's
+    // name as a `.unit-badge` (inline, not right-aligned at the row's far
+    // edge) — a locked SPEC FINAL decision.
+    it('shows the sensor unit as a .unit-badge right after its name', () => {
+        render(<SensorSelection {...makeProps()} />);
+        expandPump();
+        const badge = screen.getByText('bar'); // TAG1's unit
+        expect(badge.className).toContain('unit-badge');
+    });
+
     describe('the group-assignment menu', () => {
         it('opens via the FolderPlus button and via right-click', () => {
             render(<SensorSelection {...makeProps()} />);
@@ -297,6 +347,16 @@ describe('SensorSelection', () => {
             // context-menu handler lives on the button, not the row).
             fireEvent.contextMenu(screen.getAllByTitle('Add to failure group')[1]);
             expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
+        });
+
+        it('renders outside the scrolling sensor list (via Portal), not nested inside it', () => {
+            const { container } = render(<SensorSelection {...makeProps()} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
+            const listEl = container.querySelector('.sensor-list-widget') as HTMLElement;
+            expect(listEl.querySelector('.sensor-popover')).toBeNull();
+            const portalRoot = document.getElementById('wizard-portal-root');
+            expect(portalRoot?.querySelector('.sensor-popover')).not.toBeNull();
         });
 
         it('each group row offers a per-kind toggle (Individual/Relationship/Clustering) that adds a kind the sensor is not yet a member of', () => {

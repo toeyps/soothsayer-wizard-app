@@ -616,9 +616,12 @@ describe('LineChart option building', () => {
     });
 
     it('colors the axis with the fixed dark palette', () => {
+        // Visual refresh (2026-10-02): recoloured from a leftover slate-blue
+        // palette to match the app's own `--text-secondary` token value —
+        // see LineChart.tsx's matching comment.
         const columnar = columnarOf(['A'], 3);
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
-        expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.color).toBe('#94a3b8');
+        expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.color).toBe('#8c8c94');
     });
 
     it('falls back to row-based `data`/`headers` indexing when no columnar feed is supplied', () => {

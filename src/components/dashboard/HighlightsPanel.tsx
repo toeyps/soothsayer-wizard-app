@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
 import type { TimeHighlight, HighlightLineDisplay, ValueHighlight } from '../../types';
 import ColorPlatePicker from './ColorPlatePicker';
+import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 
 function fmt(n: number): string {
     if (!isFinite(n)) return '—';
@@ -94,6 +95,11 @@ export default function HighlightsPanel({
     const [draftLabel, setDraftLabel] = useState('');
     const [highlightError, setHighlightError] = useState<string | null>(null);
     const [highlightColorFor, setHighlightColorFor] = useState<string | null>(null);
+    // Viewport-relative rect of the swatch button that opened the colour
+    // picker — visual-refresh-only (see AnchoredPopover's docstring): the
+    // picker now renders through a floating popover instead of expanding
+    // inline within this scrolling panel.
+    const [highlightColorAnchor, setHighlightColorAnchor] = useState<PopoverAnchorRect | null>(null);
     // Inline label-rename -- which chip's label is currently an editable
     // text field instead of static text, plus its in-progress draft value.
     const [editLabelFor, setEditLabelFor] = useState<string | null>(null);
@@ -104,6 +110,9 @@ export default function HighlightsPanel({
     const [draftRangeMax, setDraftRangeMax] = useState('');
     const [rangeError, setRangeError] = useState<string | null>(null);
     const [rangeColorFor, setRangeColorFor] = useState<string | null>(null);
+    // Same idea as `highlightColorAnchor` above, for the "By value" range
+    // colour popover.
+    const [rangeColorAnchor, setRangeColorAnchor] = useState<PopoverAnchorRect | null>(null);
 
     const handleAddRange = () => {
         const min = parseFloat(draftRangeMin);
@@ -217,7 +226,11 @@ export default function HighlightsPanel({
                             <div style={chipRowStyle}>
                                 <input type="checkbox" checked={h.enabled} onChange={() => onToggleTimeHighlight(h.id)} title={h.enabled ? 'Hide this highlight' : 'Show this highlight'} />
                                 <button
-                                    onClick={() => setHighlightColorFor(prev => prev === h.id ? null : h.id)}
+                                    onClick={(e) => {
+                                        const opening = highlightColorFor !== h.id;
+                                        setHighlightColorFor(opening ? h.id : null);
+                                        setHighlightColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                    }}
                                     title="Change colour"
                                     style={{ ...swatchButtonStyle, background: h.color }}
                                 />
@@ -251,11 +264,13 @@ export default function HighlightsPanel({
                                 was already open when the chart type changed
                                 underneath it. */}
                             {highlightColorFor === h.id && highlightApplies && (
-                                <div style={pickerWrapStyle}>
-                                    <div style={pickerBoxStyle}>
-                                        <ColorPlatePicker color={h.color} onChange={hex => onRecolorTimeHighlight(h.id, hex)} />
-                                    </div>
-                                </div>
+                                <AnchoredPopover
+                                    anchorRect={highlightColorAnchor}
+                                    onRequestClose={() => { setHighlightColorFor(null); setHighlightColorAnchor(null); }}
+                                    style={{ width: 160 }}
+                                >
+                                    <ColorPlatePicker color={h.color} onChange={hex => onRecolorTimeHighlight(h.id, hex)} />
+                                </AnchoredPopover>
                             )}
                         </div>
                     ))}
@@ -302,7 +317,11 @@ export default function HighlightsPanel({
                                     <div style={chipRowStyle}>
                                         <input type="checkbox" checked={r.enabled} onChange={() => onToggleValueHighlightRange(r.id)} title={r.enabled ? 'Hide this range' : 'Show this range'} />
                                         <button
-                                            onClick={() => setRangeColorFor(prev => prev === r.id ? null : r.id)}
+                                            onClick={(e) => {
+                                                const opening = rangeColorFor !== r.id;
+                                                setRangeColorFor(opening ? r.id : null);
+                                                setRangeColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                            }}
                                             title="Change colour"
                                             style={{ ...swatchButtonStyle, background: r.color }}
                                         />
@@ -313,11 +332,13 @@ export default function HighlightsPanel({
                                         gated on valueHighlightApplies too, not just
                                         fieldset disabled. */}
                                     {rangeColorFor === r.id && valueHighlightApplies && (
-                                        <div style={pickerWrapStyle}>
-                                            <div style={pickerBoxStyle}>
-                                                <ColorPlatePicker color={r.color} onChange={hex => onRecolorValueHighlightRange(r.id, hex)} />
-                                            </div>
-                                        </div>
+                                        <AnchoredPopover
+                                            anchorRect={rangeColorAnchor}
+                                            onRequestClose={() => { setRangeColorFor(null); setRangeColorAnchor(null); }}
+                                            style={{ width: 160 }}
+                                        >
+                                            <ColorPlatePicker color={r.color} onChange={hex => onRecolorValueHighlightRange(r.id, hex)} />
+                                        </AnchoredPopover>
                                     )}
                                 </div>
                             ))}
@@ -350,21 +371,23 @@ export default function HighlightsPanel({
 const numInputStyle: CSSProperties = {
     padding: '5px 6px', fontSize: '0.75rem', width: '76px',
     background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '5px', color: 'var(--text-primary)',
+    borderRadius: '6px', color: 'var(--text-primary)',
 };
 const dtInputStyle: CSSProperties = {
     padding: '4px 6px', fontSize: '0.72rem', flex: 1, minWidth: '150px',
     background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '5px', color: 'var(--text-primary)',
+    borderRadius: '6px', color: 'var(--text-primary)',
 };
+// Matches the approved prototype's `.chip` rhythm (8px radius, slightly
+// more breathing room) — look only, same fields/behaviour as before.
 const chipRowStyle: CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px',
-    background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px',
+    display: 'flex', alignItems: 'center', gap: '9px', padding: '6px 8px',
+    background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '8px',
 };
 const labelEditInputStyle: CSSProperties = {
     fontSize: '0.78rem', fontWeight: 500, padding: '1px 4px', width: '100%',
     background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '4px', color: 'var(--text-primary)',
+    borderRadius: '5px', color: 'var(--text-primary)',
 };
 const swatchButtonStyle: CSSProperties = {
     width: '14px', height: '14px', borderRadius: '50%', border: '1px solid rgba(0,0,0,0.25)',
@@ -373,13 +396,6 @@ const swatchButtonStyle: CSSProperties = {
 const iconButtonStyle: CSSProperties = {
     background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer',
     padding: '2px', display: 'flex', flexShrink: 0,
-};
-const pickerWrapStyle: CSSProperties = {
-    display: 'flex', justifyContent: 'flex-start', padding: '4px 0 8px',
-};
-const pickerBoxStyle: CSSProperties = {
-    padding: '10px', background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '6px', width: '160px',
 };
 const errorStyle: CSSProperties = {
     fontSize: '0.7rem', color: 'var(--danger, #ef4444)', marginBottom: '6px',

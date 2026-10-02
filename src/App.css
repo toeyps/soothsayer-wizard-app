@@ -3077,9 +3077,14 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: var(--card-bg);
+    /* Visual refresh (2026-10-02): floating "glass" chrome over the chart
+     * canvas, matching the approved prototype's `.floatbar` (semi-
+     * transparent + blur + 10px radius) rather than a flat opaque card —
+     * look only, same position/contents as before. */
+    background: rgba(20, 20, 24, 0.9);
+    backdrop-filter: blur(6px);
     padding: 5px 8px;
-    border-radius: 4px;
+    border-radius: 10px;
     font-size: 11px;
     border: 1px solid var(--border-strong);
 }
@@ -3144,9 +3149,11 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    background: var(--card-bg);
+    /* Visual refresh (2026-10-02) — see `.scatter-regl-controls` above. */
+    background: rgba(20, 20, 24, 0.9);
+    backdrop-filter: blur(6px);
     border: 1px solid var(--border-strong);
-    border-radius: 4px;
+    border-radius: 10px;
     padding: 3px;
 }
 
@@ -3190,12 +3197,18 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    background: var(--card-bg);
+    /* Visual refresh (2026-10-02): the popover surface token, not a plain
+     * card — this is a floating editor over the chart canvas, same family
+     * as `.popover-surface` even though it isn't portaled (it's already
+     * positioned within the chart's own non-scrolling wrapper, so it was
+     * never subject to the clipping bug that required a Portal). */
+    background: var(--pop);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: 10px;
     padding: 8px 10px;
     font-size: 11px;
     min-width: 190px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
 .scatter-regl-axis-editor-row {
@@ -3301,9 +3314,11 @@ body {
     display: flex;
     align-items: center;
     gap: 2px;
-    background: var(--card-bg);
+    /* Visual refresh (2026-10-02) — see `.scatter-regl-controls` above. */
+    background: rgba(20, 20, 24, 0.9);
+    backdrop-filter: blur(6px);
     border: 1px solid var(--border-strong);
-    border-radius: 4px;
+    border-radius: 10px;
     padding: 3px;
 }
 
@@ -4620,4 +4635,121 @@ body {
     border: 1px solid var(--border-strong);
     border-radius: 12px;
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* =============================================
+   Visual refresh Phase 1 (2026-10-02) — Dashboard
+   "Sensor" tab: SensorSelection.tsx's row chrome,
+   the Selected Sensor list, Filter/Highlights tabs,
+   and the popovers now rendered through `Portal` +
+   `AnchoredPopover` (src/components/AnchoredPopover.tsx).
+   Look only — see docs/PROJECT_HANDOVER.md's matching
+   2026-10-02 entry. Reuses the Phase 0 tokens/classes
+   above (--pop, --ki/--kr/--kc, .unit-badge,
+   .popover-surface, .kind-badge) rather than adding new
+   ones where those already cover the need.
+   ============================================= */
+
+/* Generic padding for a popover built from `.popover-surface` +
+ * `AnchoredPopover` — background/border/radius/shadow stay on
+ * `.popover-surface` itself (shared with any future popover), this is
+ * just the inner spacing every current popover wants the same way. */
+.sensor-popover {
+    padding: 10px 12px;
+    max-height: min(70vh, 420px);
+    overflow-y: auto;
+}
+
+/* Sensor/component row action buttons (🔔 alarm, 📁 add-to-failure-group,
+ * and the Selected-Sensor list's 🎨 colour / pin-Y-axis / 🗑 remove) —
+ * matches the prototype's `.mini`/`.iconbtn`: small, square, neutral until
+ * hovered or active. Always rendered (not hover-reveal) per the locked
+ * SPEC FINAL decision — this class only restyles them, it doesn't change
+ * when they're shown. */
+.row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 7px;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.row-action-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+.row-action-btn.on {
+    background: var(--accent-muted);
+    color: var(--accent-hi);
+}
+
+/* Sensor list / component-group header row — restyled in place
+ * (`.sensor-list-row` etc. are only ever used by SensorSelection.tsx,
+ * confirmed by grep before touching them). */
+.sensor-selection-widget .component-group-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.74rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+}
+.sensor-selection-widget .component-group-header:hover {
+    color: var(--text-primary);
+    background: var(--hover-bg);
+}
+.sensor-selection-widget .component-group-count {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    font-family: var(--mono);
+    color: var(--text-faint);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+}
+.sensor-selection-widget .component-group-count b {
+    color: var(--accent-hi);
+    font-weight: 700;
+}
+
+.sensor-list-row {
+    border-radius: 8px;
+    margin: 1px 4px;
+    border-bottom: none;
+}
+.sensor-list-row:hover {
+    background: var(--hover-bg);
+}
+
+/* Small mono tag line under a sensor's name (just the bare tag, e.g.
+ * "11FQ1603.PV") — the unit now lives in `.unit-badge` next to the name
+ * instead of being repeated here. */
+.sensor-row-tag {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-faint);
+}
+
+/* "Add to failure group" / alarm popovers' own internal rows — same
+ * look for both: a label/name, flexible middle, fixed-width action(s). */
+.fg-menu-heading {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
 }
