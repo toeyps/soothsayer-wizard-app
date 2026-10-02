@@ -1337,6 +1337,44 @@ tr:hover {
     --kind-clu: oklch(0.72 0.12 200);
     --kind-clu-muted: oklch(0.72 0.12 200 / 0.16);
     --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    /* ---- Visual refresh Phase 0 (2026-10-02) ----
+     * Added for the Dashboard/Build-Model visual refresh (see
+     * docs/PROJECT_HANDOVER.md's 2026-10-02 "HANDOFF INDEX" entry and the
+     * two SPEC FINAL entries it points to). Mirrors the approved prototype
+     * (https://claude.ai/artifact/F6hexAhUEpRrUWEUa2L1i3) value-for-value --
+     * named to match ITS `:root` (`--pop`, `--ki`/`--kr`/`--kc`, `--ok-m`)
+     * rather than this file's longer descriptive style, specifically so a
+     * later phase can lift the prototype's CSS almost verbatim instead of
+     * re-deriving names each time. Every value below was already present
+     * somewhere in this file under a different name (checked one-by-one,
+     * see each comment) -- aliased via var(...) rather than duplicated, so
+     * a future change to the base token still propagates. None of these
+     * replace or rename an existing token; nothing else in this file reads
+     * them yet except the new shared classes right below. */
+    --pop: #17171c; /* distinct popover surface -- the prototype's own
+        --pop, a touch lighter than --card-bg (#101012) / --input-bg
+        (#16161a) so a floating popover still reads as "above" the card or
+        input it's anchored to, instead of blending into either */
+    --ki: var(--accent-hi); /* Individual kind colour -- already this exact
+        value via BuildModelWindow.tsx's local `KIND_COLOR` map and
+        `.model-kind-icon--individual`; oklch(0.74 0.17 245) matches the
+        prototype's own --ki */
+    --kr: var(--warn); /* Relationship kind colour -- same note as --ki;
+        oklch(0.78 0.14 75) matches the prototype's own --kr exactly */
+    --kc: var(--kind-clu); /* Clustering kind colour -- same note as --ki;
+        oklch(0.72 0.12 200) matches the prototype's own --kc exactly */
+    --ki-m: var(--accent-muted);
+    --kr-m: var(--warn-muted);
+    --kc-m: var(--kind-clu-muted);
+    --ok-m: rgba(16, 185, 129, 0.14); /* generic success/"Complete" tint --
+        same green as --ok, same literal value as the existing
+        --perf-muted, but named without --perf's "Performance category"
+        meaning -- for the new Complete/Trained status dot below and any
+        future success pill outside the Performance/Condition axis */
+    --dot-empty: #26262c; /* neutral "no status yet" fill for the new
+        kind-badge corner dot below -- not meaningful outside that one use,
+        so it isn't generalised into a broader token */
 }
 
 body {
@@ -4490,4 +4528,96 @@ body {
 @container (max-width: 720px) {
     .bmw-dhead { grid-template-columns: auto minmax(0, 1fr); }
     .bmw-dhead > div[role="group"] { grid-column: 1 / -1; }
+}
+
+/* =============================================
+   Visual refresh Phase 0 -- shared base classes (2026-10-02)
+   CSS/tokens-and-one-component foundation pass only -- see
+   docs/PROJECT_HANDOVER.md's 2026-10-02 "HANDOFF INDEX" entry (and the two
+   SPEC FINAL entries it points to) for the full redesign scope. Nothing
+   below is wired into any component yet; later phases consume these when
+   they touch Dashboard / FailureGroupsPanel / BuildModelWindow's look.
+   ============================================= */
+
+/* Kind badge + 3-state corner status dot, matching the approved prototype's
+ * `.kb` / `.kb b` (`.kb b.done` / `.tr` / `.bl`). Deliberately a NEW,
+ * standalone pair -- NOT a rename of either existing look-alike:
+ *   - `.model-kind-icon`(--individual/--relationship/--clustering) already
+ *     gives the plain colored I/R/C badge (no dot, no `position: relative`
+ *     of its own) and has other call sites this pass doesn't want to risk.
+ *   - BuildModelWindow.tsx's own `.f4-kb` / `.f4-kb-dot--trained/--complete`
+ *     is kept exactly as-is (still the only thing that component renders) --
+ *     it only has 2 colored dot states (no "needs setup"/blocked state).
+ * `.kind-badge`/`.kind-badge-dot` is for the Dashboard's Failure Groups tab
+ * (`FailureGroupsPanel.tsx`, SPEC FINAL 2026-09-29's "part 2", not yet
+ * built) and any later page that wants the full 3-state dot (Needs setup /
+ * Trained / Complete) without colliding with either class above. */
+.kind-badge {
+    position: relative;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    font-size: 0.62rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+.kind-badge--individual { background: var(--ki-m); color: var(--ki); }
+.kind-badge--relationship { background: var(--kr-m); color: var(--kr); }
+.kind-badge--clustering { background: var(--kc-m); color: var(--kc); }
+
+/* Corner dot. No modifier = "no status yet" (neutral, matches the
+ * prototype's own unset look). `--trained`/`--complete` intentionally use
+ * the SAME tokens as `.f4-kb-dot--trained`/`--complete` (--accent-hi/--ok)
+ * so the two badge families read as the same status language even though
+ * they're separate classes. `--blocked` (warn/yellow, "Needs setup") has
+ * no equivalent in `.f4-kb-dot` yet -- new state, prototype-only so far. */
+.kind-badge-dot {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 2px solid var(--card-bg);
+    background: var(--dot-empty);
+    box-shadow: inset 0 0 0 1px var(--text-faint);
+}
+.kind-badge-dot--trained { background: var(--accent-hi); box-shadow: none; }
+.kind-badge-dot--complete { background: var(--ok); box-shadow: none; }
+.kind-badge-dot--blocked { background: var(--warn); box-shadow: none; }
+
+/* Small monospace unit label rendered right after a sensor's name (e.g.
+ * "Boiler drum level (mm)" -- the unit sits inline, not flush right).
+ * Matches the prototype's `.unit`; named `.unit-badge` here (not the bare
+ * `.unit` the prototype uses) since a single-word global class is riskier
+ * to introduce into an existing ~4500-line stylesheet than a qualified
+ * one, and nothing here currently uses the word "unit" for anything else
+ * (checked). Not wired into any sensor row yet -- that is the Dashboard
+ * visual-refresh phase's job per the SPEC FINAL entry. */
+.unit-badge {
+    flex-shrink: 0;
+    font-size: 0.66rem;
+    color: var(--text-secondary);
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0 6px;
+    font-family: var(--mono);
+    line-height: 1.6;
+}
+
+/* Popover surface -- background/border/radius/shadow only (positioning,
+ * z-index and padding are each popover's own job, since they differ by
+ * use: color picker vs. alarm setpoints vs. add-to-failure-group all need
+ * different sizes/anchoring). Pair with the new `Portal` component
+ * (`src/components/Portal.tsx`) once a popover is rewired to render
+ * outside its scrolling ancestor -- that rewiring is a later phase; this
+ * pass only adds the look and the portal primitive, not wired together. */
+.popover-surface {
+    background: var(--pop);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
