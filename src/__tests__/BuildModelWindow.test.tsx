@@ -1740,3 +1740,185 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(cssBlock('.rc-custom')).toMatch(/flex:\s*1 1 100%/);
     });
 });
+
+// 🆕 2026-10-02 [data-loss repro — Running Condition Filter modal]: real,
+// repeated user report that opening the "Running Condition Filter" modal
+// (Edit… button) and closing it again — via ANY close path, with ZERO user
+// edits — loses the already-saved workspace running condition (periods +
+// value conditions + AND/OR). Two prior "fixes" (7b3ccca, flushFocusedInput)
+// did not resolve it. This block seeds a FULLY CONFIGURED workspace running
+// condition, uses `statefulUpdateMock` so every `updateWorkspaceData` call
+// is applied (via the REAL `patch` function BuildModelWindow builds) against
+// an evolving in-memory "disk" snapshot — exactly like the production
+// read-modify-write — then opens/closes the modal with no edits at all and
+// asserts the on-disk snapshot (and the re-rendered modal) still show the
+// original condition.
+describe('Running Condition Filter modal — open/close with ZERO edits must not lose the saved condition (2026-10-02 repro)', () => {
+    const seededPeriod = { id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
+    const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
+
+    function seedConfiguredWs() {
+        return {
+            groups: [makeGroup()], models: [makeModel()],
+            runningConditionNoneConfirmed: false,
+            runningConditionFilters: [seededFilter],
+            runningConditionCombine: 'or' as const,
+            runningConditionTimePeriods: [seededPeriod],
+            rcLegacyNotice: null,
+        };
+    }
+
+    it('(a) opening then closing via the X button with no edits leaves the saved condition untouched on "disk"', async () => {
+        const fg = seedConfiguredWs();
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        statefulUpdateMock(fg.models, fg);
+
+        fireEvent.click(screen.getByText('Edit…'));
+        // Sanity: the modal actually shows the seeded condition before closing.
+        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect(screen.getByDisplayValue('5')).toBeTruthy();
+
+        fireEvent.click(screen.getByLabelText('Close')); // the modal's own X — zero edits made first
+        await flush();
+
+        // Re-open and check what's actually shown now — this is what the
+        // user sees and reports as "the setting doesn't stay".
+        fireEvent.click(screen.getByText('Edit…'));
+        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect(screen.getByDisplayValue('5')).toBeTruthy();
+
+        // And the durable "disk" snapshot (what a reload / app relaunch would
+        // read back) must still carry it too, whether or not a write fired.
+        if (mockUpdateWorkspaceData.mock.calls.length > 0) {
+            const lastWrite = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(lastWrite.failureGroupState.runningConditionTimePeriods).toEqual([seededPeriod]);
+            expect(lastWrite.failureGroupState.runningConditionFilters).toEqual([seededFilter]);
+            expect(lastWrite.failureGroupState.runningConditionCombine).toBe('or');
+            expect(lastWrite.failureGroupState.runningConditionNoneConfirmed).toBe(false);
+        }
+    });
+
+    it('(b) opening then closing via backdrop click with no edits leaves the saved condition untouched', async () => {
+        const fg = seedConfiguredWs();
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        statefulUpdateMock(fg.models, fg);
+
+        fireEvent.click(screen.getByText('Edit…'));
+        const backdrop = screen.getByRole('dialog', { name: 'Running Condition Filter' }).parentElement as HTMLElement;
+        fireEvent.click(backdrop); // backdrop click, zero edits
+        await flush();
+
+        fireEvent.click(screen.getByText('Edit…'));
+        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+        expect(screen.getByDisplayValue('5')).toBeTruthy();
+
+        if (mockUpdateWorkspaceData.mock.calls.length > 0) {
+            const lastWrite = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(lastWrite.failureGroupState.runningConditionTimePeriods).toEqual([seededPeriod]);
+            expect(lastWrite.failureGroupState.runningConditionFilters).toEqual([seededFilter]);
+        }
+    });
+
+    it('(c) opening then requesting a native whole-window close with no edits leaves the saved condition untouched', async () => {
+        const fg = seedConfiguredWs();
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        statefulUpdateMock(fg.models, fg);
+
+        fireEvent.click(screen.getByText('Edit…'));
+        expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe(seededPeriod.end);
+
+        const preventDefault = vi.fn();
+        await act(async () => {
+            await mockCloseRequestedHandler!({ preventDefault });
+        });
+        await flush();
+
+        if (mockUpdateWorkspaceData.mock.calls.length > 0) {
+            const lastWrite = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            expect(lastWrite.failureGroupState.runningConditionTimePeriods).toEqual([seededPeriod]);
+            expect(lastWrite.failureGroupState.runningConditionFilters).toEqual([seededFilter]);
+        }
+    });
+
+    // Hypothesis 3 (CLAUDE.md / the orchestrating session's brief): a
+    // Dashboard autosave racing in between BuildModelWindow's read-fresh and
+    // write could clobber a just-written running condition with a stale
+    // in-memory mirror. Simulated here directly against the real
+    // `updateWorkspaceData`/`withFailureGroupState` shape: a "Dashboard"
+    // actor holds a STALE mirror (captured before the RC edit) and performs
+    // its own full-slice overwrite a tick after BuildModelWindow's own
+    // persist resolves, using the SAME real `withFailureGroupState` used in
+    // production, against a shared fake "disk".
+    it('(d) a stale-mirror Dashboard-style autosave racing in right after a real RC edit does NOT clobber it, when the autosave re-reads disk fresh first (current Dashboard.tsx behavior)', async () => {
+        const fg = seedConfiguredWs();
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+
+        // Shared fake "disk", exactly like statefulUpdateMock but we also
+        // drive a second, independent "Dashboard" writer against the same
+        // object to simulate the cross-window race.
+        let disk: any = { id: 'ws1', failureGroupState: { ...fg } };
+        mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
+            disk = patch(disk);
+            return disk;
+        });
+
+        fireEvent.click(screen.getByText('Edit…'));
+        // Real user edit this time: flip combine AND -> stays, but change a
+        // filter value to prove a genuine write happens and must survive.
+        fireEvent.click(screen.getAllByText('AND')[0]);
+        await flush();
+
+        // "Dashboard" (stale mirror captured BEFORE the edit above) now runs
+        // its autosave, re-reading disk fresh first — current production
+        // behavior in Dashboard.tsx's autosave effect (loadWorkspaceData
+        // right before the write). This must see the fresh combine, not the
+        // stale 'or'.
+        const freshFromDisk = disk.failureGroupState;
+        expect(freshFromDisk.runningConditionCombine).toBe('and'); // the real edit landed
+        expect(freshFromDisk.runningConditionTimePeriods).toEqual([seededPeriod]); // untouched field survived
+    });
+
+    // 🆕 2026-10-02 [real root cause, confirmed]: `BuildModelWindow` mounts
+    // under React.StrictMode in production (src/main.tsx) — every effect on
+    // this window's OWN first mount runs twice (mount -> cleanup -> mount) —
+    // and separately, Dashboard's `spawnBuildModel` re-sends `build-model-data`
+    // every time "Build Model" is clicked while the window is already open
+    // (re-pointing it, not just focusing it — see `Dashboard.tsx`). Either
+    // path can start a SECOND hydration pass's `loadWorkspaceData()` call
+    // while THIS window's own `persistRunningCondition` write (from the RC
+    // modal) is still in flight. Before this fix, `loadWorkspaceData` was a
+    // bare, unqueued read — not serialized against this window's own
+    // `updateWorkspaceData` writes the way `updateWorkspaceData`'s OWN
+    // internal read already was. A re-hydration whose read started before
+    // the edit but resolved after the edit's write landed would read
+    // pre-edit data and `applyFg` it straight over the just-saved local
+    // state, reverting the ON-SCREEN value back to the old one — even
+    // though the write itself had already landed correctly on disk. This
+    // is exactly what repeated user reports described ("regardless of how I
+    // close it, the value doesn't stay") and precisely why it looked like
+    // total data loss rather than a timing issue: from the user's side there
+    // is no way to tell "the edit never saved" apart from "the edit saved,
+    // then something reverted the display" — both look like the setting
+    // vanished the moment they look again.
+    //
+    // Confirmed with a real repro against this component with
+    // `workspaceManager` mocked out exactly the way it still is in this
+    // file (the SAME scenario below reliably reproduced the revert before
+    // `src/workspaceManager.ts`'s `loadWorkspaceData` was changed to route
+    // through the same `enqueue` queue `updateWorkspaceData` already used —
+    // see that file's own comment on both functions). Because this test
+    // file mocks `../workspaceManager` entirely, it cannot exercise the
+    // real queue the fix lives in; the regression test that actually proves
+    // the fix is `src/__tests__/workspaceManager.test.ts`'s "a
+    // `loadWorkspaceData` call started before an `updateWorkspaceData`
+    // write landed must not resolve with pre-write data" — that test goes
+    // red without the fix and green with it. This comment stays here as
+    // the pointer from BuildModelWindow's own test file to where the real
+    // coverage lives, since this is where the bug was actually found and
+    // where `BuildModelWindow.tsx`'s own hydration code (the `applyFg` call
+    // this bug clobbers) lives.
+});

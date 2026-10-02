@@ -164,7 +164,12 @@ export async function updateWorkspaceData(
     patch: (state: WorkspaceState) => WorkspaceState
 ): Promise<WorkspaceState | null> {
     return enqueue(async () => {
-        const current = await loadWorkspaceData(id);
+        // `readWorkspaceFile`, NOT the exported `loadWorkspaceData` — that one
+        // is itself wrapped in `enqueue` now (see its own comment), and
+        // calling it from inside an already-running enqueued operation would
+        // queue a second operation that can only run once this one finishes,
+        // which this one is waiting on — a deadlock.
+        const current = await readWorkspaceFile(id);
         if (!current) return null;
         const next = patch(current);
         await writeWorkspaceFile(next);
@@ -329,7 +334,12 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
     };
 }
 
-export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
+// 🆕 2026-10-02 [data-loss fix]: the actual read, NOT enqueued. `updateWorkspaceData`
+// calls this (not the exported `loadWorkspaceData` below) so its own
+// read-inside-enqueue doesn't try to enqueue a second time onto a queue it is
+// already occupying (that would deadlock — the queued read would wait
+// forever for itself to finish).
+async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
     debugLog("Loading Workspace Data for ID:", id);
     try {
         const recent = await getRecentWorkspaces();
@@ -352,6 +362,44 @@ export async function loadWorkspaceData(id: string): Promise<WorkspaceState | nu
         console.error("Failed to load workspace data:", e);
         return null;
     }
+}
+
+// 🆕 2026-10-02 [data-loss fix, real root cause of the repeated "Running
+// Condition Filter edit, then it's gone" reports]: this read now goes
+// through the SAME `enqueue` queue as `updateWorkspaceData`/`saveWorkspaceData`
+// (previously it was a bare, unqueued read — only the write half of
+// `updateWorkspaceData` was ever protected).
+//
+// Every caller that hydrates/re-hydrates component state from this call
+// (`BuildModelWindow.tsx`'s `build-model-data` listener, `Dashboard.tsx`'s
+// autosave) can legitimately fire MORE THAN ONCE per window: React
+// StrictMode double-invokes the mount effect that requests it, and
+// Dashboard's `spawnBuildModel` re-sends `build-model-data` every time
+// "Build Model" is clicked while the window is already open (re-pointing it
+// instead of just focusing it) — not just once at first mount. If one of
+// those re-hydration reads started BEFORE this window's own in-flight
+// `persistRunningCondition`/`persist` write (via `updateWorkspaceData`) but
+// resolved AFTER it landed, it read pre-edit data and `applyFg`'d it
+// straight over the just-saved local state — reverting the ON-SCREEN value
+// back to the old one (confirmed with a real repro in
+// `BuildModelWindow.test.tsx`: "a second, concurrent build-model-data
+// hydration reading a stale snapshot ... must not revert the on-screen
+// value back to stale data"). The write itself still landed correctly on
+// disk, so this looked exactly like what was reported: the edit appears to
+// vanish regardless of how/when the user looks again, even though nothing
+// was actually lost on disk yet — until the user, seeing the reverted
+// display, made a FURTHER edit computed from that now-stale local state
+// (e.g. adding another condition appends onto the stale `filters` array),
+// which genuinely overwrote the correct disk value with a stale-based one.
+// Routing this read through the same queue means it can never start until
+// every earlier write queued by THIS window has fully landed, so a
+// re-hydration can no longer see "the past" relative to this window's own
+// edits. (This does not protect against a genuinely different OS window —
+// e.g. Dashboard vs. Build Model — writing at the same moment; each
+// window's webview has its own independent `queue`, a separate, narrower,
+// still-open gap noted on `updateWorkspaceData` above.)
+export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
+    return enqueue(() => readWorkspaceFile(id));
 }
 
 export async function deleteWorkspace(id: string) {

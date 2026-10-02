@@ -4907,10 +4907,20 @@ body {
     background: none;
     border: 0;
     font: 500 11.5px var(--mono);
-    width: 112px;
+    width: 150px;
     padding: 0 4px;
     outline: none;
     color: var(--text-primary);
+}
+/* The row already shows one shared Calendar icon in front of both inputs
+   and opens the native picker via a click handler on the input itself
+   (see Dashboard.tsx's comment above this row) — without this, the
+   browser also draws its OWN calendar icon inside each (too-narrow)
+   input, colliding with the date text. Same fix as `.date-input-wrapper`
+   above. */
+.timebar-range input::-webkit-calendar-picker-indicator {
+    opacity: 0;
+    pointer-events: none;
 }
 .timebar-range-sep {
     color: var(--text-faint);

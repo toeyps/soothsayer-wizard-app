@@ -528,6 +528,81 @@ describe('updateWorkspaceData', () => {
         expect(result?.failureGroupState?.models).toEqual([{ id: 'm1', name: 'Model X' }]);
         expect(writeCount).toBe(2); // neither write was dropped
     });
+
+    // 🆕 2026-10-02 [data-loss fix — real root cause of the repeated
+    // "Running Condition Filter edit, then it's gone" reports]: a plain
+    // `loadWorkspaceData()` call (not an `updateWorkspaceData` read-modify-
+    // write) used to be a bare, unqueued read -- it could start and finish
+    // WHILE an `updateWorkspaceData` write from the SAME window was still
+    // in flight, resolving with pre-write data. `BuildModelWindow.tsx`'s own
+    // hydration listener calls `loadWorkspaceData` directly (not through
+    // `updateWorkspaceData`) every time it re-hydrates -- which happens more
+    // than once per window: React StrictMode double-invokes the mount
+    // effect that requests it, and Dashboard's `spawnBuildModel` re-sends
+    // `build-model-data` every time "Build Model" is clicked while the
+    // window is already open (re-pointing it, not just focusing it). If one
+    // of those re-hydration reads landed in the gap between a user's RC
+    // edit's `updateWorkspaceData` write starting and finishing, it would
+    // `applyFg` the stale pre-edit snapshot straight over the just-saved
+    // local state the instant the write actually completed -- reverting the
+    // on-screen value back to the old one, even though the edit itself had
+    // already landed correctly on disk. From the user's side this is
+    // indistinguishable from "the edit never saved at all," which is
+    // exactly what was reported ("regardless of how I close it, the value
+    // doesn't stay"). Confirmed with a real repro against `BuildModelWindow`
+    // (see that file's own test, same date) before this fix, which reliably
+    // showed the on-screen value revert.
+    it('a `loadWorkspaceData` call started before an `updateWorkspaceData` write landed must not resolve with pre-write data (the fix: `loadWorkspaceData` now shares the same `enqueue` queue)', async () => {
+        mockStoreGet.mockResolvedValue([
+            { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
+        ]);
+        mockExists.mockResolvedValue(true);
+
+        let diskContent = JSON.stringify({
+            id: 'ws1', name: 'A',
+            failureGroupState: { groups: [], models: [], runningConditionCombine: 'and' },
+        });
+        mockReadTextFile.mockImplementation(async () => diskContent);
+
+        const pendingWrite = deferred();
+        let writeCount = 0;
+        mockWriteTextFile.mockImplementation(async (_path: string, json: string) => {
+            writeCount++;
+            if (writeCount === 1) await pendingWrite.promise; // hold the RC edit's write open
+            diskContent = json;
+        });
+
+        const { loadWorkspaceData, updateWorkspaceData } = await freshModule();
+
+        // The user's real RC edit — a read-modify-write, its write held open.
+        const editPromise = updateWorkspaceData('ws1', (s: any) => ({
+            ...s,
+            failureGroupState: { ...s.failureGroupState, runningConditionCombine: 'or' },
+        }));
+        await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(1));
+
+        // A re-hydration pass's own `loadWorkspaceData` call starts now,
+        // while the edit's write is still in flight (StrictMode's double
+        // mount, or a second "Build Model" click re-pointing the window).
+        mockReadTextFile.mockClear();
+        const rehydratePromise = loadWorkspaceData('ws1');
+
+        // Pinned, not inferred from final state (same reasoning as the
+        // `updateWorkspaceData`-vs-`updateWorkspaceData` test above): the
+        // re-hydration's read must not even have STARTED yet while the edit's
+        // write is still pending. Before the fix this would already be true
+        // (readTextFile already called, holding the stale pre-edit content).
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(mockReadTextFile).not.toHaveBeenCalled();
+
+        pendingWrite.resolve();
+        await editPromise;
+        const rehydrated = await rehydratePromise;
+
+        // The re-hydration must see the EDIT, not the pre-edit snapshot it
+        // would have raced to if its read had fired immediately.
+        expect(rehydrated?.failureGroupState?.runningConditionCombine).toBe('or');
+    });
 });
 
 describe('deleteWorkspace', () => {
