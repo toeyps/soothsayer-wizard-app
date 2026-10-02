@@ -1125,9 +1125,13 @@ tr:hover {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(2, 6, 23, 0.55);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    /* 🆕 2026-10-02 [visual refresh Phase 4, look only]: rgba(0,0,0,.55) +
+       blur(2px) matches the prototype's `.scrim` and the same glass-backdrop
+       pattern Phase 3 already applied to `.bmw-modal-backdrop` — was a
+       slightly blue-tinted rgba(2,6,23,.55) + heavier blur(4px) before. */
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2290,13 +2294,19 @@ body {
 }
 
 /* ── Expanded-chart fullscreen modal ─────────────────────────────── */
+/* Also reused by BuildModelWindow.tsx's own expand-chart modal (shared
+   class, grep-confirmed) — this backdrop value change benefits both. */
 .pm-chart-modal-backdrop {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(2, 6, 23, 0.55);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    /* 🆕 2026-10-02 [visual refresh Phase 4, look only]: same rgba(0,0,0,.55)
+       + blur(2px) glass-backdrop pattern as `.predictor-picker-backdrop`
+       above and `.bmw-modal-backdrop` (Phase 3) — matches the prototype's
+       `.scrim`, was a blue-tinted rgba(2,6,23,.55) + blur(4px) before. */
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2369,9 +2379,12 @@ body {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(2, 6, 23, 0.55);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    /* 🆕 2026-10-02 [visual refresh Phase 4, look only]: same rgba(0,0,0,.55)
+       + blur(2px) glass-backdrop pattern as the other `.pm-*`/predictor-
+       picker backdrops above — see their comments for the full rationale. */
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
     display: flex;
     align-items: center;
     justify-content: center;
