@@ -35,7 +35,7 @@ import { renameTagInArray, renameTagInRecord, renameTagInModels } from '../../ut
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
-import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X } from 'lucide-react';
+import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
 import { debugLog } from '../../utils/debugLog';
 import { formatDateTime } from '../../utils/dateFormat';
 
@@ -1101,13 +1101,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // collapse/expand changes whether the split should exist at all.
     const leftColumnRef = useRef<HTMLDivElement>(null);
     const rightColumnRef = useRef<HTMLDivElement>(null);
-    // Lets the TIME RANGE row's Calendar icons open the native
-    // datetime-local picker directly on click, instead of relying on the
+    // Lets the `.timebar-range` row's Start/End datetime-local inputs open
+    // the native picker directly on click, instead of relying on the
     // browser-drawn `::-webkit-calendar-picker-indicator` pseudo-element
     // (styled in App.css, but how visible that ends up is entirely up to
     // WebView2's own rendering of it — reported hard to see on the
-    // Build Model page's matching inputs, 2026-09-16, same
-    // `.date-input-wrapper` pattern reused here).
+    // Build Model page's matching inputs, 2026-09-16; this row's own
+    // Calendar icon used to carry the click handler per-input until the
+    // 2026-10-02 visual-refresh rebuild moved to one shared leading icon,
+    // see the `.timebar` JSX below).
     const timeRangeStartRef = useRef<HTMLInputElement>(null);
     const timeRangeEndRef = useRef<HTMLInputElement>(null);
     const slotLTRef = useRef<HTMLDivElement>(null);
@@ -2142,191 +2144,156 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     />
                 )}
             </div>
-            <div className="chart-bottom-tab">
-                <div className="chart-tab-content">
-                    <div className="time-range-tab-group">
-                        <label>TIME RANGE</label>
-                        <div className="time-range-inputs">
-                            <div className="date-input-wrapper">
-                                <input
-                                    ref={timeRangeStartRef}
-                                    type="datetime-local"
-                                    value={displayTimestampStart}
-                                    onChange={(e) => {
-                                        handleFiltersChange({ ...filters, timestampStart: e.target.value });
-                                        setRelativeRangeApplied(false);
-                                    }}
-                                    placeholder="Start Date"
-                                />
-                                {/* Flush against the box's own right edge
-                                    and white — explicit color, not just
-                                    `currentColor` inherited from the
-                                    wrapper's dimmer text color, so it reads
-                                    clearly against the dark input
-                                    background instead of blending in. */}
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                    onClick={() => timeRangeStartRef.current?.showPicker?.()}
-                                />
-                            </div>
-                            <span className="separator">-</span>
-                            <div className="date-input-wrapper">
-                                <input
-                                    ref={timeRangeEndRef}
-                                    type="datetime-local"
-                                    value={displayTimestampEnd}
-                                    onChange={(e) => {
-                                        handleFiltersChange({ ...filters, timestampEnd: e.target.value });
-                                        setRelativeRangeApplied(false);
-                                    }}
-                                    placeholder="End Date"
-                                />
-                                <Calendar
-                                    size={14}
-                                    style={{ cursor: 'pointer', color: '#fff', marginLeft: 'auto' }}
-                                    onClick={() => timeRangeEndRef.current?.showPicker?.()}
-                                />
-                            </div>
-                            <span className="separator">·</span>
-                            {RANGE_UNITS.map(u => {
-                                // Two DIFFERENT things, deliberately shown differently:
-                                //   isSelected — this unit is what's currently picked
-                                //     in the widget. Must update on every click, on its
-                                //     own, with zero dependency on Apply having ever run
-                                //     — otherwise clicking Y/M/W/D/H gives no visible
-                                //     feedback at all while relativeRangeApplied is
-                                //     false (e.g. right after a manual calendar edit),
-                                //     which reads as "the buttons don't respond" even
-                                //     though relativeUnit IS changing underneath.
-                                //   isActive — the STRONGER claim that relativeRangeApplied
-                                //     is ALSO true, i.e. the dates on screen really are
-                                //     this unit's last-Applied result (see that state's
-                                //     own docstring for why it can go false again).
-                                const isSelected = relativeUnit === u;
-                                const isActive = relativeRangeApplied && isSelected;
-                                const unitLabel = { Y: 'Years', M: 'Months', W: 'Weeks', D: 'Days', H: 'Hours' }[u];
-                                return (
-                                    <button
-                                        key={u}
-                                        type="button"
-                                        onClick={() => { setRelativeUnit(u); setRelativeRangeApplied(false); }}
-                                        title={
-                                            isActive
-                                                ? `Currently applied — last ${relativeAmount || '?'} ${unitLabel}`
-                                                : isSelected
-                                                    ? `Selected — click ✓ Apply to use "last ${relativeAmount || '?'} ${unitLabel}"`
-                                                    : unitLabel
-                                        }
-                                        style={{
-                                            width: '22px', height: '22px', padding: 0,
-                                            background: isActive ? 'var(--accent-color)' : 'transparent',
-                                            border: isSelected ? '1px solid var(--accent-color)' : '1px solid var(--border)',
-                                            borderRadius: '4px',
-                                            color: isActive ? '#fff' : (isSelected ? 'var(--accent-color)' : 'var(--text-secondary)'),
-                                            fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
-                                        }}
-                                    >
-                                        {u}
-                                    </button>
-                                );
-                            })}
-                            <input
-                                type="number"
-                                min="0"
-                                // Y/M are calendar units, not a fixed duration — the spinner
-                                // (and applyRelativeRange's truncation) only make sense on
-                                // whole units for those two; W/D/H stay fractional-friendly.
-                                step={relativeUnit === 'Y' || relativeUnit === 'M' ? '1' : 'any'}
-                                value={relativeAmount}
-                                onChange={(e) => { setRelativeAmount(e.target.value); setRelativeRangeApplied(false); }}
-                                style={{
-                                    width: '68px', padding: '2px 4px',
-                                    background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                    borderRadius: '4px', color: 'var(--text-primary)',
-                                    fontSize: '0.75rem', outline: 'none',
-                                }}
-                            />
-                            <button
-                                type="button"
-                                onClick={applyRelativeRange}
-                                title="Apply relative range"
-                                style={{
-                                    width: '22px', height: '22px', padding: 0,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    background: 'var(--accent-color)', border: 'none',
-                                    borderRadius: '4px', color: '#fff', cursor: 'pointer',
-                                }}
-                            >
-                                <Check size={13} />
-                            </button>
-                        </div>
-                    </div>
-                    {/* Always visible once the dataset's real bounds are
-                        known (not gated on a filter being applied, unlike
-                        Reset Period below) — tells the user up front what
-                        time period the loaded data actually covers, since
-                        the chart no longer defaults to showing all of it. */}
-                    {dataRange && (
-                        <span
-                            className="data-range-hint"
-                            title="First and last timestamp across the whole loaded dataset"
-                        >
-                            Data: {formatDateTime(new Date(dataRange.min))} – {formatDateTime(new Date(dataRange.max))}
-                        </span>
-                    )}
-                    {/* Sits right after TIME RANGE (not after AGGREGATION,
-                        which it never touches) — only clears
-                        timestampStart/End back to the full data range.
-                        Label says "Period" explicitly so it doesn't read as
-                        also resetting the aggregation dropdown next to it. */}
-                    {dataRange && filters.timestampStart && (
-                        <button
-                            className="reset-range-btn"
-                            title="Reset the time period back to the full data range — does not change Aggregation"
-                            onClick={() => {
-                                handleFiltersChange({
-                                    ...filters,
-                                    timestampStart: '',
-                                    timestampEnd: ''
-                                });
-                                // Same reasoning as the manual Start/End edit
-                                // handlers above: the dates just changed out
-                                // from under whatever relative-range preset
-                                // was last applied, so its unit button must
-                                // stop claiming to still be "active".
-                                setRelativeRangeApplied(false);
-                            }}
-                        >
-                            Reset Period
-                        </button>
-                    )}
-                    <div className="time-range-tab-group">
-                        <label>AGGREGATION (1 HR)</label>
-                        <div className="date-input-wrapper">
-                            <select
-                                value={samplingMethod}
-                                onChange={(e) => setSamplingMethod(e.target.value as 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last')}
-                                style={{
-                                    background: 'var(--input-bg)',
-                                    border: 'none',
-                                    color: 'var(--text-primary)',
-                                    fontSize: '0.8rem',
-                                    outline: 'none',
-                                    cursor: 'pointer',
-                                    padding: 0
-                                }}
-                            >
-                                <option value="raw" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Raw</option>
-                                <option value="avg" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Avg</option>
-                                <option value="max" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Max</option>
-                                <option value="min" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Min</option>
-                                <option value="first" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>First</option>
-                                <option value="last" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>Last</option>
-                            </select>
-                        </div>
-                    </div>
+            {/* Visual refresh Phase 5 (2026-10-02) — unified `.timebar` row,
+                structurally matching the approved prototype's own `.timebar`
+                (single flex row of pill-shaped sub-controls, no leading
+                "TIME RANGE" caps label, no second "Date: ..." line — the
+                `.timebar-datarange` text on the right already covers that).
+                Every input/handler below is identical to the pre-refresh
+                version; only the JSX shape and class names changed. See
+                docs/PROJECT_HANDOVER.md's matching entry. */}
+            <div className="timebar">
+                <div className="timebar-range">
+                    <Calendar size={14} />
+                    <input
+                        ref={timeRangeStartRef}
+                        type="datetime-local"
+                        value={displayTimestampStart}
+                        onChange={(e) => {
+                            handleFiltersChange({ ...filters, timestampStart: e.target.value });
+                            setRelativeRangeApplied(false);
+                        }}
+                        onClick={() => timeRangeStartRef.current?.showPicker?.()}
+                        placeholder="Start Date"
+                        aria-label="Start date"
+                    />
+                    <span className="timebar-range-sep">→</span>
+                    <input
+                        ref={timeRangeEndRef}
+                        type="datetime-local"
+                        value={displayTimestampEnd}
+                        onChange={(e) => {
+                            handleFiltersChange({ ...filters, timestampEnd: e.target.value });
+                            setRelativeRangeApplied(false);
+                        }}
+                        onClick={() => timeRangeEndRef.current?.showPicker?.()}
+                        placeholder="End Date"
+                        aria-label="End date"
+                    />
                 </div>
+
+                <span className="timebar-hint">Last</span>
+                <div className="timebar-num">
+                    <input
+                        type="number"
+                        min="0"
+                        // Y/M are calendar units, not a fixed duration — the spinner
+                        // (and applyRelativeRange's truncation) only make sense on
+                        // whole units for those two; W/D/H stay fractional-friendly.
+                        step={relativeUnit === 'Y' || relativeUnit === 'M' ? '1' : 'any'}
+                        value={relativeAmount}
+                        onChange={(e) => { setRelativeAmount(e.target.value); setRelativeRangeApplied(false); }}
+                        aria-label="Amount"
+                    />
+                    <button type="button" onClick={applyRelativeRange} title="Apply relative range">
+                        <Check size={13} />
+                    </button>
+                </div>
+
+                <div className="timebar-unit-seg">
+                    {RANGE_UNITS.map(u => {
+                        // Two DIFFERENT things, deliberately shown differently:
+                        //   isSelected — this unit is what's currently picked
+                        //     in the widget. Must update on every click, on its
+                        //     own, with zero dependency on Apply having ever run
+                        //     — otherwise clicking Y/M/W/D/H gives no visible
+                        //     feedback at all while relativeRangeApplied is
+                        //     false (e.g. right after a manual calendar edit),
+                        //     which reads as "the buttons don't respond" even
+                        //     though relativeUnit IS changing underneath.
+                        //   isActive — the STRONGER claim that relativeRangeApplied
+                        //     is ALSO true, i.e. the dates on screen really are
+                        //     this unit's last-Applied result (see that state's
+                        //     own docstring for why it can go false again).
+                        const isSelected = relativeUnit === u;
+                        const isActive = relativeRangeApplied && isSelected;
+                        const unitLabel = { Y: 'Years', M: 'Months', W: 'Weeks', D: 'Days', H: 'Hours' }[u];
+                        return (
+                            <button
+                                key={u}
+                                type="button"
+                                onClick={() => { setRelativeUnit(u); setRelativeRangeApplied(false); }}
+                                title={
+                                    isActive
+                                        ? `Currently applied — last ${relativeAmount || '?'} ${unitLabel}`
+                                        : isSelected
+                                            ? `Selected — click ✓ Apply to use "last ${relativeAmount || '?'} ${unitLabel}"`
+                                            : unitLabel
+                                }
+                                className={`timebar-unit-btn${isSelected ? ' is-selected' : ''}${isActive ? ' is-active' : ''}`}
+                            >
+                                {u}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                <div className="timebar-vsep" />
+                <span className="timebar-hint">Aggregation</span>
+                <select
+                    className="timebar-select"
+                    value={samplingMethod}
+                    onChange={(e) => setSamplingMethod(e.target.value as 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last')}
+                >
+                    <option value="raw">Raw</option>
+                    <option value="avg">Avg</option>
+                    <option value="max">Max</option>
+                    <option value="min">Min</option>
+                    <option value="first">First</option>
+                    <option value="last">Last</option>
+                </select>
+
+                {/* Sits right after Aggregation (Phase 5 prototype order) —
+                    it never touches Aggregation itself, only clears
+                    timestampStart/End back to the full data range. */}
+                {dataRange && filters.timestampStart && (
+                    <button
+                        className="timebar-reset"
+                        title="Reset the time period back to the full data range — does not change Aggregation"
+                        onClick={() => {
+                            handleFiltersChange({
+                                ...filters,
+                                timestampStart: '',
+                                timestampEnd: ''
+                            });
+                            // Same reasoning as the manual Start/End edit
+                            // handlers above: the dates just changed out
+                            // from under whatever relative-range preset
+                            // was last applied, so its unit button must
+                            // stop claiming to still be "active".
+                            setRelativeRangeApplied(false);
+                        }}
+                    >
+                        <RotateCcw size={12} />
+                        Reset period
+                    </button>
+                )}
+
+                <span className="timebar-spacer" />
+
+                {/* Always visible once the dataset's real bounds are known
+                    (not gated on a filter being applied, unlike Reset period
+                    above) — tells the user up front what time period the
+                    loaded data actually covers, since the chart no longer
+                    defaults to showing all of it. */}
+                {dataRange && (
+                    <span
+                        className="timebar-datarange"
+                        title="First and last timestamp across the whole loaded dataset"
+                    >
+                        Data {formatDateTime(new Date(dataRange.min))} → {formatDateTime(new Date(dataRange.max))}
+                    </span>
+                )}
             </div>
         </div>
     );
@@ -2700,6 +2667,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 title: 'Add Special Sensor',
                                 width: 1000,
                                 height: 800,
+                                // The new fixed 320px | minmax(0,1fr) body grid
+                                // (replacing Split.js's `minSize: [300, 150]`) has
+                                // no floor of its own on the right (Tooling) track
+                                // — nothing stops the window shrinking it to 0. A
+                                // window minWidth is the guard: 320px left track +
+                                // 150px floor for the right one (QA sweep, 2026-10-02).
+                                minWidth: 470,
+                                minHeight: 400,
                                 center: true,
                                 alwaysOnTop: false,
                                 decorations: false

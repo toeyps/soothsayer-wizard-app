@@ -45,7 +45,7 @@ describe('HighlightsPanel', () => {
     describe('By time (highlights)', () => {
         it('shows an empty state with no highlights yet', () => {
             render(<HighlightsPanel {...makeProps()} />);
-            expect(screen.getByText('No highlights yet.')).toBeTruthy();
+            expect(screen.getByText(/No highlights yet/)).toBeTruthy();
         });
 
         it('adds a valid highlight and clears the draft fields', () => {
@@ -217,16 +217,16 @@ describe('HighlightsPanel', () => {
     });
 
     describe('Line display (Band vs Line colour -- Line-only; Scatter always rings, Pair Plot never applies)', () => {
-        it('reflects the current lineDisplay prop via aria-pressed-equivalent "active" styling', () => {
+        it('reflects the current lineDisplay prop via "is-on" styling', () => {
             const { container, rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'line', lineDisplay: 'band' })} />);
-            const [bandBtn, lineBtn] = container.querySelectorAll('.chart-type-btn');
-            expect(bandBtn.className).toContain('active');
-            expect(lineBtn.className).not.toContain('active');
+            const [bandBtn, lineBtn] = container.querySelectorAll('.highlights-seg button');
+            expect(bandBtn.className).toContain('is-on');
+            expect(lineBtn.className).not.toContain('is-on');
 
             rerender(<HighlightsPanel {...makeProps({ chartType: 'line', lineDisplay: 'line' })} />);
-            const [bandBtn2, lineBtn2] = container.querySelectorAll('.chart-type-btn');
-            expect(bandBtn2.className).not.toContain('active');
-            expect(lineBtn2.className).toContain('active');
+            const [bandBtn2, lineBtn2] = container.querySelectorAll('.highlights-seg button');
+            expect(bandBtn2.className).not.toContain('is-on');
+            expect(lineBtn2.className).toContain('is-on');
         });
 
         it('calls onSetLineDisplay with the clicked mode', () => {
@@ -354,6 +354,38 @@ describe('HighlightsPanel', () => {
             rerender(<HighlightsPanel {...makeProps({ chartType: 'pair', timeHighlights })} />);
             expect(screen.queryByDisplayValue('Startup')).toBeNull();
         });
+
+        // Regression (QA sweep, 2026-10-02): the "By time" column never
+        // becomes disabled on a Line <-> Scatter switch (only Pair Plot
+        // disables it), but Scatter inserts/removes its own inline note
+        // above the chip list, shifting the swatch's on-screen position.
+        // The earlier fix only cleared the open popover/rename draft when
+        // the column became DISABLED, so this pair of switches (column
+        // stays enabled throughout) used to leave a stale popover/draft
+        // behind. Fixed by clearing on ANY chartType change.
+        it('closes an already-open colour picker on a Line -> Scatter switch too, even though the column never becomes disabled', () => {
+            const timeHighlights: TimeHighlight[] = [
+                { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
+            ];
+            const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'line', timeHighlights })} />);
+            fireEvent.click(screen.getByTitle('Change colour'));
+            expect(colorPickerCalls.length).toBeGreaterThan(0);
+
+            rerender(<HighlightsPanel {...makeProps({ chartType: 'scatter', timeHighlights })} />);
+            expect(screen.queryByText(/^set-color-/)).toBeNull();
+        });
+
+        it('clears an in-progress rename draft on a Line -> Scatter switch too, even though the column never becomes disabled', () => {
+            const timeHighlights: TimeHighlight[] = [
+                { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
+            ];
+            const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'line', timeHighlights })} />);
+            fireEvent.click(screen.getByTitle('Rename'));
+            expect(screen.getByDisplayValue('Startup')).toBeTruthy();
+
+            rerender(<HighlightsPanel {...makeProps({ chartType: 'scatter', timeHighlights })} />);
+            expect(screen.queryByDisplayValue('Startup')).toBeNull();
+        });
     });
 
     describe('By value (Scatter-only — restored after removal, this time living here instead of a "Colour by…" control on Scatter\'s own toolbar)', () => {
@@ -416,7 +448,7 @@ describe('HighlightsPanel', () => {
             };
             render(<HighlightsPanel {...makeProps({ valueHighlight, onToggleValueHighlightRange, onRemoveValueHighlightRange })} />);
 
-            expect(screen.getByText('10.00–20.00')).toBeTruthy();
+            expect(screen.getByText('10.00 – 20.00')).toBeTruthy();
             fireEvent.click(screen.getByRole('checkbox'));
             expect(onToggleValueHighlightRange).toHaveBeenCalledWith('r1');
 

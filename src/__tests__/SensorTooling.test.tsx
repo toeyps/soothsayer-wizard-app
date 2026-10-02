@@ -37,9 +37,9 @@ afterEach(() => {
 });
 
 describe('SensorTooling', () => {
-    it('shows "No sensors selected" and a getting-started hint with nothing picked', () => {
+    it('shows a "click sensors to add them" hint and a getting-started hint with nothing picked', () => {
         render(<SensorTooling {...makeProps()} />);
-        expect(screen.getByText('No sensors selected')).toBeTruthy();
+        expect(screen.getByText('Click sensors on the left to add them')).toBeTruthy();
         expect(screen.getByText('Pick sensors on the left to get started.')).toBeTruthy();
     });
 
@@ -47,7 +47,10 @@ describe('SensorTooling', () => {
         const onRemoveSensor = vi.fn();
         render(<SensorTooling {...makeProps({ selectedSensors: ['A'], onRemoveSensor })} />);
         expect(screen.getByText('Sensor A')).toBeTruthy();
-        fireEvent.click(screen.getByText('×'));
+        // Scoped to the chip's own remove button -- with one sensor selected,
+        // the "Combine with a number" operation cards also render a bare
+        // "×" symbol (Multiply), so an unscoped text query is ambiguous.
+        fireEvent.click(document.querySelector('.special-sensor-chip-remove')!);
         expect(onRemoveSensor).toHaveBeenCalledWith('A');
     });
 

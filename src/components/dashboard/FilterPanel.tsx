@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, memo } from 'react';
+import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { Plus, X, Check } from 'lucide-react';
 import { SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
@@ -24,78 +24,19 @@ interface FilterPanelProps {
     sensorMetadata?: SensorMetadata[] | null;
 }
 
-// ── Styles (stable refs) ────────────────────────────────────────────────
-
-const labelStyle: React.CSSProperties = {
-    fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)',
-    textTransform: 'uppercase', letterSpacing: '0.05em',
-};
-
-const addBtnStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: '0.25rem',
-    padding: '0.2rem 0.4rem', background: 'var(--accent-muted)',
-    border: '1px solid var(--accent-color)', borderRadius: '6px',
-    color: 'var(--accent-color)', fontSize: '0.65rem', fontWeight: 500,
-};
-
-const filterRowStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem',
-    background: 'var(--chip-bg)', border: '1px solid var(--border)',
-    borderRadius: '8px',
-};
-
-const sensorSelectStyle: React.CSSProperties = {
-    flex: 1, minWidth: 0, padding: '0.25rem 0.3rem',
-    background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.7rem',
-    outline: 'none', cursor: 'pointer',
-};
-
-const opSelectStyle: React.CSSProperties = {
-    padding: '0.25rem 0.3rem', background: 'var(--accent-muted)',
-    border: '1px solid var(--accent-color)', borderRadius: '6px',
-    color: 'var(--accent-color)', fontSize: '0.65rem', fontWeight: 600,
-    outline: 'none', cursor: 'pointer', flexShrink: 0,
-};
-
-const valInputStyle: React.CSSProperties = {
-    width: '60px', padding: '0.25rem 0.3rem', background: 'var(--input-bg)',
-    border: '1px solid var(--border)', borderRadius: '6px',
-    color: 'var(--text-primary)', fontSize: '0.7rem', outline: 'none',
-    flexShrink: 0,
-};
-
-const removeBtnStyle: React.CSSProperties = {
-    background: 'transparent', border: 'none', color: 'var(--text-secondary)',
-    cursor: 'pointer', padding: '0.15rem', flexShrink: 0, display: 'flex',
-    borderRadius: '6px',
-};
-
-const clearBtnStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    gap: '0.3rem', padding: '0.3rem', background: 'transparent',
-    border: '1px dashed var(--border)', borderRadius: '6px',
-    color: 'var(--text-secondary)', fontSize: '0.65rem', cursor: 'pointer',
-};
-
-const applyBtnStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    gap: '0.35rem', padding: '0.4rem 0.75rem',
-    background: 'var(--accent-color)', border: 'none', borderRadius: '8px',
-    color: '#fff', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-};
-
-const applyBtnDisabledStyle: React.CSSProperties = {
-    ...applyBtnStyle,
-    opacity: 0.4, cursor: 'default',
-};
-
-const emptyStyle: React.CSSProperties = {
-    fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.5,
-    padding: '0.5rem 0',
-};
+// ── Operator segmented control ──────────────────────────────────────────
+// Matches the approved prototype's `.op` pill: 4 small buttons instead of
+// a native <select> for greater/less/equals/between.
+const OPERATORS: { value: SensorValueFilter['operation']; label: string; title: string }[] = [
+    { value: 'greater_than', label: '>', title: 'Greater than' },
+    { value: 'less_than', label: '<', title: 'Less than' },
+    { value: 'equals', label: '=', title: 'Equals' },
+    { value: 'between', label: '↔', title: 'Between' },
+];
 
 // ── Filter Row (memoized) ───────────────────────────────────────────────
+// One grid row per condition — `.frow` in the prototype:
+// [sensor select] [operator segmented] [value1] [value2 or blank] [delete].
 
 const FilterRow = memo(function FilterRow({
     filter,
@@ -110,22 +51,46 @@ const FilterRow = memo(function FilterRow({
     onUpdate: (id: string, field: keyof SensorValueFilter, value: string) => void;
     onRemove: (id: string) => void;
 }) {
+    const isBetween = filter.operation === 'between';
     return (
-        <div style={filterRowStyle}>
-            <select value={filter.sensor} onChange={(e) => onUpdate(filter.id, 'sensor', e.target.value)} style={sensorSelectStyle}>
+        <div className="filter-row">
+            <select
+                value={filter.sensor}
+                onChange={(e) => onUpdate(filter.id, 'sensor', e.target.value)}
+                className="filter-row-sensor"
+            >
                 {selectedSensors.map(s => <option key={s} value={s}>{getSensorLabel(s)}</option>)}
             </select>
-            <select value={filter.operation} onChange={(e) => onUpdate(filter.id, 'operation', e.target.value)} style={opSelectStyle}>
-                <option value="greater_than">&gt;</option>
-                <option value="less_than">&lt;</option>
-                <option value="between">between</option>
-                <option value="equals">=</option>
-            </select>
-            <input type="number" value={filter.value1} onChange={(e) => onUpdate(filter.id, 'value1', e.target.value)} placeholder="val" style={valInputStyle} />
-            {filter.operation === 'between' && (
-                <input type="number" value={filter.value2} onChange={(e) => onUpdate(filter.id, 'value2', e.target.value)} placeholder="max" style={valInputStyle} />
-            )}
-            <button onClick={() => onRemove(filter.id)} style={removeBtnStyle} title="Remove filter">
+            <div className="filter-op-seg">
+                {OPERATORS.map(op => (
+                    <button
+                        key={op.value}
+                        type="button"
+                        className={filter.operation === op.value ? 'is-on' : ''}
+                        onClick={() => onUpdate(filter.id, 'operation', op.value)}
+                        title={op.title}
+                    >
+                        {op.label}
+                    </button>
+                ))}
+            </div>
+            <input
+                type="number"
+                value={filter.value1}
+                onChange={(e) => onUpdate(filter.id, 'value1', e.target.value)}
+                placeholder={isBetween ? 'min' : 'value'}
+                className="filter-row-value"
+            />
+            {isBetween ? (
+                <input
+                    type="number"
+                    value={filter.value2}
+                    onChange={(e) => onUpdate(filter.id, 'value2', e.target.value)}
+                    placeholder="max"
+                    className="filter-row-value"
+                />
+            ) : <span />}
+            <button onClick={() => onRemove(filter.id)} className="filter-row-delete" title="Remove filter">
                 <X size={12} />
             </button>
         </div>
@@ -134,16 +99,20 @@ const FilterRow = memo(function FilterRow({
 
 // ── Main Component ──────────────────────────────────────────────────────
 
-function filtersEqual(a: FilterState, b: FilterState): boolean {
-    if (a.timestampStart !== b.timestampStart) return false;
-    if (a.timestampEnd !== b.timestampEnd) return false;
-    if (a.sensorFilters.length !== b.sensorFilters.length) return false;
-    for (let i = 0; i < a.sensorFilters.length; i++) {
-        const fa = a.sensorFilters[i];
-        const fb = b.sensorFilters[i];
+function sensorFiltersEqual(a: SensorValueFilter[], b: SensorValueFilter[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        const fa = a[i];
+        const fb = b[i];
         if (fa.id !== fb.id || fa.sensor !== fb.sensor || fa.operation !== fb.operation || fa.value1 !== fb.value1 || fa.value2 !== fb.value2) return false;
     }
     return true;
+}
+
+function filtersEqual(a: FilterState, b: FilterState): boolean {
+    if (a.timestampStart !== b.timestampStart) return false;
+    if (a.timestampEnd !== b.timestampEnd) return false;
+    return sensorFiltersEqual(a.sensorFilters, b.sensorFilters);
 }
 
 export default function FilterPanel({
@@ -163,11 +132,34 @@ export default function FilterPanel({
         return meta ? `${meta.description} (${sensor})` : sensor;
     }, [sensorMetaMap]);
 
-    // Sync from parent when parent resets
+    // Sync from parent -- but only the pieces that actually changed
+    // upstream. `filters` bundles BOTH the time period (timestampStart/End
+    // -- owned by the Dashboard timebar; Reset period, Apply relative
+    // range and editing start/end all funnel through this same prop) AND
+    // the sensor value conditions this panel itself edits. The original
+    // version re-derived the WHOLE draft whenever `filters` differed from
+    // the CURRENT DRAFT -- so an unrelated period-only change (the draft
+    // now contains an unapplied condition `filters` never had) looked
+    // identical to an external reset and silently discarded the user's
+    // in-progress typing. Comparing each half of `filters` against what
+    // was last synced FROM the parent -- not against the current draft --
+    // lets a period change update only the period half, leaving a
+    // locally-edited sensorFilters draft alone unless the parent's own
+    // sensorFilters has genuinely moved on (e.g. Apply/Clear from this
+    // panel itself, or an external reset such as a workspace reload).
+    const lastSyncedFilters = useRef<FilterState>(filters);
     useEffect(() => {
-        if (!filtersEqual(filters, draft)) {
-            setDraft(filters);
+        const prevSynced = lastSyncedFilters.current;
+        const periodChanged = filters.timestampStart !== prevSynced.timestampStart || filters.timestampEnd !== prevSynced.timestampEnd;
+        const sensorFiltersChanged = !sensorFiltersEqual(filters.sensorFilters, prevSynced.sensorFilters);
+        if (periodChanged || sensorFiltersChanged) {
+            setDraft(prev => ({
+                timestampStart: periodChanged ? filters.timestampStart : prev.timestampStart,
+                timestampEnd: periodChanged ? filters.timestampEnd : prev.timestampEnd,
+                sensorFilters: sensorFiltersChanged ? filters.sensorFilters : prev.sensorFilters,
+            }));
         }
+        lastSyncedFilters.current = filters;
     }, [filters]);
 
     const isDirty = !filtersEqual(draft, filters);
@@ -196,9 +188,19 @@ export default function FilterPanel({
     const updateSensorFilter = useCallback((id: string, field: keyof SensorValueFilter, value: string) => {
         setDraft(prev => ({
             ...prev,
-            sensorFilters: prev.sensorFilters.map(f =>
-                f.id === id ? { ...f, [field]: value } : f
-            ),
+            sensorFilters: prev.sensorFilters.map(f => {
+                if (f.id !== id) return f;
+                // Switching away from "between" hides the max-value input
+                // (see FilterRow above) -- clear its value with it, so a
+                // leftover max from an earlier "between" isn't silently
+                // carried in the draft/wire payload for an operator that no
+                // longer shows or uses it, and switching back to "between"
+                // starts fresh instead of resurrecting the old number.
+                if (field === 'operation' && value !== 'between') {
+                    return { ...f, operation: value as SensorValueFilter['operation'], value2: '' };
+                }
+                return { ...f, [field]: value };
+            }),
         }));
     }, []);
 
@@ -215,25 +217,27 @@ export default function FilterPanel({
     const hasAny = draft.sensorFilters.length > 0;
 
     return (
-        <div className="flex flex-col gap-3 w-full text-sm">
-            {/* Sensor Value Filters */}
-            <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                    <span style={labelStyle}>Sensor Filters ({draft.sensorFilters.length})</span>
-                    <button
-                        onClick={addSensorFilter}
-                        disabled={selectedSensors.length === 0}
-                        style={{ ...addBtnStyle, cursor: selectedSensors.length > 0 ? 'pointer' : 'not-allowed' }}
-                    >
-                        <Plus size={10} /> Add
-                    </button>
-                </div>
+        <div className="filter-panel">
+            {/* Header -- `.fhead` in the prototype: bold title + hint text +
+                spacer + "Add condition" (disabled with no sensors to pick
+                from). Replaces the old "SENSOR FILTERS (N)" caps label. */}
+            <div className="filter-panel-head">
+                <b>Sensor filters</b>
+                <span className="filter-panel-hint">Show only rows that match every condition</span>
+                <span className="filter-panel-spacer" />
+                <button
+                    onClick={addSensorFilter}
+                    disabled={selectedSensors.length === 0}
+                    className="filter-add-btn"
+                >
+                    <Plus size={12} /> Add condition
+                </button>
+            </div>
 
-                {draft.sensorFilters.length === 0 && (
-                    <div style={emptyStyle}>No sensor filters applied.</div>
-                )}
-
-                <div className="flex flex-col gap-2">
+            {draft.sensorFilters.length === 0 ? (
+                <div className="filter-empty">No sensor filters applied.</div>
+            ) : (
+                <div className="filter-rows">
                     {draft.sensorFilters.map((filter) => (
                         <FilterRow
                             key={filter.id}
@@ -245,21 +249,27 @@ export default function FilterPanel({
                         />
                     ))}
                 </div>
-            </div>
+            )}
 
-            {/* Apply + Clear buttons */}
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {/* Footer -- Apply (primary, disabled unless dirty) + Clear
+                (ghost, only when there's something to clear) + spacer +
+                a dirty-state hint on the right, matching the prototype. */}
+            <div className="filter-panel-footer">
                 <button
                     onClick={applyFilters}
                     disabled={!isDirty}
-                    style={isDirty ? applyBtnStyle : applyBtnDisabledStyle}
+                    className="filter-apply-btn"
                 >
-                    <Check size={12} /> Apply Filter
+                    <Check size={12} /> Apply filter
                 </button>
                 {hasAny && (
-                    <button onClick={clearAll} style={clearBtnStyle}>
+                    <button onClick={clearAll} className="filter-clear-btn">
                         <X size={10} /> Clear
                     </button>
+                )}
+                <span className="filter-panel-spacer" />
+                {isDirty && (
+                    <span className="filter-dirty-hint">Changes not applied yet</span>
                 )}
             </div>
         </div>

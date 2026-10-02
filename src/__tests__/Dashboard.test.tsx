@@ -113,7 +113,7 @@ vi.mock('../hooks/useScatterSample', () => ({
 
 // Default `bounds: null` matches the old default fixture's `ts_min: null,
 // ts_max: null` — most tests don't care about the dataset's true extent and
-// expect `dataRange`-gated UI (the "Data: …" hint, "Reset Period") to stay
+// expect `dataRange`-gated UI (the "Data …" hint, "Reset period") to stay
 // absent by default.
 const mockUseDatasetTimeBounds = vi.fn(() => ({ bounds: null, loading: false, error: null } as any));
 vi.mock('../hooks/useDatasetTimeBounds', () => ({
@@ -2087,6 +2087,25 @@ describe('Dashboard', () => {
             expect(webviewWindowCalls.some((c) => c.label === 'add-sensor')).toBe(false);
             expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-B' }));
         });
+
+        // Regression (QA sweep, 2026-10-02): the Add Special Sensor window's
+        // body grid is a fixed `320px minmax(0, 1fr)` with no floor of its
+        // own on the right (Tooling) track -- Split.js used to guarantee
+        // that pane never shrank below 150px (`minSize: [300, 150]`), but
+        // the new grid has nothing stopping the window from shrinking it to
+        // 0. A window-level minWidth (320px left track + the old 150px
+        // floor) replaces that guarantee.
+        it('"Add Special Sensor" opens with a minWidth that keeps the Tooling pane at least 150px (320px left track + 150px floor)', async () => {
+            mockGetByLabel.mockResolvedValue(null);
+            renderDashboard();
+            await act(async () => {
+                fireEvent.click(screen.getByText('Add Special Sensor'));
+                for (let i = 0; i < 6; i++) await Promise.resolve();
+            });
+            const call = webviewWindowCalls.find((c) => c.label === 'add-sensor');
+            expect(call).toBeTruthy();
+            expect(call!.opts.minWidth).toBeGreaterThanOrEqual(470);
+        });
     });
 
     describe('imperative rename', () => {
@@ -2100,40 +2119,44 @@ describe('Dashboard', () => {
         });
     });
 
-    describe('TIME RANGE Calendar icon (opens the native datetime-local picker on click)', () => {
-        it('clicking the Calendar icon next to Start/End Date opens the native picker (regression: the browser-drawn picker-indicator icon was hard to see -- the Calendar icon is a reliable, always-visible way to open it instead, matching the same fix on the Build Model page\'s Time start/end)', () => {
+    // Visual refresh Phase 5 (2026-10-02): the Time range bar was rebuilt
+    // into the approved prototype's unified `.timebar` row -- a single
+    // leading Calendar icon in front of both Start/End inputs (matching
+    // `.timebar-range`), not a per-input icon-with-click-handler. Opening
+    // the native datetime-local picker now happens by clicking the INPUT
+    // itself (`onClick={() => ref.current?.showPicker?.()}`), which is both
+    // a bigger, more discoverable target than the old small icon and still
+    // covers the same "the picker-indicator is hard to see" regression this
+    // originally fixed.
+    describe('TIME RANGE date inputs (opens the native datetime-local picker on click)', () => {
+        it('clicking the Start/End Date input opens the native picker', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
 
             const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
-            const startIcon = startInput.closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
             const showPickerStart = vi.fn();
             (startInput as any).showPicker = showPickerStart;
-            fireEvent.click(startIcon);
+            fireEvent.click(startInput);
             expect(showPickerStart).toHaveBeenCalledTimes(1);
 
             const endInput = screen.getByPlaceholderText('End Date') as HTMLInputElement;
-            const endIcon = endInput.closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
             const showPickerEnd = vi.fn();
             (endInput as any).showPicker = showPickerEnd;
-            fireEvent.click(endIcon);
+            fireEvent.click(endInput);
             expect(showPickerEnd).toHaveBeenCalledTimes(1);
         });
 
         it('does not throw when showPicker() is unsupported (older WebView2/browser)', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            const startIcon = screen.getByPlaceholderText('Start Date').closest('.date-input-wrapper')!.querySelector('svg') as SVGElement;
-            expect(() => fireEvent.click(startIcon)).not.toThrow();
+            const startInput = screen.getByPlaceholderText('Start Date');
+            expect(() => fireEvent.click(startInput)).not.toThrow();
         });
 
-        it('the Calendar icon is explicit white and sits after the input (flush to the box\'s own right edge via marginLeft: auto) -- same fix as the Build Model page\'s Time start/end, same reason: the native picker-indicator it replaces was reported unreadably dim even after trying to recolor it', () => {
+        it('renders one shared Calendar icon in front of the Start/End inputs inside the `.timebar-range` pill', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            const wrapper = screen.getByPlaceholderText('Start Date').closest('.date-input-wrapper')!;
+            const wrapper = screen.getByPlaceholderText('Start Date').closest('.timebar-range')!;
             const children = Array.from(wrapper.children);
-            expect(children[0].tagName).toBe('INPUT');
-            const icon = children[1] as HTMLElement;
-            expect(icon.tagName.toLowerCase()).toBe('svg');
-            expect(icon.style.color).toBe('rgb(255, 255, 255)'); // jsdom normalizes '#fff'
-            expect(icon.style.marginLeft).toBe('auto');
+            expect(children[0].tagName.toLowerCase()).toBe('svg');
+            expect(children[1].tagName).toBe('INPUT');
         });
     });
 
@@ -2195,6 +2218,12 @@ describe('Dashboard', () => {
         // stronger claim, shown as a SOLID accent fill). D is the default
         // relativeUnit, so it renders as "selected" (outline) from the very
         // first render even with nothing clicked yet.
+        // Visual refresh Phase 5 (2026-10-02): the unit buttons moved from
+        // inline `style` objects to the shared `.timebar-unit-btn` class +
+        // `is-selected`/`is-active` modifiers (`.timebar-unit-seg` is the
+        // approved prototype's `.seg.sm`-equivalent). Same 2-tier
+        // selected/applied distinction as before -- these tests now assert
+        // on className instead of inline style properties.
         describe('unit-button selected/applied indicator (2-tier: outline = picked, solid = picked AND matches the shown dates)', () => {
             const dayBtn = () => screen.getByRole('button', { name: 'D' }) as HTMLButtonElement;
             const hourBtn = () => screen.getByRole('button', { name: 'H' }) as HTMLButtonElement;
@@ -2202,18 +2231,16 @@ describe('Dashboard', () => {
             it('shows the default unit (D) as selected-but-not-applied at rest — outline, no solid fill', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 const btn = dayBtn();
-                expect(btn.style.background).toBe('transparent');
-                expect(btn.style.border).toBe('1px solid var(--accent-color)');
-                expect(btn.style.color).toBe('var(--accent-color)');
+                expect(btn.className).toContain('is-selected');
+                expect(btn.className).not.toContain('is-active');
                 expect(btn.title).toMatch(/^Selected/);
             });
 
             it('every OTHER unit stays fully plain while D is selected', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 const btn = hourBtn();
-                expect(btn.style.background).toBe('transparent');
-                expect(btn.style.border).toBe('1px solid var(--border)');
-                expect(btn.style.color).toBe('var(--text-secondary)');
+                expect(btn.className).not.toContain('is-selected');
+                expect(btn.className).not.toContain('is-active');
                 expect(btn.title).toBe('Hours');
             });
 
@@ -2221,8 +2248,8 @@ describe('Dashboard', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 const btn = dayBtn();
-                expect(btn.style.background).toBe('var(--accent-color)');
-                expect(btn.style.color).toBe('rgb(255, 255, 255)'); // jsdom normalizes '#fff'
+                expect(btn.className).toContain('is-selected');
+                expect(btn.className).toContain('is-active');
                 expect(btn.title).toMatch(/^Currently applied/);
             });
 
@@ -2231,8 +2258,8 @@ describe('Dashboard', () => {
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
                 const btn = dayBtn();
-                expect(btn.style.background).toBe('transparent');
-                expect(btn.style.border).toBe('1px solid var(--accent-color)'); // still selected
+                expect(btn.className).not.toContain('is-active');
+                expect(btn.className).toContain('is-selected'); // still selected
             });
 
             it('drops back to outline-only when End is edited by hand after Apply', () => {
@@ -2240,8 +2267,8 @@ describe('Dashboard', () => {
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 fireEvent.change(screen.getByPlaceholderText('End Date'), { target: { value: '2020-01-02T00:00' } });
                 const btn = dayBtn();
-                expect(btn.style.background).toBe('transparent');
-                expect(btn.style.border).toBe('1px solid var(--accent-color)');
+                expect(btn.className).not.toContain('is-active');
+                expect(btn.className).toContain('is-selected');
             });
 
             it('moves the outline to the newly-clicked unit (not the solid fill) when the picker is changed after Apply — this is the exact click the user reported as "unresponsive"', () => {
@@ -2250,12 +2277,12 @@ describe('Dashboard', () => {
                 fireEvent.click(hourBtn());
 
                 const day = dayBtn();
-                expect(day.style.background).toBe('transparent');
-                expect(day.style.border).toBe('1px solid var(--border)'); // no longer selected at all
+                expect(day.className).not.toContain('is-selected'); // no longer selected at all
+                expect(day.className).not.toContain('is-active');
 
                 const hour = hourBtn();
-                expect(hour.style.background).toBe('transparent'); // not yet applied
-                expect(hour.style.border).toBe('1px solid var(--accent-color)'); // but IS now selected — visible immediately
+                expect(hour.className).not.toContain('is-active'); // not yet applied
+                expect(hour.className).toContain('is-selected'); // but IS now selected — visible immediately
                 expect(hour.title).toMatch(/^Selected/);
             });
 
@@ -2264,8 +2291,8 @@ describe('Dashboard', () => {
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '5' } });
                 const btn = dayBtn();
-                expect(btn.style.background).toBe('transparent');
-                expect(btn.style.border).toBe('1px solid var(--accent-color)');
+                expect(btn.className).not.toContain('is-active');
+                expect(btn.className).toContain('is-selected');
             });
 
             it('re-solid-fills after clicking Apply again', () => {
@@ -2274,7 +2301,7 @@ describe('Dashboard', () => {
                 fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2020-01-01T00:00' } });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 const btn = dayBtn();
-                expect(btn.style.background).toBe('var(--accent-color)');
+                expect(btn.className).toContain('is-active');
             });
         });
 
@@ -2294,19 +2321,30 @@ describe('Dashboard', () => {
                 });
             });
 
-            it('is labelled "Reset Period", not the ambiguous "Reset"', () => {
+            it('is labelled "Reset period", not the ambiguous "Reset"', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
-                expect(screen.getByText('Reset Period')).toBeTruthy();
+                expect(screen.getByText('Reset period')).toBeTruthy();
                 expect(screen.queryByText('Reset')).toBeNull();
             });
 
-            it('sits before the AGGREGATION control in the DOM, not after it', () => {
+            // Visual refresh Phase 5 (2026-10-02): the approved prototype's
+            // `.timebar` row explicitly orders Aggregation BEFORE "Reset
+            // period" (unit segmented control → vsep → Aggregation select →
+            // Reset period → spacer → Data range) -- the opposite of the
+            // order this test used to enforce. That's not a regression of
+            // the original ambiguity fix: the button's label ("Reset
+            // period", not the old bare "Reset") and its title ("...does
+            // not change Aggregation") already disambiguate it regardless
+            // of which side of Aggregation it sits on, so following the
+            // prototype's explicit layout here doesn't reopen the bug this
+            // test was written to catch.
+            it('sits after the Aggregation control in the DOM, matching the approved prototype\'s `.timebar` order', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
-                const resetBtn = screen.getByText('Reset Period');
-                const aggregationLabel = screen.getByText('AGGREGATION (1 HR)');
-                expect(resetBtn.compareDocumentPosition(aggregationLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+                const resetBtn = screen.getByText('Reset period');
+                const aggregationLabel = screen.getByText('Aggregation');
+                expect(aggregationLabel.compareDocumentPosition(resetBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
             });
 
             it('clears the time period back to the full data range without touching Aggregation', () => {
@@ -2315,7 +2353,7 @@ describe('Dashboard', () => {
                 const aggregationSelect = screen.getByDisplayValue('Raw') as HTMLSelectElement;
                 fireEvent.change(aggregationSelect, { target: { value: 'max' } });
 
-                fireEvent.click(screen.getByText('Reset Period'));
+                fireEvent.click(screen.getByText('Reset period'));
 
                 const lastCall = last(mockUseChartData.mock.calls)![0] as any;
                 // '' → null: the dataFilter builder does `filters.timestampStart || null`.
@@ -2329,8 +2367,8 @@ describe('Dashboard', () => {
                 fireEvent.click(screen.getByTitle('Apply relative range'));
                 expect(screen.getByTitle(/Currently applied/)).toBeTruthy();
 
-                fireEvent.click(screen.getByText('Reset Period'));
-                expect((screen.getByRole('button', { name: 'D' }) as HTMLButtonElement).style.background).toBe('transparent');
+                fireEvent.click(screen.getByText('Reset period'));
+                expect((screen.getByRole('button', { name: 'D' }) as HTMLButtonElement).className).not.toContain('is-active');
             });
         });
     });
@@ -2412,7 +2450,7 @@ describe('Dashboard', () => {
 
             // Simulate the user manually clearing the period after the
             // default applied (same as clicking "Reset Period").
-            fireEvent.click(screen.getByText('Reset Period'));
+            fireEvent.click(screen.getByText('Reset period'));
             let lastCall = last(mockUseChartData.mock.calls)![0] as any;
             expect(lastCall.filter.timestamp_start).toBeNull();
 

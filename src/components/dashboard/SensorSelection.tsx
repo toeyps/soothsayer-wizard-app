@@ -306,7 +306,7 @@ export default function SensorSelection({
         // than one kind for the same group by clicking more than one
         // (2026-08-31 redesign, replacing the old single +/✕ button).
         const renderKindToggles = (groupNo: number, groupName: string) => (
-            <div style={{ display: 'flex', gap: '2px' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', gap: '3px' }} onClick={e => e.stopPropagation()}>
                 {ALL_KINDS.map(kind => {
                     const active = isMemberOfKind(groupNo, kind);
                     return (
@@ -314,9 +314,13 @@ export default function SensorSelection({
                             key={kind}
                             onClick={() => onToggleSensorGroupKind(sensor, groupNo, kind)}
                             title={`${active ? 'Remove' : 'Add'} ${KIND_LABEL[kind]}${active ? ' from' : ' to'} ${groupName}`}
+                            // Matches the approved prototype's `.ktog` — 24x24,
+                            // deliberately larger than the inline sensor-row
+                            // kind badges (those stay 16px) since this is the
+                            // popup's own primary click target.
                             style={{
-                                width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                borderRadius: '4px', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+                                width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                borderRadius: '6px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
                                 border: `1px solid ${active ? KIND_ACCENT[kind] : 'var(--border)'}`,
                                 background: active ? KIND_ACCENT[kind] : 'none',
                                 color: active ? 'var(--bg-primary)' : 'var(--text-faint)',
@@ -498,7 +502,17 @@ export default function SensorSelection({
                     <AnchoredPopover
                         anchorRect={groupMenuAnchor}
                         onRequestClose={() => { setGroupMenuFor(null); setGroupMenuAnchor(null); }}
-                        width={290}
+                        // Deliberate deviation from the approved prototype's
+                        // literal 290px (see docs/PROJECT_HANDOVER.md's
+                        // 2026-10-02 structural-rebuild entry) -- this app's
+                        // real Failure Group names ("generator mechanical
+                        // condition", "generator electrical condition", ...)
+                        // are far longer than the prototype's placeholder
+                        // names ("Bearing wear") and clipped even at 290px.
+                        // Widened into the 360-400px range the user asked
+                        // for; AnchoredPopover's own clamp logic already
+                        // keeps it on-screen at typical anchor positions.
+                        width={380}
                         style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
                     >
                         <div className="fg-menu-heading">Add to failure group</div>
@@ -506,7 +520,7 @@ export default function SensorSelection({
                             const isEditing = editingGroupNo === g.no;
                             if (isEditing) {
                                 return (
-                                    <div key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px' }}>
+                                    <div key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px' }}>
                                         <span className={`fg-group-color-${getGroupColor(g.no)}`} style={{
                                             width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)',
                                         }} />
@@ -540,12 +554,16 @@ export default function SensorSelection({
                                     key={g.no}
                                     className={`fg-group-color-${getGroupColor(g.no)}`}
                                     style={{
-                                        display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px',
+                                        display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '6px', padding: '5px 6px',
                                         background: isMemberOfGroup(g.no) ? 'var(--fg-tint)' : undefined,
                                     }}
                                 >
                                     <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
-                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.75rem', color: 'var(--text-primary)' }}>{g.name}</span>
+                                    {/* Ellipsis stays as a last-resort fallback
+                                        only -- at 380px, a real group name
+                                        should fit unclipped in the common
+                                        case, unlike the prototype's 290px. */}
+                                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.76rem', color: 'var(--text-primary)' }}>{g.name}</span>
                                     {renderKindToggles(g.no, g.name)}
                                     <button
                                         onClick={() => { setEditingGroupNo(g.no); setEditGroupDraft(g.name); }}
@@ -578,12 +596,12 @@ export default function SensorSelection({
                         <div
                             className="fg-group-color-slate"
                             style={{
-                                display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '4px', padding: '4px 8px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '8px',
+                                display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '6px', padding: '5px 6px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '9px',
                                 background: isMemberOfGroup(0) ? 'var(--fg-tint)' : undefined,
                             }}
                         >
                             <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
-                            <span style={{ flex: 1, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Not in Group</span>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Not in Group</span>
                             {renderKindToggles(0, 'Not in Group')}
                         </div>
 

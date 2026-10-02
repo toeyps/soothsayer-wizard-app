@@ -37,13 +37,6 @@ describe('SensorExplorer', () => {
         expect(screen.getByText('Pump Temp')).toBeTruthy();
     });
 
-    it('collapsing "All Components" hides every group and ungrouped sensor', () => {
-        render(<SensorExplorer {...makeProps()} />);
-        fireEvent.click(screen.getByText('All Components'));
-        expect(screen.queryByText('Pump')).toBeNull();
-        expect(screen.queryByText('TAG3')).toBeNull();
-    });
-
     it('re-clicking an opened component group collapses it again, without affecting ungrouped sensors', () => {
         render(<SensorExplorer {...makeProps()} />);
         fireEvent.click(screen.getByText('Pump')); // open
@@ -60,14 +53,22 @@ describe('SensorExplorer', () => {
         expect(onToggleSensor).toHaveBeenCalledWith('TAG1');
     });
 
-    it('shows the checkbox checked for a selected sensor', () => {
+    // Visual refresh Phase 5 (2026-10-02): a selected source sensor now
+    // shows an "Added" pill instead of a checked native checkbox, and an
+    // unselected one shows a + icon instead -- matches the approved
+    // prototype's `.sens` row (`added` pill vs. a bare + button). Same
+    // underlying `selectedSensors` prop/`onToggleSensor` handler, just a
+    // different render of the same state.
+    it('shows an "Added" pill for a selected sensor, and a + icon for one that is not', () => {
         render(<SensorExplorer {...makeProps({ selectedSensors: ['TAG1'] })} />);
         fireEvent.click(screen.getByText('Pump'));
-        const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-        const tag1Row = screen.getByText('Pump Pressure').closest('div')!;
-        const checkbox = tag1Row.querySelector('input[type="checkbox"]') as HTMLInputElement;
-        expect(checkbox.checked).toBe(true);
-        expect(checkboxes.some((c) => !c.checked)).toBe(true); // others unchecked
+        const tag1Row = screen.getByText('Pump Pressure').closest('.special-sensor-row')!;
+        expect(tag1Row.querySelector('.special-sensor-added-pill')).toBeTruthy();
+        expect(tag1Row.querySelector('.special-sensor-add-icon')).toBeNull();
+
+        const tag2Row = screen.getByText('Pump Temp').closest('.special-sensor-row')!;
+        expect(tag2Row.querySelector('.special-sensor-added-pill')).toBeNull();
+        expect(tag2Row.querySelector('.special-sensor-add-icon')).toBeTruthy();
     });
 
     it('falls back to the raw tag for a sensor with no metadata', () => {

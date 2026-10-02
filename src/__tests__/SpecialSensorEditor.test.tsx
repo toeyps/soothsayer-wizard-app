@@ -117,17 +117,19 @@ describe('SpecialSensorEditor', () => {
             expect(screen.getAllByText('TAG1').length).toBeGreaterThan(0);
             expect(screen.getAllByText('TAG2').length).toBeGreaterThan(0);
             // "Sum all" seeded as active -- distinguishable from the other
-            // shortcuts by its accent styling, same convention `SensorTooling`
+            // shortcuts by its accent card styling (visual refresh Phase 5,
+            // 2026-10-02: `.special-sensor-op-card.is-on`, replacing the old
+            // inline accent `style.color`), same convention `SensorTooling`
             // itself uses (no separate "selected" text).
-            const sumAll = screen.getByText('Sum all') as HTMLButtonElement;
-            expect(sumAll.style.color).toBe('var(--accent-color)');
+            const sumAll = screen.getByText('Sum all').closest('button') as HTMLButtonElement;
+            expect(sumAll.className).toContain('is-on');
         });
 
         it('opens a single-sensor recipe with its sensor, operation and value already filled in', () => {
             renderEditor({ recipe: singleRecipe, sensorMetadata: [] });
             expect(screen.getByText('TAG1')).toBeTruthy();
-            const addBtn = screen.getByText('Add') as HTMLButtonElement;
-            expect(addBtn.style.color).toBe('var(--accent-color)');
+            const addBtn = screen.getByText('Add').closest('button') as HTMLButtonElement;
+            expect(addBtn.className).toContain('is-on');
             expect(valueInput().value).toBe('10');
         });
 

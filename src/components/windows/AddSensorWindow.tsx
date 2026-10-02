@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import Split from 'split.js';
-import { X } from "lucide-react";
+import { X, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
@@ -77,21 +76,6 @@ export default function AddSensorWindow() {
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [savingEdit, setSavingEdit] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
-
-    useEffect(() => {
-        // Initialize Split.js
-        const splitInstance = Split(['#split-0', '#split-1'], {
-            sizes: [60, 40],
-            minSize: [300, 150],
-            gutterSize: 5,
-            cursor: 'col-resize',
-            direction: 'horizontal',
-        });
-
-        return () => {
-            splitInstance.destroy();
-        };
-    }, []);
 
     useEffect(() => {
         let unlistenData: (() => void) | undefined;
@@ -586,7 +570,28 @@ export default function AddSensorWindow() {
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', position: 'relative' }}>
             {/* Header — matches View Table dialog (.pair-regl-modal-header) */}
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
-                <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Special Sensors</h2>
+                <div className="flex items-center" style={{ gap: '14px' }}>
+                    <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Special Sensors</h2>
+                    {/* Tabs — creating and managing are the same window because
+                        the two are the same job: you build a sensor, then you
+                        want to see what you built and get rid of what you no
+                        longer use. Moved next to the title (matching the
+                        approved prototype's header-level segmented tab pair)
+                        instead of a separate row below it. */}
+                    <div className="special-sensor-tabs" role="tablist">
+                        {(['create', 'manage'] as const).map(tab => (
+                            <button
+                                key={tab}
+                                role="tab"
+                                aria-selected={activeTab === tab}
+                                onClick={() => setActiveTab(tab)}
+                                className={activeTab === tab ? 'is-on' : ''}
+                            >
+                                {tab === 'create' ? 'Create' : `Manage ${recipes.length > 0 ? ` (${recipes.length})` : ''}`}
+                            </button>
+                        ))}
+                    </div>
+                </div>
                 <button
                     onClick={handleClose}
                     className="scatter-regl-btn scatter-regl-btn-icon"
@@ -596,70 +601,39 @@ export default function AddSensorWindow() {
                 </button>
             </div>
 
-            {/* Tabs — creating and managing are the same window because the
-                two are the same job: you build a sensor, then you want to see
-                what you built and get rid of what you no longer use. */}
-            <div className="flex shrink-0 gap-1 px-4 pt-2" style={{ backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }} role="tablist">
-                {(['create', 'manage'] as const).map(tab => (
-                    <button
-                        key={tab}
-                        role="tab"
-                        aria-selected={activeTab === tab}
-                        onClick={() => setActiveTab(tab)}
-                        className="px-3 py-1.5 rounded-t"
-                        style={{
-                            fontSize: '12px',
-                            fontWeight: activeTab === tab ? 600 : 500,
-                            color: activeTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
-                            backgroundColor: activeTab === tab ? 'var(--card-bg)' : 'transparent',
-                            borderBottom: `2px solid ${activeTab === tab ? 'var(--accent-color)' : 'transparent'}`,
-                        }}
-                    >
-                        {tab === 'create' ? 'Create' : `Manage${recipes.length > 0 ? ` (${recipes.length})` : ''}`}
-                    </button>
-                ))}
-            </div>
-
-            {/* Main Content (Split.js).
-                Kept mounted while the Manage tab is showing: Split.js binds to
-                #split-0/#split-1 once on mount, and unmounting them would
-                leave it pointing at elements that no longer exist. */}
-            <div className="flex-1 min-h-0 overflow-hidden" style={{ display: activeTab === 'create' ? 'flex' : 'none' }}>
+            {/* Main content — fixed 320px left column (Explorer) + flexible
+                right column (Tooling), matching the approved prototype's own
+                `.fv` grid. Kept mounted while the Manage tab is showing (just
+                hidden via `display`), same as before. */}
+            <div className="special-sensor-body" style={{ display: activeTab === 'create' ? 'grid' : 'none' }}>
                 {/* Left: Explorer */}
-                <div id="split-0" className="flex flex-col h-full min-h-0 divide-y" style={{ borderColor: 'var(--border)' }}>
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                        {loading ? (
-                            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-secondary)' }}>Loading...</div>
-                        ) : (
-                            <SensorExplorer
-                                sensors={filteredSensors}
-                                sensorMetadata={sensorMetadata}
-                                selectedSensors={selectedSensors}
-                                onToggleSensor={handleSensorToggle}
-                                searchTerm={searchTerm}
-                                onSearchChange={setSearchTerm}
-                            />
-                        )}
-                    </div>
+                <div className="special-sensor-left">
+                    {loading ? (
+                        <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-secondary)' }}>Loading...</div>
+                    ) : (
+                        <SensorExplorer
+                            sensors={filteredSensors}
+                            sensorMetadata={sensorMetadata}
+                            selectedSensors={selectedSensors}
+                            onToggleSensor={handleSensorToggle}
+                            searchTerm={searchTerm}
+                            onSearchChange={setSearchTerm}
+                        />
+                    )}
                 </div>
 
                 {/* Right: Tooling */}
-                <div id="split-1" className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-                    <div className="px-4 py-2 text-xs font-bold tracking-wider uppercase border-b" style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
-                        Tooling
-                    </div>
-                    <div className="flex-1 overflow-hidden">
-                        <SensorTooling
-                            selectedSensors={selectedSensors}
-                            sensorMetadata={sensorMetadata}
-                            onConfigChange={handleConfigChange}
-                            onRemoveSensor={handleSensorToggle}
-                            onFormulaSubmit={handleFormulaSubmit}
-                            onDescriptionChange={setDescription}
-                            onUnitChange={setUnit}
-                            onComponentChange={setComponent}
-                        />
-                    </div>
+                <div className="special-sensor-right custom-scrollbar">
+                    <SensorTooling
+                        selectedSensors={selectedSensors}
+                        sensorMetadata={sensorMetadata}
+                        onConfigChange={handleConfigChange}
+                        onRemoveSensor={handleSensorToggle}
+                        onFormulaSubmit={handleFormulaSubmit}
+                        onDescriptionChange={setDescription}
+                        onUnitChange={setUnit}
+                        onComponentChange={setComponent}
+                    />
                 </div>
             </div>
 
@@ -684,27 +658,34 @@ export default function AddSensorWindow() {
                 </div>
             )}
 
-            {/* Footer */}
-            <div className="flex flex-col gap-2 px-4 py-3 border-t shrink-0" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
-                {activeTab === 'create' && missingCreateFields.length > 0 && (
-                    <p className="text-xs" style={{ color: 'var(--danger)' }}>
-                        Fill in {missingCreateFields.join(', ')} before adding.
-                    </p>
-                )}
-                <div className="flex justify-end gap-2">
-                    <button onClick={handleClose} className="px-4 py-1.5 rounded text-sm" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>Close</button>
-                    {activeTab === 'create' && (
+            {/* Footer — matches the approved prototype's `.mf`: a left-aligned
+                contextual hint (what's missing, or a plain "ready" message)
+                plus the action buttons on the right, one row. */}
+            <div className="special-sensor-footer">
+                {activeTab === 'create' ? (
+                    <>
+                        <span className={`special-sensor-footer-hint${missingCreateFields.length > 0 ? ' is-danger' : ''}`}>
+                            {missingCreateFields.length > 0
+                                ? `Fill in ${missingCreateFields.join(', ')} before adding.`
+                                : 'Adds a computed sensor to this workspace.'}
+                        </span>
+                        <span className="special-sensor-spacer" />
+                        <button onClick={handleClose} className="special-sensor-btn">Cancel</button>
                         <button
                             onClick={handleAdd}
                             disabled={!canAdd}
                             title={canAdd ? undefined : `Fill in ${missingCreateFields.join(', ')} first`}
-                            className="px-4 py-1.5 rounded text-white text-sm font-medium"
-                            style={{ backgroundColor: 'var(--accent-color)', opacity: canAdd ? 1 : 0.45, cursor: canAdd ? 'pointer' : 'not-allowed' }}
+                            className="special-sensor-btn special-sensor-btn--primary"
                         >
-                            Add sensor
+                            <Plus size={13} /> Add sensor
                         </button>
-                    )}
-                </div>
+                    </>
+                ) : (
+                    <>
+                        <span className="special-sensor-spacer" />
+                        <button onClick={handleClose} className="special-sensor-btn">Close</button>
+                    </>
+                )}
             </div>
 
             {/* Toast */}

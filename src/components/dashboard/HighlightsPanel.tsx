@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, useEffect } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
 import type { TimeHighlight, HighlightLineDisplay, ValueHighlight } from '../../types';
 import ColorPlatePicker from './ColorPlatePicker';
@@ -44,8 +44,8 @@ interface HighlightsPanelProps {
 
     /** Which chart is on screen right now -- drives the live compatibility
      *  banner + disabled state below. On Pair Plot (the only chart type this
-     *  group has no effect on), every input/select/button inside it is
-     *  fully disabled (via a wrapping <fieldset disabled>) and dims, with a
+     *  group has no effect on), the "By time" column's body is fully
+     *  disabled (via a wrapping <fieldset disabled>) and dims, with a
      *  banner explaining why, instead of relying on a static footnote
      *  nobody reads. Deliberately NOT just visually dimmed while staying
      *  clickable -- an earlier revision did that (reasoning: these are
@@ -67,12 +67,14 @@ function fmtRange(start: string, end: string): string {
 }
 
 /**
- * Dashboard's "Highlights" tab -- timestamp-range windows, coloured and
- * toggled on/off, read by Line and Scatter (not Pair Plot -- it keeps its
- * own lasso-cluster gesture instead). Persists through Dashboard.tsx's
- * `timeHighlights` state -- this component only owns ephemeral draft-form /
- * open-popover state, the same split already used for the Selected Sensor
- * tab's colour picker.
+ * Dashboard's "Highlights" tab -- "By time" (timestamp-range windows, Line +
+ * Scatter) and "By value" (a sensor's value ranges, Scatter only) rendered
+ * SIDE BY SIDE as two columns (`.hl-grid` in the approved prototype),
+ * divided by a vertical rule, instead of stacked top-to-bottom -- both are
+ * visible at once without scrolling past one to reach the other. Persists
+ * through Dashboard.tsx's `timeHighlights` state -- this component only owns
+ * ephemeral draft-form / open-popover state, the same split already used for
+ * the Selected Sensor tab's colour picker.
  */
 export default function HighlightsPanel({
     timeHighlights, onAddTimeHighlight, onToggleTimeHighlight, onRemoveTimeHighlight, onRecolorTimeHighlight,
@@ -114,26 +116,32 @@ export default function HighlightsPanel({
     // colour popover.
     const [rangeColorAnchor, setRangeColorAnchor] = useState<PopoverAnchorRect | null>(null);
 
-    // Both colour popovers are gated on `highlightApplies`/`valueHighlightApplies`
-    // (see their render sites below) rather than unmounted along with their
-    // row, so switching chart type away and back doesn't naturally clear
-    // `highlightColorFor`/`rangeColorFor` the way a removed row would. A
-    // round trip like Line -> Pair Plot -> Line left the picker re-mounting
+    // Both colour popovers (and the inline rename draft) are gated on
+    // `highlightApplies`/`valueHighlightApplies` (see their render sites
+    // below) rather than unmounted along with their row, so switching chart
+    // type away and back doesn't naturally clear `highlightColorFor`/
+    // `rangeColorFor`/`editLabelFor` the way a removed row would. A round
+    // trip like Line -> Pair Plot -> Line left the picker re-mounting
     // unasked at the screen position captured before the switch -- the
     // panel's own layout shifts in between (the "Not shown on Pair Plot"
-    // banner appears above the list), so that position is stale (QA sweep,
-    // 2026-10-02; same stale-anchor bug class fixed elsewhere by clearing
-    // the "…For" state once its popover can no longer legitimately be open).
+    // banner appears above the list), so that position is stale.
+    //
+    // Narrowing this to "only clear when the column becomes DISABLED" (the
+    // original fix) missed a second case: Line <-> Scatter never disables
+    // the "By time" column, but Scatter inserts/removes its own inline note
+    // above the chip list, which also moves the swatch -- so the popover
+    // stayed open at a stale position across that switch too. Clearing on
+    // ANY chartType change (not just disabled transitions) covers both --
+    // every popover/draft that depends on chart-relative layout is cheap to
+    // re-open, so there's no reason to try to preserve it across a type
+    // switch (QA sweep, 2026-10-02).
     useEffect(() => {
-        if (!highlightApplies) {
-            setHighlightColorFor(null);
-            setHighlightColorAnchor(null);
-        }
-        if (!valueHighlightApplies) {
-            setRangeColorFor(null);
-            setRangeColorAnchor(null);
-        }
-    }, [highlightApplies, valueHighlightApplies]);
+        setHighlightColorFor(null);
+        setHighlightColorAnchor(null);
+        setRangeColorFor(null);
+        setRangeColorAnchor(null);
+        setEditLabelFor(null);
+    }, [chartType]);
 
     const handleAddRange = () => {
         const min = parseFloat(draftRangeMin);
@@ -170,30 +178,17 @@ export default function HighlightsPanel({
     const cancelEditLabel = () => setEditLabelFor(null);
 
     return (
-        <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', padding: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>By time</span>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>colour Line or Scatter by a timestamp range</span>
-            </div>
-
-            {!highlightApplies && (
-                <div style={compatBannerStyle}>
-                    <AlertCircle size={14} style={{ flexShrink: 0, color: 'var(--warn)' }} />
-                    <span style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                        Not shown on <b style={{ color: 'var(--text-primary)' }}>Pair Plot</b> — it keeps its own lasso-cluster gesture instead.
-                    </span>
-                </div>
-            )}
-
-            <fieldset disabled={!highlightApplies} style={highlightApplies ? fieldsetResetStyle : { ...fieldsetResetStyle, ...mutedStyle }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
-                    <span style={{ fontSize: '0.68rem', fontWeight: 650, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-                        Line display
-                    </span>
-                    <div className="chart-type-group" style={{ width: 'fit-content' }}>
+        <div className="highlights-grid">
+            {/* ===== Left column: "By time" (Line + Scatter) ===== */}
+            <div className="highlights-col">
+                <div className="highlights-col-head">
+                    <span className="highlights-col-title">By time</span>
+                    <span className="highlights-col-hint">Line + Scatter</span>
+                    <span className="highlights-spacer" />
+                    <div className="highlights-seg" title="How highlights render on the Line chart">
                         <button
                             type="button"
-                            className={`chart-type-btn${lineDisplay === 'band' ? ' active' : ''}`}
+                            className={lineDisplay === 'band' ? 'is-on' : ''}
                             onClick={() => onSetLineDisplay('band')}
                             disabled={!lineDisplayApplies}
                         >
@@ -201,245 +196,201 @@ export default function HighlightsPanel({
                         </button>
                         <button
                             type="button"
-                            className={`chart-type-btn${lineDisplay === 'line' ? ' active' : ''}`}
+                            className={lineDisplay === 'line' ? 'is-on' : ''}
                             onClick={() => onSetLineDisplay('line')}
                             disabled={!lineDisplayApplies}
                         >
                             Line colour
                         </button>
                     </div>
-                    {/* Scatter-specific: NOT the amber compatBannerStyle used
-                        above -- highlights are still fully live on Scatter,
-                        just fixed to the ring, so a "not shown" warning would
-                        overstate it. Quiet, informational tone instead. Pair
-                        Plot needs no equivalent note here -- the banner above
-                        already explains the whole group is inert there. */}
-                    {chartType === 'scatter' && (
-                        <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                            Not adjustable here — Scatter always renders highlights as a ring, regardless of this setting.
-                        </span>
-                    )}
                 </div>
 
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input type="datetime-local" value={draftStart} onChange={e => { setDraftStart(e.target.value); setHighlightError(null); }} style={dtInputStyle} />
-                    <span style={{ color: 'var(--text-secondary)' }}>→</span>
-                    <input type="datetime-local" value={draftEnd} onChange={e => { setDraftEnd(e.target.value); setHighlightError(null); }} style={dtInputStyle} />
-                </div>
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-                    <input
-                        type="text" placeholder="Label (optional)" value={draftLabel}
-                        onChange={e => setDraftLabel(e.target.value)}
-                        style={{ ...numInputStyle, flex: 1, width: 'auto' }}
-                    />
-                    <button className="text-btn" onClick={handleAddHighlight}>+ Add</button>
-                </div>
-                {highlightError && <div style={errorStyle}>{highlightError}</div>}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    {timeHighlights.length === 0 && (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, padding: '4px 0' }}>
-                            No highlights yet.
-                        </div>
-                    )}
-                    {timeHighlights.map(h => (
-                        <div key={h.id}>
-                            <div style={chipRowStyle}>
-                                <input type="checkbox" checked={h.enabled} onChange={() => onToggleTimeHighlight(h.id)} title={h.enabled ? 'Hide this highlight' : 'Show this highlight'} />
-                                <button
-                                    onClick={(e) => {
-                                        const opening = highlightColorFor !== h.id;
-                                        setHighlightColorFor(opening ? h.id : null);
-                                        setHighlightColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
-                                    }}
-                                    title="Change colour"
-                                    style={{ ...swatchButtonStyle, background: h.color }}
-                                />
-                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                                    {editLabelFor === h.id && highlightApplies ? (
-                                        <input
-                                            type="text"
-                                            value={draftEditLabel}
-                                            autoFocus
-                                            onChange={e => setDraftEditLabel(e.target.value)}
-                                            onBlur={commitEditLabel}
-                                            onKeyDown={e => {
-                                                if (e.key === 'Enter') commitEditLabel();
-                                                else if (e.key === 'Escape') cancelEditLabel();
-                                            }}
-                                            style={labelEditInputStyle}
-                                        />
-                                    ) : (
-                                        <span style={{ fontSize: '0.78rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.label}</span>
-                                    )}
-                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>{fmtRange(h.start, h.end)}</span>
-                                </div>
-                                <button onClick={() => startEditLabel(h)} title="Rename" style={iconButtonStyle}><Pencil size={12} /></button>
-                                <button onClick={() => onRemoveTimeHighlight(h.id)} title="Remove" style={iconButtonStyle}><X size={12} /></button>
-                            </div>
-                            {/* Gated on highlightApplies too, not just fieldset
-                                disabled=true: ColorPlatePicker is a custom
-                                drag-square/hue-slider built from plain divs, not
-                                a native form control, so a disabled <fieldset>
-                                alone would NOT stop it from being dragged if it
-                                was already open when the chart type changed
-                                underneath it. */}
-                            {highlightColorFor === h.id && highlightApplies && (
-                                <AnchoredPopover
-                                    anchorRect={highlightColorAnchor}
-                                    onRequestClose={() => { setHighlightColorFor(null); setHighlightColorAnchor(null); }}
-                                    style={{ width: 160 }}
-                                >
-                                    <ColorPlatePicker color={h.color} onChange={hex => onRecolorTimeHighlight(h.id, hex)} />
-                                </AnchoredPopover>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            </fieldset>
-            <div style={{ ...scopeNoteStyle, marginTop: '10px' }}>
-                Applies to Line and Scatter. Line shows a tinted band or recolours itself (see above); Scatter always rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '16px 0 8px' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>By value</span>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>colour Scatter points by a sensor's value range</span>
-            </div>
-
-            {!valueHighlightApplies && (
-                <div style={compatBannerStyle}>
-                    <AlertCircle size={14} style={{ flexShrink: 0, color: 'var(--warn)' }} />
-                    <span style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                        Only affects <b style={{ color: 'var(--text-primary)' }}>Scatter</b> — Line has no 3rd-sensor colour channel and Pair Plot keeps its own lasso-cluster gesture instead.
-                    </span>
-                </div>
-            )}
-
-            <fieldset disabled={!valueHighlightApplies} style={valueHighlightApplies ? fieldsetResetStyle : { ...fieldsetResetStyle, ...mutedStyle }}>
-                <select
-                    value={valueHighlight.sensor}
-                    onChange={e => onSetValueHighlightSensor(e.target.value)}
-                    style={{ ...numInputStyle, width: '100%', marginBottom: '6px' }}
-                >
-                    <option value="">Colour by…</option>
-                    {valueHighlightSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-
-                {valueHighlight.sensor && (
-                    <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
-                            {valueHighlight.ranges.length === 0 && (
-                                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.6, padding: '4px 0' }}>
-                                    No ranges yet — a point stays uncoloured until at least one is added below.
-                                </div>
-                            )}
-                            {valueHighlight.ranges.map(r => (
-                                <div key={r.id}>
-                                    <div style={chipRowStyle}>
-                                        <input type="checkbox" checked={r.enabled} onChange={() => onToggleValueHighlightRange(r.id)} title={r.enabled ? 'Hide this range' : 'Show this range'} />
-                                        <button
-                                            onClick={(e) => {
-                                                const opening = rangeColorFor !== r.id;
-                                                setRangeColorFor(opening ? r.id : null);
-                                                setRangeColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
-                                            }}
-                                            title="Change colour"
-                                            style={{ ...swatchButtonStyle, background: r.color }}
-                                        />
-                                        <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 500 }}>{fmt(r.min)}–{fmt(r.max)}</span>
-                                        <button onClick={() => onRemoveValueHighlightRange(r.id)} title="Remove" style={iconButtonStyle}><X size={12} /></button>
-                                    </div>
-                                    {/* Same reasoning as the "By time" picker above —
-                                        gated on valueHighlightApplies too, not just
-                                        fieldset disabled. */}
-                                    {rangeColorFor === r.id && valueHighlightApplies && (
-                                        <AnchoredPopover
-                                            anchorRect={rangeColorAnchor}
-                                            onRequestClose={() => { setRangeColorFor(null); setRangeColorAnchor(null); }}
-                                            style={{ width: 160 }}
-                                        >
-                                            <ColorPlatePicker color={r.color} onChange={hex => onRecolorValueHighlightRange(r.id, hex)} />
-                                        </AnchoredPopover>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px' }}>
-                            <input
-                                type="number" placeholder="min" value={draftRangeMin}
-                                onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
-                                style={numInputStyle}
-                            />
-                            <span style={{ color: 'var(--text-secondary)' }}>–</span>
-                            <input
-                                type="number" placeholder="max" value={draftRangeMax}
-                                onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
-                                style={numInputStyle}
-                            />
-                            <button className="text-btn" onClick={handleAddRange}>+ Add</button>
-                        </div>
-                        {rangeError && <div style={errorStyle}>{rangeError}</div>}
-                    </>
+                {!highlightApplies && (
+                    <div className="highlights-note">
+                        <AlertCircle size={13} />
+                        <span>Not shown on <b>Pair Plot</b> — it uses its own lasso clusters.</span>
+                    </div>
                 )}
-            </fieldset>
-            <div style={{ ...scopeNoteStyle, marginTop: '10px' }}>
-                Applies to Scatter only. A point's colour comes from the first enabled range its value falls inside; a value matching none of them fades out instead.
+
+                <fieldset disabled={!highlightApplies} className={`highlights-fieldset${highlightApplies ? '' : ' highlights-fieldset--dim'}`}>
+                    {/* Scatter-specific: NOT the amber note above -- highlights
+                        are still fully live on Scatter, just fixed to the
+                        ring, so a "not shown" warning would overstate it.
+                        Quiet, informational tone instead. Pair Plot needs no
+                        equivalent note here -- the banner above already
+                        explains the whole column is inert there. */}
+                    {chartType === 'scatter' && (
+                        <div className="highlights-inline-note">
+                            Not adjustable here — Scatter always renders highlights as a ring, regardless of this setting.
+                        </div>
+                    )}
+
+                    <div className="highlights-add-row">
+                        <input type="datetime-local" value={draftStart} onChange={e => { setDraftStart(e.target.value); setHighlightError(null); }} className="highlights-field highlights-field--date" />
+                        <span className="highlights-add-sep">→</span>
+                        <input type="datetime-local" value={draftEnd} onChange={e => { setDraftEnd(e.target.value); setHighlightError(null); }} className="highlights-field highlights-field--date" />
+                    </div>
+                    <div className="highlights-add-row">
+                        <input
+                            type="text" placeholder="Label (optional)" value={draftLabel}
+                            onChange={e => setDraftLabel(e.target.value)}
+                            className="highlights-field highlights-field--grow"
+                        />
+                        <button className="highlights-add-btn" onClick={handleAddHighlight}>+ Add</button>
+                    </div>
+                    {highlightError && <div className="highlights-error">{highlightError}</div>}
+
+                    <div className="highlights-chip-list">
+                        {timeHighlights.length === 0 && (
+                            <div className="highlights-empty">No highlights yet. Add one above or drag on the chart with the tag tool.</div>
+                        )}
+                        {timeHighlights.map(h => (
+                            <div key={h.id}>
+                                <div className="highlights-chip">
+                                    <input type="checkbox" checked={h.enabled} onChange={() => onToggleTimeHighlight(h.id)} title={h.enabled ? 'Hide this highlight' : 'Show this highlight'} />
+                                    <button
+                                        onClick={(e) => {
+                                            const opening = highlightColorFor !== h.id;
+                                            setHighlightColorFor(opening ? h.id : null);
+                                            setHighlightColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                        }}
+                                        title="Change colour"
+                                        className="highlights-chip-swatch"
+                                        style={{ background: h.color }}
+                                    />
+                                    <div className="highlights-chip-body">
+                                        {editLabelFor === h.id && highlightApplies ? (
+                                            <input
+                                                type="text"
+                                                value={draftEditLabel}
+                                                autoFocus
+                                                onChange={e => setDraftEditLabel(e.target.value)}
+                                                onBlur={commitEditLabel}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter') commitEditLabel();
+                                                    else if (e.key === 'Escape') cancelEditLabel();
+                                                }}
+                                                className="highlights-rename-input"
+                                            />
+                                        ) : (
+                                            <b>{h.label}</b>
+                                        )}
+                                        <small>{fmtRange(h.start, h.end)}</small>
+                                    </div>
+                                    <button onClick={() => startEditLabel(h)} title="Rename" className="highlights-chip-icon-btn"><Pencil size={12} /></button>
+                                    <button onClick={() => onRemoveTimeHighlight(h.id)} title="Remove" className="highlights-chip-icon-btn"><X size={12} /></button>
+                                </div>
+                                {/* Gated on highlightApplies too, not just fieldset
+                                    disabled=true: ColorPlatePicker is a custom
+                                    drag-square/hue-slider built from plain divs, not
+                                    a native form control, so a disabled <fieldset>
+                                    alone would NOT stop it from being dragged if it
+                                    was already open when the chart type changed
+                                    underneath it. */}
+                                {highlightColorFor === h.id && highlightApplies && (
+                                    <AnchoredPopover
+                                        anchorRect={highlightColorAnchor}
+                                        onRequestClose={() => { setHighlightColorFor(null); setHighlightColorAnchor(null); }}
+                                        style={{ width: 160 }}
+                                    >
+                                        <ColorPlatePicker color={h.color} onChange={hex => onRecolorTimeHighlight(h.id, hex)} />
+                                    </AnchoredPopover>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </fieldset>
+                <div className="highlights-scope-note">
+                    Applies to Line and Scatter. Line shows a tinted band or recolours itself (see above); Scatter always rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
+                </div>
+            </div>
+
+            {/* ===== Right column: "By value" (Scatter only) ===== */}
+            <div className="highlights-col">
+                <div className="highlights-col-head">
+                    <span className="highlights-col-title">By value</span>
+                    <span className="highlights-col-hint">Scatter only</span>
+                </div>
+
+                {!valueHighlightApplies && (
+                    <div className="highlights-note">
+                        <AlertCircle size={13} />
+                        <span>Only affects <b>Scatter</b> — Line has no 3rd-sensor colour channel and Pair Plot keeps its own lasso-cluster gesture instead.</span>
+                    </div>
+                )}
+
+                <fieldset disabled={!valueHighlightApplies} className={`highlights-fieldset${valueHighlightApplies ? '' : ' highlights-fieldset--dim'}`}>
+                    <select
+                        value={valueHighlight.sensor}
+                        onChange={e => onSetValueHighlightSensor(e.target.value)}
+                        className="highlights-field highlights-field--full"
+                    >
+                        <option value="">Colour by…</option>
+                        {valueHighlightSensors.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+
+                    {valueHighlight.sensor && (
+                        <>
+                            <div className="highlights-chip-list">
+                                {valueHighlight.ranges.length === 0 && (
+                                    <div className="highlights-empty">No ranges yet — a point stays uncoloured until at least one is added below.</div>
+                                )}
+                                {valueHighlight.ranges.map(r => (
+                                    <div key={r.id}>
+                                        <div className="highlights-chip">
+                                            <input type="checkbox" checked={r.enabled} onChange={() => onToggleValueHighlightRange(r.id)} title={r.enabled ? 'Hide this range' : 'Show this range'} />
+                                            <button
+                                                onClick={(e) => {
+                                                    const opening = rangeColorFor !== r.id;
+                                                    setRangeColorFor(opening ? r.id : null);
+                                                    setRangeColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                                }}
+                                                title="Change colour"
+                                                className="highlights-chip-swatch"
+                                                style={{ background: r.color }}
+                                            />
+                                            <div className="highlights-chip-body highlights-chip-body--row">
+                                                <b>{fmt(r.min)} – {fmt(r.max)}</b>
+                                            </div>
+                                            <button onClick={() => onRemoveValueHighlightRange(r.id)} title="Remove" className="highlights-chip-icon-btn"><X size={12} /></button>
+                                        </div>
+                                        {/* Same reasoning as the "By time" picker above —
+                                            gated on valueHighlightApplies too, not just
+                                            fieldset disabled. */}
+                                        {rangeColorFor === r.id && valueHighlightApplies && (
+                                            <AnchoredPopover
+                                                anchorRect={rangeColorAnchor}
+                                                onRequestClose={() => { setRangeColorFor(null); setRangeColorAnchor(null); }}
+                                                style={{ width: 160 }}
+                                            >
+                                                <ColorPlatePicker color={r.color} onChange={hex => onRecolorValueHighlightRange(r.id, hex)} />
+                                            </AnchoredPopover>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="highlights-add-row">
+                                <input
+                                    type="number" placeholder="min" value={draftRangeMin}
+                                    onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
+                                    className="highlights-field"
+                                />
+                                <span className="highlights-add-sep">–</span>
+                                <input
+                                    type="number" placeholder="max" value={draftRangeMax}
+                                    onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
+                                    className="highlights-field"
+                                />
+                                <button className="highlights-add-btn" onClick={handleAddRange}>+ Add</button>
+                            </div>
+                            {rangeError && <div className="highlights-error">{rangeError}</div>}
+                        </>
+                    )}
+                </fieldset>
+                <div className="highlights-scope-note">
+                    Applies to Scatter only. A point's colour comes from the first enabled range its value falls inside; a value matching none of them fades out instead.
+                </div>
             </div>
         </div>
     );
 }
-
-const numInputStyle: CSSProperties = {
-    padding: '5px 6px', fontSize: '0.75rem', width: '76px',
-    background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '6px', color: 'var(--text-primary)',
-};
-const dtInputStyle: CSSProperties = {
-    padding: '4px 6px', fontSize: '0.72rem', flex: 1, minWidth: '150px',
-    background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '6px', color: 'var(--text-primary)',
-};
-// Matches the approved prototype's `.chip` rhythm (8px radius, slightly
-// more breathing room) — look only, same fields/behaviour as before.
-const chipRowStyle: CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: '9px', padding: '6px 8px',
-    background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '8px',
-};
-const labelEditInputStyle: CSSProperties = {
-    fontSize: '0.78rem', fontWeight: 500, padding: '1px 4px', width: '100%',
-    background: 'var(--input-bg)', border: '1px solid var(--border)',
-    borderRadius: '5px', color: 'var(--text-primary)',
-};
-const swatchButtonStyle: CSSProperties = {
-    width: '14px', height: '14px', borderRadius: '50%', border: '1px solid rgba(0,0,0,0.25)',
-    cursor: 'pointer', flexShrink: 0, padding: 0,
-};
-const iconButtonStyle: CSSProperties = {
-    background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer',
-    padding: '2px', display: 'flex', flexShrink: 0,
-};
-const errorStyle: CSSProperties = {
-    fontSize: '0.7rem', color: 'var(--danger, #ef4444)', marginBottom: '6px',
-};
-const scopeNoteStyle: CSSProperties = {
-    fontSize: '0.68rem', color: 'var(--text-secondary)', opacity: 0.75,
-    paddingTop: '8px', borderTop: '1px dashed var(--border)', lineHeight: 1.5,
-};
-const compatBannerStyle: CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 9px', marginBottom: '8px',
-    background: 'var(--warn-muted)', border: '1px solid var(--warn)',
-    borderRadius: '6px',
-};
-/** Neutralises the browser's default <fieldset> chrome (border, padding,
- *  min-width: min-content) so it behaves like the plain <div> it replaces,
- *  visually. Always applied, regardless of disabled state. */
-const fieldsetResetStyle: CSSProperties = {
-    border: 'none', margin: 0, padding: 0, minWidth: 0,
-};
-/** Dims a group's controls when they have no effect on the current chart.
- *  Paired with the group's <fieldset disabled> -- opacity alone doesn't
- *  stop clicks, so every input/select/button inside genuinely can't be
- *  used while dimmed, not just look like it shouldn't be. */
-const mutedStyle: CSSProperties = {
-    opacity: 0.5,
-};

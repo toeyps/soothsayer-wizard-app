@@ -760,11 +760,17 @@ describe('AddSensorWindow', () => {
         expect(mockInvoke).not.toHaveBeenCalledWith('rename_formula_refs', expect.anything());
     });
 
-    it('Close closes the window', async () => {
+    // Visual refresh Phase 5 (2026-10-02): the Create tab's footer close
+    // button is now labelled "Cancel" (matching the approved prototype's
+    // `.mf` footer -- Cancel + Add sensor), not "Close" -- "Close" is still
+    // used, unchanged, on the Manage tab (see the multi-project isolation
+    // describe block below, which exercises that one). Both call the same
+    // `handleClose` handler.
+    it('Cancel closes the window (Create tab)', async () => {
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1']);
         await act(async () => {
-            fireEvent.click(screen.getByText('Close'));
+            fireEvent.click(screen.getByText('Cancel'));
             await Promise.resolve();
         });
         expect(mockClose).toHaveBeenCalled();

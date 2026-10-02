@@ -161,48 +161,42 @@ export default function SensorTooling({
   return (
     <div className="flex flex-col h-full bg-[var(--bg-secondary)] overflow-hidden">
       <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4">
-        {/* Target Sensors */}
+        {/* Target Sensors -- dashed-border chip box, matching the approved
+            prototype's `.srcs` "Source sensors" field. */}
         <div>
           <h3 className="text-xs font-bold uppercase text-[var(--text-secondary)] mb-2">
-            Target Sensors
+            Source sensors
           </h3>
-          <div className="text-sm bg-[var(--input-bg)] p-2 rounded border border-[var(--border)] max-h-24 overflow-y-auto">
+          <div className="special-sensor-srcs">
             {selectedSensors.length === 0 ? (
-              <span className="text-[var(--text-secondary)] italic">
-                No sensors selected
+              <span className="special-sensor-srcs-empty">
+                Click sensors on the left to add them
               </span>
             ) : (
-              <div className="flex flex-wrap gap-1">
-                {selectedSensors.map((s) => {
-                  const isBase = pickingBase && (engine.baseSensor || selectedSensors[0]) === s;
-                  return (
-                    <span
-                      key={s}
-                      onClick={pickingBase ? () => engine.setBaseSensor(s) : undefined}
-                      className="px-2 py-0.5 rounded text-xs border flex items-center gap-1"
-                      style={{
-                        cursor: pickingBase ? "pointer" : "default",
-                        backgroundColor: isBase ? "var(--accent-color)" : "var(--card-bg)",
-                        color: isBase ? "white" : "var(--text-primary)",
-                        borderColor: isBase ? "var(--accent-color)" : "var(--border)",
+              selectedSensors.map((s) => {
+                const isBase = pickingBase && (engine.baseSensor || selectedSensors[0]) === s;
+                return (
+                  <span
+                    key={s}
+                    onClick={pickingBase ? () => engine.setBaseSensor(s) : undefined}
+                    className={`special-sensor-chip${isBase ? ' is-base' : ''}`}
+                    style={{ cursor: pickingBase ? "pointer" : "default" }}
+                    title={pickingBase ? "Click to mark as the starting value" : undefined}
+                  >
+                    {isBase && <Star size={10} fill="currentColor" />}
+                    {getSensorName(s)}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveSensor(s);
                       }}
-                      title={pickingBase ? "Click to mark as the starting value" : undefined}
+                      className="special-sensor-chip-remove"
                     >
-                      {isBase && <Star size={10} fill="currentColor" />}
-                      {getSensorName(s)}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveSensor(s);
-                        }}
-                        className="hover:text-red-500 focus:outline-none"
-                      >
-                        &times;
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
+                      &times;
+                    </button>
+                  </span>
+                );
+              })
             )}
           </div>
           {pickingBase && (
@@ -239,19 +233,18 @@ export default function SensorTooling({
           {engine.mode === "buttons" ? "Edit as text instead" : "Use buttons instead"}
         </button>
 
-        {/* Preview panel */}
-        <div className="p-3 bg-[rgba(59,130,246,0.1)] border border-[var(--accent-color)] rounded text-xs text-[var(--text-primary)]">
-          <span className="font-semibold text-[var(--accent-color)]">Preview:</span>
-          <div className="mt-1">
-            {selectedSensors.length > 0 ? (
-              <div>
-                {engine.customName && <span className="font-bold">{engine.customName} = </span>}
-                {buildPreviewText(engine, selectedSensors, getSensorName, formulaEditor.formula)}
-              </div>
-            ) : (
-              <div className="text-[var(--text-secondary)]">Select sensors to see a preview</div>
-            )}
-          </div>
+        {/* Formula preview -- matches the approved prototype's `.formula`
+            line ("SensorName = A + B" style), dimmed to a hint when nothing
+            is selected yet. */}
+        <div className="special-sensor-formula">
+          {selectedSensors.length > 0 ? (
+            <>
+              {engine.customName && <b>{engine.customName} = </b>}
+              {buildPreviewText(engine, selectedSensors, getSensorName, formulaEditor.formula)}
+            </>
+          ) : (
+            <span className="special-sensor-formula-hint">Select sensors to see a preview</span>
+          )}
         </div>
 
         {/* Name/Description/Unit/Component -- the same master-data fields a
@@ -461,7 +454,7 @@ function ChainBuilder({
           <span key={tag} className="contents">
             <span
               className="px-2 py-0.5 rounded text-xs"
-              style={{ backgroundColor: "rgba(59,130,246,0.15)", color: "var(--accent-color)" }}
+              style={{ backgroundColor: "var(--accent-muted)", color: "var(--accent-color)" }}
             >
               {getSensorName(tag)}
             </span>
@@ -525,7 +518,7 @@ function WrapGroup({ engine }: { engine: UseCalculationEngineReturn }) {
         <div className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] mb-1">
           Then apply to the result
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="special-sensor-opgrid">
           {WRAP_OP_IDS.map((id) => {
             const op = findOperation("single", id);
             if (!op) return null;
@@ -534,14 +527,10 @@ function WrapGroup({ engine }: { engine: UseCalculationEngineReturn }) {
               <button
                 key={id}
                 onClick={() => engine.setWrapFunc(active ? null : id)}
-                className="px-2.5 py-1 rounded text-xs border transition-colors"
-                style={{
-                  borderColor: active ? "var(--accent-color)" : "var(--border)",
-                  backgroundColor: active ? "rgba(59,130,246,0.15)" : "var(--input-bg)",
-                  color: active ? "var(--accent-color)" : "var(--text-primary)",
-                }}
+                className={`special-sensor-op-card${active ? ' is-on' : ''}`}
               >
-                {op.label}
+                <span className="special-sensor-op-sym">{op.symbol}</span>
+                <b>{op.label}</b>
               </button>
             );
           })}
@@ -571,7 +560,15 @@ function OpGroup({ title, ids, engine }: { title: string; ids: string[]; engine:
       <div className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] mb-1">
         {title}
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      {/* Small operation cards -- matches the approved prototype's `.opc`
+          card look (symbol + label), applied over this app's real
+          operation set rather than the prototype's fixed 4-card mockup
+          (that mockup only models Combine/Subtract/Scale/Transform; this
+          app offers a richer, context-dependent set of single- and
+          multi-sensor operations -- the card STYLING is what's being
+          matched here, not a literal 4-card grid, so no operation is
+          dropped). */}
+      <div className="special-sensor-opgrid">
         {ids.map((id) => {
           const op = findOperation(engine.opGroup, id);
           if (!op) return null;
@@ -580,14 +577,10 @@ function OpGroup({ title, ids, engine }: { title: string; ids: string[]; engine:
             <button
               key={id}
               onClick={() => engine.setOperationId(active ? null : id)}
-              className="px-2.5 py-1 rounded text-xs border transition-colors"
-              style={{
-                borderColor: active ? "var(--accent-color)" : "var(--border)",
-                backgroundColor: active ? "rgba(59,130,246,0.15)" : "var(--input-bg)",
-                color: active ? "var(--accent-color)" : "var(--text-primary)",
-              }}
+              className={`special-sensor-op-card${active ? ' is-on' : ''}`}
             >
-              {op.label}
+              {op.symbol && <span className="special-sensor-op-sym">{op.symbol}</span>}
+              <b>{op.label}</b>
             </button>
           );
         })}
