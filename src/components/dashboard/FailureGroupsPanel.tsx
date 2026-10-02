@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Play, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Play, ChevronRight, Check } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
-import { groupModelsBySensor, modelSensorKey, type SensorModelGroup } from '../../utils/modelGrouping';
+import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
 import { getBuildBlockReason, type RunningConditionFg } from '../../utils/runningCondition';
 import { isModelTrainedFresh } from '../../utils/trainFingerprint';
 
@@ -114,6 +114,16 @@ export default function FailureGroupsPanel({
     const [showNewGroup, setShowNewGroup] = useState(false);
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
+    // 2026-10-02 (Visual refresh Phase 2, SPEC FINAL 2026-09-30): the
+    // locked structural rule for this tab is "search -> summary chip ->
+    // group rows -> sensor rows", same shell as the Sensor tab's own
+    // search box. Filters which sensor lines render within each group (and
+    // hides a group entirely once its name and every one of its sensors
+    // fail to match) -- same two-level match as the approved prototype's
+    // fgPanel(): a group-NAME match keeps every sensor in that group, a
+    // sensor match on its own only keeps that sensor. Display-only; does
+    // not touch which models/groups exist.
+    const [fgSearch, setFgSearch] = useState('');
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
 
@@ -178,13 +188,18 @@ export default function FailureGroupsPanel({
     // previously showed no kind indicator at all, so two models of the
     // same sensor in different kinds (e.g. Individual + Relationship) were
     // visually identical, reported by the user directly ("tab FG ไม่บอก
-    // อะไรเลย"). Reuses `.model-kind-icon--*`, the exact same class Build
-    // Model's own row badge uses, for one consistent visual language
-    // across the whole app rather than inventing a second one here.
+    // อะไรเลย").
+    //
+    // 2026-10-02 (Visual refresh Phase 2): badge shell switched to
+    // `.kind-badge`/`.kind-badge--*` (the dedicated Phase 0 class for this
+    // tab) instead of `.model-kind-icon--*`. This row's own badge never
+    // carries a status dot (the sensor row above it already shows one per
+    // kind) so the `.f4-kb-dot` constraint explained on renderSensorRow
+    // below doesn't apply here.
     const renderModelRow = (model: FailureModel) => (
         <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div
-                className={`model-kind-icon model-kind-icon--${model.kind}`}
+                className={`kind-badge kind-badge--${model.kind}`}
                 title={KIND_LABEL[model.kind]}
                 style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.56rem', flexShrink: 0 }}
             >
@@ -210,13 +225,28 @@ export default function FailureGroupsPanel({
     // shows the sensor once plus a mini chip per kind that exists; the
     // per-model rows (and their delete buttons) sit inside the expansion.
     // No category control here — category is set on Build Model's sensor header.
+    //
+    // 2026-10-02 (Visual refresh Phase 2, SPEC FINAL 2026-09-30): the I/R/C
+    // badge SHELL below now uses `.kind-badge`/`.kind-badge--*` (the
+    // dedicated class Phase 0 added for this tab — see App.css's matching
+    // comment). The corner STATUS DOT deliberately keeps its existing
+    // `.f4-kb-dot`/`.f4-kb-dot--trained`/`--complete` class instead of
+    // moving to the newer `.kind-badge-dot` alongside it: a cross-window
+    // integration test this pass does not own
+    // (`BuildModelWorkbenchStatusDotCrossWindow.integration.test.tsx`,
+    // qa-agent's) reads this dot's class with a `/f4-kb-dot--(\w+)/` regex,
+    // and renaming it would make that assertion silently read back "none"
+    // for every state instead of failing loudly. Both dot classes render
+    // identically (same `--accent-hi`/`--ok` tokens under the hood — see
+    // App.css), so there is no visual inconsistency on screen from this,
+    // only a class-name one under the hood.
     const renderSensorRow = (groupNo: number, sg: SensorModelGroup) => {
         const id = `${groupNo}:${sg.key}`;
         const open = expandedSensors.has(id);
         const first = sg.models[0];
         const keyTag = first.kind === 'clustering' ? first.xSensor : first.targetSensor;
-        const desc = keyTag ? sensorMetaMap.get(normalizeSensorTag(keyTag))?.description : undefined;
-        const label = keyTag ? (desc ? `${desc} (${keyTag})` : keyTag) : modelDisplayLabel(first);
+        const meta = keyTag ? sensorMetaMap.get(normalizeSensorTag(keyTag)) : undefined;
+        const label = keyTag ? (meta?.description ? `${meta.description} (${keyTag})` : keyTag) : modelDisplayLabel(first);
         const kinds = (['individual', 'relationship', 'clustering'] as ModelKind[]).filter(k => sg.models.some(m => m.kind === k));
         return (
             <div key={id} data-testid={`fg-sensor-row-${id}`}>
@@ -232,6 +262,13 @@ export default function FailureGroupsPanel({
                         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
                             {label}
                         </span>
+                        {/* Unit badge trails the name+tag label, matching the
+                            Sensor tab's "name (unit) tag" convention as
+                            closely as this row's combined "desc (tag)" text
+                            allows without splitting that text across
+                            elements (a test asserts on its exact combined
+                            string — see FailureGroupsPanel.test.tsx). */}
+                        {meta?.unit && <span className="unit-badge" style={{ flexShrink: 0 }}>{meta.unit}</span>}
                     </button>
                     {kinds.map(k => {
                         // One model per (sensor, kind) across the whole
@@ -243,9 +280,9 @@ export default function FailureGroupsPanel({
                         return (
                             <span
                                 key={k}
-                                className={`model-kind-icon model-kind-icon--${k}`}
+                                className={`kind-badge kind-badge--${k}`}
                                 title={KIND_LABEL[k]}
-                                style={{ position: 'relative', width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.56rem', flexShrink: 0 }}
+                                style={{ width: '18px', height: '18px', fontSize: '0.56rem', flexShrink: 0 }}
                             >
                                 {k.charAt(0).toUpperCase()}
                                 {dot !== 'none' && (
@@ -270,13 +307,38 @@ export default function FailureGroupsPanel({
 
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModels = fgModels.length;
-    const totalSensors = new Set(fgModels.map(m => modelSensorKey(m))).size;
+    // "N of M models complete" summary chip (2026-10-02 reskin) — `status`
+    // is the exact same boolean the group-row/footer "done / total"
+    // counters and `dotStatusFor`'s 'complete' case already read.
+    const doneModels = fgModels.filter(m => m.status).length;
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
     // for models built against a sensor that isn't part of any failure
     // mode. Always rendered as its own card now (2026-08-31 fix — it used
     // to hide until non-empty, which meant there was no entry point to
     // ever get a model into it in the first place).
     const ungroupedModels = fgModels.filter(m => m.groupNos.includes(0));
+
+    // 2026-10-02 (Visual refresh Phase 2): search box filtering, per the
+    // locked structural rule ("search -> summary chip -> group rows ->
+    // sensor rows"). Mirrors the approved prototype's own two-level match:
+    // a GROUP NAME match keeps every sensor line in that card; otherwise
+    // only sensor lines whose own description/tag matches survive, and a
+    // group with none left (and a non-matching name) is hidden entirely.
+    // Display/filter only — never touches which groups/models exist.
+    const searchQuery = fgSearch.trim().toLowerCase();
+    const sensorMatchesQuery = (sg: SensorModelGroup) => {
+        if (!searchQuery) return true;
+        const first = sg.models[0];
+        const keyTag = first.kind === 'clustering' ? first.xSensor : first.targetSensor;
+        const desc = keyTag ? sensorMetaMap.get(normalizeSensorTag(keyTag))?.description : undefined;
+        return `${desc ?? ''} ${keyTag ?? ''}`.toLowerCase().includes(searchQuery);
+    };
+    const visibleSensorGroups = (groupNo: number, groupName: string): { visible: boolean; sensorGroups: SensorModelGroup[] } => {
+        const all = groupModelsBySensor(fgModels, groupNo);
+        if (!searchQuery || groupName.toLowerCase().includes(searchQuery)) return { visible: true, sensorGroups: all };
+        const filtered = all.filter(sensorMatchesQuery);
+        return { visible: filtered.length > 0, sensorGroups: filtered };
+    };
 
     const toggleGroupDetails = (g: FailureGroup) => {
         if (expandedGroupNo === g.no) {
@@ -326,53 +388,80 @@ export default function FailureGroupsPanel({
         setShowNewGroup(false);
     };
 
+    // "Not in Group" goes through the same search visibility rule as a
+    // real group (see `visibleSensorGroups` above) — computed once here
+    // since it isn't part of the `realGroups.map()` below.
+    const notInGroupVisible = visibleSensorGroups(0, 'Not in Group');
+
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                <span><b style={{ color: 'var(--text-primary)' }}>{totalSensors}</b> sensors</span>
-                <span style={{ color: 'var(--border)' }}>·</span>
-                <span><b style={{ color: 'var(--text-primary)' }}>{totalModels}</b> models</span>
-                <span style={{ color: 'var(--border)' }}>·</span>
-                <span><b style={{ color: 'var(--text-primary)' }}>{realGroups.length}</b> groups</span>
+        <div className="fg-panel-widget" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            {/* Search -> summary chip -> legend, same header shell as the
+                Sensor tab's own search box (locked structural rule, SPEC
+                FINAL 2026-09-30: "tab Failure Groups ใช้โครงเดียวกับ tab
+                Sensors"). */}
+            <div className="widget-header" style={{ flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
+                <input
+                    type="text"
+                    placeholder="Search groups or sensors..."
+                    value={fgSearch}
+                    onChange={e => setFgSearch(e.target.value)}
+                    className="search-input-compact"
+                />
+                <div className="fg-summary-chip">
+                    <b>{doneModels}</b> of {totalModels} models complete
+                </div>
+                <div className="fg-legend">
+                    <span><i className="fg-legend-dot" />Not trained</span>
+                    <span><i className="fg-legend-dot fg-legend-dot--trained" />Trained</span>
+                    <span><i className="fg-legend-dot fg-legend-dot--complete" />Complete</span>
+                </div>
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {realGroups.map(group => {
                     const groupModels = fgModels.filter(m => m.groupNos.includes(group.no));
+                    const doneInGroup = groupModels.filter(m => m.status).length;
                     const color = getGroupColor(group.no);
                     const isExpanded = expandedGroupNo === group.no;
+                    const { visible, sensorGroups } = visibleSensorGroups(group.no, group.name);
+                    if (!visible) return null;
                     return (
                         <div
                             key={group.no}
                             className={`fg-group-color-${color} fg-group-card`}
                             style={{ border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}
                         >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
+                            <div className="fg-row">
                                 <span className="fg-group-dot" />
-                                <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span className="fg-row-name">
                                     {group.name}
                                 </span>
-                                <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>FG-{group.no}</span>
-                                <button className="text-btn" style={{ fontSize: '0.66rem' }} onClick={() => toggleGroupDetails(group)}>
-                                    {isExpanded ? 'Hide details' : 'Edit details'}
-                                </button>
-                                <button
-                                    className="fg-icon-btn fg-icon-btn-danger"
-                                    title="Delete group"
-                                    // 2026-08-31: no confirmation dialog anywhere in the app,
-                                    // per explicit user request — click delete, it's deleted.
-                                    // (Briefly used an async ask() here to fix window.confirm()
-                                    // not actually blocking in Tauri's webview; removed again
-                                    // once the user clarified they want no confirmation at all,
-                                    // system-wide, not just a working one.)
-                                    onClick={() => onDeleteGroup(group.no)}
-                                >
-                                    <Trash2 size={11} />
-                                </button>
+                                <span className="fg-row-no">FG-{group.no}</span>
+                                <div className="fg-row-actions">
+                                    <button className="text-btn" style={{ fontSize: '0.66rem' }} onClick={() => toggleGroupDetails(group)}>
+                                        {isExpanded ? 'Hide details' : 'Edit details'}
+                                    </button>
+                                    <button
+                                        className="fg-icon-btn fg-icon-btn-danger"
+                                        title="Delete group"
+                                        // 2026-08-31: no confirmation dialog anywhere in the app,
+                                        // per explicit user request — click delete, it's deleted.
+                                        // (Briefly used an async ask() here to fix window.confirm()
+                                        // not actually blocking in Tauri's webview; removed again
+                                        // once the user clarified they want no confirmation at all,
+                                        // system-wide, not just a working one.)
+                                        onClick={() => onDeleteGroup(group.no)}
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                </div>
+                                <span className="fg-row-count">
+                                    {groupModels.length > 0 ? <><b>{doneInGroup}</b> / {groupModels.length}</> : '0'}
+                                </span>
                             </div>
 
                             {isExpanded && (
-                                <div style={{ borderTop: '1px solid var(--border)', padding: '8px 8px 8px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div className="fg-group-edit">
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                         <label style={{ fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>Name</label>
                                         <input
@@ -402,15 +491,24 @@ export default function FailureGroupsPanel({
                                             style={{ resize: 'vertical', padding: '5px 7px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.72rem' }}
                                         />
                                     </div>
+                                    {/* Static label, not a live dirty/clean indicator — the
+                                        debounced autosave above already runs unconditionally
+                                        on every change, this just tells the user that's the
+                                        case (matches the approved prototype's `.gedit .saved`,
+                                        which is the same always-on label, not a tracked
+                                        pending/saved state machine). */}
+                                    <div className="fg-edit-saved">
+                                        <Check size={12} /> Saved automatically
+                                    </div>
                                 </div>
                             )}
 
                             <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
-                                {groupModels.length === 0 ? (
+                                {sensorGroups.length === 0 ? (
                                     <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                        {groupModelsBySensor(fgModels, group.no).map(sg => renderSensorRow(group.no, sg))}
+                                        {sensorGroups.map(sg => renderSensorRow(group.no, sg))}
                                     </div>
                                 )}
                             </div>
@@ -424,33 +522,49 @@ export default function FailureGroupsPanel({
                     FIRST one (no "+ Add model" button existed here at all).
                     Reported by the user after testing: "not in group ทำไม
                     ไม่สามารถ add model ได้". */}
-                <div
-                    className="fg-group-color-slate fg-group-card"
-                    style={{ border: '1px dashed var(--border)', borderRadius: '8px', overflow: 'hidden' }}
-                >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 8px' }}>
-                        <span className="fg-group-dot" />
-                        <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                            Not in Group
-                        </span>
-                        <span style={{ fontSize: '0.66rem', fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>
-                            {ungroupedModels.length} model{ungroupedModels.length === 1 ? '' : 's'}
-                        </span>
-                    </div>
-                    <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
-                        {ungroupedModels.length === 0 ? (
-                            <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                {groupModelsBySensor(fgModels, 0).map(sg => renderSensorRow(0, sg))}
+                {notInGroupVisible.visible && (
+                    <div
+                        className="fg-group-color-slate fg-group-card"
+                        style={{ border: '1px dashed var(--border)', borderRadius: '8px', overflow: 'hidden' }}
+                    >
+                        <div className="fg-row">
+                            <span className="fg-group-dot" />
+                            <span className="fg-row-name" style={{ color: 'var(--text-secondary)' }}>
+                                Not in Group
+                            </span>
+                            <span className="fg-row-count">
+                                {ungroupedModels.length > 0 ? <><b>{ungroupedModels.filter(m => m.status).length}</b> / {ungroupedModels.length}</> : '0'}
+                            </span>
+                        </div>
+                        <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
+                            {notInGroupVisible.sensorGroups.length === 0 ? (
+                                <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                    {notInGroupVisible.sensorGroups.map(sg => renderSensorRow(0, sg))}
+                                </div>
+                            )}
+                            <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>
+                                Sensors here aren't tied to any failure group — a place for a standalone model.
                             </div>
-                        )}
-                        <div style={{ marginTop: '4px', fontSize: '0.65rem', color: 'var(--text-faint)', lineHeight: 1.4 }}>
-                            Sensors here aren't tied to any failure group — a place for a standalone model.
                         </div>
                     </div>
-                </div>
+                )}
 
+                {realGroups.length === 0 && (
+                    <div className="no-results">No failure groups yet</div>
+                )}
+            </div>
+
+            {/* Panel footer: create-group + "Build Model ->" together
+                (locked structural rule, SPEC FINAL 2026-09-30: "ท้ายแผง =
+                สร้างกลุ่ม + Build Model ->") — 2026-10-02: moved the
+                create-group control down here from the scrollable list
+                above it so both live in the same non-scrolling footer, as
+                designed. The toggle/input/Create interaction itself is
+                untouched (same handlers, same Enter/Escape keys, same
+                validation) — only its container moved. */}
+            <div className="fg-footer">
                 {showNewGroup ? (
                     <div>
                         <div style={{ display: 'flex', gap: '4px' }}>
@@ -472,26 +586,19 @@ export default function FailureGroupsPanel({
                 ) : (
                     <button
                         onClick={() => setShowNewGroup(true)}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '7px 0', borderRadius: '8px', border: '1px dashed var(--border)', background: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem', cursor: 'pointer' }}
+                        className="fg-addbtn"
                     >
                         <Plus size={13} /> Add failure group
                     </button>
                 )}
 
-                {realGroups.length === 0 && !showNewGroup && (
-                    <div className="no-results">No failure groups yet</div>
-                )}
-            </div>
-
-            <div style={{ padding: '8px', borderTop: '1px solid var(--border)' }}>
                 <button
                     className="fg-build-model-btn"
                     onClick={onOpenBuildModel}
                 >
-                    <Play size={12} /> Build Model
+                    <Play size={12} /> Build Model →
                 </button>
             </div>
-
         </div>
     );
 }

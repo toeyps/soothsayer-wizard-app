@@ -84,19 +84,34 @@ describe('FailureGroupsPanel', () => {
             expect(screen.queryAllByTitle('Delete group')).toHaveLength(0);
         });
 
-        it('does not count toward the "groups" stat (it is not a real failure group)', () => {
+        it('does not get an FG-n badge or edit/delete controls counted as a real group — only its own "done / total" row count shows', () => {
             const fgModels = [makeModel({ id: 'm1', groupNos: [0] })];
-            const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
-            const statBolds = container.querySelectorAll('b');
-            expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '1', '0']); // sensors, models, groups
+            render(<FailureGroupsPanel {...makeProps({ fgModels, fgGroups: [notInGroup] })} />);
+            expect(screen.queryByText(/^FG-0$/)).toBeNull();
         });
     });
 
-    it('computes header stats: sensor count, model count, group count (no completion % anymore — status lives only in Build Model)', () => {
+    // 2026-10-02 (Visual refresh Phase 2): the header's old "sensors /
+    // models / groups" 3-stat line was replaced by a single "N of M models
+    // complete" summary chip, matching the approved prototype's `.selchip`
+    // (SPEC FINAL 2026-09-30's locked "search -> summary chip -> group
+    // rows" structure) — see FailureGroupsPanel.tsx's render for the chip.
+    it('shows a "N of M models complete" summary chip in the header (no completion % anymore — status lives only in Build Model)', () => {
         const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
         const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
-        const statBolds = container.querySelectorAll('b');
-        expect(Array.from(statBolds).map((b) => b.textContent)).toEqual(['1', '2', '1']); // both models are the same sensor -> 1 sensor, 2 models
+        const chip = container.querySelector('.fg-summary-chip')!;
+        expect(chip.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 of 2 models complete');
+        expect(chip.querySelector('b')!.textContent).toBe('1');
+    });
+
+    it('each group row shows its own "done / total" models-complete count', () => {
+        const fgModels = [
+            makeModel({ id: 'm1', groupNos: [1], status: true }),
+            makeModel({ id: 'm2', groupNos: [1], targetSensor: 'TAG2', status: false }),
+        ];
+        render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
+        const countEl = screen.getByText('FG-1').closest('.fg-row')!.querySelector('.fg-row-count')!;
+        expect(countEl.textContent).toBe('1 / 2');
     });
 
     it('lists every model in the group by name, without any Complete/Incomplete status (removed per user request)', () => {
@@ -108,7 +123,11 @@ describe('FailureGroupsPanel', () => {
         expect(modelLabels()).toEqual([]); // collapsed: the sensor shows once, not its models
         expandAll();
         expect(modelLabels()).toEqual(['Bearing model (TAG1)', 'Temp model (TAG1)']);
-        expect(screen.queryByText('Complete')).toBeNull();
+        // 2026-10-02 reskin: the header's status-dot legend has its own
+        // static "Complete" label now (unrelated to any per-model text),
+        // so this only checks no ADDITIONAL "Complete" text shows up next
+        // to a model row — the legend's one instance is expected.
+        expect(screen.queryAllByText('Complete')).toHaveLength(1);
         expect(screen.queryByText('Incomplete')).toBeNull();
     });
 
@@ -118,12 +137,14 @@ describe('FailureGroupsPanel', () => {
             makeModel({ id: 'm2', kind: 'relationship', predictorSensors: ['TAG2'] }),
         ];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
-        // The collapsed sensor line already carries one chip per kind that exists.
-        const individualBadge = screen.getByText('I', { selector: '.model-kind-icon' });
-        const relationshipBadge = screen.getByText('R', { selector: '.model-kind-icon' });
-        expect(screen.queryByText('C', { selector: '.model-kind-icon' })).toBeNull(); // no Clustering model -> no chip
-        expect(individualBadge.className).toContain('model-kind-icon--individual');
-        expect(relationshipBadge.className).toContain('model-kind-icon--relationship');
+        // The collapsed sensor line already carries one chip per kind that
+        // exists. 2026-10-02 reskin: badge shell is `.kind-badge` (the
+        // Phase 0 class built for this tab) instead of `.model-kind-icon`.
+        const individualBadge = screen.getByText('I', { selector: '.kind-badge' });
+        const relationshipBadge = screen.getByText('R', { selector: '.kind-badge' });
+        expect(screen.queryByText('C', { selector: '.kind-badge' })).toBeNull(); // no Clustering model -> no chip
+        expect(individualBadge.className).toContain('kind-badge--individual');
+        expect(relationshipBadge.className).toContain('kind-badge--relationship');
     });
 
     // Phase C of the Build Model Workbench redesign (2026-09-30, SPEC FINAL):
@@ -133,7 +154,12 @@ describe('FailureGroupsPanel', () => {
     // `getBuildBlockReason` combination BuildModelWindow.tsx's own dot/pill
     // use, so the two views can never disagree.
     describe('status dot on the I/R/C badge', () => {
-        const badgeFor = (letter: string) => screen.getByText(letter, { selector: '.model-kind-icon' });
+        // 2026-10-02 reskin: badge shell is `.kind-badge` now (see "shows a
+        // colored kind badge" above) — the dot itself deliberately KEPT its
+        // `.f4-kb-dot` class (see FailureGroupsPanel.tsx's renderSensorRow
+        // doc comment: a cross-window integration test outside this pass's
+        // zone asserts that exact class name).
+        const badgeFor = (letter: string) => screen.getByText(letter, { selector: '.kind-badge' });
         const dotOn = (badge: HTMLElement) => badge.querySelector('.f4-kb-dot');
 
         it('shows no dot when the model has never been trained', () => {
@@ -251,9 +277,9 @@ describe('FailureGroupsPanel', () => {
             ];
             render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
             expect(screen.getAllByTestId(/^fg-sensor-row-/)).toHaveLength(1);
-            expect(screen.getByText('I', { selector: '.model-kind-icon' })).toBeTruthy();
-            expect(screen.getByText('R', { selector: '.model-kind-icon' })).toBeTruthy();
-            expect(screen.getByText('C', { selector: '.model-kind-icon' })).toBeTruthy();
+            expect(screen.getByText('I', { selector: '.kind-badge' })).toBeTruthy();
+            expect(screen.getByText('R', { selector: '.kind-badge' })).toBeTruthy();
+            expect(screen.getByText('C', { selector: '.kind-badge' })).toBeTruthy();
         });
 
         it('different sensors are different lines; a sensor in two groups appears in each', () => {
@@ -290,6 +316,60 @@ describe('FailureGroupsPanel', () => {
             expect(line.style.whiteSpace).toBe('nowrap');
             expect(line.style.textOverflow).toBe('ellipsis');
         });
+
+        // 2026-10-02 (Visual refresh Phase 2): unit badge next to the
+        // sensor row's name, matching the Sensor tab's own convention
+        // (`.unit-badge`, SPEC FINAL 2026-09-30: "ป้ายหน่วยอยู่ติดท้ายชื่อ
+        // sensor").
+        it('shows the sensor\'s unit as a badge next to the row label', () => {
+            render(<FailureGroupsPanel {...makeProps()} />);
+            expect(screen.getByText('bar', { selector: '.unit-badge' })).toBeTruthy();
+        });
+
+        it('shows no unit badge when the sensor has no metadata', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: '', targetSensor: 'TAG9' })] })} />);
+            expect(screen.queryByText('bar', { selector: '.unit-badge' })).toBeNull();
+        });
+    });
+
+    // 2026-10-02 (Visual refresh Phase 2, SPEC FINAL 2026-09-30): the
+    // locked structural rule for this tab opens with a search box, same as
+    // the Sensor tab's own ("tab Failure Groups ใช้โครงเดียวกับ tab
+    // Sensors ... ค้นหา -> ชิปสรุป -> แถวกลุ่ม..."). Display/filter only.
+    describe('search box', () => {
+        const fgModels = [
+            makeModel({ id: 'm1', groupNos: [1], targetSensor: 'TAG1' }),
+            makeModel({ id: 'm2', groupNos: [2], targetSensor: 'TAG2', name: '' }),
+        ];
+        const sensorMetadata: SensorMetadata[] = [
+            { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
+            { tag: 'TAG2', description: 'Motor Temperature', unit: 'C', component: 'Motor' },
+        ];
+
+        it('a sensor-text match keeps only that sensor\'s group, hiding the other', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels, sensorMetadata })} />);
+            fireEvent.change(screen.getByPlaceholderText('Search groups or sensors...'), { target: { value: 'motor' } });
+            expect(screen.queryByText('Group A')).toBeNull();
+            expect(screen.getByText('Group B')).toBeTruthy();
+            expect(screen.getByText('Motor Temperature (TAG2)')).toBeTruthy();
+        });
+
+        it('a group-NAME match keeps every sensor in that group', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels, sensorMetadata })} />);
+            fireEvent.change(screen.getByPlaceholderText('Search groups or sensors...'), { target: { value: 'group a' } });
+            expect(screen.getByText('Group A')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expect(screen.queryByText('Group B')).toBeNull();
+        });
+
+        it('clearing the search restores every group and sensor', () => {
+            render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels, sensorMetadata })} />);
+            const input = screen.getByPlaceholderText('Search groups or sensors...');
+            fireEvent.change(input, { target: { value: 'motor' } });
+            fireEvent.change(input, { target: { value: '' } });
+            expect(screen.getByText('Group A')).toBeTruthy();
+            expect(screen.getByText('Group B')).toBeTruthy();
+        });
     });
 
     it('shows "No models yet" for an empty group', () => {
@@ -318,10 +398,10 @@ describe('FailureGroupsPanel', () => {
         expect(onOpenBuildModel).not.toHaveBeenCalled();
     });
 
-    it('the bottom "Build Model" button opens the Build Model window', () => {
+    it('the bottom "Build Model →" button opens the Build Model window (2026-10-02 reskin: label gained a trailing arrow, matching the approved prototype)', () => {
         const onOpenBuildModel = vi.fn();
         render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
-        fireEvent.click(screen.getByText('Build Model'));
+        fireEvent.click(screen.getByText('Build Model →'));
         expect(onOpenBuildModel).toHaveBeenCalledTimes(1);
     });
 

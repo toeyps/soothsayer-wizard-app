@@ -4753,3 +4753,158 @@ body {
     color: var(--text-secondary);
     margin-bottom: 8px;
 }
+
+/* =============================================
+   Visual refresh Phase 2 (2026-10-02) — Dashboard
+   "Failure Groups" tab (FailureGroupsPanel.tsx).
+   Look only — see docs/PROJECT_HANDOVER.md's
+   matching 2026-10-02 entry and the SPEC FINAL
+   entries it points to. Reuses Phase 0/1
+   tokens/classes rather than duplicating them:
+   `.widget-header` + `.search-input-compact` (the
+   search box, same shell as the Sensor tab),
+   `.kind-badge`/`.kind-badge--*` (I/R/C badge
+   shell), `.unit-badge`, `.sensor-row-tag`,
+   `.text-btn`, `.fg-icon-btn`, `.fg-group-dot`,
+   `.fg-group-color-*`, `.fg-group-card`,
+   `.fg-build-model-btn`. The per-kind STATUS DOT on
+   the sensor row still uses the pre-existing
+   `.f4-kb-dot`/`--trained`/`--complete` classes
+   (NOT the newer `.kind-badge-dot`) — deliberately;
+   see FailureGroupsPanel.tsx's renderSensorRow doc
+   comment for why (a cross-window integration test
+   outside this pass's zone asserts that exact class
+   name). ============================================= */
+
+/* Summary chip -- "N of M models complete" (matches the approved
+ * prototype's `.selchip`, reused verbatim as a dedicated class here since
+ * `.selchip` itself was never added to this codebase -- only this tab
+ * wants it so far). */
+.fg-summary-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-muted);
+    border-radius: 9px;
+    padding: 7px 10px;
+    font-size: 0.75rem;
+    color: var(--accent-hi);
+}
+
+/* Status-dot legend under the summary chip -- purely decorative, explains
+ * what the sensor row's I/R/C corner dot colors mean (matches the
+ * prototype's `.legend`). Uses the same tokens as `.f4-kb-dot--trained`/
+ * `--complete` so the legend never drifts from what the dot actually
+ * renders. */
+.fg-legend {
+    display: flex;
+    gap: 12px;
+    font-size: 0.66rem;
+    color: var(--text-faint);
+}
+.fg-legend span {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+}
+.fg-legend-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--dot-empty);
+    box-shadow: inset 0 0 0 1.5px var(--text-faint);
+    flex-shrink: 0;
+}
+.fg-legend-dot--trained { background: var(--accent-hi); box-shadow: none; }
+.fg-legend-dot--complete { background: var(--ok); box-shadow: none; }
+
+/* Group header row -- "crow" in the approved prototype. Not a button (the
+ * row itself doesn't toggle anything -- only "Edit details" and the
+ * per-sensor chevrons do), so plain flex chrome rather than a clickable
+ * row shell. */
+.fg-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.fg-row-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+.fg-row-no {
+    flex-shrink: 0;
+    font: 500 0.66rem var(--mono);
+    color: var(--text-faint);
+}
+.fg-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+/* Trailing "done / total" counter, matching the prototype's `.crow .n`
+ * (and the Sensor tab's own "selected / total" `.component-group-count`
+ * pattern) -- a plain "0" when the group has no models yet (same
+ * "hide the noisy 0/ prefix" rule `.component-group-count` already uses). */
+.fg-row-count {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    font-family: var(--mono);
+    color: var(--text-faint);
+    font-weight: 500;
+}
+.fg-row-count b {
+    color: var(--accent-hi);
+    font-weight: 700;
+}
+
+/* "Edit details" panel -- `.gedit` in the prototype. Expands directly
+ * under the group row, same as today, just restyled. */
+.fg-group-edit {
+    border-top: 1px solid var(--border);
+    padding: 10px 10px 10px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.fg-edit-saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.68rem;
+    color: var(--ok);
+}
+
+/* Panel footer -- create-group + "Build Model ->" together (`.rfoot` in
+ * the prototype). */
+.fg-footer {
+    padding: 10px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.fg-addbtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 7px 0;
+    border-radius: 8px;
+    border: 1px dashed var(--border);
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+.fg-addbtn:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-hi);
+}
