@@ -4352,7 +4352,15 @@ body {
 .f4-fgchip i { width: 6px; height: 6px; border-radius: 2px; flex-shrink: 0; }
 .f4-fgchip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .f4-fgchip em { font-style: normal; font-family: var(--mono); font-size: 0.64rem; color: var(--text-faint); flex-shrink: 0; }
-.f4-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+/* 🆕 2026-10-02 [visual refresh Phase 3, look only]: flattened to match the
+   approved prototype's `.mtabs` (https://claude.ai/artifact/F6hexAhUEpRrUWEUa2L1i3)
+   -- a plain underline-tab strip with a single bottom border, no distinct
+   background of its own (it reads as part of the detail pane, not a boxed-in
+   toolbar). Was `border-top` + `background: var(--bg-primary)`, which gave
+   it a "sunken bar" look the prototype doesn't have. No class renamed, no
+   JSX touched -- `.f4-tab`'s own underline-on-select styling (right below)
+   is unchanged. */
+.f4-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); }
 .f4-tab { display: inline-flex; align-items: center; gap: 7px; padding: 9px 10px 8px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--text-secondary); font-size: 0.74rem; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .f4-tab:hover { color: var(--text-primary); }
 .f4-tab--on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--kc); }
@@ -4416,11 +4424,13 @@ body {
 .bmw-prog { display: flex; flex-direction: column; gap: 5px; font-size: 0.72rem; color: var(--text-secondary); }
 .bmw-prog-row { display: flex; justify-content: space-between; }
 .bmw-prog-bar { height: 5px; border-radius: 99px; background: var(--input-bg); overflow: hidden; display: flex; }
-.bmw-prog-bar span { display: block; height: 100%; }
+.bmw-prog-bar span { display: block; height: 100%; transition: width 0.3s; } /* 🆕 2026-10-02: matches the prototype's `.prog .bar span` */
 .bmw-chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .bmw-chip { font: inherit; font-size: 0.7rem; border: 1px solid var(--border-strong); background: none; color: var(--text-secondary); padding: 3px 9px; border-radius: 99px; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
 .bmw-chip:hover { color: var(--text-primary); }
+.bmw-chip b { color: var(--text-primary); font-weight: 600; } /* 🆕 2026-10-02: matches the prototype's `.fchip b` -- the count reads brighter than the label */
 .bmw-chip--on { background: var(--accent-muted); border-color: transparent; color: var(--accent-hi); font-weight: 600; }
+.bmw-chip--on b { color: var(--accent-hi); }
 .bmw-groupby { display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; color: var(--text-faint); }
 .bmw-list { flex: 1; overflow-y: auto; padding: 6px 0; }
 .bmw-list-grp { padding: 10px 14px 4px; display: flex; align-items: center; gap: 7px; font-size: 0.66rem; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -4435,8 +4445,15 @@ body {
 .bmw-dhead { padding: 14px 20px 12px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .bmw-dhead h3 { margin: 0; font-size: 1rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bmw-dmeta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 5px; }
-.bmw-iconbtn { font: inherit; width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--input-bg); color: var(--text-secondary); cursor: pointer; display: grid; place-items: center; flex-shrink: 0; }
-.bmw-iconbtn:hover { color: var(--text-primary); }
+/* 🆕 2026-10-02 [visual refresh Phase 3, look only]: borderless "ghost"
+   icon button, matching the prototype's `.iconbtn` (no border, no filled
+   background until hovered) instead of the previous always-boxed look
+   (1px border + filled `--input-bg`). Only used for the sidebar ⇤/⇥
+   toggle in this file (grep-confirmed) -- hover/active behavior
+   unchanged, size/radius kept as-is (28px/7px, already close to the
+   prototype's 30px/8px). */
+.bmw-iconbtn { font: inherit; width: 28px; height: 28px; border-radius: 7px; border: 0; background: none; color: var(--text-secondary); cursor: pointer; display: grid; place-items: center; flex-shrink: 0; }
+.bmw-iconbtn:hover { background: var(--hover-bg); color: var(--text-primary); }
 .bmw-empty-detail { flex: 1; display: grid; place-items: center; color: var(--text-faint); font-size: 0.8rem; padding: 24px; text-align: center; }
 
 .bmw-sets { border-bottom: 1px solid var(--border); background: var(--bg-primary); }
@@ -4534,7 +4551,14 @@ body {
    the chart the way PredictiveModelBuild.tsx's own stats strip does. */
 .bmw-result-stats { background: none; border: 0; padding: 0; gap: 16px; }
 
-.bmw-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; z-index: 50; padding: 20px; }
+/* 🆕 2026-10-02 [visual refresh Phase 3, look only]: added blur + bumped
+   opacity to match the prototype's own `.scrim` (rgba(0,0,0,.55) +
+   backdrop-filter: blur(2px)) and the same glass-backdrop pattern already
+   used elsewhere in this app (e.g. `.pm-chart-modal-backdrop`). The modal's
+   own content (`RunningConditionPanel`, out of scope this pass per the
+   brief -- dense, already reworked, real bugs found each time) is
+   untouched; only this wrapper's backdrop. */
+.bmw-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 50; padding: 20px; }
 .bmw-modal { width: min(720px, 100%); max-height: 85vh; overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
 .bmw-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.82rem; font-weight: 600; }
 .bmw-modal-x { background: none; border: 0; color: var(--text-secondary); cursor: pointer; display: flex; padding: 4px; border-radius: 6px; }
