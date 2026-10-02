@@ -1452,20 +1452,22 @@ describe('Dashboard', () => {
         // ── Final visual-refresh QA sweep (2026-10-02, after Phase 4) ──
         // The first QA round noted the Line -> Scatter -> Line variant of bug
         // #6 ("กรณีเดียวกันเกิดเมื่อสลับ Line→Scatter→Line ด้วย แต่ไม่ได้เขียน
-        // เทสต์แยก"), but the fix only added colorPickerFor to the
+        // เทสต์แยก"), but that fix only added colorPickerFor to the
         // deselect-prune effect. Switching the chart type hides both popovers
         // (their render is gated on `isLine`) WITHOUT clearing
         // colorPickerFor/axisEditorFor or their captured anchors, so switching
-        // back to Line re-mounts the popover — unasked — at the screen
+        // back to Line used to re-mount the popover — unasked — at the screen
         // position captured before the switch (the swatch may have moved:
         // the Scatter/Pair Plot info banner above the list changes the
-        // layout). KNOWN BUG (LOW-MEDIUM). Fix idea: clear both "…For"
-        // states when chartType leaves 'line' (same remedy as the prune).
+        // layout). FIXED (2026-10-02): a dedicated effect keyed on
+        // `chartType` clears both colorPickerFor and axisEditorFor as soon as
+        // chartType leaves 'line' (see Dashboard.tsx, right after chartType's
+        // own useState) — same remedy as the deselect prune.
         const lineBtn = () => screen.getAllByText('Line').find(el => el.classList.contains('chart-type-btn'))!;
         const rectAt = (top: number) => ({ top, bottom: top + 26, left: 300, right: 326, width: 26, height: 26, x: 300, y: top, toJSON() {} }) as DOMRect;
         const renderTwo = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
 
-        it.fails('KNOWN BUG: Line -> Scatter -> Line does not resurrect the colour popover (unclicked) at its stale anchor', () => {
+        it('Line -> Scatter -> Line does not resurrect the colour popover (unclicked) at its stale anchor', () => {
             renderTwo();
             const swatch = screen.getAllByTitle('Change line color')[0];
             swatch.getBoundingClientRect = () => rectAt(100);
@@ -1477,10 +1479,10 @@ describe('Dashboard', () => {
             expect(openPops()).toHaveLength(0);
             fireEvent.click(lineBtn());
             expect(last(chartProps).chartType).toBe('line');
-            expect(openPops()).toHaveLength(0); // actual: 1, at top 132px
+            expect(openPops()).toHaveLength(0);
         });
 
-        it.fails('KNOWN BUG: Line -> Scatter -> Line does not resurrect the pin-Y-axis popover (unclicked) with its old draft', () => {
+        it('Line -> Scatter -> Line does not resurrect the pin-Y-axis popover (unclicked) with its old draft', () => {
             renderTwo();
             const pin = screen.getAllByTitle(/Pin the Y-axis/)[0];
             pin.getBoundingClientRect = () => rectAt(100);
@@ -1489,7 +1491,7 @@ describe('Dashboard', () => {
             fireEvent.click(screen.getByText('Scatter'));
             expect(screen.queryByPlaceholderText('min')).toBeNull();
             fireEvent.click(lineBtn());
-            expect(screen.queryByPlaceholderText('min')).toBeNull(); // actual: popover back, draft "5" intact
+            expect(screen.queryByPlaceholderText('min')).toBeNull();
         });
     });
 

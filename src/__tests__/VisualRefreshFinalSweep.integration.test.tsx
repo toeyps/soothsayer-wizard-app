@@ -16,21 +16,30 @@
  *      render (all dot states, legend, footer, edit panel, both portaled
  *      popovers) is defined in App.css, so a later rename can't silently
  *      leave an unstyled element (jsdom would never notice).
- *   3. Known bugs (recorded as `it.fails`, per this repo's convention — app
- *      code is NOT changed by this sweep):
- *        - the FG-tab legend shows a "Not trained" dot that no badge ever
- *          renders (Phase 2 legend vs Phase C "no dot = never trained");
- *        - SensorSelection's portaled popovers resurrect at a stale captured
- *          anchor after their row unmounts and remounts (collapse/expand,
- *          search filter-out/clear) — same class as fixed bug #6
- *          (`colorPickerFor`), but in SensorSelection's own state;
- *        - a popover left open while the sensor search narrows the list
- *          keeps floating at its old coordinates (layout reflow, no scroll);
- *        - the viewport clamp only runs once at mount, so a popover that
- *          GROWS while open (creating a group from the add-to-FG menu)
- *          runs off the bottom of the window.
+ *   3. Bugs found by this sweep (originally recorded as `it.fails`, per this
+ *      repo's convention) — all 5 fixed 2026-10-02, tests now plain `it`:
+ *        - the FG-tab legend showed a "Not trained" dot that no badge ever
+ *          rendered (Phase 2 legend vs Phase C "no dot = never trained") —
+ *          fixed by dropping the marker from the legend's "Not trained" entry;
+ *        - SensorSelection's portaled popovers resurrected at a stale
+ *          captured anchor after their row unmounted and remounted
+ *          (collapse/expand, search filter-out/clear) — same class as fixed
+ *          bug #6 (`colorPickerFor`), but in SensorSelection's own state —
+ *          fixed by a shared visible-row-set effect;
+ *        - a popover left open while the sensor search narrowed the list
+ *          kept floating at its old coordinates (layout reflow, no scroll) —
+ *          fixed by closing any open row popover on every search keystroke;
+ *        - the Dashboard colour/pin-Y-axis popovers and the Highlights
+ *          colour popover had the same stale-anchor bug via a chart-type
+ *          round trip (Line -> Scatter -> Line / Line -> Pair Plot -> Line)
+ *          — fixed by clearing their "…For" state when their popover can no
+ *          longer legitimately be open;
+ *        - the viewport clamp only ran once at mount, so a popover that
+ *          GREW while open (creating a group from the add-to-FG menu) ran
+ *          off the bottom of the window — fixed with a ResizeObserver on the
+ *          popover element that re-runs the same clamp.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
@@ -254,20 +263,24 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
         expect(src('src/components/charts/ScatterChart.tsx')).toContain('[0.0627, 0.0627, 0.0706, 1.0]');
     });
 
-    // KNOWN GAP (LOW, cosmetic) — not a documented exception. Phase 1
-    // recoloured the Dashboard LineChart's axis/grid/tooltip literals away
-    // from the pre-refresh Tailwind slate palette (#94a3b8 / #334155 /
-    // navy tooltip rgba(30,41,59,…)), calling it "visibly off-palette".
-    // Phases 3/4 were CSS-only by brief (zero JSX/TS changes), so the SAME
-    // palette is still hardcoded in the ECharts option builders of
-    // BuildModelWindow.tsx (Relationship/Clustering result charts) and
-    // PredictiveModelBuild.tsx (three preview-chart builders). Net effect in
-    // the real app: inside ONE Workbench window, the Individual result
-    // (LineChart) shows the new neutral tooltip/grid while the
-    // Relationship/Clustering result shows the old navy one; same on the PM
-    // full page. Phase 4's note only says ResponsiveECharts has no
-    // className to restyle — it never mentions these option literals.
-    it.fails('no chart option builder on Build Model / PM page still uses the pre-refresh slate palette Phase 1 removed from LineChart', () => {
+    // FIXED (2026-10-02). Phase 1 recoloured the Dashboard LineChart's
+    // axis/grid/tooltip literals away from the pre-refresh Tailwind slate
+    // palette (#94a3b8 / #334155 / navy tooltip rgba(30,41,59,…)), calling
+    // it "visibly off-palette". Phases 3/4 were CSS-only by brief (zero
+    // JSX/TS changes), so the SAME palette was left hardcoded in the ECharts
+    // option builders of BuildModelWindow.tsx (Relationship/Clustering
+    // result charts) and PredictiveModelBuild.tsx (three preview-chart
+    // builders, plus the Individual result's `meanColor` markLine). Net
+    // effect in the real app before this fix: inside ONE Workbench window,
+    // the Individual result (LineChart) showed the new neutral
+    // tooltip/grid while the Relationship/Clustering result showed the old
+    // navy one; same on the PM full page. Fixed by copying the exact
+    // literal values LineChart.tsx's Phase 1 fix already established
+    // (txtPrimary '#ededef', txtSecondary '#8c8c94', gridLine '#2a2a30',
+    // tooltipBg 'rgba(23, 23, 28, 0.92)', tooltipBorder
+    // 'rgba(255, 255, 255, 0.12)') into every offending constant in both
+    // files — a pure color-literal swap, no option-building logic touched.
+    it('no chart option builder on Build Model / PM page still uses the pre-refresh slate palette Phase 1 removed from LineChart', () => {
         const offenders: string[] = [];
         for (const f of ['src/components/windows/BuildModelWindow.tsx', 'src/components/windows/PredictiveModelBuild.tsx', 'src/components/charts/LineChart.tsx']) {
             const code = src(f).split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n');
@@ -329,19 +342,19 @@ describe('class contract: every class the refreshed components render is defined
 // ── 3. known bugs ──────────────────────────────────────────────────────
 
 describe('FG tab legend vs the badges it explains', () => {
-    // KNOWN BUG (LOW, cosmetic) — Phase 2 added a legend copied from the
-    // approved prototype: "• Not trained  • Trained  • Complete", where the
-    // "Not trained" marker is a neutral grey ringed dot (`.fg-legend-dot`,
+    // FIXED (2026-10-02). Phase 2 added a legend copied from the approved
+    // prototype: "• Not trained  • Trained  • Complete", where the "Not
+    // trained" marker was a neutral grey ringed dot (`.fg-legend-dot`,
     // --dot-empty + inset ring). In the prototype that matches `.kb b`,
     // which is ALWAYS rendered (neutral when untrained). In the app, Phase C
     // chose "no dot = never trained" (`dot !== 'none' && …` in
     // FailureGroupsPanel.tsx's renderSensorRow, and Build Model's own left
-    // list does the same) — so the legend explains a grey dot that no badge
-    // on screen ever shows. Either fix makes this pass: render a neutral dot
-    // for untrained (`.f4-kb-dot` with no modifier would need a neutral fill
-    // — today it has NO background at all) or drop the marker from the
-    // legend's "Not trained" entry.
-    it.fails('the legend\'s "Not trained" marker matches what an untrained badge actually renders', () => {
+    // list does the same) — so the legend was explaining a grey dot that no
+    // badge on screen ever shows. Fixed by dropping the marker from the
+    // legend's "Not trained" entry (the smaller, lower-risk of the two
+    // sanctioned fixes — it doesn't touch any badge render path, just the
+    // legend that documents them).
+    it('the legend\'s "Not trained" marker matches what an untrained badge actually renders', () => {
         const { container } = render(<FailureGroupsPanel {...fgPanelProps()} />);
         const legendNotTrained = screen.getByText('Not trained').querySelector('.fg-legend-dot');
         const untrainedBadge = container.querySelector('[data-testid="fg-sensor-row-1:tag1"] .kind-badge--individual')!;
@@ -362,19 +375,22 @@ describe('SensorSelection portaled popovers — stale anchor after the row unmou
         return pops[0].style.top === `${fresh.bottom + 6}px`;
     };
 
-    // KNOWN BUG (LOW-MEDIUM). `groupMenuFor`/`groupMenuAnchor` (and the
-    // alarm pair) live in SensorSelection's state, but the popover is
-    // rendered as a child of the sensor row. Collapsing the component
-    // unmounts the row (the popover disappears — covered by
-    // PortaledPopovers' "collapsing … unmounts" test), but the state stays
-    // set; expanding again re-mounts the popover at the anchor rect captured
-    // BEFORE the collapse. Before Phase 1 the menu was inline and simply
-    // reappeared inside its row; now it reappears at a fixed screen position
-    // (the list may have scrolled, or the window resized, while it was
-    // collapsed — no listener is attached while unmounted). Fix idea: clear
-    // the open-popover state when the component is collapsed / the row
-    // unmounts (same remedy as Dashboard's colorPickerFor prune).
-    it.fails('collapsing then re-expanding the component does not resurrect the add-to-FG popover at its old screen position', () => {
+    // FIXED (2026-10-02). `groupMenuFor`/`groupMenuAnchor` (and the alarm
+    // pair) live in SensorSelection's state, but the popover is rendered as
+    // a child of the sensor row. Collapsing the component unmounts the row
+    // (the popover disappears), but the state stayed set; expanding again
+    // re-mounted the popover at the anchor rect captured BEFORE the
+    // collapse. Before Phase 1 the menu was inline and simply reappeared
+    // inside its row; as a portaled popover it reappeared at a fixed screen
+    // position instead (the list may have scrolled, or the window resized,
+    // while it was collapsed — no listener is attached while unmounted).
+    // Fixed by a shared effect (below `isFilterActive` in
+    // SensorSelection.tsx) keyed on the actual visible-row set: whenever
+    // `groupMenuFor`/`alarmPanelFor`'s row leaves that set — collapsed
+    // group OR filtered out by search, see the next test — the matching
+    // "…For"/anchor state is cleared, same remedy as Dashboard's
+    // colorPickerFor prune.
+    it('collapsing then re-expanding the component does not resurrect the add-to-FG popover at its old screen position', () => {
         renderSensorSelection();
         folderButtons()[0].getBoundingClientRect = () => rectAt(100);
         fireEvent.click(folderButtons()[0]);
@@ -385,10 +401,15 @@ describe('SensorSelection portaled popovers — stale anchor after the row unmou
         expect(reanchoredOrClosed()).toBe(true); // actual: reappears at 132px, new button is at 0
     });
 
-    // KNOWN BUG (LOW-MEDIUM) — same mechanism via the search box: filter the
-    // open row out (popover unmounts), clear the search (it re-mounts at
-    // the stale rect).
-    it.fails('filtering the open row out with the search box and clearing it again does not resurrect the popover at its old position', () => {
+    // FIXED (2026-10-02) — same mechanism via the search box: filtering the
+    // open row out (popover unmounts) then clearing the search used to
+    // re-mount it at the stale rect. Fixed by the same visible-row-set
+    // effect as the test above (search changes recompute `filteredSensors`,
+    // which the effect's `visibleSensorSet` already depends on) — plus
+    // `handleSearchChange` closes any open popover on every keystroke
+    // regardless (see the next test, a different trigger for the same
+    // class of bug).
+    it('filtering the open row out with the search box and clearing it again does not resurrect the popover at its old position', () => {
         renderSensorSelection();
         folderButtons()[0].getBoundingClientRect = () => rectAt(100); // TAG1
         fireEvent.click(folderButtons()[0]);
@@ -400,12 +421,18 @@ describe('SensorSelection portaled popovers — stale anchor after the row unmou
         expect(reanchoredOrClosed()).toBe(true); // actual: reappears at 132px
     });
 
-    // KNOWN BUG (LOW). Narrowing the list while a popover is open (the
+    // FIXED (2026-10-02). Narrowing the list while a popover is open (the
     // anchored row stays mounted but moves up) fires no scroll/resize, so
     // AnchoredPopover's "close when the anchor may have moved" rule never
-    // triggers — the popover keeps floating where the row USED to be,
-    // detached from it. Inline (pre-Phase 1) the menu moved with its row.
-    it.fails('narrowing the sensor search while a row popover is open does not leave it floating at the row\'s old position', () => {
+    // triggered — the popover kept floating where the row USED to be,
+    // detached from it (the visible-row-set effect above doesn't catch this
+    // either, since the row never actually leaves the visible set — it just
+    // moves). Inline (pre-Phase 1) the menu moved with its row. Fixed by
+    // closing any open row popover on every search keystroke
+    // (`handleSearchChange` in SensorSelection.tsx) — the same conservative
+    // "close rather than reposition" rule AnchoredPopover already applies to
+    // scroll/resize.
+    it('narrowing the sensor search while a row popover is open does not leave it floating at the row\'s old position', () => {
         renderSensorSelection();
         const tag2Btn = folderButtons()[1];
         tag2Btn.getBoundingClientRect = () => rectAt(200);
@@ -435,15 +462,18 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
         chartType,
     });
 
-    // KNOWN BUG (LOW) — the third component with the same pattern as the
+    // FIXED (2026-10-02) — the third component with the same pattern as the
     // Dashboard colour/pin popovers (see Dashboard.test.tsx's
-    // "Line -> Scatter -> Line" it.fails): the popover's render is gated on
+    // "Line -> Scatter -> Line" tests): the popover's render is gated on
     // `highlightApplies` (false on Pair Plot) but `highlightColorFor` /
-    // `highlightColorAnchor` are not cleared when it turns false, so
-    // Line -> Pair Plot -> Line re-mounts the picker unasked at the old
+    // `highlightColorAnchor` weren't cleared when it turned false, so
+    // Line -> Pair Plot -> Line re-mounted the picker unasked at the old
     // captured screen position (the panel's layout changed in between: the
     // "Not shown on Pair Plot" banner appears above the list on Pair Plot).
-    it.fails('Line -> Pair Plot -> Line does not resurrect the time-highlight colour popover unasked', () => {
+    // Fixed by an effect in HighlightsPanel.tsx keyed on
+    // `highlightApplies`/`valueHighlightApplies` that clears both colour
+    // popovers' "…For"/anchor state the moment either turns false.
+    it('Line -> Pair Plot -> Line does not resurrect the time-highlight colour popover unasked', () => {
         const { rerender } = render(<HighlightsPanel {...hlProps('line')} />);
         const swatch = screen.getByTitle('Change colour');
         swatch.getBoundingClientRect = () => rectAt(100);
@@ -457,6 +487,31 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
 });
 
 describe('AnchoredPopover viewport clamp vs content that grows while open', () => {
+    // jsdom has no native ResizeObserver (confirmed: `typeof ResizeObserver`
+    // is `undefined` under this project's jsdom version) — AnchoredPopover
+    // guards its own `new ResizeObserver(...)` call for exactly that reason,
+    // so this describe block provides the same kind of test-only stub this
+    // repo already uses for every other ResizeObserver consumer (see
+    // ResponsiveECharts.test.tsx), scoped to just these tests via
+    // beforeEach/afterEach so it doesn't leak into sibling describes that
+    // never needed it. `roCallback` captures the one callback AnchoredPopover
+    // registers so a test can fire it manually, standing in for the browser
+    // actually detecting the popover's content box changing size.
+    let roCallback: (() => void) | null = null;
+    class MockResizeObserver {
+        constructor(cb: () => void) { roCallback = cb; }
+        observe = vi.fn();
+        disconnect = vi.fn();
+        unobserve = vi.fn();
+    }
+    beforeEach(() => {
+        roCallback = null;
+        vi.stubGlobal('ResizeObserver', MockResizeObserver);
+    });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
     /** Popover height = 40px + 30px per group row inside it (jsdom has no layout). */
     function mockPopoverLayout() {
         HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
@@ -483,18 +538,21 @@ describe('AnchoredPopover viewport clamp vs content that grows while open', () =
         expect(r.bottom).toBeLessThanOrEqual(window.innerHeight);
     });
 
-    // KNOWN BUG (LOW). AnchoredPopover clamps once — in its callback ref,
-    // when the node is first inserted (plus a layout effect keyed on
-    // anchorRect/width only). The add-to-FG menu stays open after "Create"
-    // (commitCreateGroup only clears the draft), and the parent adds the
-    // new group as one more row, so the menu grows downward from a `top`
-    // that was computed for the smaller size. Opened from the lower part of
-    // the window, the bottom of the menu — the "New group name" input and
-    // its error line — slides off screen, and since `.sensor-popover` only
-    // scrolls internally once it hits max-height, there is no way to reach
-    // it short of closing and reopening. Fix idea: re-run applyClamp from a
-    // ResizeObserver on the popover element (or after every render).
-    it.fails('creating a group from the add-to-FG menu (menu grows by one row) keeps the whole menu on screen', () => {
+    // FIXED (2026-10-02). AnchoredPopover used to clamp only once — in its
+    // callback ref, when the node is first inserted (plus a layout effect
+    // keyed on anchorRect/width only). The add-to-FG menu stays open after
+    // "Create" (commitCreateGroup only clears the draft), and the parent
+    // adds the new group as one more row, so the menu grew downward from a
+    // `top` that was computed for the smaller size. Opened from the lower
+    // part of the window, the bottom of the menu — the "New group name"
+    // input and its error line — slid off screen, and since
+    // `.sensor-popover` only scrolls internally once it hits max-height,
+    // there was no way to reach it short of closing and reopening. Fixed by
+    // attaching a ResizeObserver to the popover element (in the same
+    // callback ref that already runs the open-time clamp) that re-runs the
+    // identical `applyClamp` logic whenever the element's content box
+    // changes size.
+    it('creating a group from the add-to-FG menu (menu grows by one row) keeps the whole menu on screen', () => {
         mockPopoverLayout();
         const { props, rerender } = renderSensorSelection();
         const btn = folderButtons()[0];
@@ -506,10 +564,15 @@ describe('AnchoredPopover viewport clamp vs content that grows while open', () =
         expect(props.onCreateGroupForSensor).toHaveBeenCalledWith('TAG1', 'Seal leak');
         // The parent (Dashboard) adds the group -> the still-open menu grows.
         rerender(<SensorSelection {...props} fgGroups={[...props.fgGroups, { no: 2, name: 'Seal leak' }]} />);
+        // Stand in for the browser's ResizeObserver actually detecting the
+        // popover's now-taller content box (jsdom never fires it on its
+        // own, hence the mock above) — this is what AnchoredPopover's own
+        // observer callback does in a real browser.
+        roCallback?.();
         expect(openPopovers()).toHaveLength(1);
         const r = openPopovers()[0].getBoundingClientRect();
         expect(r.height).toBe(130);
-        expect(r.bottom).toBeLessThanOrEqual(window.innerHeight); // actual: 776 > 768
+        expect(r.bottom).toBeLessThanOrEqual(window.innerHeight);
     });
 
     it('the clamp itself still works for a direct AnchoredPopover consumer (re-confirms fix #2 after Phases 2-4)', () => {

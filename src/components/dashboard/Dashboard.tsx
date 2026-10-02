@@ -1458,6 +1458,25 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
+    // The Selected Sensor tab's colour/pin-Y-axis popovers only render while
+    // `chartType === 'line'` (Scatter/Pair Plot hide that list entirely), but
+    // switching chart type does not unmount Dashboard itself, so
+    // colorPickerFor/axisEditorFor (and their captured anchor rects) used to
+    // just sit in state while hidden. Switching back to Line re-opened them
+    // at the pre-switch screen position — same stale-anchor bug class as the
+    // selectedSensors prune effect above, just reached via chart type instead
+    // of deselecting a sensor (QA sweep, 2026-10-02). Clearing both "…For"
+    // states (anchors don't need clearing separately — both popovers' render
+    // is already gated on `…For === sensor`, so a stale anchor is inert once
+    // the "for" state is null) whenever chartType leaves 'line' closes them
+    // for good instead of just hiding them.
+    useEffect(() => {
+        if (chartType !== 'line') {
+            setColorPickerFor(null);
+            setAxisEditorFor(null);
+        }
+    }, [chartType]);
+
 
     // ── Build Model — singleton window (label `build-model`) reached from
     //    the Failure Groups tab's "Build Model" button. Was two OS windows

@@ -1241,7 +1241,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         return () => { cancelled = true; };
     }, [criteriaSensor, dashboardFilterKey]);
 
-    const meanColor = '#f1f5f9';
+    // Visual refresh (2026-10-02): matches LineChart.tsx's own `txtPrimary`
+    // (the same literal, kept in sync by eye — ECharts/the markLine overlay
+    // can't read CSS custom properties). Was still the pre-refresh slate
+    // palette's `#f1f5f9` until this fix.
+    const meanColor = '#ededef';
 
     // Build markLines for mean / ±1σ / ±3σ to overlay on the LineChart.
     const targetMarkLines: ChartMarkLine[] = targetSensor && targetStats ? [
@@ -1363,11 +1367,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         const xIdx = predictorsAtApply.indexOf(effectiveScatterX);
         if (xIdx < 0) return null;
 
-        const txtPrimary    = '#f1f5f9';
-        const txtSecondary  = '#94a3b8';
-        const gridLine      = '#334155';
-        const tooltipBg     = 'rgba(30,41,59,0.95)';
-        const tooltipBorder = '#334155';
+        // Visual refresh (2026-10-02): same literal values LineChart.tsx
+        // uses for its `txtPrimary`/`txtSecondary`/`gridLine`/`tooltipBg`/
+        // `tooltipBorder` (kept in sync by eye — ECharts renders to canvas
+        // and can't read CSS custom properties). These three preview-chart
+        // builders were still on the pre-refresh slate palette until this
+        // fix; see LineChart.tsx's own comment for the full rationale.
+        const txtPrimary    = '#ededef';
+        const txtSecondary  = '#8c8c94';
+        const gridLine      = '#2a2a30';
+        const tooltipBg     = 'rgba(23, 23, 28, 0.92)';
+        const tooltipBorder = 'rgba(255, 255, 255, 0.12)';
 
         const rawPoints: [number, number][] = [];
         const modelPoints: [number, number][] = [];
@@ -1485,11 +1495,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         const { first_sensor, second_sensor, clusters, n_rows } = clusteringPreview;
         if (!clusters || clusters.length === 0 || n_rows === 0) return null;
 
-        const txtPrimary    = '#f1f5f9';
-        const txtSecondary  = '#94a3b8';
-        const gridLine      = '#334155';
-        const tooltipBg     = 'rgba(30,41,59,0.95)';
-        const tooltipBorder = '#334155';
+        // Visual refresh (2026-10-02): same literal values LineChart.tsx
+        // uses for its `txtPrimary`/`txtSecondary`/`gridLine`/`tooltipBg`/
+        // `tooltipBorder` (kept in sync by eye — ECharts renders to canvas
+        // and can't read CSS custom properties). These three preview-chart
+        // builders were still on the pre-refresh slate palette until this
+        // fix; see LineChart.tsx's own comment for the full rationale.
+        const txtPrimary    = '#ededef';
+        const txtSecondary  = '#8c8c94';
+        const gridLine      = '#2a2a30';
+        const tooltipBg     = 'rgba(23, 23, 28, 0.92)';
+        const tooltipBorder = 'rgba(255, 255, 255, 0.12)';
 
         // Density-based scatter tuning (mirrors relScatterOption).
         const totalPoints = clusters.reduce((acc, c) => acc + c.xs.length, 0);
@@ -1830,11 +1846,17 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         const xIdx = predictors.indexOf(xSensor);
         if (xIdx < 0) return null;
 
-        const txtPrimary    = '#f1f5f9';
-        const txtSecondary  = '#94a3b8';
-        const gridLine      = '#334155';
-        const tooltipBg     = 'rgba(30,41,59,0.95)';
-        const tooltipBorder = '#334155';
+        // Visual refresh (2026-10-02): same literal values LineChart.tsx
+        // uses for its `txtPrimary`/`txtSecondary`/`gridLine`/`tooltipBg`/
+        // `tooltipBorder` (kept in sync by eye — ECharts renders to canvas
+        // and can't read CSS custom properties). These three preview-chart
+        // builders were still on the pre-refresh slate palette until this
+        // fix; see LineChart.tsx's own comment for the full rationale.
+        const txtPrimary    = '#ededef';
+        const txtSecondary  = '#8c8c94';
+        const gridLine      = '#2a2a30';
+        const tooltipBg     = 'rgba(23, 23, 28, 0.92)';
+        const tooltipBorder = 'rgba(255, 255, 255, 0.12)';
 
         const rawPoints: [number, number][] = [];
         const modelPoints: [number, number][] = [];

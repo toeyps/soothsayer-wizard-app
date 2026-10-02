@@ -146,9 +146,38 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
         el.style.left = `${left}px`;
     }, [anchorRect, width]);
 
+    // Holds the ResizeObserver set up below for the currently-mounted
+    // popover element, so it can be torn down (and not leaked/duplicated)
+    // when the node changes or unmounts.
+    const resizeObserverRef = useRef<ResizeObserver | null>(null);
+
     const setPopoverRef = useCallback((node: HTMLDivElement | null) => {
         popoverRef.current = node;
-        if (node) applyClamp(node);
+        resizeObserverRef.current?.disconnect();
+        resizeObserverRef.current = null;
+        if (node) {
+            applyClamp(node);
+            // The clamp above only runs once, right when the popover is
+            // first inserted — content that grows AFTER that (e.g. the
+            // add-to-failure-group menu adding a row for a group just
+            // created from its own "Create" button, still open) can push
+            // the popover's bottom edge off screen with no way to reach it,
+            // since `.sensor-popover` only scrolls internally once it hits
+            // its own max-height (QA sweep, 2026-10-02). A ResizeObserver on
+            // the popover's own element re-runs the SAME `applyClamp` logic
+            // whenever its content box actually changes size, so a popover
+            // that grows while open gets nudged back on screen exactly the
+            // way it was positioned at open time, instead of needing to be
+            // closed and reopened to recompute. Guarded for environments
+            // (jsdom in tests that don't need it) with no ResizeObserver at
+            // all — those simply keep the open-time-only clamp, same as
+            // before this fix.
+            if (typeof ResizeObserver !== 'undefined') {
+                const ro = new ResizeObserver(() => applyClamp(node));
+                ro.observe(node);
+                resizeObserverRef.current = ro;
+            }
+        }
     }, [applyClamp]);
 
     // Belt-and-suspenders re-clamp for the (currently unused) case of

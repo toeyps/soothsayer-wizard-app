@@ -265,8 +265,14 @@ function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtAp
     const xIdx = xSensor ? predictorsAtApply.indexOf(xSensor) : -1;
     const effectiveXIdx = xIdx >= 0 ? xIdx : 0;
     const effectiveXSensor = predictorsAtApply[effectiveXIdx];
-    const txtSecondary = '#94a3b8';
-    const gridLine = '#334155';
+    // Visual refresh (2026-10-02): these previously matched LineChart.tsx's
+    // own pre-refresh slate palette but were never recoloured when that file
+    // was (Phase 1, same day) — same literal values LineChart.tsx now uses
+    // for its `txtSecondary`/`gridLine`/`tooltipBg`/`tooltipBorder`, kept in
+    // sync by eye since ECharts renders to canvas and can't read CSS custom
+    // properties. See that file's own comment for the full rationale.
+    const txtSecondary = '#8c8c94';
+    const gridLine = '#2a2a30';
     const rawPoints: [number, number][] = [];
     const modelPoints: [number, number][] = [];
     const n = Math.min(xRaw.length, yRaw.length, yPred.length);
@@ -292,7 +298,7 @@ function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtAp
         backgroundColor: 'transparent',
         textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
         animation: !isLargeData,
-        tooltip: { trigger: 'item', backgroundColor: 'rgba(30,41,59,0.95)', borderColor: gridLine, textStyle: { color: '#f1f5f9' } },
+        tooltip: { trigger: 'item', backgroundColor: 'rgba(23, 23, 28, 0.92)', borderColor: 'rgba(255, 255, 255, 0.12)', textStyle: { color: '#ededef' } },
         legend: { show: false },
         grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
@@ -311,8 +317,14 @@ function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtAp
 function buildClusteringScatterOption(preview: ClusteringPreview) {
     const { first_sensor, second_sensor, clusters, n_rows } = preview;
     if (!clusters || clusters.length === 0 || n_rows === 0) return null;
-    const txtSecondary = '#94a3b8';
-    const gridLine = '#334155';
+    // Visual refresh (2026-10-02): these previously matched LineChart.tsx's
+    // own pre-refresh slate palette but were never recoloured when that file
+    // was (Phase 1, same day) — same literal values LineChart.tsx now uses
+    // for its `txtSecondary`/`gridLine`/`tooltipBg`/`tooltipBorder`, kept in
+    // sync by eye since ECharts renders to canvas and can't read CSS custom
+    // properties. See that file's own comment for the full rationale.
+    const txtSecondary = '#8c8c94';
+    const gridLine = '#2a2a30';
     const totalPoints = clusters.reduce((acc, c) => acc + c.xs.length, 0);
     const isLargeData = totalPoints > 2000;
     const isHugeData = totalPoints > 20000;
@@ -375,7 +387,7 @@ function buildClusteringScatterOption(preview: ClusteringPreview) {
         backgroundColor: 'transparent',
         textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
         animation: !isLargeData,
-        tooltip: { trigger: 'item', backgroundColor: 'rgba(30,41,59,0.95)', borderColor: gridLine, textStyle: { color: '#f1f5f9' } },
+        tooltip: { trigger: 'item', backgroundColor: 'rgba(23, 23, 28, 0.92)', borderColor: 'rgba(255, 255, 255, 0.12)', textStyle: { color: '#ededef' } },
         legend: { show: false },
         grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
@@ -2191,7 +2203,7 @@ export default function BuildModelWindow() {
             const s = entry.result.stats;
             const hasChartData = (individualChartView?.timestamps.length ?? 0) > 0;
             const markLines: ChartMarkLine[] = [
-                { sensor: m.targetSensor, y: s.mean, label: 'Mean', color: '#f1f5f9', lineStyle: 'solid' },
+                { sensor: m.targetSensor, y: s.mean, label: 'Mean', color: '#ededef', lineStyle: 'solid' },
                 { sensor: m.targetSensor, y: s.upper1, label: '+1σ', color: '#f59e0b', lineStyle: 'solid' },
                 { sensor: m.targetSensor, y: s.lower1, label: '−1σ', color: '#f59e0b', lineStyle: 'solid' },
                 { sensor: m.targetSensor, y: s.upper3, label: '+3σ', color: '#f43f5e', lineStyle: 'dashed' },

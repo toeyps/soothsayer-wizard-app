@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
 import type { TimeHighlight, HighlightLineDisplay, ValueHighlight } from '../../types';
 import ColorPlatePicker from './ColorPlatePicker';
@@ -113,6 +113,27 @@ export default function HighlightsPanel({
     // Same idea as `highlightColorAnchor` above, for the "By value" range
     // colour popover.
     const [rangeColorAnchor, setRangeColorAnchor] = useState<PopoverAnchorRect | null>(null);
+
+    // Both colour popovers are gated on `highlightApplies`/`valueHighlightApplies`
+    // (see their render sites below) rather than unmounted along with their
+    // row, so switching chart type away and back doesn't naturally clear
+    // `highlightColorFor`/`rangeColorFor` the way a removed row would. A
+    // round trip like Line -> Pair Plot -> Line left the picker re-mounting
+    // unasked at the screen position captured before the switch -- the
+    // panel's own layout shifts in between (the "Not shown on Pair Plot"
+    // banner appears above the list), so that position is stale (QA sweep,
+    // 2026-10-02; same stale-anchor bug class fixed elsewhere by clearing
+    // the "…For" state once its popover can no longer legitimately be open).
+    useEffect(() => {
+        if (!highlightApplies) {
+            setHighlightColorFor(null);
+            setHighlightColorAnchor(null);
+        }
+        if (!valueHighlightApplies) {
+            setRangeColorFor(null);
+            setRangeColorAnchor(null);
+        }
+    }, [highlightApplies, valueHighlightApplies]);
 
     const handleAddRange = () => {
         const min = parseFloat(draftRangeMin);

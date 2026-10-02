@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { ChevronRight, ChevronDown, FolderPlus, X, Pencil, Trash2, Check, Bell } from 'lucide-react';
 import { SensorMetadata, FailureGroup, FailureModel, ModelKind, AlarmLevel } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
@@ -198,6 +198,41 @@ export default function SensorSelection({
 
     const isFilterActive = searchTerm !== '';
 
+    // Which sensor tags are actually rendered right now — a component that's
+    // collapsed, or a search that doesn't match, both remove a sensor's row
+    // (and with it, any popover anchored to that row) from the DOM without
+    // the sensor itself ever being deselected. `groupMenuFor`/`alarmPanelFor`
+    // (and their captured anchor rects) are state local to THIS component,
+    // not tied to the row's lifecycle, so they used to just sit there while
+    // hidden — collapsing then re-expanding the group (or filtering the row
+    // out then clearing the search) remounted the popover at the stale rect
+    // captured before the row disappeared (QA sweep, 2026-10-02; same bug
+    // class as Dashboard.tsx's selectedSensors prune effect for
+    // colorPickerFor/axisEditorFor). One shared effect, keyed on the actual
+    // visible row set, closes whichever popover's row just left it — covers
+    // both the collapse/expand and the filter-out/clear-search path, so a
+    // third "row disappeared" trigger later doesn't need its own one-off fix.
+    const visibleSensorSet = useMemo(() => {
+        const visible = new Set<string>();
+        for (const [component, compSensors] of groupedSensors) {
+            if (!isComponentExpanded(component)) continue;
+            for (const sensor of compSensors) visible.add(sensor);
+        }
+        return visible;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groupedSensors, expandedComponents, searchTerm]);
+
+    useEffect(() => {
+        if (groupMenuFor && !visibleSensorSet.has(groupMenuFor)) {
+            setGroupMenuFor(null);
+            setGroupMenuAnchor(null);
+        }
+        if (alarmPanelFor && !visibleSensorSet.has(alarmPanelFor)) {
+            setAlarmPanelFor(null);
+            setAlarmPanelAnchor(null);
+        }
+    }, [visibleSensorSet, groupMenuFor, alarmPanelFor]);
+
     // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
     //
     // 2026-09-03 perf: this used to be derived inside renderSensorRow as
@@ -221,6 +256,23 @@ export default function SensorSelection({
 
     const handleClearFilter = () => {
         setSearchTerm('');
+    };
+
+    // Typing in the search box can re-filter the list out from under an open
+    // row popover WITHOUT removing that row from `visibleSensorSet` above
+    // (e.g. a different row ahead of it in the list disappears, so this row
+    // merely shifts up) — no unmount happens, so the visibility effect above
+    // never fires, yet the popover (positioned via a one-time captured rect)
+    // is now floating over the wrong spot. `AnchoredPopover` already treats
+    // "the page may have moved under the popover" as "close it" rather than
+    // trying to reposition (see its own scroll/resize listener) — any search
+    // keystroke while a popover from this list is open gets the same
+    // conservative treatment, matching bug report #2 from the 2026-10-02 QA
+    // sweep.
+    const handleSearchChange = (value: string) => {
+        setSearchTerm(value);
+        if (groupMenuFor) { setGroupMenuFor(null); setGroupMenuAnchor(null); }
+        if (alarmPanelFor) { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }
     };
 
     const renderSensorRow = (sensor: string) => {
@@ -577,7 +629,7 @@ export default function SensorSelection({
                     type="text"
                     placeholder="Search sensors..."
                     value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
+                    onChange={e => handleSearchChange(e.target.value)}
                     className="search-input-compact"
                 />
 

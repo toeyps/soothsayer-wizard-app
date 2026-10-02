@@ -411,7 +411,14 @@ export default function FailureGroupsPanel({
                     <b>{doneModels}</b> of {totalModels} models complete
                 </div>
                 <div className="fg-legend">
-                    <span><i className="fg-legend-dot" />Not trained</span>
+                    {/* No dot here on purpose — matches what an actual
+                        untrained badge renders below (renderSensorRow gates
+                        its dot on `dot !== 'none'`, so a never-trained model
+                        shows NO dot at all, not a neutral/ringed one). The
+                        legend used to draw a grey ringed `.fg-legend-dot`
+                        for this entry, documenting a dot no badge on screen
+                        ever actually shows (QA sweep, 2026-10-02). */}
+                    <span>Not trained</span>
                     <span><i className="fg-legend-dot fg-legend-dot--trained" />Trained</span>
                     <span><i className="fg-legend-dot fg-legend-dot--complete" />Complete</span>
                 </div>
