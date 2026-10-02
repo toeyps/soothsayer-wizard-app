@@ -1038,11 +1038,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
 
     // Prune per-sensor color/axis-range/alarm-line overrides (and close the
-    // inline axis/alarm editors) once a sensor is deselected — via the trash
-    // button, unchecking it in the Sensor panel, or "Clear selection".
-    // Without this, re-adding the same tag later silently resurrects a stale
-    // color/pinned range/checked alarms with no indication anything carried
-    // over from the earlier session.
+    // inline axis/alarm/colour editors) once a sensor is deselected — via
+    // the trash button, unchecking it in the Sensor panel, or "Clear
+    // selection". Without this, re-adding the same tag later silently
+    // resurrects a stale color/pinned range/checked alarms with no
+    // indication anything carried over from the earlier session.
     useEffect(() => {
         const selectedSet = new Set(selectedSensors);
         setSensorColors(prev => {
@@ -1067,6 +1067,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             return next;
         });
         setAxisEditorFor(prev => (prev && !selectedSet.has(prev) ? null : prev));
+        // colorPickerFor used to be left out of this prune — removing a
+        // sensor with its colour popover open, then re-adding it, would
+        // resurrect the picker at a stale captured anchor rect (bug found
+        // in QA sweep, 2026-10-02). Clear it the same way axisEditorFor is
+        // handled above (the anchor itself doesn't need clearing either —
+        // like axisEditorAnchor, the popover's render is already gated on
+        // `colorPickerFor === sensor`, so a stale anchor is inert once the
+        // "for" state is null).
+        setColorPickerFor(prev => (prev && !selectedSet.has(prev) ? null : prev));
     }, [selectedSensors]);
 
     // Collapsed panels state. Filters out ids that no longer exist in PANELS
@@ -2467,6 +2476,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                             const opening = colorPickerFor !== sensor;
                                                             toggleColorPicker(sensor);
                                                             setColorPickerAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                                            // Both popovers are `position: fixed` at the same row
+                                                            // height now, 28px apart — having both open at once
+                                                            // overlaps them, so opening this one closes the other.
+                                                            if (opening) closeAxisEditor();
                                                         }}
                                                         title="Change line color"
                                                         className="row-action-btn"
@@ -2482,6 +2495,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                             const opening = axisEditorFor !== sensor;
                                                             toggleAxisEditor(sensor);
                                                             setAxisEditorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
+                                                            // Same reasoning as the colour-swatch button above, in reverse.
+                                                            if (opening) { setColorPickerFor(null); setColorPickerAnchor(null); }
                                                         }}
                                                         title={isPinned ? 'Y-axis scale pinned to a fixed range — click to edit, click again to close' : 'Pin the Y-axis to a fixed min/max range'}
                                                         className="row-action-btn"

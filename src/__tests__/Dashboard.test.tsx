@@ -1400,16 +1400,18 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).toBeNull();
         });
 
-        // ── Known bugs (recorded, not fixed) ──
+        // ── Regression tests for 6 bugs QA found in Phase 1 (fixed 2026-10-02) ──
 
         // Chromium fires a `scroll` event on an <input> whose content
         // scrolls horizontally — verified for this sweep with a 64px
         // number input (exactly the min/max fields' width): typing
         // "1013250" queued a scroll event on the input. AnchoredPopover's
-        // window `capture: true` scroll listener treats it like a page
-        // scroll and closes the popover mid-typing; closeAxisEditor then
-        // drops the draft, since reopening re-seeds it from the saved range.
-        it.fails('typing a long number into the axis popover\'s 64px min field (the input scrolls) does not close it', () => {
+        // window `capture: true` scroll listener used to treat it like a
+        // page scroll and close the popover mid-typing, dropping the draft
+        // (closeAxisEditor re-seeds from the saved range on reopen). Fixed
+        // by having the listener ignore a scroll whose target is inside the
+        // popover's own DOM subtree.
+        it('typing a long number into the axis popover\'s 64px min field (the input scrolls) does not close it', () => {
             renderOne();
             fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
             const min = screen.getByPlaceholderText('min');
@@ -1418,14 +1420,14 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).not.toBeNull();
         });
 
-        // colorPickerFor is never cleared when its sensor is removed (only
-        // axisEditorFor is, in the selectedSensors prune effect), and the
-        // captured anchor rect is kept too. Re-adding the sensor later
-        // re-renders the popover immediately, at a stale fixed screen
-        // position captured from a button that may no longer be there.
-        // (Inline, the same stale state re-opened the picker under its own
-        // row; portaled, it now floats wherever the old click happened.)
-        it.fails('removing a sensor with its colour popover open, then re-adding it, does not resurrect the popover', () => {
+        // colorPickerFor used to never be cleared when its sensor was
+        // removed (only axisEditorFor was, in the selectedSensors prune
+        // effect), so re-adding the sensor later re-rendered the popover
+        // immediately, at a stale fixed screen position captured from a
+        // button that may no longer be there. Fixed by clearing
+        // colorPickerFor in that same prune effect, the same way
+        // axisEditorFor already was.
+        it('removing a sensor with its colour popover open, then re-adding it, does not resurrect the popover', () => {
             renderOne();
             fireEvent.click(screen.getByTitle('Change line color'));
             fireEvent.click(screen.getByTitle('Remove from plot'));
@@ -1434,12 +1436,13 @@ describe('Dashboard', () => {
             expect(openPops()).toHaveLength(0);
         });
 
-        // Colour and axis popovers are independent state, so both can be
+        // Colour and axis popovers are independent state, so both could be
         // open for the same row. Inline they stacked under the row; now both
         // are `position: fixed` at the same `top` (adjacent buttons in one
-        // row), right-aligned 28px apart, so the 230px axis popover covers
-        // most of the 180px colour picker.
-        it.fails('only one Selected Sensor popover is open at a time (two fixed popovers from one row overlap)', () => {
+        // row), right-aligned 28px apart, so the 230px axis popover covered
+        // most of the 180px colour picker. Fixed by having each button's
+        // "open" branch close the other popover first.
+        it('only one Selected Sensor popover is open at a time (two fixed popovers from one row overlap)', () => {
             renderOne();
             fireEvent.click(screen.getByTitle('Change line color'));
             fireEvent.click(screen.getByTitle(/Pin the Y-axis/));

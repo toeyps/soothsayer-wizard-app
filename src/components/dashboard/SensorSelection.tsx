@@ -325,7 +325,14 @@ export default function SensorSelection({
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     if (alarmOpen) { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }
-                                    else { setAlarmPanelAnchor(e.currentTarget.getBoundingClientRect()); setAlarmPanelFor(sensor); }
+                                    else {
+                                        // Opening this one closes the add-to-FG menu if it's
+                                        // open on the same (or another) row — both are
+                                        // `position: fixed` at the same row height now, so
+                                        // having both open at once would overlap on screen.
+                                        setGroupMenuFor(null); setGroupMenuAnchor(null);
+                                        setAlarmPanelAnchor(e.currentTarget.getBoundingClientRect()); setAlarmPanelFor(sensor);
+                                    }
                                 }}
                                 title="Alarm setpoints"
                                 className={`row-action-btn${alarmOpen ? ' on' : ''}`}
@@ -337,10 +344,15 @@ export default function SensorSelection({
                             onClick={(e) => {
                                 e.stopPropagation();
                                 if (menuOpen) { setGroupMenuFor(null); setGroupMenuAnchor(null); }
-                                else { setGroupMenuAnchor(e.currentTarget.getBoundingClientRect()); setGroupMenuFor(sensor); }
+                                else {
+                                    // Same reasoning as the alarm button above, in reverse.
+                                    setAlarmPanelFor(null); setAlarmPanelAnchor(null);
+                                    setGroupMenuAnchor(e.currentTarget.getBoundingClientRect()); setGroupMenuFor(sensor);
+                                }
                             }}
                             onContextMenu={(e) => {
                                 e.preventDefault(); e.stopPropagation();
+                                setAlarmPanelFor(null); setAlarmPanelAnchor(null);
                                 setGroupMenuAnchor(e.currentTarget.getBoundingClientRect());
                                 setGroupMenuFor(sensor);
                             }}

@@ -18,7 +18,8 @@
  *     from the user's point of view) instead of reopening it.
  *   - the scroll-closes-itself listener is `capture: true` on window, so it
  *     sees EVERY element's scroll — including scrolls that happen inside
- *     the popover itself (see the `it.fails` cases at the bottom).
+ *     the popover itself; `AnchoredPopover` now ignores those (see the
+ *     regression cases at the bottom, fixed 2026-10-02).
  *
  * Real ColorPlatePicker is used (not mocked) so the HighlightsPanel case
  * exercises the actual pointer-driven picker inside the portal.
@@ -186,20 +187,20 @@ describe('SensorSelection popovers through Portal — interaction seam', () => {
         });
     });
 
-    // ── Known bugs (recorded, not fixed — app code is outside qa's zone) ──
+    // ── Regression tests for 6 bugs QA found in Phase 1 (fixed 2026-10-02) ──
 
-    describe('known bugs', () => {
+    describe('popover bugs fixed 2026-10-02', () => {
         // `.sensor-popover` is `max-height: min(70vh, 420px); overflow-y:
         // auto` (App.css), so the add-to-FG menu with ~10+ groups scrolls
-        // internally. That scroll fires a `scroll` event on the popover
+        // internally. That used to fire a `scroll` event on the popover
         // element itself, which AnchoredPopover's window-level
-        // `capture: true` listener catches like any other scroll — so the
-        // first wheel tick inside the menu closes it, and groups below the
-        // fold (plus the "New group name" input at the very bottom) become
-        // unreachable. Verified in Chromium (same engine as WebView2): a
-        // scroll on an `overflow: auto` descendant is delivered to a window
-        // capture listener.
-        it.fails('scrolling INSIDE the add-to-FG popover (its own overflow-y: auto) does not close it', () => {
+        // `capture: true` listener caught like any other scroll — so the
+        // first wheel tick inside the menu closed it, and groups below the
+        // fold (plus the "New group name" input at the very bottom) were
+        // unreachable. Fixed by checking whether the scroll's target is
+        // inside the popover (`popoverRef.current.contains(event.target)`)
+        // before closing — only a scroll elsewhere now closes it.
+        it('scrolling INSIDE the add-to-FG popover (its own overflow-y: auto) does not close it', () => {
             const manyGroups: FailureGroup[] = [{ no: 0, name: 'Not in Group' }];
             for (let i = 1; i <= 15; i++) manyGroups.push({ no: i, name: `Group ${i}` });
             renderSensorSelection({ fgGroups: manyGroups });
@@ -214,11 +215,11 @@ describe('SensorSelection popovers through Portal — interaction seam', () => {
         // verified in Chromium for this sweep: typing 55 chars into an
         // 80px text input, and 7 digits ("1013250") into a 64px
         // number input, each queued a `scroll` event on the input that a
-        // window capture listener received. So typing a long group name
-        // here (the input is ~200px wide inside a 290px popover) closes the
-        // popover mid-typing and discards nothing but the user's place —
-        // the draft survives in state, but the menu vanishes under them.
-        it.fails('typing a long name into "New group name" (the input scrolls horizontally) does not close the popover', () => {
+        // window capture listener received. That used to close the popover
+        // mid-typing (input is inside the popover, so the same contains()
+        // check above now covers it too — this test is the two concrete
+        // repros for that general fix).
+        it('typing a long name into "New group name" (the input scrolls horizontally) does not close the popover', () => {
             renderSensorSelection();
             fireEvent.click(folderButtons()[0]);
             const input = screen.getByPlaceholderText('New group name');
@@ -227,13 +228,14 @@ describe('SensorSelection popovers through Portal — interaction seam', () => {
             expect(screen.queryByPlaceholderText('New group name')).not.toBeNull();
         });
 
-        // Position is `top = anchor.bottom + 6` with no flip/clamp, and the
-        // sensor list fills the panel to the bottom of the window. Opening
-        // the menu on one of the lowest visible rows puts the whole popover
-        // below the viewport edge — and since scrolling closes it, there is
-        // no way to reach it. Before Phase 1 the menu expanded inline and
-        // could simply be scrolled into view with the list.
-        it.fails('a popover opened from a row near the bottom of the window stays (mostly) on screen', () => {
+        // Position used to be `top = anchor.bottom + 6` with no flip/clamp,
+        // and the sensor list fills the panel to the bottom of the window —
+        // opening the menu on one of the lowest visible rows put the whole
+        // popover below the viewport edge, with no way to reach it (before
+        // Phase 1 the menu expanded inline and could simply be scrolled
+        // into view with the list). Fixed by measuring the popover's real
+        // rendered size after mount and clamping/flipping it back on screen.
+        it('a popover opened from a row near the bottom of the window stays (mostly) on screen', () => {
             renderSensorSelection();
             const btn = folderButtons()[1];
             const h = window.innerHeight;
@@ -247,12 +249,15 @@ describe('SensorSelection popovers through Portal — interaction seam', () => {
         });
 
         // The alarm and add-to-FG popovers are independent pieces of state,
-        // so both can be open at once. Inline, they stacked one under the
-        // other inside the row; now both are `position: fixed` at the same
-        // `top` (bell and folder buttons share one row) and right-aligned to
-        // buttons 28px apart, so the 290px FG menu sits almost exactly on
-        // top of the 220px alarm list.
-        it.fails('only one sensor-list popover is open at a time (two fixed popovers from one row overlap)', () => {
+        // so both could be open at once. Inline, they stacked one under the
+        // other inside the row; portaled, both are `position: fixed` at the
+        // same `top` (bell and folder buttons share one row) and
+        // right-aligned to buttons 28px apart, so the 290px FG menu sat
+        // almost exactly on top of the 220px alarm list. Fixed by having
+        // each button's "open" branch close the other popover's state first
+        // (simpler than trying to keep both open and separate them —
+        // per-row action menus conventionally show one at a time anyway).
+        it('only one sensor-list popover is open at a time (two fixed popovers from one row overlap)', () => {
             renderSensorSelection();
             fireEvent.click(screen.getByTitle('Alarm setpoints')); // TAG1
             fireEvent.click(folderButtons()[0]); // TAG1

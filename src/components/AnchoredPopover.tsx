@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import Portal from './Portal';
 
 /** Viewport-relative rectangle of the element a popover is anchored to —
@@ -53,9 +53,32 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
     const closeRef = useRef(onRequestClose);
     closeRef.current = onRequestClose;
 
+    // The popover's own rendered element — needed both to tell a scroll
+    // that originated INSIDE it apart from a scroll elsewhere (bug: a long
+    // list or a horizontally-overflowing input firing its own `scroll`
+    // event used to close the popover on itself) and, below, to measure its
+    // real on-screen size for the viewport clamp/flip pass.
+    const popoverRef = useRef<HTMLDivElement>(null);
+
     useEffect(() => {
         if (!anchorRect) return;
-        const handleViewportChange = () => closeRef.current();
+        const handleViewportChange = (event: Event) => {
+            // A scroll that happened inside the popover (its own `overflow-
+            // y: auto` list, or a text/number input scrolling its content
+            // horizontally once it overflows) does not invalidate the
+            // anchor position — only a scroll of the page/list BEHIND the
+            // popover does, since that's what actually moves the anchor
+            // out from under it.
+            if (
+                event.type === 'scroll' &&
+                popoverRef.current &&
+                event.target instanceof Node &&
+                popoverRef.current.contains(event.target)
+            ) {
+                return;
+            }
+            closeRef.current();
+        };
         // `capture: true` so this also sees a scroll on any scrollable
         // ancestor (e.g. the sensor list's own overflow-y container), not
         // just a window-level scroll.
@@ -70,6 +93,74 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
         // listener exists for the whole time anchorRect is non-null.
     }, [anchorRect]);
 
+    // Viewport clamp/flip pass. The popover is first rendered (below) at
+    // its "natural" position — directly under the anchor, right-aligned to
+    // it when `width` is given — but that can push it partly or fully off
+    // screen (anchor near the bottom/right edge). Its real size isn't known
+    // until it has rendered, so this measures the actual element via
+    // `getBoundingClientRect()` and nudges its inline `top`/`left` back on
+    // screen if needed, flipping above the anchor instead of below when
+    // that leaves more of the popover visible.
+    //
+    // This runs from a CALLBACK ref, not a `useLayoutEffect` keyed on
+    // `anchorRect` — `Portal` (see its own doc comment) mounts its children
+    // into `#wizard-portal-root` only after ITS OWN `useEffect` runs, one
+    // commit after this component's first render/layout-effect pass. A
+    // `useLayoutEffect` here would run too early, see `popoverRef.current`
+    // as still null, and silently no-op forever (caught by hand: the clamp
+    // never actually applied in any test until this was switched to a
+    // callback ref). A callback ref fires exactly when the host node is
+    // actually inserted into the DOM, whichever commit that turns out to
+    // be, so it reliably catches the delayed portal mount.
+    const applyClamp = useCallback((el: HTMLDivElement) => {
+        if (!anchorRect) return;
+        const vh = window.innerHeight;
+        const vw = window.innerWidth;
+        const rect = el.getBoundingClientRect();
+        const popoverHeight = rect.height;
+        const popoverWidth = width ?? rect.width;
+
+        const naturalTop = anchorRect.bottom + 6;
+        const spaceBelow = vh - anchorRect.bottom - 6;
+        const spaceAbove = anchorRect.top - 6;
+        let top: number;
+        if (popoverHeight > spaceBelow && spaceAbove > spaceBelow) {
+            // More room above the anchor than below, and it doesn't fit
+            // below as-is — flip to open upward instead.
+            top = Math.max(8, anchorRect.top - popoverHeight - 6);
+        } else {
+            // Keep the natural (below-anchor) placement, but never let the
+            // popover's bottom edge run past the viewport.
+            top = Math.min(naturalTop, Math.max(8, vh - popoverHeight - 8));
+        }
+
+        const naturalLeft = width !== undefined
+            ? Math.max(8, anchorRect.right - width)
+            : anchorRect.left;
+        let left = naturalLeft;
+        if (left + popoverWidth > vw - 8) {
+            left = Math.max(8, vw - popoverWidth - 8);
+        }
+
+        el.style.top = `${top}px`;
+        el.style.left = `${left}px`;
+    }, [anchorRect, width]);
+
+    const setPopoverRef = useCallback((node: HTMLDivElement | null) => {
+        popoverRef.current = node;
+        if (node) applyClamp(node);
+    }, [applyClamp]);
+
+    // Belt-and-suspenders re-clamp for the (currently unused) case of
+    // `anchorRect`/`width` changing on an ALREADY-mounted instance, without
+    // a fresh ref attach — every current caller instead fully unmounts and
+    // remounts a fresh AnchoredPopover per anchor (see callers' `key`s), so
+    // the callback ref above is what actually fires in practice, but this
+    // keeps the clamp correct if that assumption ever changes.
+    useLayoutEffect(() => {
+        if (popoverRef.current) applyClamp(popoverRef.current);
+    }, [applyClamp]);
+
     if (!anchorRect) return null;
 
     const top = anchorRect.bottom + 6;
@@ -80,6 +171,7 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
     return (
         <Portal>
             <div
+                ref={setPopoverRef}
                 className="popover-surface sensor-popover"
                 style={{
                     position: 'fixed',
