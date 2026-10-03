@@ -4,25 +4,28 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
-import { FailureModel, FailureGroupStateChangedPayload, SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from "../../types";
+import {
+    FailureModel, FailureGroupStateChangedPayload, SensorMetadata, SensorOperationConfig,
+    SpecialSensorRecipe, WorkspaceSensorFilter,
+} from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
 import ManageSpecialSensors from "./ManageSpecialSensors";
 import { debugLog } from "../../utils/debugLog";
 import {
-    buildSpecialSensorUsage, cycleConflicts, dependentsToRecompute,
-    orderRecipesByDependency, reorderRecipesByTags,
+    buildSpecialSensorUsage, reorderRecipesByTags, usageFor, SpecialSensorUsage,
 } from "../../utils/specialSensorDeps";
-import { recomputeSpecialSensors } from "../../utils/specialSensorRecompute";
-import { renameTagInArray, renameTagInRecipes } from "../../utils/specialSensorRename";
+import { runSpecialSensorEdit, SpecialSensorEditError } from "../../utils/specialSensorEdit";
+import {
+    renameTagInArray, renameTagInModels, renameTagInRunningConditionFilters,
+} from "../../utils/specialSensorRename";
 import { nameProblem, sameTag } from "../../utils/specialSensorNaming";
-import { mergeIntoPlot } from "../../utils/specialSensorPlot";
+import { createSerialQueue } from "../../utils/asyncQueue";
+import { loadWorkspaceData } from "../../workspaceManager";
 
 /** How long a deleted special sensor can still be brought back. Nothing has
- *  left this window yet during that time — see `commitDelete`. */
+ *  left this window yet during that time -- see `commitDeleteRaw`. */
 const UNDO_WINDOW_MS = 8000;
-
-const tagKey = (tag: string) => tag.trim().toLowerCase();
 
 /** What a rejected `invoke` carries, as text for the user. Tauri rejects with
  *  the command's `Err(String)` itself, not an `Error`. */
@@ -30,24 +33,93 @@ const errorText = (err: unknown): string => (err instanceof Error ? err.message 
 
 type ToastKind = 'ok' | 'error';
 
+/**
+ * `useState` whose latest value is ALSO readable synchronously through a ref.
+ * The serial queue's tasks must see what the previous task just wrote, and a
+ * task that awaits cannot trust a `state` variable captured at the render it
+ * started in -- so the lists tasks reason about live here.
+ */
+function useRefState<T>(initial: T) {
+    const [state, setState] = useState<T>(initial);
+    const ref = useRef<T>(initial);
+    const set = useCallback((update: T | ((prev: T) => T)) => {
+        const next = typeof update === 'function' ? (update as (prev: T) => T)(ref.current) : update;
+        ref.current = next;
+        setState(next);
+    }, []);
+    return [state, set, ref] as const;
+}
+
+/** A deletion that has left the lists (hidden) but not yet been applied. */
+interface Deletion {
+    tags: string[];
+    label: string;
+    /** Undone before it started: it never happens. */
+    cancelled: boolean;
+    /** Its commit is running or finished (it can no longer be undone). */
+    started: boolean;
+    /** Its commit task is in the queue. */
+    queued: boolean;
+}
+
+/** Everything the Create form held when "Add sensor" was clicked. The task is
+ *  queued, so it must not read the form later -- the user may have moved on. */
+interface CreateSnapshot {
+    formulaMode: boolean;
+    formulaExpression: string;
+    formulaCustomName: string;
+    operationConfig: SensorOperationConfig | null;
+    selectedSensors: string[];
+    description: string;
+    unit: string;
+    component: string;
+    /** Would this create a new derived sensor (vs. adding raw sensors as-is)? */
+    creating: boolean;
+    name: string;
+}
+
+/** One short sentence: what still uses a sensor that was about to be deleted. */
+function describeUsage(usages: SpecialSensorUsage[]): string {
+    const parts: string[] = [];
+    for (const u of usages) {
+        if (u.dependentSensors.length > 0) parts.push(`${u.dependentSensors.join(', ')} (built on it)`);
+        if (u.modelReferences.length > 0) {
+            parts.push(u.modelReferences.map(r => `${r.modelName || 'Untitled model'} (${r.field})`).join(', '));
+        }
+        if (u.runningCondition) parts.push('the workspace Running condition');
+    }
+    return parts.join('; ');
+}
+
 export default function AddSensorWindow() {
-    const [sensors, setSensors] = useState<string[]>([]);
+    // Everything the serial queue's tasks reason about lives in `useRefState`:
+    // the state drives rendering, the ref is what a task reads (always the
+    // value the PREVIOUS task left behind, never a stale render's copy).
+    const [sensors, setSensors, sensorsRef] = useRefState<string[]>([]);
     const [selectedSensors, setSelectedSensors] = useState<string[]>([]);
     // What the dashboard chart is currently plotting. Distinct from
     // `selectedSensors` above, which is this window's own picker (deliberately
     // left empty on open -- see the sensors-data handler).
-    // A local MIRROR of that: seeded by `sensors-data`, then advanced by this
-    // window's own adds/deletes/renames. It is only ever used for the Manage
-    // tab's "on chart" badge -- the Dashboard owns the real selection (and
-    // merges what this window adds into it), so this can lag a toggle the user
-    // makes in the Dashboard afterwards without anything acting on it.
+    // A MIRROR of the Dashboard's selection, used only for the Manage tab's
+    // "on chart" badge. It is seeded by `sensors-data` and then set from what
+    // the Dashboard REPORTS it plotted (`add-sensor-plot-result`) -- never
+    // inferred from what this window asked for: the Dashboard may refuse (Pair
+    // Plot's 4-sensor cap), and a guessed mirror showed a badge for a sensor
+    // that was not on the chart.
     const [plottedSensors, setPlottedSensors] = useState<string[]>([]);
-    const [sensorMetadata, setSensorMetadata] = useState<SensorMetadata[] | null>(null);
+    const [sensorMetadata, setSensorMetadata] = useRefState<SensorMetadata[] | null>(null);
     const [loading, setLoading] = useState(true);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(null);
     const [description, setDescription] = useState('');
     const [unit, setUnit] = useState('');
     const [component, setComponent] = useState('');
+    // Bumped after a successful Add: SensorTooling is remounted with it, which
+    // clears ALL of its own state (mode, picked operation / chain, formula
+    // text, Name, Description/Unit/Component). Resetting only this window's
+    // copy left the tooling still showing -- and re-submitting -- the old
+    // formula and name ("A sensor named 'Once' already exists" right after a
+    // successful add).
+    const [formKey, setFormKey] = useState(0);
 
     // Formula mode state
     const [formulaMode, setFormulaMode] = useState(false);
@@ -68,7 +140,7 @@ export default function AddSensorWindow() {
     // didn't know of them (a column it was never told about). Treated as taken
     // so the Name field shows the conflict instead of letting the same click
     // fail again.
-    const [rejectedNames, setRejectedNames] = useState<string[]>([]);
+    const [rejectedNames, setRejectedNames, rejectedRef] = useRefState<string[]>([]);
 
     const [toast, setToast] = useState<{ message: string; kind: ToastKind } | null>(null);
     const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -86,25 +158,89 @@ export default function AddSensorWindow() {
     // Everything the Manage tab needs. `recipes` is this window's own copy of
     // the dashboard's `specialSensorRecipes` -- it arrives with sensors-data,
     // grows as sensors are created here, and shrinks as they are deleted.
-    const [recipes, setRecipes] = useState<SpecialSensorRecipe[]>([]);
-    // Workspace the last `sensors-data` belonged to — stamped on every emit.
+    const [recipes, setRecipes, recipesRef] = useRefState<SpecialSensorRecipe[]>([]);
+    // Workspace the last `sensors-data` belonged to -- stamped on every emit.
     const workspaceIdRef = useRef<string | undefined>(undefined);
-    const [models, setModels] = useState<FailureModel[]>([]);
+    const [models, setModels, modelsRef] = useRefState<FailureModel[]>([]);
+    // The workspace Running condition's conditions: naming a special sensor
+    // there blocks deleting it (and a rename has to carry through).
+    const [runningConditionFilters, setRunningConditionFilters, rcRef] = useRefState<WorkspaceSensorFilter[]>([]);
+    // Whether `models` / `runningConditionFilters` are KNOWN fresh. Until they
+    // are (never received, or the last re-read from disk failed) deletion is
+    // blocked: "nothing uses it" would be a guess, and a delete drops the
+    // column for real.
+    const [failureKnown, setFailureKnown] = useState(false);
     // Formula tag -> sensors it references, from Rust. Null until the lookup
     // answers; Manage refuses to delete anything while it is null, because an
     // empty map would look exactly like "nothing depends on anything".
+    // (Only a UI hint -- every mutation re-reads references itself, inside the
+    // queue, instead of trusting this cache.)
     const [formulaRefs, setFormulaRefs] = useState<Map<string, string[]> | null>(null);
 
-    // A deletion inside its undo window: already gone from the list here, not
-    // yet told to the dashboard.
-    const [pendingDelete, setPendingDelete] = useState<{ tags: string[]; label: string } | null>(null);
-    const pendingDeleteRef = useRef<{ tags: string[]; label: string } | null>(null);
+    // ---- The serial queue ---------------------------------------------------
+    // Create, edit/rename and delete-commit all read the session, write
+    // columns, and then tell the Dashboard. Run two at once and one reads (or
+    // overwrites) what the other is half-way through writing. So they run one
+    // at a time, each against the state the previous one left, and every
+    // check (name taken? still in use? would that be a cycle?) happens INSIDE
+    // the task, against fresh state -- not at click time.
+    const queue = useMemo(() => createSerialQueue(), []);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => queue.subscribe(n => setBusy(n > 0)), [queue]);
+
+    // ---- Deletions (undo window) ---------------------------------------------
+    // A deletion is applied in two steps. Click: the sensor disappears from
+    // every list here at once ("hidden") but nothing leaves the window and no
+    // column is dropped -- Undo costs nothing. After UNDO_WINDOW_MS (or when
+    // something needs the name/sources settled, or the window closes) a
+    // commit task is queued; it re-checks what uses the sensor against FRESH
+    // state, and only then drops the column and tells the Dashboard.
+    const deletionsRef = useRef<Deletion[]>([]);     // every hidden, unfinished deletion
+    const slotRef = useRef<Deletion | null>(null);   // the one that can still be undone
     const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [hiddenTags, setHiddenTags] = useState<string[]>([]);
+    const [pendingDelete, setPendingDelete] = useState<{ tags: string[]; label: string } | null>(null);
 
     // Which row has its editor open, and how the last save attempt went.
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [savingEdit, setSavingEdit] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
+
+    const syncHidden = () => setHiddenTags(deletionsRef.current.flatMap(d => d.tags));
+    const isHidden = (tag: string) => deletionsRef.current.some(d => d.tags.some(t => sameTag(t, tag)));
+    const invoker = (cmd: string, args: Record<string, unknown>) => invoke(cmd, args);
+
+    /** Re-read the models and Running condition from the workspace file. */
+    const readFailureState = async (): Promise<{ models: FailureModel[]; rc: WorkspaceSensorFilter[] }> => {
+        const id = workspaceIdRef.current;
+        // No workspace file to ask (the Dashboard had none): what it handed over
+        // is all there is.
+        if (!id) return { models: modelsRef.current, rc: rcRef.current };
+        const ws = await loadWorkspaceData(id);
+        if (!ws) throw new Error('the workspace file could not be read');
+        return { models: ws.failureGroupState?.models ?? [], rc: ws.failureGroupState?.runningConditionFilters ?? [] };
+    };
+
+    // Broadcast arrival order is not guaranteed (two windows can write and
+    // emit close together), so a payload is never trusted as "the latest":
+    // every broadcast just triggers a re-read of the file (writers persist
+    // BEFORE they emit), and only the newest re-read may apply.
+    const refreshSeq = useRef(0);
+    const refreshFailureState = () => {
+        const seq = ++refreshSeq.current;
+        void (async () => {
+            try {
+                const fresh = await readFailureState();
+                if (seq !== refreshSeq.current) return;
+                setModels(fresh.models);
+                setRunningConditionFilters(fresh.rc);
+                setFailureKnown(true);
+            } catch (err) {
+                console.warn('Failed to re-read models from the workspace file:', err);
+                if (seq === refreshSeq.current) setFailureKnown(false);
+            }
+        })();
+    };
 
     useEffect(() => {
         let unlistenData: (() => void) | undefined;
@@ -117,9 +253,21 @@ export default function AddSensorWindow() {
                 selectedSensors: string[],
                 sensorMetadata: SensorMetadata[],
                 specialSensorRecipes?: SpecialSensorRecipe[],
-                models?: FailureModel[]
+                models?: FailureModel[],
+                runningConditionFilters?: WorkspaceSensorFilter[],
             }>('sensors-data', (event) => {
                 debugLog("Received sensors-data:", event.payload);
+                // A different workspace than the one this window was serving:
+                // whatever was mid-undo belonged to the OLD project.
+                if (workspaceIdRef.current !== undefined && event.payload.workspaceId !== workspaceIdRef.current) {
+                    for (const d of deletionsRef.current) d.cancelled = true;
+                    deletionsRef.current = [];
+                    slotRef.current = null;
+                    if (deleteTimer.current) clearTimeout(deleteTimer.current);
+                    deleteTimer.current = null;
+                    setPendingDelete(null);
+                    syncHidden();
+                }
                 // This window belongs to whichever workspace it was last
                 // handed data for; every emit below is tagged with it so the
                 // Dashboard can drop anything from a different project.
@@ -139,6 +287,8 @@ export default function AddSensorWindow() {
                 setPlottedSensors(event.payload.selectedSensors ?? []);
                 setRecipes(event.payload.specialSensorRecipes ?? []);
                 setModels(event.payload.models ?? []);
+                setRunningConditionFilters(event.payload.runningConditionFilters ?? []);
+                setFailureKnown(Array.isArray(event.payload.models));
                 setLoading(false);
             });
 
@@ -176,20 +326,36 @@ export default function AddSensorWindow() {
             if (toastTimer.current) clearTimeout(toastTimer.current);
             if (deleteTimer.current) clearTimeout(deleteTimer.current);
         };
+        // The handlers only touch refs and stable setters.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Keep `models` current. It arrives with `sensors-data` once, when the
-    // window opens -- but this window can stay open while the user assigns a
-    // special sensor to a model in Build Model, and delete-protection reads
-    // `models`. A stale list would let a sensor a model now uses be deleted,
-    // and since a delete drops the column for real, that model would be left
-    // pointing at data that is gone. Same workspace-scoped broadcast
-    // Dashboard and Build Model use; one without OUR workspace id is foreign.
+    // Keep `models` and the Running condition current. They arrive with
+    // `sensors-data` once, when the window opens -- but this window can stay
+    // open while the user assigns a special sensor to a model in Build Model,
+    // and delete-protection reads them. A stale list would let a sensor a model
+    // now uses be deleted, and since a delete drops the column for real, that
+    // model would be left pointing at data that is gone. Same workspace-scoped
+    // broadcast Dashboard and Build Model use; one without OUR workspace id is
+    // foreign. The payload itself is NOT applied (arrival order is not
+    // guaranteed) -- it only says "something changed, look again".
     useEffect(() => {
         const off = subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
             const id = workspaceIdRef.current;
             if (!id || event.payload?.workspaceId !== id) return;
-            if (Array.isArray(event.payload.models)) setModels(event.payload.models);
+            refreshFailureState();
+        });
+        return () => off();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // What the Dashboard REALLY plotted after an add (it merges into its own
+    // current selection and applies Pair Plot's cap) -- see `plottedSensors`.
+    useEffect(() => {
+        const off = subscribe<{ workspaceId?: string; selectedSensors?: string[] }>('add-sensor-plot-result', (event) => {
+            const id = workspaceIdRef.current;
+            if (!id || event.payload?.workspaceId !== id) return;
+            if (Array.isArray(event.payload.selectedSensors)) setPlottedSensors(event.payload.selectedSensors);
         });
         return () => off();
     }, []);
@@ -223,14 +389,73 @@ export default function AddSensorWindow() {
         return () => { cancelled = true; };
     }, [recipes]);
 
+    // ---- Delete: commit (runs INSIDE the queue) -------------------------------
+
+    /** Take `d` out of the hidden set (finished, undone, or refused). */
+    const dropDeletion = (d: Deletion) => {
+        deletionsRef.current = deletionsRef.current.filter(x => x !== d);
+        syncHidden();
+    };
+
+    /** `d` is being committed now: it can no longer be undone. */
+    const claim = (d: Deletion) => {
+        d.started = true;
+        if (slotRef.current === d) {
+            if (deleteTimer.current) clearTimeout(deleteTimer.current);
+            deleteTimer.current = null;
+            slotRef.current = null;
+            setPendingDelete(null);
+        }
+    };
+
     /**
-     * Actually delete: tell the dashboard (which drops the recipe, the
-     * metadata, the chart line and the tag itself) and forget the sensor here
-     * too, so it can no longer be picked as an input for a new one.
+     * Actually delete, against FRESH state. The Delete button was enabled at
+     * click time, but up to UNDO_WINDOW_MS (plus any queue wait) has passed:
+     * another window may since have made the sensor a model's target, put it in
+     * the Running condition, or built another special sensor on it. Dropping
+     * its column then would leave that model/filter/sensor pointing at data
+     * that is gone (and Rust silently ignores an unknown filter sensor, so
+     * models would train on different rows with no error). So the dependents
+     * are re-read here; if something uses it now the delete is CANCELLED, the
+     * sensor reappears in the list, and the user is told why.
      */
-    const commitDelete = useCallback(async (tags: string[]) => {
-        if (tags.length === 0) return;
+    const commitDeleteRaw = async (d: Deletion) => {
+        const tags = d.tags;
         const gone = (tag: string) => tags.some(t => sameTag(t, tag));
+
+        let blocked: string | null = null;
+        try {
+            const fresh = await readFailureState();
+            setModels(fresh.models);
+            setRunningConditionFilters(fresh.rc);
+            setFailureKnown(true);
+            const formulaRecipes = recipesRef.current.filter(r => r.kind === 'formula');
+            let refsMap = new Map<string, string[]>();
+            if (formulaRecipes.length > 0) {
+                const out = await invoke<string[][]>('extract_formula_refs', {
+                    formulas: formulaRecipes.map(r => (r as { formula: string }).formula),
+                });
+                refsMap = new Map(formulaRecipes.map((r, i) => [r.tag.trim().toLowerCase(), out[i] ?? []]));
+            }
+            const usage = buildSpecialSensorUsage({
+                recipes: recipesRef.current,
+                formulaRefs: refsMap,
+                models: fresh.models,
+                runningConditionFilters: fresh.rc,
+                selectedSensors: [],
+            });
+            const used = tags.map(t => usageFor(usage, t)).filter((u): u is SpecialSensorUsage => !!u && !u.deletable);
+            if (used.length > 0) blocked = `it is now used by ${describeUsage(used)}`;
+        } catch (err) {
+            console.error('Could not re-check what uses the sensor before deleting it:', err);
+            blocked = `couldn't check whether anything still uses it (${errorText(err)})`;
+        }
+        if (blocked) {
+            dropDeletion(d);
+            showToast(`Didn't delete ${d.label}: ${blocked}. It is back in the list.`, 'error');
+            return;
+        }
+
         setRecipes(prev => prev.filter(r => !gone(r.tag)));
         setSensors(prev => prev.filter(t => !gone(t)));
         setSensorMetadata(prev => (prev ? prev.filter(m => !gone(m.tag)) : prev));
@@ -258,193 +483,140 @@ export default function AddSensorWindow() {
         } catch (err) {
             console.error('Failed to tell the dashboard about the deletion:', err);
         }
-    }, [showToast]);
+        dropDeletion(d);
+    };
 
-    /** Commit whatever is mid-undo right now (window closing, or a second
-     *  delete starting). Safe to call when nothing is pending. */
-    const flushPendingDelete = useCallback(async () => {
-        const pending = pendingDeleteRef.current;
-        if (!pending) return;
-        if (deleteTimer.current) clearTimeout(deleteTimer.current);
-        deleteTimer.current = null;
-        pendingDeleteRef.current = null;
-        setPendingDelete(null);
-        await commitDelete(pending.tags);
-    }, [commitDelete]);
+    /** Commit every deletion that is still waiting (and matches `pred`) NOW,
+     *  inside the current task. */
+    const settleDeletions = async (pred: (d: Deletion) => boolean = () => true) => {
+        for (const d of [...deletionsRef.current]) {
+            if (d.started || d.cancelled || !pred(d)) continue;
+            claim(d);
+            await commitDeleteRaw(d);
+        }
+    };
 
-    const handleDeleteSensor = useCallback(async (tag: string) => {
-        await flushPendingDelete();
-        const pending = { tags: [tag], label: tag };
-        pendingDeleteRef.current = pending;
-        setPendingDelete(pending);
+    /** Queue `d`'s commit (undo window expired, a newer delete replaced it, or
+     *  the window is closing). Resolves when it has been applied. */
+    const scheduleCommit = (d: Deletion): Promise<void> => {
+        if (d.queued || d.started || d.cancelled) return Promise.resolve();
+        d.queued = true;
+        return queue.run(async () => {
+            // Undone while it was waiting, or already settled by another task.
+            if (d.cancelled || d.started) return;
+            claim(d);
+            await commitDeleteRaw(d);
+        }).catch(err => { console.error('Delete failed:', err); });
+    };
+
+    const handleDeleteSensor = (tag: string) => {
+        // One undoable deletion at a time: a new delete makes the previous one
+        // final (its commit is queued) and takes the slot.
+        const previous = slotRef.current;
+        if (previous) {
+            if (deleteTimer.current) clearTimeout(deleteTimer.current);
+            deleteTimer.current = null;
+            void scheduleCommit(previous);
+        }
+        const d: Deletion = { tags: [tag], label: tag, cancelled: false, started: false, queued: false };
+        deletionsRef.current = [...deletionsRef.current, d];
+        slotRef.current = d;
+        setPendingDelete({ tags: d.tags, label: d.label });
+        // A hidden sensor must not stay a source of the form being filled in.
+        setSelectedSensors(prev => prev.filter(t => !sameTag(t, tag)));
+        syncHidden();
         deleteTimer.current = setTimeout(() => {
             deleteTimer.current = null;
-            pendingDeleteRef.current = null;
-            setPendingDelete(null);
-            void commitDelete(pending.tags);
+            void scheduleCommit(d);
         }, UNDO_WINDOW_MS);
-    }, [commitDelete, flushPendingDelete]);
+    };
 
-    const handleUndoDelete = useCallback(() => {
+    const handleUndoDelete = () => {
+        const d = slotRef.current;
+        // Once its commit has begun it is final (while it only WAITS in the
+        // queue, behind a slow edit, Undo still works).
+        if (!d || d.started) return;
+        d.cancelled = true;
         if (deleteTimer.current) clearTimeout(deleteTimer.current);
         deleteTimer.current = null;
-        pendingDeleteRef.current = null;
+        slotRef.current = null;
         setPendingDelete(null);
-    }, []);
+        dropDeletion(d);
+    };
 
     /** Rows the Manage tab shows: a sensor inside its undo window is already
      *  gone from here, which is also what unlocks anything built on top of
      *  it for deletion in the same breath. */
     const manageRecipes = useMemo(() => {
-        if (!pendingDelete) return recipes;
-        return recipes.filter(r => !pendingDelete.tags.some(t => sameTag(t, r.tag)));
-    }, [recipes, pendingDelete]);
+        if (hiddenTags.length === 0) return recipes;
+        return recipes.filter(r => !hiddenTags.some(t => sameTag(t, r.tag)));
+    }, [recipes, hiddenTags]);
 
-    /** Every sensor tag still in play: `sensors` minus anything inside its undo
-     *  window. A name freed by a pending delete is usable straight away -- the
-     *  delete is settled (column dropped) before the new sensor is created. */
+    /** Every sensor tag still in play: `sensors` minus anything deleted but
+     *  not yet applied. It feeds EVERY source picker (Explorer, formula
+     *  autocompletion, the editor's source list): a sensor inside its undo
+     *  window must not be selectable as the source of a new one -- its column
+     *  is dropped when the delete commits. A name freed by a pending delete is
+     *  usable straight away -- the delete is settled before the sensor is
+     *  created. */
     const liveSensors = useMemo(() => {
-        if (!pendingDelete) return sensors;
-        return sensors.filter(s => !pendingDelete.tags.some(t => sameTag(t, s)));
-    }, [sensors, pendingDelete]);
+        if (hiddenTags.length === 0) return sensors;
+        return sensors.filter(s => !hiddenTags.some(t => sameTag(t, s)));
+    }, [sensors, hiddenTags]);
+
+    // ---- Edit / rename (runs INSIDE the queue) --------------------------------
 
     /**
      * Save an edited special sensor -- including a rename (the Name field is
-     * no longer locked; `renamedFrom` is set when it changed).
+     * not locked; `renamedFrom` is set when it changed).
      *
      * Editing is not a local change. The sensor's column was computed once and
      * lives in the Rust session; changing the recipe means recomputing it, and
      * anything built on top of it was computed from the OLD values and is
-     * stale the moment this lands. So the edit recomputes the sensor and then
-     * replays every downstream recipe, in recipe order.
+     * stale the moment this lands. The backend half -- find what is built on
+     * it, recompute it and every downstream recipe in BUILD order, roll back if
+     * any step fails -- is `runSpecialSensorEdit` (specialSensorEdit.ts).
      *
-     * A rename adds steps around that replay. Before it, every OTHER recipe
-     * that still names the OLD tag -- a formula's `$oldName` reference, or an
-     * operation's `sourceSensors` entry -- has to be rewritten to the new one
-     * (`renameTagInRecipes`, via the Rust `rename_formula_refs` command), or
-     * replaying them would ask the backend to resolve a name that no longer
-     * means anything. The dependency graph itself
-     * (`usage`/`cycleConflicts`/`dependentsToRecompute`) is still keyed by the
-     * OLD tag at this point -- `manageRecipes` hasn't been touched yet -- so
-     * every lookup into it uses `identityTag`, not `next.recipe.tag`.
+     * A rename adds steps around that. Before it, every OTHER recipe that
+     * still names the OLD tag has to be rewritten to the new one; after it, the
+     * Dashboard is told (it re-keys everything it holds by tag: selection,
+     * colours, axes, highlights, Filter tab, models, Running condition), and
+     * LAST the OLD column is removed -- the recompute writes the sensor under
+     * its NEW name only, and the old column would otherwise sit in the session
+     * forever, still holding the old values and blocking the old name. It is
+     * last so a failure anywhere earlier can never leave a recipe pointing at a
+     * column that is gone. (Skipped when the name only changed case: Rust
+     * overwrites that very column in place, and removing "the old one" would
+     * delete the new.)
      *
-     * After it, the OLD column has to go: the recompute writes the sensor
-     * under its NEW name only, and the old column would otherwise sit in the
-     * session forever -- still holding the old values, and still blocking a new
-     * sensor from ever being called by the old name. That removal is the LAST
-     * step, after the new column exists, every downstream recipe has been
-     * replayed against it, and the Dashboard has been told -- so a failure
-     * anywhere earlier can never leave a recipe pointing at a column that is
-     * gone. (Skipped when the name only changed case: Rust overwrites that
-     * very column in place, and removing "the old one" would delete the new.)
-     *
-     * Three things get refused rather than repaired afterwards: a formula that
-     * references nothing (there would be no column to compute), one that makes
-     * the sensor depend on itself — directly or through the chain — and a
-     * rename that collides with another sensor's tag. Nothing later in the
-     * app would catch a cycle: the recipes would just replay in order on the
-     * next workspace open, each reading whatever stale column happened to be
-     * there.
-     *
-     * The recipe LIST's order is kept a valid build order too (see
-     * `orderRecipesByDependency`): the workspace-reopen replay runs it top to
-     * bottom, and an edit can point an early sensor at a later one.
+     * Refused rather than repaired afterwards: a formula that references
+     * nothing, one that makes the sensor depend on itself (directly or through
+     * the chain), and a rename that collides with another sensor's tag.
      */
-    const handleSaveEdit = useCallback(async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
-        setSavingEdit(true);
-        setEditError(null);
-        // Only true while the recompute is in flight: if IT fails part-way, the
-        // renamed sensor's new column may already exist and nothing points at
-        // it, so it is cleaned up below. Never set once the recompute is done.
-        let recomputeInFlight = false;
+    const saveEditTask = async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
         const oldTag = next.renamedFrom;
         const newTag = next.recipe.tag;
         const removesOldColumn = !!oldTag && !sameTag(oldTag, newTag);
         try {
-            // Any deletion still mid-undo is settled first, so the dependency
+            // Any deletion still waiting is settled first, so the dependency
             // graph this reasons about matches what the dashboard holds.
-            await flushPendingDelete();
+            await settleDeletions();
 
             if (oldTag) {
                 if (!newTag.trim()) throw new Error('Name is required.');
                 const problem = nameProblem(newTag, []);
                 if (problem) throw new Error(problem);
-                const collides = liveSensors.some(s => sameTag(s, newTag) && !sameTag(s, oldTag));
+                const collides = sensorsRef.current.some(s => sameTag(s, newTag) && !sameTag(s, oldTag));
                 if (collides) throw new Error(`"${newTag}" is already in use by another sensor.`);
             }
 
-            // Without the formula-reference lookup the window can't tell what is
-            // built on this sensor -- so it could neither recompute nor (for a
-            // rename) rewrite those dependents, and would then drop the old
-            // column from under them. Refuse until it has answered.
-            if (formulaRefs === null && recipes.some(r => r.kind === 'formula')) {
-                throw new Error('Still working out which sensors are built on this one. Try again in a moment.');
-            }
-
-            let nextInputs: string[];
-            if (next.recipe.kind === 'formula') {
-                const refs = await invoke<string[][]>('extract_formula_refs', { formulas: [next.recipe.formula] });
-                nextInputs = refs[0] ?? [];
-                if (nextInputs.length === 0) {
-                    throw new Error('This formula doesn\'t reference any sensor. Use $Name, or ${Name With Spaces}.');
-                }
-            } else {
-                nextInputs = next.recipe.sourceSensors;
-            }
-
-            // The identity this recipe is still known by across `manageRecipes`
-            // / `formulaRefs` / `models` -- the OLD tag when renaming, since
-            // none of those have caught up to the new one yet.
-            const identityTag = oldTag ?? next.recipe.tag;
-
-            const usage = buildSpecialSensorUsage({
-                recipes: manageRecipes,
-                formulaRefs: formulaRefs ?? new Map(),
-                models,
-                selectedSensors: plottedSensors,
+            const outcome = await runSpecialSensorEdit({
+                recipes: recipesRef.current,
+                next: next.recipe,
+                oldTag,
+                invoker,
             });
-
-            const conflicts = cycleConflicts(manageRecipes, usage, identityTag, nextInputs);
-            if (conflicts.length > 0) {
-                throw new Error(
-                    `"${next.recipe.tag}" can't be built from ${conflicts.join(', ')} — that would make it depend on itself.`,
-                );
-            }
-
-            const downstream = dependentsToRecompute(manageRecipes, usage, identityTag);
-
-            // Carry the rename into every downstream recipe's own stored
-            // formula/sourceSensors BEFORE any of them replay, so each one
-            // resolves against the sensor's new name from here on.
-            const renamedDownstream = oldTag
-                ? await renameTagInRecipes(downstream, oldTag, newTag, (cmd, args) => invoke(cmd, args))
-                : downstream;
-
-            // New column first (replace: true creates it when nothing matches
-            // the new name), then everything built on it, against that name.
-            recomputeInFlight = true;
-            await recomputeSpecialSensors([next.recipe, ...renamedDownstream], (cmd, args) => invoke(cmd, args));
-            recomputeInFlight = false;
-
-            const applyEdit = (list: SpecialSensorRecipe[]) => list.map(r => {
-                if (sameTag(r.tag, identityTag)) return next.recipe;
-                const rewritten = renamedDownstream.find(d => sameTag(d.tag, r.tag));
-                return rewritten ?? r;
-            });
-
-            // What each recipe reads, after this edit, for ordering. Formula
-            // inputs for untouched recipes come from the lookup this window
-            // already holds; a rename has to be carried into them by hand.
-            const inputsOf = (r: SpecialSensorRecipe): string[] => {
-                if (sameTag(r.tag, newTag)) return nextInputs;
-                if (r.kind === 'operation') return r.sourceSensors ?? [];
-                const refs = formulaRefs?.get(tagKey(r.tag)) ?? [];
-                return oldTag ? refs.map(x => (sameTag(x, oldTag) ? newTag : x)) : refs;
-            };
-            const edited = applyEdit(manageRecipes);
-            const ordered = orderRecipesByDependency(edited, inputsOf);
-            const orderChanged = ordered.some((r, i) => edited[i] !== r);
-            const recipeOrder = orderChanged ? ordered.map(r => r.tag) : undefined;
+            const { downstream, renamedDownstream, recipeOrder, applyEdit } = outcome;
 
             setRecipes(prev => reorderRecipesByTags(applyEdit(prev), recipeOrder));
             setSensorMetadata(prev => {
@@ -459,6 +631,12 @@ export default function AddSensorWindow() {
                 setSensors(prev => renameTagInArray(prev, oldTag, newTag));
                 setSelectedSensors(prev => renameTagInArray(prev, oldTag, newTag));
                 setPlottedSensors(prev => renameTagInArray(prev, oldTag, newTag));
+                // This window's own copies follow at once (the Dashboard
+                // re-keys the persisted ones and broadcasts, but that lands
+                // later -- until then the renamed sensor would look unused and
+                // could be deleted from under the model / condition using it).
+                setModels(prev => renameTagInModels(prev, oldTag, newTag));
+                setRunningConditionFilters(prev => renameTagInRunningConditionFilters(prev, oldTag, newTag));
             }
 
             if (oldTag) {
@@ -509,23 +687,37 @@ export default function AddSensorWindow() {
                 );
             }
         } catch (err) {
-            if (recomputeInFlight && removesOldColumn) {
-                // The recompute died part-way through a rename: the new column
-                // may exist but no recipe points at it (the Dashboard was never
-                // told), and it would block creating a sensor by that name.
-                // Best effort -- the original sensor was never touched.
-                try { await invoke<number>('remove_sensor_columns', { names: [newTag] }); } catch { /* nothing more to do */ }
+            let message = errorText(err);
+            if (err instanceof SpecialSensorEditError) {
+                if (err.inconsistent.length > 0) {
+                    message += ` The previous values of ${err.inconsistent.join(', ')} could not be restored, `
+                        + 'so they may show wrong numbers. Reopen the workspace to rebuild them.';
+                }
+                if (err.touched) {
+                    // Some columns were overwritten (then rolled back): charts
+                    // may have fetched the in-between values meanwhile.
+                    try { await emit('special-sensor-data-changed', { workspaceId: workspaceIdRef.current }); } catch { /* best effort */ }
+                }
             }
-            setEditError(errorText(err));
-        } finally {
-            setSavingEdit(false);
+            setEditError(message);
         }
-    }, [flushPendingDelete, manageRecipes, recipes, formulaRefs, models, plottedSensors, liveSensors, showToast]);
+    };
+
+    const handleSaveEdit = (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
+        setSavingEdit(true);
+        setEditError(null);
+        void queue.run(() => saveEditTask(next))
+            .catch(err => { console.error('Edit failed:', err); setEditError(errorText(err)); })
+            .finally(() => setSavingEdit(false));
+    };
 
     const handleClose = async () => {
-        // A pending delete has not left this window yet; closing is the user
-        // saying they meant it, so make it real before the window goes.
-        await flushPendingDelete();
+        // A deletion still mid-undo has not left this window yet; closing is
+        // the user saying they meant it, so make it real before the window
+        // goes. It queues behind anything in flight, and so does the wait.
+        const d = slotRef.current;
+        if (d) await scheduleCommit(d);
+        await queue.idle();
         await getCurrentWindow().close();
     };
 
@@ -580,12 +772,14 @@ export default function AddSensorWindow() {
         setAddError(null);
     }, [attemptKey]);
 
+    // ---- Create (runs INSIDE the queue) ---------------------------------------
+
     /**
-     * Run whatever calculation is currently configured (formula, legacy
-     * config, or none -- "add as-is") and return what the Dashboard should
-     * plot, the master-data metadata (description/unit/component) for the newly
-     * created sensor -- the same fields a mapping CSV row supplies for an
-     * imported sensor -- and its recipe.
+     * Run whatever calculation was configured (formula, legacy config, or none
+     * -- "add as-is") and return what the Dashboard should plot, the
+     * master-data metadata (description/unit/component) for the newly created
+     * sensor -- the same fields a mapping CSV row supplies for an imported
+     * sensor -- and its recipe.
      *
      * `plotSensors` is what gets ADDED to the Dashboard's plot: the new
      * sensor's own tag when one was created (never the sensors it was built
@@ -601,47 +795,133 @@ export default function AddSensorWindow() {
      * what's needed to invoke the same command again after a workspace
      * reopen -- see `WorkspaceState.specialSensorRecipes`.
      */
-    const computeCurrentRound = async (): Promise<{ plotSensors: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
-        if (formulaMode && formulaExpression.trim()) {
+    const computeRound = async (snap: CreateSnapshot): Promise<{ plotSensors: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
+        if (snap.formulaMode && snap.formulaExpression.trim()) {
             const newSensorName = await invoke<string>('evaluate_formula', {
-                formula: formulaExpression,
-                customName: formulaCustomName.trim() || null,
+                formula: snap.formulaExpression,
+                customName: snap.formulaCustomName.trim() || null,
             });
             return {
                 plotSensors: [newSensorName],
                 newMetadata: [{
                     tag: newSensorName,
-                    description: description.trim() || formulaCustomName.trim(),
-                    unit: unit.trim(),
-                    component: component.trim() || 'Uncategorized',
+                    description: snap.description.trim() || snap.formulaCustomName.trim(),
+                    unit: snap.unit.trim(),
+                    component: snap.component.trim() || 'Uncategorized',
                 }],
-                newRecipes: [{ kind: 'formula', tag: newSensorName, formula: formulaExpression }],
+                newRecipes: [{ kind: 'formula', tag: newSensorName, formula: snap.formulaExpression }],
             };
         }
-        if (operationConfig) {
+        if (snap.operationConfig) {
             const newSensorName = await invoke<string>('calculate_new_sensor', {
-                sensors: selectedSensors,
-                config: operationConfig,
+                sensors: snap.selectedSensors,
+                config: snap.operationConfig,
             });
             return {
                 plotSensors: [newSensorName],
                 newMetadata: [{
                     tag: newSensorName,
-                    description: description.trim() || (operationConfig.customName ?? '').trim(),
-                    unit: unit.trim(),
-                    component: component.trim() || 'Uncategorized',
+                    description: snap.description.trim() || (snap.operationConfig.customName ?? '').trim(),
+                    unit: snap.unit.trim(),
+                    component: snap.component.trim() || 'Uncategorized',
                 }],
-                newRecipes: [{ kind: 'operation', tag: newSensorName, sourceSensors: selectedSensors, operationConfig }],
+                newRecipes: [{ kind: 'operation', tag: newSensorName, sourceSensors: snap.selectedSensors, operationConfig: snap.operationConfig }],
             };
         }
-        return { plotSensors: selectedSensors, newMetadata: [], newRecipes: [] };
+        return { plotSensors: snap.selectedSensors, newMetadata: [], newRecipes: [] };
     };
 
-    // Creates the sensor currently configured, tells Dashboard about it right
-    // away (so the chart updates immediately), clears the form for the next
-    // one, and keeps the window open -- there's no separate "finish" step;
-    // "Close" just closes once the user is done adding sensors.
-    const handleAdd = async () => {
+    const createSensor = async (snap: CreateSnapshot) => {
+        const attemptedName = snap.name.trim();
+
+        // A name that is only taken by a sensor still waiting to be deleted:
+        // settle that delete first (drops its column) or the backend would
+        // refuse the name as "already exists".
+        if (attemptedName) await settleDeletions(d => d.tags.some(t => sameTag(t, attemptedName)));
+
+        // Re-check the name against FRESH state: while this waited its turn, an
+        // edit/rename may have taken it (a rename would otherwise be
+        // overwritten by this create, leaving two recipes with one name).
+        if (snap.creating) {
+            const taken = [
+                ...sensorsRef.current.filter(s => !isHidden(s)),
+                ...recipesRef.current.filter(r => !isHidden(r.tag)).map(r => r.tag),
+                ...rejectedRef.current,
+            ];
+            const problem = nameProblem(snap.name, taken);
+            if (problem) throw new Error(problem);
+        }
+
+        // A source that is deleted-but-not-applied (typed into a formula by
+        // hand -- the pickers do not offer it) would be built on, then have its
+        // column dropped from under the new sensor.
+        if (deletionsRef.current.length > 0) {
+            let used: string[] = snap.selectedSensors;
+            if (snap.creating && snap.formulaMode) {
+                const out = await invoke<string[][]>('extract_formula_refs', { formulas: [snap.formulaExpression] });
+                used = out?.[0] ?? [];
+            }
+            const hiddenSource = used.find(isHidden);
+            if (hiddenSource !== undefined) {
+                throw new Error(`"${hiddenSource}" is being deleted. Undo that first, or pick another sensor.`);
+            }
+        }
+
+        const { plotSensors, newMetadata, newRecipes } = await computeRound(snap);
+
+        const createdName = newMetadata[0]?.tag;
+        if (createdName) {
+            // Make the new sensor pickable as an input for the next round
+            // (e.g. building a second sensor on top of the first).
+            setSensors(prev => (prev.some(t => sameTag(t, createdName)) ? prev : [...prev, createdName]));
+            setSensorMetadata(prev => {
+                const existing = prev ?? [];
+                return existing.some(m => sameTag(m.tag, createdName)) ? existing : [...existing, newMetadata[0]];
+            });
+            // Show up on the Manage tab right away, without waiting for
+            // the dashboard to send a fresh sensors-data.
+            setRecipes(prev => {
+                const others = prev.filter(r => !newRecipes.some(n => sameTag(n.tag, r.tag)));
+                return [...others, ...newRecipes];
+            });
+        }
+
+        // `sensors` is a delta -- what the Dashboard should ADD to its
+        // plot -- see `AddSensorSelectionPayload`. The Dashboard answers with
+        // what it actually plotted (`add-sensor-plot-result`).
+        try {
+            await emit('add-sensor-selection', {
+                sensors: plotSensors,
+                operation: null,
+                newMetadata,
+                newRecipes,
+                workspaceId: workspaceIdRef.current,
+            });
+        } catch (err) {
+            console.error('Failed to tell the dashboard about the new sensor:', err);
+            showToast(`Created ${createdName ?? 'the sensor'}, but couldn't tell the dashboard (${errorText(err)}). Reopen the workspace to see it.`, 'error');
+        }
+
+        showToast(createdName ? `Added: ${newMetadata[0].description || createdName}` : `Added ${plotSensors.length} sensor(s)`);
+
+        // Reset the form for the next round -- this window's copy AND the
+        // tooling's (remounted through `formKey`).
+        setSelectedSensors([]);
+        setOperationConfig(null);
+        setFormulaMode(false);
+        setFormulaExpression('');
+        setFormulaCustomName('');
+        setDescription('');
+        setUnit('');
+        setComponent('');
+        setFormKey(k => k + 1);
+    };
+
+    // Queues the sensor currently configured, tells Dashboard about it as soon
+    // as it is built (so the chart updates immediately), clears the form for
+    // the next one, and keeps the window open -- there's no separate "finish"
+    // step; "Close" just closes once the user is done adding sensors.
+    const handleAdd = () => {
         // The button is disabled in these states, so this only matters for a
         // second click that lands before React has re-rendered it disabled --
         // which would otherwise create twice (or hit the new duplicate-name
@@ -650,71 +930,31 @@ export default function AddSensorWindow() {
         addingRef.current = true;
         setAdding(true);
         setAddError(null);
+        const snap: CreateSnapshot = {
+            formulaMode, formulaExpression, formulaCustomName, operationConfig,
+            selectedSensors: selectedSensors.filter(t => !isHidden(t)),
+            description, unit, component,
+            creating: isCreatingSomething,
+            name: currentName,
+        };
         const attemptedName = currentName.trim();
-        try {
-            // A name that is only taken by a sensor still inside its undo
-            // window: settle that delete first (drops its column) or the
-            // backend would refuse the name as "already exists".
-            if (attemptedName && pendingDeleteRef.current?.tags.some(t => sameTag(t, attemptedName))) {
-                await flushPendingDelete();
-            }
-
-            const { plotSensors, newMetadata, newRecipes } = await computeCurrentRound();
-            setPlottedSensors(prev => mergeIntoPlot(prev, plotSensors).next);
-
-            const createdName = newMetadata[0]?.tag;
-            if (createdName) {
-                // Make the new sensor pickable as an input for the next round
-                // (e.g. building a second sensor on top of the first).
-                setSensors(prev => (prev.some(t => sameTag(t, createdName)) ? prev : [...prev, createdName]));
-                setSensorMetadata(prev => {
-                    const existing = prev ?? [];
-                    return existing.some(m => sameTag(m.tag, createdName)) ? existing : [...existing, newMetadata[0]];
-                });
-                // Show up on the Manage tab right away, without waiting for
-                // the dashboard to send a fresh sensors-data.
-                setRecipes(prev => {
-                    const others = prev.filter(r => !newRecipes.some(n => sameTag(n.tag, r.tag)));
-                    return [...others, ...newRecipes];
-                });
-            }
-
-            // `sensors` is a delta -- what the Dashboard should ADD to its
-            // plot -- see `AddSensorSelectionPayload`.
-            await emit('add-sensor-selection', {
-                sensors: plotSensors,
-                operation: null,
-                newMetadata,
-                newRecipes,
-                workspaceId: workspaceIdRef.current,
+        void queue.run(() => createSensor(snap))
+            .catch((err: unknown) => {
+                console.error("Failed to add sensor:", err);
+                const message = errorText(err);
+                // The window didn't know of this name but the backend does (a
+                // race, or a column this window was never told about): remember
+                // it so the Name field flags it instead of letting the same
+                // click fail again.
+                if (attemptedName && /already exists/i.test(message)) {
+                    setRejectedNames(prev => (prev.some(n => sameTag(n, attemptedName)) ? prev : [...prev, attemptedName]));
+                }
+                setAddError(message);
+            })
+            .finally(() => {
+                addingRef.current = false;
+                setAdding(false);
             });
-
-            showToast(createdName ? `Added: ${newMetadata[0].description || createdName}` : `Added ${plotSensors.length} sensor(s)`);
-
-            // Reset the picker for the next round.
-            setSelectedSensors([]);
-            setOperationConfig(null);
-            setFormulaMode(false);
-            setFormulaExpression('');
-            setFormulaCustomName('');
-            setDescription('');
-            setUnit('');
-            setComponent('');
-        } catch (err) {
-            console.error("Failed to add sensor:", err);
-            const message = errorText(err);
-            // The window didn't know of this name but the backend does (a
-            // race, or a column this window was never told about): remember it
-            // so the Name field flags it instead of letting the same click fail
-            // again.
-            if (attemptedName && /already exists/i.test(message)) {
-                setRejectedNames(prev => (prev.some(n => sameTag(n, attemptedName)) ? prev : [...prev, attemptedName]));
-            }
-            setAddError(message);
-        } finally {
-            addingRef.current = false;
-            setAdding(false);
-        }
     };
 
     const handleSensorToggle = (sensor: string) => {
@@ -739,16 +979,16 @@ export default function AddSensorWindow() {
     }, []);
 
     const filteredSensors = useMemo(() => {
-        if (!searchTerm) return sensors;
+        if (!searchTerm) return liveSensors;
         const lowerTerm = searchTerm.toLowerCase();
-        return sensors.filter(s => {
+        return liveSensors.filter(s => {
             const meta = sensorMetadata?.find(m => m.tag === s);
             const searchStr = meta
                 ? `${s} ${meta.description} ${meta.component} ${meta.unit}`.toLowerCase()
                 : s.toLowerCase();
             return searchStr.includes(lowerTerm);
         });
-    }, [sensors, searchTerm, sensorMetadata]);
+    }, [liveSensors, searchTerm, sensorMetadata]);
 
 
     return (
@@ -776,6 +1016,13 @@ export default function AddSensorWindow() {
                             </button>
                         ))}
                     </div>
+                    {/* Changes are applied one at a time (see `queue`); this says
+                        one is in progress. */}
+                    {busy && (
+                        <span data-testid="special-sensor-busy" aria-live="polite" className="pointer-events-none" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            Applying changes…
+                        </span>
+                    )}
                 </div>
                 <button
                     onClick={handleClose}
@@ -790,7 +1037,11 @@ export default function AddSensorWindow() {
                 right column (Tooling), matching the approved prototype's own
                 `.fv` grid. Kept mounted while the Manage tab is showing (just
                 hidden via `display`), same as before. */}
-            <div className="special-sensor-body" style={{ display: activeTab === 'create' ? 'grid' : 'none' }}>
+            <div
+                className="special-sensor-body"
+                aria-busy={adding || undefined}
+                style={{ display: activeTab === 'create' ? 'grid' : 'none', ...(adding ? { pointerEvents: 'none', opacity: 0.7 } : null) }}
+            >
                 {/* Left: Explorer */}
                 <div className="special-sensor-left">
                     {loading ? (
@@ -810,6 +1061,7 @@ export default function AddSensorWindow() {
                 {/* Right: Tooling */}
                 <div className="special-sensor-right custom-scrollbar">
                     <SensorTooling
+                        key={formKey}
                         selectedSensors={selectedSensors}
                         sensorMetadata={sensorMetadata}
                         onConfigChange={handleConfigChange}
@@ -829,6 +1081,8 @@ export default function AddSensorWindow() {
                         recipes={manageRecipes}
                         sensorMetadata={sensorMetadata}
                         models={models}
+                        usageKnown={failureKnown}
+                        runningConditionFilters={runningConditionFilters}
                         selectedSensors={plottedSensors}
                         formulaRefs={formulaRefs}
                         onDelete={handleDeleteSensor}

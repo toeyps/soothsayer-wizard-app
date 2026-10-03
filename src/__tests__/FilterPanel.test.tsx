@@ -183,4 +183,77 @@ describe('FilterPanel', () => {
         expect(screen.getByText('Pump Pressure (A)')).toBeTruthy();
         expect(screen.getByText('B')).toBeTruthy(); // no metadata -> bare tag
     });
+
+    // 2026-10-03: a special sensor was renamed / deleted in the Add Special Sensor
+    // window. The Dashboard rewrites the APPLIED filters itself; `sensorChange`
+    // carries the same change into the panel's unapplied draft (the Dashboard
+    // cannot see it), without throwing away unrelated unapplied typing.
+    describe('sensorChange (a special sensor renamed / deleted while the panel is open)', () => {
+        const cond = (id: string, sensor: string, value1 = '4') => ({ id, sensor, operation: 'greater_than' as const, value1, value2: '' });
+        const selectValues = () => (screen.getAllByRole('combobox') as HTMLSelectElement[]).map(s => s.value);
+
+        it('a rename re-keys the applied conditions shown in the draft, in step with the Dashboard rewriting `filters`', () => {
+            const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A'), cond('f2', 'B')] };
+            const { rerender } = render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2', 'B']} sensorChange={{ id: 0 }} />);
+            expect(selectValues()).toEqual(['A', 'B']);
+            // Dashboard rewrote its applied filters and bumped sensorChange in one render.
+            const renamed: FilterState = { ...applied, sensorFilters: [cond('f1', 'A2'), cond('f2', 'B')] };
+            rerender(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2', 'B']} sensorChange={{ id: 1, rename: { from: 'A', to: 'A2' } }} />);
+            expect(selectValues()).toEqual(['A2', 'B']);
+        });
+
+        it('a rename also re-keys an UNAPPLIED draft condition, and keeps what else the user was typing (it is not reset to the applied list)', () => {
+            const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A')] };
+            const { rerender } = render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2', 'B']} sensorChange={{ id: 0 }} />);
+            // Unapplied: a second condition on A, typed value 77, plus an edit to f1's value.
+            fireEvent.click(screen.getByText('Add condition').closest('button')!);
+            fireEvent.change(screen.getAllByPlaceholderText('value')[1], { target: { value: '77' } });
+            fireEvent.change(screen.getAllByPlaceholderText('value')[0], { target: { value: '5' } });
+            expect(selectValues()).toEqual(['A', 'A']);
+
+            const renamed: FilterState = { ...applied, sensorFilters: [cond('f1', 'A2')] };
+            rerender(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2', 'B']} sensorChange={{ id: 1, rename: { from: 'A', to: 'A2' } }} />);
+            expect(selectValues()).toEqual(['A2', 'A2']);
+            const values = (screen.getAllByPlaceholderText('value') as HTMLInputElement[]).map(i => i.value);
+            expect(values).toEqual(['5', '77']); // unapplied typing survived
+        });
+
+        it('a delete removes the conditions of the deleted sensor from the draft (applied and unapplied) and keeps the others', () => {
+            const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A'), cond('f2', 'B')] };
+            const { rerender } = render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A', 'B']} sensorChange={{ id: 0 }} />);
+            fireEvent.click(screen.getByText('Add condition').closest('button')!); // unapplied, defaults to A
+            expect(selectValues()).toEqual(['A', 'B', 'A']);
+
+            const afterDelete: FilterState = { ...applied, sensorFilters: [cond('f2', 'B')] };
+            rerender(<FilterPanel filters={afterDelete} onFiltersChange={vi.fn()} selectedSensors={['B']} sensorChange={{ id: 1, removed: ['a'] }} />);
+            expect(selectValues()).toEqual(['B']);
+        });
+
+        it('deleting the only condition leaves the empty state', () => {
+            const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A')] };
+            const { rerender } = render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A']} sensorChange={{ id: 0 }} />);
+            rerender(<FilterPanel filters={{ ...applied, sensorFilters: [] }} onFiltersChange={vi.fn()} selectedSensors={[]} sensorChange={{ id: 1, removed: ['A'] }} />);
+            expect(screen.getByText('No sensor filters applied.')).toBeTruthy();
+        });
+
+        it('each change is applied exactly once (a re-render with the same id does not re-apply it to what the user has done since)', () => {
+            const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A')] };
+            const change = { id: 1, rename: { from: 'A', to: 'A2' } };
+            const renamed: FilterState = { ...applied, sensorFilters: [cond('f1', 'A2')] };
+            const { rerender } = render(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2']} sensorChange={{ id: 0 }} />);
+            rerender(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2']} sensorChange={change} />);
+            // The user picks sensor A again for that row ...
+            fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'A' } });
+            expect(selectValues()).toEqual(['A']);
+            // ... and an unrelated re-render with the SAME change does not rename it again.
+            rerender(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2']} sensorChange={change} />);
+            expect(selectValues()).toEqual(['A']);
+        });
+
+        it('a panel mounted with a non-zero id does not replay an old change', () => {
+            const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A')] };
+            render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A']} sensorChange={{ id: 5, rename: { from: 'A', to: 'ZZ' } }} />);
+            expect(selectValues()).toEqual(['A']);
+        });
+    });
 });

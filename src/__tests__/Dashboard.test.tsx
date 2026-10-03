@@ -2241,6 +2241,151 @@ describe('Dashboard', () => {
             expect(patched.failureGroupState.models[0].targetSensor).toBe('CALC1-renamed');
         });
 
+        // ---- 2026-10-03 (second pass): the Filter tab, the Running condition,
+        // the plotted-set answer and the rollback refresh ----------------------
+        describe('special-sensor rename / delete reach the Filter tab and the workspace Running condition', () => {
+            const cond = (id: string, sensor: string) => ({ id, sensor, operation: 'greater_than' as const, value1: '4', value2: '' });
+            const rcModel = {
+                id: 'm1', groupNos: [1], name: 'Model1', kind: 'individual' as const, category: null,
+                notes: '', status: false, targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
+                clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
+                filterTimePeriods: [],
+                runningConditionMode: 'custom' as const, customRunningConditionFilters: [cond('c1', 'CALC1')], customRunningConditionCombine: 'and' as const,
+            };
+            const recipe = { kind: 'formula' as const, tag: 'CALC1', formula: '$TAG1 * 2' };
+            const renamePayload = {
+                workspaceId: 'ws1', oldTag: 'CALC1', newTag: 'CALC9', recipe: { ...recipe, tag: 'CALC9' },
+                metadata: { tag: 'CALC9', description: 'x', unit: '', component: '' }, updatedRecipes: [],
+            };
+            async function fire(event: string, payload: Record<string, unknown>) {
+                await act(async () => {
+                    for (const cb of listenCallbacks[event] ?? []) cb({ payload });
+                });
+            }
+            async function openWith(extra: Record<string, unknown> = {}) {
+                const initial = makeInitialState({
+                    selectedSensors: ['CALC1'], visibleSensors: ['CALC1'],
+                    specialSensorRecipes: [recipe],
+                    filters: { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'CALC1'), cond('f2', 'TAG2')] },
+                    failureGroupState: {
+                        groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG1' }],
+                        models: [rcModel],
+                        runningConditionFilters: [cond('r1', 'CALC1'), cond('r2', 'TAG2')],
+                        runningConditionCombine: 'or' as const,
+                    },
+                    ...extra,
+                });
+                seedDisk(initial); // the Running condition re-key is computed against DISK
+                renderDashboard({ initialState: initial });
+                await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+                fireEvent.click(screen.getByText('Filter'));
+            }
+            const lastChartFilter = () => (last(mockUseChartData.mock.calls)![0] as any).filter;
+
+            it('a rename re-keys the Filter tab conditions the chart query uses (applied) and tells an open panel to re-key its draft', async () => {
+                await openWith();
+                expect(lastChartFilter().value_filters.map((f: any) => f.sensor)).toEqual(['CALC1', 'TAG2']);
+                await fire('rename-special-sensor', renamePayload);
+                expect(lastChartFilter().value_filters.map((f: any) => f.sensor)).toEqual(['CALC9', 'TAG2']);
+                const sent = (last(filterPanelProps) as any).filters.sensorFilters.map((f: any) => f.sensor);
+                expect(sent).toEqual(['CALC9', 'TAG2']);
+                expect((last(filterPanelProps) as any).sensorChange).toMatchObject({ rename: { from: 'CALC1', to: 'CALC9' } });
+            });
+
+            it('a rename re-keys the workspace Running condition AND every model\'s own custom conditions on disk, keeps every other field, and broadcasts it', async () => {
+                await openWith();
+                mockEmit.mockClear();
+                await fire('rename-special-sensor', renamePayload);
+                const patched = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                const slice = patched.failureGroupState;
+                expect(slice.runningConditionFilters.map((f: any) => f.sensor)).toEqual(['CALC9', 'TAG2']);
+                expect(slice.models[0].customRunningConditionFilters.map((f: any) => f.sensor)).toEqual(['CALC9']);
+                // Not a hand-built slice: the combine mode survived.
+                expect(slice.runningConditionCombine).toBe('or');
+                await waitFor(() => expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
+                    workspaceId: 'ws1', origin: 'dashboard', runningConditionCombine: 'or',
+                    runningConditionFilters: [expect.objectContaining({ sensor: 'CALC9' }), expect.objectContaining({ sensor: 'TAG2' })],
+                })));
+            });
+
+            it('a rename that names nothing in the Filter tab leaves it untouched', async () => {
+                await openWith();
+                await fire('rename-special-sensor', { ...renamePayload, oldTag: 'NOPE', newTag: 'NOPE2' });
+                expect(lastChartFilter().value_filters.map((f: any) => f.sensor)).toEqual(['CALC1', 'TAG2']);
+            });
+
+            it('a delete removes the conditions that name the deleted sensor from the Filter tab (the chart must not keep an applied condition on a column that is gone) and tells the open panel', async () => {
+                await openWith({ selectedSensors: ['CALC1', 'TAG1'], visibleSensors: ['CALC1', 'TAG1'] });
+                await fire('delete-special-sensors', { workspaceId: 'ws1', tags: ['calc1'] });
+                expect(lastChartFilter().value_filters.map((f: any) => f.sensor)).toEqual(['TAG2']);
+                expect((last(filterPanelProps) as any).sensorChange).toMatchObject({ removed: ['calc1'] });
+            });
+
+            it('events for another workspace change nothing', async () => {
+                await openWith();
+                await fire('rename-special-sensor', { ...renamePayload, workspaceId: 'other' });
+                await fire('delete-special-sensors', { workspaceId: 'other', tags: ['CALC1'] });
+                expect(lastChartFilter().value_filters.map((f: any) => f.sensor)).toEqual(['CALC1', 'TAG2']);
+            });
+
+            it('"request-sensors" carries the workspace Running condition (the window blocks deleting a sensor it names)', async () => {
+                await openWith();
+                mockEmit.mockClear();
+                await act(async () => { for (const cb of listenCallbacks['request-sensors'] ?? []) cb({}); });
+                expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({
+                    runningConditionFilters: [expect.objectContaining({ sensor: 'CALC1' }), expect.objectContaining({ sensor: 'TAG2' })],
+                }));
+            });
+        });
+
+        describe('"add-sensor-selection" is answered with what was REALLY plotted', () => {
+            async function fire(payload: Record<string, unknown>) {
+                await act(async () => {
+                    for (const cb of listenCallbacks['add-sensor-selection'] ?? []) cb({ payload: { workspaceId: 'ws1', operation: null, ...payload } });
+                });
+            }
+            const meta = (tag: string) => [{ tag, description: tag, unit: '', component: '' }];
+
+            it('reports the merged selection, tagged with the workspace', async () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                await act(async () => { await Promise.resolve(); });
+                mockEmit.mockClear();
+                await fire({ sensors: ['CALC1'], newMetadata: meta('CALC1') });
+                expect(mockEmit).toHaveBeenCalledWith('add-sensor-plot-result', { workspaceId: 'ws1', selectedSensors: ['TAG1', 'CALC1'] });
+            });
+
+            it('Pair Plot at its cap: the report does NOT include the sensor that was refused', async () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], chartType: 'pair',
+                    }),
+                });
+                await act(async () => { await Promise.resolve(); });
+                mockEmit.mockClear();
+                await fire({ sensors: ['CALC1'], newMetadata: meta('CALC1') });
+                expect(mockEmit).toHaveBeenCalledWith('add-sensor-plot-result', { workspaceId: 'ws1', selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'] });
+            });
+
+            it('a request from another workspace gets no answer', async () => {
+                renderDashboard();
+                await act(async () => { await Promise.resolve(); });
+                mockEmit.mockClear();
+                await fire({ workspaceId: 'other', sensors: ['CALC1'], newMetadata: meta('CALC1') });
+                expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-plot-result', expect.anything());
+            });
+        });
+
+        it('"special-sensor-data-changed" (a failed edit was rolled back) bumps the data revision so charts refetch; another workspace\'s is ignored', async () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            const before = last(mockUseChartData.mock.calls)[0]?.revision ?? 0;
+            await act(async () => { for (const cb of listenCallbacks['special-sensor-data-changed'] ?? []) cb({ payload: { workspaceId: 'other' } }); });
+            expect(last(mockUseChartData.mock.calls)[0]?.revision ?? 0).toBe(before);
+            await act(async () => { for (const cb of listenCallbacks['special-sensor-data-changed'] ?? []) cb({ payload: { workspaceId: 'ws1' } }); });
+            expect(last(mockUseChartData.mock.calls)[0]?.revision).toBe(before + 1);
+        });
+
         it('"delete-special-sensors" matches tags case-insensitively, and ignores an empty list', async () => {
             const recipe = { kind: 'formula' as const, tag: 'Calc1', formula: '$TAG1 * 2' };
             renderDashboard({ initialState: makeInitialState({ specialSensorRecipes: [recipe] }) });

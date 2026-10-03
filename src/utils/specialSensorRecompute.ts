@@ -44,17 +44,22 @@ export function recomputeCall(recipe: SpecialSensorRecipe): { cmd: string; args:
  *
  * Rejects on the first failure, naming the recipe that failed. Recipes before
  * it have already been written — there is no transaction here — so the caller
- * should treat a rejection as "the data is now part-way through an edit" and
- * say so rather than pretending nothing happened.
+ * should treat a rejection as "the data is now part-way through an edit". Use
+ * `onRecomputed` to learn which ones, and roll them back (`specialSensorEdit`).
  */
 export async function recomputeSpecialSensors(
     recipes: SpecialSensorRecipe[],
     invoker: Invoker,
+    /** Called after each recipe's column has been written, so a caller that
+     *  gets a rejection later knows exactly which columns were already changed
+     *  (the edit flow rolls those back -- see `specialSensorEdit.ts`). */
+    onRecomputed?: (recipe: SpecialSensorRecipe) => void,
 ): Promise<void> {
     for (const recipe of recipes) {
         const { cmd, args } = recomputeCall(recipe);
         try {
             await invoker(cmd, args);
+            onRecomputed?.(recipe);
         } catch (err) {
             const failure = new Error(`Could not recompute "${recipe.tag}": ${String(err)}`);
             // Set rather than passed to the constructor: the project's TS lib

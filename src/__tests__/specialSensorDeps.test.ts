@@ -321,3 +321,72 @@ describe('reorderRecipesByTags', () => {
         expect(reorderRecipesByTags([A, B, C], ['ghost', 'c']).map(r => r.tag)).toEqual(['C', 'A', 'B']);
     });
 });
+
+// ── 2026-10-03 (second pass): running condition + build-order recompute ─────
+
+describe('buildSpecialSensorUsage -- the Running condition', () => {
+    const cond = (sensor: string) => ({ id: `c-${sensor}`, sensor, operation: 'greater_than' as const, value1: '3', value2: '' });
+
+    it('a special sensor named by the workspace Running condition is in use: not deletable, flagged runningCondition', () => {
+        const usage = buildSpecialSensorUsage({
+            recipes: [formula('A', '$RAW'), formula('B', '$RAW')],
+            formulaRefs: new Map(),
+            models: [],
+            runningConditionFilters: [cond('a')], // case-insensitive, like every other tag match
+            selectedSensors: [],
+        });
+        expect(usageFor(usage, 'A')).toMatchObject({ runningCondition: true, deletable: false, dependentSensors: [], modelReferences: [] });
+        expect(usageFor(usage, 'B')).toMatchObject({ runningCondition: false, deletable: true });
+    });
+
+    it('a raw sensor in the Running condition does not matter (only special sensors are tracked)', () => {
+        const usage = buildSpecialSensorUsage({
+            recipes: [formula('A', '$RAW')], formulaRefs: new Map(), models: [],
+            runningConditionFilters: [cond('TAG1')], selectedSensors: [],
+        });
+        expect(usageFor(usage, 'A')!.deletable).toBe(true);
+    });
+
+    it('omitted / empty Running condition changes nothing', () => {
+        const base = { recipes: [formula('A', '$RAW')], formulaRefs: new Map<string, string[]>(), models: [] as FailureModel[], selectedSensors: [] as string[] };
+        expect(usageFor(buildSpecialSensorUsage(base), 'A')).toMatchObject({ runningCondition: false, deletable: true });
+        expect(usageFor(buildSpecialSensorUsage({ ...base, runningConditionFilters: [] }), 'A')!.deletable).toBe(true);
+    });
+
+    it('a model\'s OWN custom running-condition conditions block the delete too, listed as a model reference with that field (even while the model is in workspace mode: the list comes back when it switches to Custom)', () => {
+        const model = makeModel({
+            id: 'm9', name: 'Pump health', runningConditionMode: 'workspace',
+            customRunningConditionFilters: [cond('A')],
+        });
+        const usage = build({ recipes: [formula('A', '$RAW')], models: [model] });
+        const info = usageFor(usage, 'A')!;
+        expect(info.deletable).toBe(false);
+        expect(info.modelReferences).toEqual([{ modelId: 'm9', modelName: 'Pump health', field: 'custom running condition' }]);
+    });
+});
+
+describe('dependentsToRecompute -- build order', () => {
+    const A = formula('A', '$RAW');
+    const B = formula('B', '${A} + 1');
+    const C = formula('C', '$B * 10');
+    const refs: Record<string, string[]> = { a: ['RAW'], b: ['A'], c: ['B'] };
+    const inputsOf = (r: SpecialSensorRecipe) => refs[r.tag.toLowerCase()] ?? [];
+
+    it('without inputsOf: stored array order (the legacy behaviour)', () => {
+        const stored = [C, B, A];
+        const usage = build({ recipes: stored, formulaRefs: { A: ['RAW'], B: ['A'], C: ['B'] } });
+        expect(dependentsToRecompute(stored, usage, 'A').map(r => r.tag)).toEqual(['C', 'B']);
+    });
+
+    it('with inputsOf: a stored order that is NOT a build order is put right, so a dependent is never recomputed before what it reads', () => {
+        const stored = [C, B, A];
+        const usage = build({ recipes: stored, formulaRefs: { A: ['RAW'], B: ['A'], C: ['B'] } });
+        expect(dependentsToRecompute(stored, usage, 'A', inputsOf).map(r => r.tag)).toEqual(['B', 'C']);
+    });
+
+    it('with inputsOf and an order that is already right: unchanged', () => {
+        const stored = [A, B, C];
+        const usage = build({ recipes: stored, formulaRefs: { A: ['RAW'], B: ['A'], C: ['B'] } });
+        expect(dependentsToRecompute(stored, usage, 'A', inputsOf).map(r => r.tag)).toEqual(['B', 'C']);
+    });
+});

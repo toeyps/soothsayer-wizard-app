@@ -10,8 +10,10 @@ import { FailureModel, SpecialSensorRecipe } from '../types';
  * fails loudly, so the rule (confirmed with the user) is to block the delete
  * up front rather than cascade or repair afterwards.
  *
- *   blocked  — another special sensor references it, or a Failure Group model
- *              references it in ANY of its seven sensor-bearing fields
+ *   blocked  — another special sensor references it, a Failure Group model
+ *              references it in ANY of its sensor-bearing fields (including a
+ *              model's own Custom running condition), or the workspace-wide
+ *              Running condition filter names it
  *   allowed  — merely plotted on the chart, or unused entirely
  *
  * Plotting is deliberately not a blocker: the sensor is just removed from the
@@ -23,10 +25,14 @@ import { FailureModel, SpecialSensorRecipe } from '../types';
  *  2026-09-15: the old "PM filter" field (`pmSensorFilters`, per-model) was
  *  removed here — that concept moved to a single workspace-wide
  *  `runningConditionFilters` list (see `FailureGroupStateSlice`), which
- *  isn't per-model and so doesn't fit this array's shape. Deleting a special
- *  sensor the running-condition filter references is NOT currently blocked
- *  by this check — a known, scoped gap (flagged to the user), not an
- *  oversight. */
+ *  isn't per-model and so doesn't fit this array's shape.
+ *
+ *  2026-10-03: that gap is closed. The workspace list is passed to
+ *  `buildSpecialSensorUsage` separately (`runningConditionFilters`), and a
+ *  model's own Custom running-condition conditions are a field below. Rust
+ *  silently DROPS a condition on a sensor that no longer exists, so a deleted
+ *  special sensor still named there would make every model train on different
+ *  rows without any error. */
 const MODEL_SENSOR_FIELDS = [
     { label: 'target sensor', read: (m: FailureModel) => [m.targetSensor] },
     { label: 'predictor', read: (m: FailureModel) => m.predictorSensors ?? [] },
@@ -34,13 +40,16 @@ const MODEL_SENSOR_FIELDS = [
     { label: 'Y sensor', read: (m: FailureModel) => [m.ySensor] },
     { label: 'criteria sensor', read: (m: FailureModel) => [m.criteriaSensor] },
     { label: 'scatter X sensor', read: (m: FailureModel) => [m.scatterXSensor] },
+    // Kept even when the model is currently in 'workspace' mode: the list is
+    // persisted and comes back the moment the user switches to Custom.
+    { label: 'custom running condition', read: (m: FailureModel) => (m.customRunningConditionFilters ?? []).map(f => f.sensor) },
 ] as const;
 
 /** A Failure Group model that names the sensor, and the field it names it in. */
 export interface ModelReference {
     modelId: string;
     modelName: string;
-    /** Which of the seven fields — e.g. `target sensor`. */
+    /** Which field — e.g. `target sensor`, `custom running condition`. */
     field: string;
 }
 
@@ -52,9 +61,12 @@ export interface SpecialSensorUsage {
     /** Models that name this sensor. One model can appear twice under
      *  different fields — that is information, not a duplicate. */
     modelReferences: ModelReference[];
+    /** Named by a condition of the workspace-wide Running condition filter. */
+    runningCondition: boolean;
     /** Currently plotted on the dashboard chart. Never blocks a delete. */
     onChart: boolean;
-    /** False exactly when `dependentSensors` or `modelReferences` is non-empty. */
+    /** False exactly when `dependentSensors` or `modelReferences` is non-empty,
+     *  or `runningCondition` is set. */
     deletable: boolean;
 }
 
@@ -97,10 +109,13 @@ export function buildSpecialSensorUsage(args: {
     recipes: SpecialSensorRecipe[];
     formulaRefs: Map<string, string[]>;
     models: FailureModel[];
+    /** The workspace-wide Running condition's conditions
+     *  (`failureGroupState.runningConditionFilters`). Omitted = none. */
+    runningConditionFilters?: Array<{ sensor: string }>;
     /** Sensors currently plotted on the chart. */
     selectedSensors: string[];
 }): Map<string, SpecialSensorUsage> {
-    const { recipes, formulaRefs, models, selectedSensors } = args;
+    const { recipes, formulaRefs, models, selectedSensors, runningConditionFilters } = args;
 
     const usage = new Map<string, SpecialSensorUsage>();
     for (const recipe of recipes) {
@@ -108,6 +123,7 @@ export function buildSpecialSensorUsage(args: {
             tag: recipe.tag,
             dependentSensors: [],
             modelReferences: [],
+            runningCondition: false,
             onChart: false,
             deletable: true,
         });
@@ -146,13 +162,22 @@ export function buildSpecialSensorUsage(args: {
         }
     }
 
+    // workspace Running condition -> special.
+    for (const filter of runningConditionFilters ?? []) {
+        if (!filter?.sensor) continue;
+        const target = usage.get(key(filter.sensor));
+        if (target) target.runningCondition = true;
+    }
+
     for (const sensor of selectedSensors) {
         const target = usage.get(key(sensor));
         if (target) target.onChart = true;
     }
 
     for (const entry of usage.values()) {
-        entry.deletable = entry.dependentSensors.length === 0 && entry.modelReferences.length === 0;
+        entry.deletable = entry.dependentSensors.length === 0
+            && entry.modelReferences.length === 0
+            && !entry.runningCondition;
     }
 
     return usage;
@@ -175,11 +200,12 @@ export function usageFor(
  * edit has to be followed by replaying the whole downstream chain — not just
  * the direct dependents, since those have dependents of their own.
  *
- * The result is drawn from `recipes` in array order, which is what makes it
- * safe to run straight through: a recipe can only reference sensors created
- * before it, so an earlier entry is never waiting on a later one. (This is the
- * same ordering guarantee the workspace-reopen replay relies on — see
- * `WorkspaceState.specialSensorRecipes`.)
+ * The result is drawn from `recipes` in array order. That is only a valid
+ * build order when the stored list is one -- which a workspace saved before the
+ * ordering fix (2026-10-03) may not be (`[C=$B*10, B=${A}+1, A=...]`: C would be
+ * recomputed from B's OLD values). Pass `inputsOf` (what each recipe reads) and
+ * the result is put in dependency order (`orderRecipesByDependency`) before it
+ * is returned, whatever order the list is stored in.
  *
  * `tag` itself is not included; the caller recomputes it first.
  */
@@ -187,6 +213,7 @@ export function dependentsToRecompute(
     recipes: SpecialSensorRecipe[],
     usage: Map<string, SpecialSensorUsage>,
     tag: string,
+    inputsOf?: (recipe: SpecialSensorRecipe) => string[],
 ): SpecialSensorRecipe[] {
     const stale = new Set<string>();
     const queue = [key(tag)];
@@ -198,7 +225,8 @@ export function dependentsToRecompute(
             queue.push(key(dependent));
         }
     }
-    return recipes.filter(r => stale.has(key(r.tag)));
+    const downstream = recipes.filter(r => stale.has(key(r.tag)));
+    return inputsOf ? orderRecipesByDependency(downstream, inputsOf) : downstream;
 }
 
 /**

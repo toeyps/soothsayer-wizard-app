@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { Plus, X, Check } from 'lucide-react';
 import { SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { renameTagInRunningConditionFilters, removeTagsFromFilters } from '../../utils/specialSensorRename';
 
 export interface SensorValueFilter {
     id: string;
@@ -17,11 +18,24 @@ export interface FilterState {
     sensorFilters: SensorValueFilter[];
 }
 
+/**
+ * A special sensor was renamed or deleted (Add Special Sensor window). The
+ * Dashboard rewrites the APPLIED `filters` itself; this carries the same change
+ * into the panel's own unapplied DRAFT, which the Dashboard cannot see. `id`
+ * increments per event so each is applied exactly once.
+ */
+export interface FilterSensorChange {
+    id: number;
+    rename?: { from: string; to: string };
+    removed?: string[];
+}
+
 interface FilterPanelProps {
     selectedSensors?: string[];
     filters: FilterState;
     onFiltersChange: (filters: FilterState) => void;
     sensorMetadata?: SensorMetadata[] | null;
+    sensorChange?: FilterSensorChange;
 }
 
 // ── Operator segmented control ──────────────────────────────────────────
@@ -120,6 +134,7 @@ export default function FilterPanel({
     filters,
     onFiltersChange,
     sensorMetadata,
+    sensorChange,
 }: FilterPanelProps) {
     // Local draft state — edits happen here without triggering heavy recomputation
     const [draft, setDraft] = useState<FilterState>(filters);
@@ -148,6 +163,32 @@ export default function FilterPanel({
     // sensorFilters has genuinely moved on (e.g. Apply/Clear from this
     // panel itself, or an external reset such as a workspace reload).
     const lastSyncedFilters = useRef<FilterState>(filters);
+
+    // A special sensor's rename / deletion, carried into the draft. Declared
+    // BEFORE the sync effect below on purpose: it applies the same rewrite to
+    // `lastSyncedFilters` too, so when the sync effect then sees the Dashboard's
+    // already-rewritten applied filters they match what it last synced and it
+    // leaves the draft (with any unapplied typing) alone.
+    const lastChangeId = useRef(sensorChange?.id ?? 0);
+    useEffect(() => {
+        if (!sensorChange || sensorChange.id === lastChangeId.current) return;
+        lastChangeId.current = sensorChange.id;
+        const apply = <T extends { sensor: string }>(list: T[]): T[] => {
+            let out = list;
+            if (sensorChange.rename) out = renameTagInRunningConditionFilters(out, sensorChange.rename.from, sensorChange.rename.to);
+            if (sensorChange.removed) out = removeTagsFromFilters(out, sensorChange.removed);
+            return out;
+        };
+        setDraft(prev => {
+            const next = apply(prev.sensorFilters);
+            return next === prev.sensorFilters ? prev : { ...prev, sensorFilters: next };
+        });
+        lastSyncedFilters.current = {
+            ...lastSyncedFilters.current,
+            sensorFilters: apply(lastSyncedFilters.current.sensorFilters),
+        };
+    }, [sensorChange]);
+
     useEffect(() => {
         const prevSynced = lastSyncedFilters.current;
         const periodChanged = filters.timestampStart !== prevSynced.timestampStart || filters.timestampEnd !== prevSynced.timestampEnd;

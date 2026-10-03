@@ -6,6 +6,7 @@ import {
     renameTagInModels,
     renameTagInRunningConditionFilters,
     renameTagInRecipes,
+    removeTagsFromFilters,
 } from '../utils/specialSensorRename';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
@@ -213,5 +214,38 @@ describe('renameTagInRecipes', () => {
         const [renamedA, renamedB] = await renameTagInRecipes([a, b], 'OLD', 'NEW', invoker);
         expect(renamedA).toEqual({ kind: 'formula', tag: 'A', formula: '$NEW * 2' });
         expect(renamedB.kind === 'operation' && renamedB.sourceSensors).toEqual(['NEW']);
+    });
+});
+
+// ── 2026-10-03 (second pass) ────────────────────────────────────────────────
+describe('removeTagsFromFilters', () => {
+    const f = (id: string, sensor: string) => ({ id, sensor, operation: 'greater_than' as const, value1: '1', value2: '' });
+
+    it('drops every condition that names a deleted tag (trimmed, case-insensitive) and keeps the rest in order', () => {
+        const list = [f('1', 'A'), f('2', 'TAG1'), f('3', ' a '), f('4', 'B')];
+        expect(removeTagsFromFilters(list, ['a']).map(x => x.id)).toEqual(['2', '4']);
+        expect(removeTagsFromFilters(list, ['A', 'B']).map(x => x.id)).toEqual(['2']);
+    });
+
+    it('returns the SAME array when nothing matches (callers can skip a state update)', () => {
+        const list = [f('1', 'TAG1')];
+        expect(removeTagsFromFilters(list, ['A'])).toBe(list);
+        expect(removeTagsFromFilters(list, [])).toBe(list);
+    });
+
+    it('an empty list stays empty', () => {
+        const empty: Array<{ sensor: string }> = [];
+        expect(removeTagsFromFilters(empty, ['A'])).toBe(empty);
+    });
+});
+
+describe('renameTagInRunningConditionFilters -- the Dashboard Filter tab uses it too', () => {
+    it('re-keys applied Filter tab conditions (same { sensor } shape) and keeps ids', () => {
+        const list = [
+            { id: 'f1', sensor: 'CALC1', operation: 'greater_than' as const, value1: '4', value2: '' },
+            { id: 'f2', sensor: 'TAG2', operation: 'less_than' as const, value1: '9', value2: '' },
+        ];
+        const out = renameTagInRunningConditionFilters(list, 'calc1', 'CALC9');
+        expect(out.map(x => [x.id, x.sensor])).toEqual([['f1', 'CALC9'], ['f2', 'TAG2']]);
     });
 });

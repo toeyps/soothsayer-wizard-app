@@ -10,7 +10,7 @@ import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
     FailureGroup, FailureModel, ModelKind, ModelCategory, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
-    FailureGroupStateSlice, FailureGroupStateChangedPayload,
+    FailureGroupStateSlice, FailureGroupStateChangedPayload, WorkspaceSensorFilter,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -20,7 +20,7 @@ import type { DashboardDataFilter } from '../../types/commands';
 import { Chart, defaultSensorColor, LINE_CHART_COLORS, MAX_PAIR_PLOT_SENSORS, RANGE_PALETTE, type ChartMarkLine } from '../charts';
 import { rgbaToHex } from '../charts/pairPlotColors';
 import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
-import FilterPanel, { FilterState } from './FilterPanel';
+import FilterPanel, { FilterState, FilterSensorChange } from './FilterPanel';
 import SensorSelection from './SensorSelection';
 import UndoToastStack from './UndoToastStack';
 import { KIND_LABEL, UNDO_SECONDS } from './FailureGroupAssignSheet';
@@ -33,7 +33,7 @@ import { reportError } from '../../errorReporter';
 import { useChartData } from '../../hooks/useChartData';
 import { useDatasetTimeBounds } from '../../hooks/useDatasetTimeBounds';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
-import { renameTagInArray, renameTagInRecord, renameTagInModels } from '../../utils/specialSensorRename';
+import { renameTagInArray, renameTagInRecord, renameTagInModels, renameTagInRunningConditionFilters, removeTagsFromFilters } from '../../utils/specialSensorRename';
 import { mergeIntoPlot, type AddSensorSelectionPayload } from '../../utils/specialSensorPlot';
 import { reorderRecipesByTags } from '../../utils/specialSensorDeps';
 
@@ -247,6 +247,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Deliberately NOT part of `buildWorkspaceState`: it describes this
     // session's in-memory data, not anything worth persisting.
     const [dataRevision, setDataRevision] = useState(0);
+    // Tells an OPEN Filter panel to carry a special sensor's rename / deletion
+    // into its unapplied draft too (the applied `filters` are rewritten by the
+    // listeners directly). `id` increments per event so the panel applies each
+    // once; not persisted.
+    const [filterSensorChange, setFilterSensorChange] = useState<FilterSensorChange>({ id: 0 });
     const sensorMetadata = useMemo(() => {
         if (extraSensorMetadata.length === 0) return sensorMetadataProp;
         const known = new Set((sensorMetadataProp ?? []).map(m => m.tag.toLowerCase()));
@@ -395,13 +400,24 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // combine, the workspace time range, fields added later — is carried by
     // `withFailureGroupState`'s spread, so this writer never has to know about
     // it (2026-09-23: it used to list four fields and erase the rest).
+    //
+    // 2026-10-03: `compute` may also return `runningConditionFilters` -- the
+    // workspace Running condition's conditions as they should be after this
+    // write (a special-sensor rename has to re-key them). Left out, the field is
+    // carried through untouched like every other one.
     const persistFailureGroupStateFrom = useCallback((
-        compute: (disk: { groups: FailureGroup[]; models: FailureModel[] }) => { groups: FailureGroup[]; models: FailureModel[] },
+        compute: (disk: { groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters: WorkspaceSensorFilter[] }) => {
+            groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[];
+        },
     ) => {
         if (!initialState) return;
         updateWorkspaceData(initialState.id, prev => {
             const before = prev.failureGroupState;
-            const result = compute({ groups: before?.groups ?? [], models: before?.models ?? [] });
+            const result = compute({
+                groups: before?.groups ?? [],
+                models: before?.models ?? [],
+                runningConditionFilters: before?.runningConditionFilters ?? [],
+            });
             // The FIRST model of a workspace is created here (Dashboard), i.e.
             // by a workspace that was never pre-gate: mark it as handled so
             // `flagLegacyGate` (Build Model window) doesn't flag it as a legacy
@@ -1302,7 +1318,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // depends on a special sensor before offering to delete it (see
     // `buildSpecialSensorUsage`). They travel on the same
     // request-sensors/sensors-data handshake rather than a second one.
-    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups });
+    const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra });
     // 2026-09-21: every event from the Add Sensor window is a GLOBAL
     // broadcast, so with a second project loaded a leftover window from the
     // previous one could push ITS sensors/metadata/recipes into this
@@ -1313,8 +1329,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const forThisWorkspace = (payload: unknown) =>
         (payload as { workspaceId?: string } | null | undefined)?.workspaceId === workspaceIdRef.current;
     useEffect(() => {
-        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups };
-    }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups]);
+        stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra };
+    }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra]);
 
     useEffect(() => {
         let unlistenRequest: UnlistenFn | undefined;
@@ -1322,13 +1338,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         let unlistenDelete: UnlistenFn | undefined;
         let unlistenUpdate: UnlistenFn | undefined;
         let unlistenRename: UnlistenFn | undefined;
+        let unlistenDataChanged: UnlistenFn | undefined;
 
         const setupListeners = () => {
             debugLog("Setting up Dashboard listeners");
             // Listen for request from child window
             unlistenRequest = subscribe('request-sensors', () => {
                 debugLog("Dashboard received 'request-sensors', emitting data...");
-                const { allSensorTags, selectedSensors, sensorMetadata, specialSensorRecipes, fgModels } = stateRef.current;
+                const { allSensorTags, selectedSensors, sensorMetadata, specialSensorRecipes, fgModels, fgExtra } = stateRef.current;
                 emit('sensors-data', {
                     workspaceId: workspaceIdRef.current,
                     sensors: allSensorTags,
@@ -1336,6 +1353,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     sensorMetadata: sensorMetadata,
                     specialSensorRecipes,
                     models: fgModels,
+                    runningConditionFilters: fgExtra.runningConditionFilters ?? [],
                 });
             });
 
@@ -1377,6 +1395,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 stateRef.current = { ...stateRef.current, selectedSensors: next };
                 setSelectedSensors(prev => mergeIntoPlot(prev, toPlot, cap).next);
                 setOperationConfig(newOperationConfig);
+                // Tell the window what is REALLY plotted now (the cap may have
+                // kept the new sensor off): its Manage tab's "on chart" badge
+                // is a mirror of this, never a guess from what it asked for.
+                emit('add-sensor-plot-result', { workspaceId: workspaceIdRef.current, selectedSensors: next })
+                    .catch(e => console.warn('Failed to report the plotted sensors:', e));
 
                 if (blocked.length > 0) {
                     const text = `Pair Plot supports at most ${MAX_PAIR_PLOT_SENSORS} sensors, so ${blocked.join(', ')} ${blocked.length === 1 ? 'was' : 'were'} added to the workspace but not plotted. Deselect a sensor first, or switch chart type.`;
@@ -1457,6 +1480,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
                 setSpecialSensorRecipes(prev => kept(prev, r => r.tag));
                 setExtraSensorMetadata(prev => kept(prev, m => m.tag));
+                // The Filter tab's conditions (applied AND the open panel's
+                // draft). A condition on a column that is gone is silently
+                // ignored by Rust -- the chart would show every row while the
+                // tab still listed the condition as applied.
+                const removedTags = event.payload?.tags ?? [];
+                setFilters(prev => {
+                    const next = removeTagsFromFilters(prev.sensorFilters, removedTags);
+                    return next === prev.sensorFilters ? prev : { ...prev, sensorFilters: next };
+                });
+                setFilterSensorChange(prev => ({ id: prev.id + 1, removed: removedTags }));
                 // visibleSensors, sensorColors, sensorAxisRange and
                 // alarmLinesEnabled all follow selectedSensors through
                 // existing effects, so deselecting is enough to clear them.
@@ -1543,11 +1576,38 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     y: prev.y && isOld(prev.y.sensor) ? { ...prev.y, sensor: newTag } : prev.y,
                 }));
                 setValueHighlight(prev => (isOld(prev.sensor) ? { ...prev, sensor: newTag } : prev));
+                // The Filter tab: applied conditions here, the open panel's
+                // draft through `filterSensorChange`. Left on the old tag the
+                // condition names a column that is gone, which Rust ignores
+                // silently (the chart shows every row, the tab still says
+                // filtered).
+                setFilters(prev => {
+                    const next = renameTagInRunningConditionFilters(prev.sensorFilters, oldTag, newTag);
+                    return next === prev.sensorFilters ? prev : { ...prev, sensorFilters: next };
+                });
+                setFilterSensorChange(prev => ({ id: prev.id + 1, rename: { from: oldTag, to: newTag } }));
 
                 const renamedModels = renameTagInModels(stateRef.current.fgModels, oldTag, newTag);
                 setFgModels(renamedModels);
-                persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: renameTagInModels(disk.models, oldTag, newTag) }));
+                // The workspace Running condition names sensors too -- carried
+                // through the same disk-derived write as the models (a hand
+                // built slice would erase fields it does not know).
+                setFgExtra(prev => (prev.runningConditionFilters
+                    ? { ...prev, runningConditionFilters: renameTagInRunningConditionFilters(prev.runningConditionFilters, oldTag, newTag) }
+                    : prev));
+                persistFailureGroupStateFrom(disk => ({
+                    groups: disk.groups,
+                    models: renameTagInModels(disk.models, oldTag, newTag),
+                    runningConditionFilters: renameTagInRunningConditionFilters(disk.runningConditionFilters, oldTag, newTag),
+                }));
 
+                setDataRevision(n => n + 1);
+            });
+
+            // Columns were overwritten and then ROLLED BACK by a failed edit:
+            // a chart that fetched in between holds values no recipe produces.
+            unlistenDataChanged = subscribe<{ workspaceId?: string }>('special-sensor-data-changed', (event) => {
+                if (!forThisWorkspace(event.payload)) return;
                 setDataRevision(n => n + 1);
             });
         };
@@ -1555,6 +1615,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setupListeners();
 
         return () => {
+            if (unlistenDataChanged) unlistenDataChanged();
             if (unlistenRequest) unlistenRequest();
             if (unlistenAdd) unlistenAdd();
             if (unlistenDelete) unlistenDelete();
@@ -2480,6 +2541,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             filters={filters}
                             onFiltersChange={handleFiltersChange}
                             sensorMetadata={sensorMetadata}
+                            sensorChange={filterSensorChange}
                         />
                     </div>
                 ) : activeDataTab === 'highlights' ? (
@@ -2777,6 +2839,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                     sensorMetadata: cur.sensorMetadata,
                                     specialSensorRecipes: cur.specialSensorRecipes,
                                     models: cur.fgModels,
+                                    runningConditionFilters: cur.fgExtra.runningConditionFilters ?? [],
                                 });
                                 return;
                             }

@@ -12,6 +12,14 @@ interface Props {
     /** Every Failure Group model, from the dashboard. A model referencing a
      *  special sensor is one of the two things that blocks deleting it. */
     models: FailureModel[];
+    /** False while this window does not know the models / running condition
+     *  FRESH (never received, or the last re-read failed): deletion is held
+     *  back, because "no model uses it" would be a guess. */
+    usageKnown?: boolean;
+    /** The workspace Running condition's conditions: naming a special sensor
+     *  there also blocks its deletion (Rust silently ignores a condition on a
+     *  column that no longer exists, so models would train on other rows). */
+    runningConditionFilters?: Array<{ sensor: string }>;
     /** Sensors currently plotted on the dashboard chart. */
     selectedSensors: string[];
     /** Formula tag -> sensors its expression references, from Rust's
@@ -65,11 +73,13 @@ function blockedSummary(usage: SpecialSensorUsage): string | null {
         const models = new Set(usage.modelReferences.map(r => r.modelId));
         parts.push(`${models.size} model${models.size > 1 ? 's' : ''}`);
     }
+    if (usage.runningCondition) parts.push('the running condition');
     return parts.length > 0 ? `Used by ${parts.join(' and ')}` : null;
 }
 
 export default function ManageSpecialSensors({
-    recipes, sensorMetadata, models, selectedSensors, formulaRefs, onDelete, pendingDelete, onUndo,
+    recipes, sensorMetadata, models, usageKnown = true, runningConditionFilters,
+    selectedSensors, formulaRefs, onDelete, pendingDelete, onUndo,
     availableSensors, editingTag, onEdit, onSaveEdit, savingEdit, editError,
 }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
@@ -80,9 +90,10 @@ export default function ManageSpecialSensors({
             recipes,
             formulaRefs: formulaRefs ?? new Map(),
             models,
+            runningConditionFilters,
             selectedSensors,
         }),
-        [recipes, formulaRefs, models, selectedSensors],
+        [recipes, formulaRefs, models, runningConditionFilters, selectedSensors],
     );
 
     const metaFor = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase());
@@ -140,8 +151,9 @@ export default function ManageSpecialSensors({
                     const meta = metaFor(recipe.tag);
                     const summary = blockedSummary(info);
                     // Deletion stays off until the reference lookup has
-                    // actually answered — see `formulaRefs` above.
-                    const canDelete = info.deletable && formulaRefs !== null;
+                    // actually answered — see `formulaRefs` above — and until
+                    // the models / running condition are known fresh.
+                    const canDelete = info.deletable && formulaRefs !== null && usageKnown;
                     const expanded = expandedTag === recipe.tag;
                     const expandedEditor = editingTag === recipe.tag;
                     return (
@@ -218,7 +230,9 @@ export default function ManageSpecialSensors({
                                     type="button"
                                     onClick={() => onDelete(recipe.tag)}
                                     disabled={!canDelete}
-                                    title={canDelete ? `Delete ${recipe.tag}` : 'Something still uses this sensor'}
+                                    title={canDelete
+                                        ? `Delete ${recipe.tag}`
+                                        : (info.deletable ? 'Still checking what uses this sensor' : 'Something still uses this sensor')}
                                     aria-label={`Delete ${recipe.tag}`}
                                     className="flex items-center justify-center shrink-0 rounded"
                                     style={{
@@ -255,6 +269,13 @@ export default function ManageSpecialSensors({
                                                     ))}
                                                 </ul>
                                                 <div style={{ marginTop: 2 }}>Take it out of those models (or delete them) first.</div>
+                                            </div>
+                                        )}
+                                        {info.runningCondition && (
+                                            <div>
+                                                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Used by the running condition:</span>{' '}
+                                                the workspace's Running condition has a condition on this sensor.
+                                                <div style={{ marginTop: 2 }}>Remove that condition (Build Model → Running condition) first.</div>
                                             </div>
                                         )}
                                     </div>

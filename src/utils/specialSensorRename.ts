@@ -78,13 +78,12 @@ export function renameTagInModels(models: FailureModel[], oldTag: string, newTag
  * swap, just against one flat array instead of scattered across every
  * model's own fields.
  *
- * NOT YET WIRED UP to the actual rename flow (`AddSensorWindow.handleSaveEdit`)
- * — that requires threading `runningConditionFilters` through the
- * `sensors-data` event AddSensorWindow listens on, which is a separate,
- * scoped follow-up (flagged to the user rather than silently left out).
- * Until then, renaming a special sensor that the running-condition filter
- * references will NOT update the filter, same gap `specialSensorDeps.ts`'s
- * delete-protection also has for now.
+ * 2026-10-03: wired up. Dashboard's `rename-special-sensor` listener rewrites
+ * the workspace's `runningConditionFilters` through this (persisted with
+ * `withFailureGroupState` + broadcast), and the same function re-keys the
+ * Dashboard's own Filter tab conditions (`filters.sensorFilters`, the same
+ * `{ sensor }` shape) -- Rust silently drops a condition on an unknown sensor,
+ * so a stale tag would turn the filter off without any sign in the UI.
  */
 export function renameTagInRunningConditionFilters<T extends { sensor: string }>(
     filters: T[],
@@ -94,6 +93,20 @@ export function renameTagInRunningConditionFilters<T extends { sensor: string }>
     const target = key(oldTag);
     if (!filters.some(f => key(f.sensor) === target)) return filters;
     return filters.map(f => (key(f.sensor) === target ? { ...f, sensor: newTag } : f));
+}
+
+/**
+ * Drop every condition that names one of `tags` (a deleted special sensor).
+ * Same case/space-insensitive match as the rename helpers. A no-op (same array
+ * reference) when nothing matches. Used for the Dashboard's Filter tab: its
+ * conditions are not a reason to block a delete (they are view-only), but they
+ * must not keep naming a column that is gone -- Rust would silently ignore them
+ * while the tab still showed the condition as applied.
+ */
+export function removeTagsFromFilters<T extends { sensor: string }>(filters: T[], tags: string[]): T[] {
+    const gone = new Set(tags.map(key));
+    if (!filters.some(f => gone.has(key(f.sensor)))) return filters;
+    return filters.filter(f => !gone.has(key(f.sensor)));
 }
 
 /**
