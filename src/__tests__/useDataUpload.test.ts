@@ -324,3 +324,15 @@ describe('useDataUpload', () => {
     });
   });
 });
+
+describe('useDataUpload: dataset generation (2026-10-03)', () => {
+  it('keeps the `generation` load_csv returned on the report, untouched (the page hands it to the Dashboard)', async () => {
+    mockOpen.mockResolvedValue(['/a.csv']);
+    mockInvoke.mockResolvedValue({ ...sampleReport, generation: 17 });
+    const { result } = renderHook(() => useDataUpload());
+    await act(async () => { await result.current.selectFiles(); });
+    await act(async () => { await result.current.uploadDataset(); });
+    expect(mockInvoke).toHaveBeenCalledWith('load_csv', { paths: ['/a.csv'] });
+    expect(result.current.loadReport?.generation).toBe(17);
+  });
+});

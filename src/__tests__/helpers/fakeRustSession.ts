@@ -26,6 +26,14 @@
  *    NaN); `mean`/`median` skip NaN; single ops keep NaN; divide by 0 -> NaN.
  *  - `chart_query::resolve_ctx` and `ResolvedFilter::resolve`: EXACT header
  *    match (`h == s`), FIRST match, unknown names dropped silently.
+ *  - Session generation (aa51de5): `load_csv` returns `generation`;
+ *    `evaluate_formula` / `calculate_new_sensor` / `remove_sensor_columns` take an
+ *    optional `expectedGeneration` (camelCase) and, when it is not the session's,
+ *    mutate nothing and fail with `STALE_SESSION_ERROR`. The two computing
+ *    commands check it at the start AND again at commit (after a held call is
+ *    released), where -- as in `commit_derived` -- the pinned check comes BEFORE
+ *    the plain "dataset changed while computing" one. `get_session_generation`
+ *    answers the current generation (null before the first load).
  *  - Tauri v2 arg-key casing: every command rejects a key it would not
  *    deserialize (a snake_case key sent to a camelCase command is how a
  *    feature "silently does nothing" in this app), and a missing required key.
@@ -120,9 +128,10 @@ const finite = (v: number) => (Number.isFinite(v) ? v : NaN);
 /** Allowed argument keys per command, exactly as Tauri v2 deserializes them
  *  for the Rust signatures in lib.rs (camelCase unless `rename_all`). */
 const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = {
-    evaluate_formula: { required: ['formula'], optional: ['customName', 'replace'] },
-    calculate_new_sensor: { required: ['sensors', 'config'], optional: ['replace'] },
-    remove_sensor_columns: { required: ['names'] },
+    evaluate_formula: { required: ['formula'], optional: ['customName', 'replace', 'expectedGeneration'] },
+    calculate_new_sensor: { required: ['sensors', 'config'], optional: ['replace', 'expectedGeneration'] },
+    remove_sensor_columns: { required: ['names'], optional: ['expectedGeneration'] },
+    get_session_generation: { required: [] },
     extract_formula_refs: { required: ['formulas'] },
     rename_formula_refs: { required: ['formula', 'oldName', 'newName'] },
     validate_formula: { required: ['formula'] },
@@ -131,23 +140,51 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
     get_chart_data: { required: ['filter', 'sampling', 'max_points'], optional: ['operation'] },
 };
 
-export function createFakeRust(raw: RawCsv) {
+export interface FakeRustOptions {
+    /**
+     * CSV contents per `load_csv` `paths` (joined with `|`). When given,
+     * `load_csv` loads the dataset its paths name -- and rejects, keeping the
+     * current session (like lib.rs, which fails before taking the write lock),
+     * for paths it does not know. Without it every `load_csv` reloads `raw`.
+     */
+    datasets?: Record<string, RawCsv>;
+    /** What `get_loaded_paths` answers before the first `load_csv`. */
+    initialPaths?: string[];
+}
+
+/** Rust `commit_derived`'s refusal when `load_csv` replaced the session while a
+ *  special sensor was being computed (generation mismatch). */
+export const GENERATION_CHANGED_ERROR = 'The dataset changed while the sensor was being computed; please try again';
+
+/** Rust's `STALE_SESSION_ERROR`: the caller pinned a generation that is not the
+ *  session's (frontend matches the `STALE_SESSION` prefix). */
+export const STALE_SESSION_ERROR = 'STALE_SESSION: the dataset changed since this window was opened';
+
+export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
     let headers: string[] = [];
     let columns: number[][] = [];
     let derived = new Set<string>();
     let generation = 0;
     let loaded = false;
-    const nRows = raw.columns[0]?.length ?? 0;
-    const timestamps = Array.from({ length: nRows }, (_, i) => `2026-01-01 0${i}:00:00`);
+    let dataset: RawCsv = raw;
+    let loadedPaths: string[] = opts.initialPaths ?? [];
+    let nRows = raw.columns[0]?.length ?? 0;
+    const tsFor = (n: number) => Array.from({ length: n }, (_, i) => `2026-01-01 0${i}:00:00`);
+    let timestamps = tsFor(nRows);
 
     const calls: Array<{ cmd: string; args: Args; result?: unknown; error?: string }> = [];
     const chartResponses: Array<{ filter: any; view: any }> = [];
     const faults: Fault[] = [];
     const gates: Gate[] = [];
 
-    const reset = () => {
-        headers = [...raw.headers];
-        columns = [timestamps.map(() => NaN), ...raw.columns.map(c => [...c])];
+    /** lib.rs `load_csv`: a NEW session -- raw columns only, derived set
+     *  rebuilt empty, generation bumped. */
+    const reset = (next: RawCsv = dataset) => {
+        dataset = next;
+        nRows = next.columns[0]?.length ?? 0;
+        timestamps = tsFor(nRows);
+        headers = [...next.headers];
+        columns = [timestamps.map(() => NaN), ...next.columns.map(c => [...c])];
         derived = new Set();
         generation++;
         loaded = true;
@@ -346,24 +383,56 @@ export function createFakeRust(raw: RawCsv) {
         }
     };
 
+    /** `check_expected_generation`: a pinned generation that is not the session's. */
+    const checkExpected = (args: Args) => {
+        const expected = args.expectedGeneration;
+        if (expected === undefined || expected === null) return;
+        if (!loaded || expected !== generation) throw STALE_SESSION_ERROR;
+    };
+
     const run = (cmd: string, args: Args): unknown => {
         checkArgs(cmd, args);
         switch (cmd) {
-            case 'load_csv':
-                reset();
-                return { headers: [...headers], total_rows: nRows };
+            case 'load_csv': {
+                const paths = (args.paths as string[]) ?? [];
+                let next = raw;
+                if (opts.datasets) {
+                    const found = opts.datasets[paths.join('|')];
+                    if (!found) throw `Failed to open ${paths.join(', ')}: The system cannot find the file specified. (os error 2)`;
+                    next = found;
+                }
+                reset(next);
+                loadedPaths = [...paths];
+                return {
+                    headers: [...headers],
+                    total_rows: nRows,
+                    columns: headers.map((name, i) => ({
+                        name,
+                        dtype: i === 0 ? 'datetime' : 'numeric',
+                        null_count: i === 0 ? 0 : columns[i].filter(Number.isNaN).length,
+                        valid_count: i === 0 ? nRows : columns[i].filter(v => !Number.isNaN(v)).length,
+                    })),
+                    warnings: [],
+                    generation,
+                };
+            }
+            case 'get_session_generation':
+                return loaded ? generation : null;
             case 'get_all_sensors':
                 if (!loaded) throw 'No data loaded';
                 return [...headers];
             case 'get_loaded_paths':
-                return [];
+                return [...loadedPaths];
             case 'evaluate_formula':
+                checkExpected(args);
                 if (!loaded) throw 'No data loaded';
                 return evalFormula(args.formula, args.customName, !!args.replace);
             case 'calculate_new_sensor':
+                checkExpected(args);
                 if (!loaded) throw 'No data loaded';
                 return calcOperation(args.sensors, args.config, !!args.replace);
             case 'remove_sensor_columns':
+                checkExpected(args);
                 return loaded ? remove(args.names) : 0;
             case 'extract_formula_refs':
                 return (args.formulas as string[]).map(rustExtractRefs);
@@ -387,7 +456,27 @@ export function createFakeRust(raw: RawCsv) {
         const entry: { cmd: string; args: Args; result?: unknown; error?: string } = { cmd, args: structuredClone(args ?? {}) };
         calls.push(entry);
         const gate = gates.find(g => g.armed && g.cmd === cmd && g.pred(args));
-        if (gate) { gate.armed = false; await gate.promise; }
+        if (gate) {
+            gate.armed = false;
+            const computing = cmd === 'evaluate_formula' || cmd === 'calculate_new_sensor';
+            // A held computation is one Rust has STARTED (under the read lock):
+            // the pinned generation was checked at that start ...
+            if (computing) {
+                try { checkExpected(args); } catch (e) { entry.error = String(e); throw e; }
+            }
+            const startedIn = generation;
+            await gate.promise;
+            if (computing) {
+                // ... and again at commit, pinned check first (`commit_derived`);
+                // then, for a caller that pinned nothing, `load_csv` having
+                // replaced the session means the result is not attached.
+                try { checkExpected(args); } catch (e) { entry.error = String(e); throw e; }
+                if (generation !== startedIn) {
+                    entry.error = GENERATION_CHANGED_ERROR;
+                    throw GENERATION_CHANGED_ERROR;
+                }
+            }
+        }
         const fault = faults.find(f => f.cmd === cmd && f.pred(args));
         if (fault) {
             if (fault.once) faults.splice(faults.indexOf(fault), 1);
@@ -440,6 +529,8 @@ export function createFakeRust(raw: RawCsv) {
             return g;
         },
         generation: () => generation,
+        /** Paths of the dataset the session currently holds. */
+        loadedPaths: () => [...loadedPaths],
     };
 }
 

@@ -22,6 +22,10 @@ import {
 import { nameProblem, sameTag } from "../../utils/specialSensorNaming";
 import { createSerialQueue } from "../../utils/asyncQueue";
 import { loadWorkspaceData } from "../../workspaceManager";
+import {
+    bindToGeneration, isSessionLostError, STALE_SESSION_MESSAGE, StaleSessionError, TaskAbortedError,
+} from "../../utils/staleSession";
+import type { Invoker } from "../../utils/specialSensorRecompute";
 
 /** How long a deleted special sensor can still be brought back. Nothing has
  *  left this window yet during that time -- see `commitDeleteRaw`. */
@@ -76,6 +80,25 @@ interface CreateSnapshot {
     /** Would this create a new derived sensor (vs. adding raw sensors as-is)? */
     creating: boolean;
     name: string;
+}
+
+/**
+ * What a queued task is bound to, captured when it is ENQUEUED (never read
+ * later from the refs, which move on when the window is re-pointed):
+ *  - `epoch`: the window's invalidation counter. Anything that makes the work
+ *    in flight no longer belong here (re-pointed to another project/dataset,
+ *    its project closed, the Rust session found stale) bumps it; a task
+ *    re-checks it after every await and stops silently if it moved.
+ *  - `workspaceId` / `generation`: the project and Rust dataset this window
+ *    was handed. Every emit is tagged with the captured id, and every guarded
+ *    Rust command carries the captured generation (`expectedGeneration`), so
+ *    even a task that is already past its last check cannot mutate another
+ *    project's session.
+ */
+interface TaskCtx {
+    epoch: number;
+    workspaceId: string | undefined;
+    generation: number | undefined;
 }
 
 /** One short sentence: what still uses a sensor that was about to be deleted. */
@@ -159,8 +182,26 @@ export default function AddSensorWindow() {
     // the dashboard's `specialSensorRecipes` -- it arrives with sensors-data,
     // grows as sensors are created here, and shrinks as they are deleted.
     const [recipes, setRecipes, recipesRef] = useRefState<SpecialSensorRecipe[]>([]);
-    // Workspace the last `sensors-data` belonged to -- stamped on every emit.
+    // Workspace the last `sensors-data` belonged to -- every task captures it
+    // when it is queued and stamps it on its emits (see `TaskCtx`).
     const workspaceIdRef = useRef<string | undefined>(undefined);
+    // The Rust dataset generation the Dashboard handed over with it. Sent as
+    // `expectedGeneration` on every guarded command, so a window that outlives
+    // its project cannot mutate the next project's session.
+    const generationRef = useRef<number | undefined>(undefined);
+    // Bumped whenever work in flight stops belonging to this window's current
+    // project (re-pointed, project closed, session found stale).
+    const epochRef = useRef(0);
+    // Has a `sensors-data` ever bound this window?
+    const boundRef = useRef(false);
+    // Set when this window learned its dataset is gone (project closed or the
+    // session replaced). Mutations are refused until a NEWER `sensors-data`
+    // re-binds it; `lostAtGenerationRef` is what "newer" is measured against.
+    const [sessionLost, setSessionLost] = useState<string | null>(null);
+    const sessionLostRef = useRef(false);
+    const lostAtGenerationRef = useRef<number | undefined>(undefined);
+    // Newest models re-read wins (also bumped on every invalidation).
+    const refreshSeq = useRef(0);
     const [models, setModels, modelsRef] = useRefState<FailureModel[]>([]);
     // The workspace Running condition's conditions: naming a special sensor
     // there blocks deleting it (and a rename has to carry through).
@@ -208,15 +249,126 @@ export default function AddSensorWindow() {
 
     const syncHidden = () => setHiddenTags(deletionsRef.current.flatMap(d => d.tags));
     const isHidden = (tag: string) => deletionsRef.current.some(d => d.tags.some(t => sameTag(t, tag)));
-    const invoker = (cmd: string, args: Record<string, unknown>) => invoke(cmd, args);
 
-    /** Re-read the models and Running condition from the workspace file. */
-    const readFailureState = async (): Promise<{ models: FailureModel[]; rc: WorkspaceSensorFilter[] }> => {
-        const id = workspaceIdRef.current;
+    // ---- Window epoch ---------------------------------------------------------
+    // Everything below belongs to "the project this window is bound to". When
+    // that stops being true the epoch moves; a queued/in-flight task that
+    // captured an older one aborts silently (it neither retries nor rolls back
+    // -- the data in the session is not ours any more).
+    const captureCtx = (): TaskCtx => ({
+        epoch: epochRef.current,
+        workspaceId: workspaceIdRef.current,
+        generation: generationRef.current,
+    });
+    const isCurrent = (ctx: TaskCtx) => ctx.epoch === epochRef.current;
+    const assertCurrent = (ctx: TaskCtx) => { if (!isCurrent(ctx)) throw new TaskAbortedError(); };
+
+    /** The Tauri `invoke` for one task: stamps `expectedGeneration` on the
+     *  guarded commands, turns Rust's STALE_SESSION refusal into a typed error,
+     *  and refuses to even start (or to hand back a result) once the window's
+     *  epoch has moved on. */
+    const invokerFor = (ctx: TaskCtx): Invoker => {
+        const bound = bindToGeneration((cmd, args) => invoke(cmd, args), ctx.generation);
+        return async (cmd, args) => {
+            assertCurrent(ctx);
+            let out: unknown;
+            try {
+                out = await bound(cmd, args);
+            } catch (err) {
+                // A refusal that arrives after the window was re-pointed is
+                // about the OLD project -- it must not mark the new one lost.
+                assertCurrent(ctx);
+                throw err;
+            }
+            assertCurrent(ctx);
+            return out;
+        };
+    };
+
+    /** Queue `work` bound to the project/dataset this window holds RIGHT NOW. */
+    const runTask = <T,>(work: (ctx: TaskCtx) => Promise<T>): Promise<T> => {
+        const ctx = captureCtx();
+        return queue.run(async () => {
+            assertCurrent(ctx);
+            return work(ctx);
+        });
+    };
+
+    /** Stop everything in flight: bump the epoch, cancel every pending deletion
+     *  (the one in its undo window is dropped, never committed), invalidate
+     *  in-flight models re-reads. Does NOT touch the form. */
+    const invalidateWork = () => {
+        epochRef.current += 1;
+        refreshSeq.current += 1;
+        for (const d of deletionsRef.current) d.cancelled = true;
+        deletionsRef.current = [];
+        slotRef.current = null;
+        if (deleteTimer.current) clearTimeout(deleteTimer.current);
+        deleteTimer.current = null;
+        setPendingDelete(null);
+        syncHidden();
+        addingRef.current = false;
+        setAdding(false);
+        setSavingEdit(false);
+    };
+
+    /** The dataset this window was bound to is gone. Further mutations are
+     *  refused until a NEWER `sensors-data` re-binds the window. */
+    const markSessionLost = (message: string = STALE_SESSION_MESSAGE) => {
+        lostAtGenerationRef.current = generationRef.current;
+        sessionLostRef.current = true;
+        setSessionLost(message);
+        invalidateWork();
+    };
+
+    /** A different project / dataset (or a recovery from "lost"): drop ALL of the
+     *  old binding's state -- form, open editor, queued work, errors. */
+    const resetForRebind = () => {
+        invalidateWork();
+        sessionLostRef.current = false;
+        lostAtGenerationRef.current = undefined;
+        setSessionLost(null);
+        setSelectedSensors([]);
+        setOperationConfig(null);
+        setFormulaMode(false);
+        setFormulaExpression('');
+        setFormulaCustomName('');
+        setDescription('');
+        setUnit('');
+        setComponent('');
+        setFormKey(k => k + 1);
+        setRejectedNames([]);
+        setAddError(null);
+        setSearchTerm('');
+        setActiveTab('create');
+        setEditingTag(null);
+        setEditError(null);
+        setFormulaRefs(null);
+        setFailureKnown(false);
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        setToast(null);
+    };
+
+    /** A task failed with `err`. True when it was only because this window's
+     *  dataset is gone (already handled: nothing more to do or show). */
+    const handleSessionLoss = (ctx: TaskCtx, err: unknown): boolean => {
+        // Re-pointed / closed since this task was queued: stay silent, the
+        // window may well be healthy for its NEW project.
+        if (!isCurrent(ctx)) return true;
+        if (err instanceof StaleSessionError) { markSessionLost(); return true; }
+        return err instanceof TaskAbortedError;
+    };
+
+    /** Re-read the models and Running condition from the workspace file. With a
+     *  `ctx` it reads THAT task's workspace and aborts if the window moved on
+     *  while the file was being read. */
+    const readFailureState = async (ctx: TaskCtx | null = null): Promise<{ models: FailureModel[]; rc: WorkspaceSensorFilter[] }> => {
+        const id = ctx ? ctx.workspaceId : workspaceIdRef.current;
         // No workspace file to ask (the Dashboard had none): what it handed over
         // is all there is.
         if (!id) return { models: modelsRef.current, rc: rcRef.current };
         const ws = await loadWorkspaceData(id);
+        if (ctx) assertCurrent(ctx);
         if (!ws) throw new Error('the workspace file could not be read');
         return { models: ws.failureGroupState?.models ?? [], rc: ws.failureGroupState?.runningConditionFilters ?? [] };
     };
@@ -224,8 +376,9 @@ export default function AddSensorWindow() {
     // Broadcast arrival order is not guaranteed (two windows can write and
     // emit close together), so a payload is never trusted as "the latest":
     // every broadcast just triggers a re-read of the file (writers persist
-    // BEFORE they emit), and only the newest re-read may apply.
-    const refreshSeq = useRef(0);
+    // BEFORE they emit), and only the newest re-read may apply (`refreshSeq`,
+    // which every invalidation bumps too -- a re-read of the OLD project's
+    // file can never land on the new one).
     const refreshFailureState = () => {
         const seq = ++refreshSeq.current;
         void (async () => {
@@ -255,23 +408,36 @@ export default function AddSensorWindow() {
                 specialSensorRecipes?: SpecialSensorRecipe[],
                 models?: FailureModel[],
                 runningConditionFilters?: WorkspaceSensorFilter[],
+                generation?: number,
             }>('sensors-data', (event) => {
                 debugLog("Received sensors-data:", event.payload);
-                // A different workspace than the one this window was serving:
-                // whatever was mid-undo belonged to the OLD project.
-                if (workspaceIdRef.current !== undefined && event.payload.workspaceId !== workspaceIdRef.current) {
-                    for (const d of deletionsRef.current) d.cancelled = true;
-                    deletionsRef.current = [];
-                    slotRef.current = null;
-                    if (deleteTimer.current) clearTimeout(deleteTimer.current);
-                    deleteTimer.current = null;
-                    setPendingDelete(null);
-                    syncHidden();
+                const incomingGeneration = typeof event.payload.generation === 'number' ? event.payload.generation : undefined;
+                const boundGeneration = generationRef.current;
+                if (boundRef.current) {
+                    // MONOTONIC RULE: the Rust generation only ever grows, so a
+                    // payload OLDER than what this window already holds comes
+                    // from a Dashboard that no longer exists (a copy delayed in
+                    // transit). Re-pointing the window backwards to it would
+                    // hand a dead project's recipes to the live session.
+                    if (incomingGeneration !== undefined && boundGeneration !== undefined && incomingGeneration < boundGeneration) return;
+                    // Once the dataset was lost, only a STRICTLY newer one may
+                    // re-bind (the same generation is the dead Dashboard again).
+                    const lostAt = lostAtGenerationRef.current;
+                    if (sessionLostRef.current && incomingGeneration !== undefined && lostAt !== undefined && incomingGeneration <= lostAt) return;
+                    // A different project, a different dataset (same project
+                    // reopened), or a recovery from "lost": nothing of the old
+                    // binding survives -- form, editor, queue, deletions.
+                    const differentProject = event.payload.workspaceId !== workspaceIdRef.current;
+                    const differentDataset = incomingGeneration !== undefined && boundGeneration !== undefined && incomingGeneration !== boundGeneration;
+                    if (differentProject || differentDataset || sessionLostRef.current) resetForRebind();
                 }
-                // This window belongs to whichever workspace it was last
-                // handed data for; every emit below is tagged with it so the
-                // Dashboard can drop anything from a different project.
+                boundRef.current = true;
+                // This window belongs to whichever workspace/dataset it was last
+                // handed data for; every task captures them when queued, tags its
+                // emits with that workspace id and pins that generation on every
+                // guarded Rust command.
                 workspaceIdRef.current = event.payload.workspaceId;
+                generationRef.current = incomingGeneration;
                 setSensors(event.payload.sensors);
                 // Deliberately NOT pre-checking `event.payload.selectedSensors`
                 // (whatever's currently plotted on the Dashboard chart) --
@@ -292,9 +458,24 @@ export default function AddSensorWindow() {
                 setLoading(false);
             });
 
-            unlistenData = off;
+            // The Dashboard that bound this window is going away (Back to
+            // Import / another project opening). Defence in depth next to the
+            // Dashboard's own close of this window: if that close is lost or
+            // late, drop everything NOW instead of trusting it. Scoped to the
+            // workspace AND dataset this window holds -- a late copy for an
+            // earlier project must not kill a window already re-pointed.
+            const offClosing = subscribe<{ workspaceId?: string; generation?: number }>('workspace-closing', (event) => {
+                if (!boundRef.current || sessionLostRef.current) return;
+                if (event.payload?.workspaceId !== workspaceIdRef.current) return;
+                const g = event.payload?.generation;
+                if (typeof g === 'number' && generationRef.current !== undefined && g !== generationRef.current) return;
+                markSessionLost();
+            });
+
+            unlistenData = () => { off(); offClosing(); };
             // Registered before asking, so the reply can't be missed.
             await off.ready;
+            await offClosing.ready;
 
             // 2. Request data
             await emit('request-sensors');
@@ -302,17 +483,14 @@ export default function AddSensorWindow() {
             // 3. Fallback logic
             try {
                 const allHeaders = await invoke<string[]>('get_all_sensors');
+                // Never reload the CSV from here: this window shares ONE Rust
+                // session with the Dashboard, and `load_csv` would replace it
+                // (dropping every computed column and invalidating the
+                // generation this window is bound to). An empty session just
+                // means the Dashboard's `sensors-data` has not arrived yet.
                 if (allHeaders.length > 0) {
                     setSensors(prev => prev.length === 0 ? allHeaders.filter(h => h.trim().toLowerCase() !== 'timestamp') : prev);
                     setLoading(false);
-                } else {
-                    const paths = await invoke<string[]>('get_loaded_paths');
-                    if (paths && paths.length > 0) {
-                        await invoke("load_csv", { paths });
-                        const retriedHeaders = await invoke<string[]>('get_all_sensors');
-                        setSensors(prev => prev.length === 0 ? retriedHeaders.filter(h => h.trim().toLowerCase() !== 'timestamp') : prev);
-                        setLoading(false);
-                    }
                 }
             } catch (err) {
                 console.warn("Fallback loading failed:", err);
@@ -325,6 +503,10 @@ export default function AddSensorWindow() {
             if (unlistenData) unlistenData();
             if (toastTimer.current) clearTimeout(toastTimer.current);
             if (deleteTimer.current) clearTimeout(deleteTimer.current);
+            // Whatever is still queued or running belongs to a window that is
+            // going away: it must not announce anything.
+            epochRef.current += 1;
+            refreshSeq.current += 1;
         };
         // The handlers only touch refs and stable setters.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -419,22 +601,23 @@ export default function AddSensorWindow() {
      * are re-read here; if something uses it now the delete is CANCELLED, the
      * sensor reappears in the list, and the user is told why.
      */
-    const commitDeleteRaw = async (d: Deletion) => {
+    const commitDeleteRaw = async (d: Deletion, ctx: TaskCtx) => {
         const tags = d.tags;
         const gone = (tag: string) => tags.some(t => sameTag(t, tag));
+        const inv = invokerFor(ctx);
 
         let blocked: string | null = null;
         try {
-            const fresh = await readFailureState();
+            const fresh = await readFailureState(ctx);
             setModels(fresh.models);
             setRunningConditionFilters(fresh.rc);
             setFailureKnown(true);
             const formulaRecipes = recipesRef.current.filter(r => r.kind === 'formula');
             let refsMap = new Map<string, string[]>();
             if (formulaRecipes.length > 0) {
-                const out = await invoke<string[][]>('extract_formula_refs', {
+                const out = await inv('extract_formula_refs', {
                     formulas: formulaRecipes.map(r => (r as { formula: string }).formula),
-                });
+                }) as string[][];
                 refsMap = new Map(formulaRecipes.map((r, i) => [r.tag.trim().toLowerCase(), out[i] ?? []]));
             }
             const usage = buildSpecialSensorUsage({
@@ -447,6 +630,9 @@ export default function AddSensorWindow() {
             const used = tags.map(t => usageFor(usage, t)).filter((u): u is SpecialSensorUsage => !!u && !u.deletable);
             if (used.length > 0) blocked = `it is now used by ${describeUsage(used)}`;
         } catch (err) {
+            // Re-pointed / closed while re-reading: this deletion belongs to a
+            // project that is not on screen any more -- never touch the session.
+            if (isSessionLostError(err)) throw err;
             console.error('Could not re-check what uses the sensor before deleting it:', err);
             blocked = `couldn't check whether anything still uses it (${errorText(err)})`;
         }
@@ -469,8 +655,11 @@ export default function AddSensorWindow() {
         // finishes -- but it is surfaced, because the name stays taken in the
         // session until the app restarts.
         try {
-            await invoke<number>('remove_sensor_columns', { names: tags });
+            await inv('remove_sensor_columns', { names: tags });
         } catch (err) {
+            // Stale dataset / re-pointed window: the columns in the session are
+            // not this window's -- nothing was removed, and nothing is announced.
+            if (isSessionLostError(err)) throw err;
             console.error('Failed to drop the deleted sensor column(s) from the session:', err);
             showToast(
                 `Removed ${tags.join(', ')} from the workspace, but couldn't free its data (${errorText(err)}). `
@@ -478,8 +667,9 @@ export default function AddSensorWindow() {
                 'error',
             );
         }
+        assertCurrent(ctx);
         try {
-            await emit('delete-special-sensors', { tags, workspaceId: workspaceIdRef.current });
+            await emit('delete-special-sensors', { tags, workspaceId: ctx.workspaceId, generation: ctx.generation });
         } catch (err) {
             console.error('Failed to tell the dashboard about the deletion:', err);
         }
@@ -488,11 +678,11 @@ export default function AddSensorWindow() {
 
     /** Commit every deletion that is still waiting (and matches `pred`) NOW,
      *  inside the current task. */
-    const settleDeletions = async (pred: (d: Deletion) => boolean = () => true) => {
+    const settleDeletions = async (ctx: TaskCtx, pred: (d: Deletion) => boolean = () => true) => {
         for (const d of [...deletionsRef.current]) {
             if (d.started || d.cancelled || !pred(d)) continue;
             claim(d);
-            await commitDeleteRaw(d);
+            await commitDeleteRaw(d, ctx);
         }
     };
 
@@ -501,15 +691,23 @@ export default function AddSensorWindow() {
     const scheduleCommit = (d: Deletion): Promise<void> => {
         if (d.queued || d.started || d.cancelled) return Promise.resolve();
         d.queued = true;
-        return queue.run(async () => {
+        return runTask(async ctx => {
             // Undone while it was waiting, or already settled by another task.
             if (d.cancelled || d.started) return;
             claim(d);
-            await commitDeleteRaw(d);
-        }).catch(err => { console.error('Delete failed:', err); });
+            await commitDeleteRaw(d, ctx);
+        }).catch(err => {
+            // The window was re-pointed / closed / found stale meanwhile.
+            if (isSessionLostError(err)) {
+                if (err instanceof StaleSessionError) markSessionLost();
+                return;
+            }
+            console.error('Delete failed:', err);
+        });
     };
 
     const handleDeleteSensor = (tag: string) => {
+        if (sessionLostRef.current) { showToast(STALE_SESSION_MESSAGE, 'error'); return; }
         // One undoable deletion at a time: a new delete makes the previous one
         // final (its commit is queued) and takes the slot.
         const previous = slotRef.current;
@@ -603,26 +801,28 @@ export default function AddSensorWindow() {
      * is touched. A model that starts using the sensor WHILE a task is already
      * past that check is not stopped (it can only have picked the new values).
      */
-    const saveEditTask = async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
+    const saveEditTask = async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }, ctx: TaskCtx) => {
         const oldTag = next.renamedFrom;
         const newTag = next.recipe.tag;
         const removesOldColumn = !!oldTag && !sameTag(oldTag, newTag);
+        const inv = invokerFor(ctx);
         try {
             // Any deletion still waiting is settled first, so the dependency
             // graph this reasons about matches what the dashboard holds.
-            await settleDeletions();
+            await settleDeletions(ctx);
 
             // Fresh models + Running condition for the edit lock. Unreadable =
             // treated as locked (a guess of "nothing uses it" is how a trained
             // model goes stale).
             let failureState: EditFailureState;
             try {
-                const fresh = await readFailureState();
+                const fresh = await readFailureState(ctx);
                 setModels(fresh.models);
                 setRunningConditionFilters(fresh.rc);
                 setFailureKnown(true);
                 failureState = { known: true, models: fresh.models, runningConditionFilters: fresh.rc };
             } catch (err) {
+                if (isSessionLostError(err)) throw err;
                 console.error('Could not re-read the models before editing a sensor:', err);
                 setFailureKnown(false);
                 failureState = { known: false, models: [], runningConditionFilters: [], reason: errorText(err) };
@@ -640,9 +840,10 @@ export default function AddSensorWindow() {
                 recipes: recipesRef.current,
                 next: next.recipe,
                 oldTag,
-                invoker,
+                invoker: inv,
                 failureState,
             });
+            assertCurrent(ctx);
             const { downstream, renamedDownstream, recipeOrder, applyEdit } = outcome;
             // What was really saved: for a metadata-only save of a locked
             // sensor, the stored recipe untouched.
@@ -669,6 +870,7 @@ export default function AddSensorWindow() {
                 setRunningConditionFilters(prev => renameTagInRunningConditionFilters(prev, oldTag, newTag));
             }
 
+            assertCurrent(ctx);
             if (oldTag) {
                 await emit('rename-special-sensor', {
                     oldTag,
@@ -677,7 +879,8 @@ export default function AddSensorWindow() {
                     metadata: next.metadata,
                     updatedRecipes: renamedDownstream,
                     recipeOrder,
-                    workspaceId: workspaceIdRef.current,
+                    workspaceId: ctx.workspaceId,
+                    generation: ctx.generation,
                 });
             } else {
                 await emit('update-special-sensor', {
@@ -685,7 +888,8 @@ export default function AddSensorWindow() {
                     metadata: next.metadata,
                     recomputed: outcome.metadataOnly ? [] : [next.recipe.tag, ...downstream.map(r => r.tag)],
                     recipeOrder,
-                    workspaceId: workspaceIdRef.current,
+                    workspaceId: ctx.workspaceId,
+                    generation: ctx.generation,
                 });
             }
 
@@ -696,8 +900,9 @@ export default function AddSensorWindow() {
             let cleanupWarning: string | null = null;
             if (removesOldColumn && oldTag) {
                 try {
-                    await invoke<number>('remove_sensor_columns', { names: [oldTag] });
+                    await inv('remove_sensor_columns', { names: [oldTag] });
                 } catch (err) {
+                    if (isSessionLostError(err)) throw err;
                     console.error('Failed to drop the old column after a rename:', err);
                     cleanupWarning = `Renamed "${oldTag}" to "${newTag}", but couldn't free the old data (${errorText(err)}). `
                         + `Creating a sensor named "${oldTag}" may fail until the app is restarted.`;
@@ -717,16 +922,23 @@ export default function AddSensorWindow() {
                 );
             }
         } catch (err) {
+            // The dataset is not ours any more (stale generation, project
+            // closed, window re-pointed): no rollback, no cleanup, no emit.
+            const wasCurrent = isCurrent(ctx);
+            if (handleSessionLoss(ctx, err)) {
+                if (wasCurrent) setEditError(STALE_SESSION_MESSAGE);
+                return;
+            }
             let message = errorText(err);
             if (err instanceof SpecialSensorEditError) {
                 if (err.inconsistent.length > 0) {
                     message += ` The previous values of ${err.inconsistent.join(', ')} could not be restored, `
                         + 'so they may show wrong numbers. Reopen the workspace to rebuild them.';
                 }
-                if (err.touched) {
+                if (err.touched && isCurrent(ctx)) {
                     // Some columns were overwritten (then rolled back): charts
                     // may have fetched the in-between values meanwhile.
-                    try { await emit('special-sensor-data-changed', { workspaceId: workspaceIdRef.current }); } catch { /* best effort */ }
+                    try { await emit('special-sensor-data-changed', { workspaceId: ctx.workspaceId, generation: ctx.generation }); } catch { /* best effort */ }
                 }
             }
             setEditError(message);
@@ -734,11 +946,17 @@ export default function AddSensorWindow() {
     };
 
     const handleSaveEdit = (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
+        if (sessionLostRef.current) { setEditError(STALE_SESSION_MESSAGE); return; }
+        const epoch = epochRef.current;
         setSavingEdit(true);
         setEditError(null);
-        void queue.run(() => saveEditTask(next))
-            .catch(err => { console.error('Edit failed:', err); setEditError(errorText(err)); })
-            .finally(() => setSavingEdit(false));
+        void runTask(ctx => saveEditTask(next, ctx))
+            .catch(err => {
+                if (isSessionLostError(err)) return;
+                console.error('Edit failed:', err);
+                if (epoch === epochRef.current) setEditError(errorText(err));
+            })
+            .finally(() => { if (epoch === epochRef.current) setSavingEdit(false); });
     };
 
     const handleClose = async () => {
@@ -825,12 +1043,12 @@ export default function AddSensorWindow() {
      * what's needed to invoke the same command again after a workspace
      * reopen -- see `WorkspaceState.specialSensorRecipes`.
      */
-    const computeRound = async (snap: CreateSnapshot): Promise<{ plotSensors: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
+    const computeRound = async (snap: CreateSnapshot, inv: Invoker): Promise<{ plotSensors: string[]; newMetadata: SensorMetadata[]; newRecipes: SpecialSensorRecipe[] }> => {
         if (snap.formulaMode && snap.formulaExpression.trim()) {
-            const newSensorName = await invoke<string>('evaluate_formula', {
+            const newSensorName = await inv('evaluate_formula', {
                 formula: snap.formulaExpression,
                 customName: snap.formulaCustomName.trim() || null,
-            });
+            }) as string;
             return {
                 plotSensors: [newSensorName],
                 newMetadata: [{
@@ -843,10 +1061,10 @@ export default function AddSensorWindow() {
             };
         }
         if (snap.operationConfig) {
-            const newSensorName = await invoke<string>('calculate_new_sensor', {
+            const newSensorName = await inv('calculate_new_sensor', {
                 sensors: snap.selectedSensors,
                 config: snap.operationConfig,
-            });
+            }) as string;
             return {
                 plotSensors: [newSensorName],
                 newMetadata: [{
@@ -861,13 +1079,14 @@ export default function AddSensorWindow() {
         return { plotSensors: snap.selectedSensors, newMetadata: [], newRecipes: [] };
     };
 
-    const createSensor = async (snap: CreateSnapshot) => {
+    const createSensor = async (snap: CreateSnapshot, ctx: TaskCtx) => {
         const attemptedName = snap.name.trim();
+        const inv = invokerFor(ctx);
 
         // A name that is only taken by a sensor still waiting to be deleted:
         // settle that delete first (drops its column) or the backend would
         // refuse the name as "already exists".
-        if (attemptedName) await settleDeletions(d => d.tags.some(t => sameTag(t, attemptedName)));
+        if (attemptedName) await settleDeletions(ctx, d => d.tags.some(t => sameTag(t, attemptedName)));
 
         // Re-check the name against FRESH state: while this waited its turn, an
         // edit/rename may have taken it (a rename would otherwise be
@@ -888,7 +1107,7 @@ export default function AddSensorWindow() {
         if (deletionsRef.current.length > 0) {
             let used: string[] = snap.selectedSensors;
             if (snap.creating && snap.formulaMode) {
-                const out = await invoke<string[][]>('extract_formula_refs', { formulas: [snap.formulaExpression] });
+                const out = await inv('extract_formula_refs', { formulas: [snap.formulaExpression] }) as string[][];
                 used = out?.[0] ?? [];
             }
             const hiddenSource = used.find(isHidden);
@@ -897,7 +1116,8 @@ export default function AddSensorWindow() {
             }
         }
 
-        const { plotSensors, newMetadata, newRecipes } = await computeRound(snap);
+        const { plotSensors, newMetadata, newRecipes } = await computeRound(snap, inv);
+        assertCurrent(ctx);
 
         const createdName = newMetadata[0]?.tag;
         if (createdName) {
@@ -925,7 +1145,8 @@ export default function AddSensorWindow() {
                 operation: null,
                 newMetadata,
                 newRecipes,
-                workspaceId: workspaceIdRef.current,
+                workspaceId: ctx.workspaceId,
+                generation: ctx.generation,
             });
         } catch (err) {
             console.error('Failed to tell the dashboard about the new sensor:', err);
@@ -956,6 +1177,7 @@ export default function AddSensorWindow() {
         // second click that lands before React has re-rendered it disabled --
         // which would otherwise create twice (or hit the new duplicate-name
         // error on a sensor that was in fact created fine).
+        if (sessionLostRef.current) { setAddError(STALE_SESSION_MESSAGE); return; }
         if (addingRef.current || !canAdd) return;
         addingRef.current = true;
         setAdding(true);
@@ -968,9 +1190,17 @@ export default function AddSensorWindow() {
             name: currentName,
         };
         const attemptedName = currentName.trim();
-        void queue.run(() => createSensor(snap))
+        const epoch = epochRef.current;
+        void runTask(ctx => createSensor(snap, ctx))
             .catch((err: unknown) => {
+                // Dataset gone / window re-pointed: say so (once, in the banner)
+                // and leave every list as it is.
+                if (isSessionLostError(err)) {
+                    if (err instanceof StaleSessionError && epoch === epochRef.current) markSessionLost();
+                    return;
+                }
                 console.error("Failed to add sensor:", err);
+                if (epoch !== epochRef.current) return;
                 const message = errorText(err);
                 // The window didn't know of this name but the backend does (a
                 // race, or a column this window was never told about): remember
@@ -982,6 +1212,9 @@ export default function AddSensorWindow() {
                 setAddError(message);
             })
             .finally(() => {
+                // A task of an older epoch must not unlock (or lock) the form
+                // of the project the window serves NOW.
+                if (epoch !== epochRef.current) return;
                 addingRef.current = false;
                 setAdding(false);
             });
@@ -1062,6 +1295,20 @@ export default function AddSensorWindow() {
                     <X size={14} />
                 </button>
             </div>
+
+            {/* The dataset this window was opened for is gone (its project was
+                closed or reloaded). Nothing here can change anything until the
+                Dashboard re-sends its data (Add Special Sensor button). */}
+            {sessionLost && (
+                <div
+                    role="alert"
+                    data-testid="special-sensor-session-lost"
+                    className="shrink-0 text-xs"
+                    style={{ padding: '8px 16px', color: 'var(--danger)', borderBottom: '1px solid var(--danger)', backgroundColor: 'var(--card-bg)' }}
+                >
+                    {sessionLost}
+                </div>
+            )}
 
             {/* Main content — fixed 320px left column (Explorer) + flexible
                 right column (Tooling), matching the approved prototype's own
@@ -1144,7 +1391,7 @@ export default function AddSensorWindow() {
                         <button onClick={handleClose} className="special-sensor-btn">Cancel</button>
                         <button
                             onClick={handleAdd}
-                            disabled={!canAdd || adding}
+                            disabled={!canAdd || adding || !!sessionLost}
                             title={canAdd ? undefined : footerIssue ?? undefined}
                             className="special-sensor-btn special-sensor-btn--primary"
                         >

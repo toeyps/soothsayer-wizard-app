@@ -3034,3 +3034,144 @@ describe('Dashboard', () => {
         });
     });
 });
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// 2026-10-03 -- the dataset generation, "workspace-closing", robust closing of
+// the child windows, and the autosave flush on leaving the Dashboard.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('Dashboard: dataset generation and leaving the workspace (2026-10-03)', () => {
+    const withGeneration = (generation: number | undefined): CsvMetadata => ({ ...makeMetadata(), generation });
+
+    describe('the generation of the dataset this Dashboard sits on', () => {
+        it('goes out with "sensors-data" in reply to "request-sensors" (the Add Special Sensor window pins it on every command)', async () => {
+            renderDashboard({ metadata: withGeneration(42), initialState: makeInitialState({ id: 'ws-A' }) });
+            await act(async () => { for (const cb of listenCallbacks['request-sensors'] ?? []) cb({}); });
+            expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-A', generation: 42 }));
+        });
+
+        it('goes out when "Add Special Sensor" re-points an already-open window too', async () => {
+            const existing = { setFocus: vi.fn().mockResolvedValue(undefined) };
+            mockGetByLabel.mockImplementation((label: string) => Promise.resolve(label === 'add-sensor' ? existing : null));
+            renderDashboard({ metadata: withGeneration(7), initialState: makeInitialState({ id: 'ws-B' }) });
+            mockEmit.mockClear();
+            await act(async () => {
+                fireEvent.click(screen.getByText('Add Special Sensor'));
+                for (let i = 0; i < 6; i++) await Promise.resolve();
+            });
+            expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-B', generation: 7 }));
+        });
+
+        const addPayload = (extra: Record<string, unknown>) => ({
+            workspaceId: 'ws1', sensors: ['CALC1'], operation: null,
+            newMetadata: [{ tag: 'CALC1', description: 'Calculated', unit: '', component: '' }],
+            newRecipes: [{ kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 2' }],
+            ...extra,
+        });
+        const deliverAdd = async (payload: Record<string, unknown>) => {
+            await act(async () => { for (const cb of listenCallbacks['add-sensor-selection'] ?? []) cb({ payload }); });
+        };
+
+        it('a window event for this workspace but ANOTHER load of it (older generation) is dropped; the matching one and an unstamped one (older sender) are applied', async () => {
+            renderDashboard({ metadata: withGeneration(10) });
+            await act(async () => { await Promise.resolve(); });
+            await deliverAdd(addPayload({ generation: 9 })); // A -> Back -> A again: a window bound to the first load
+            expect(last(sensorSelectionProps).sensors).not.toContain('CALC1');
+            await deliverAdd(addPayload({ generation: 10 }));
+            expect(last(sensorSelectionProps).sensors).toContain('CALC1');
+        });
+
+        it('with no generation on either side (older sender / hand-built fixture) only the workspace id decides', async () => {
+            renderDashboard({ metadata: withGeneration(undefined) });
+            await act(async () => { await Promise.resolve(); });
+            await deliverAdd(addPayload({ generation: 5 }));
+            expect(last(sensorSelectionProps).sensors).toContain('CALC1');
+        });
+    });
+
+    describe('leaving the workspace', () => {
+        it('unmounting announces "workspace-closing" with the workspace id and dataset generation', async () => {
+            const { unmount } = renderDashboard({ metadata: withGeneration(13), initialState: makeInitialState({ id: 'ws-A' }) });
+            mockEmit.mockClear();
+            unmount();
+            expect(mockEmit).toHaveBeenCalledWith('workspace-closing', { workspaceId: 'ws-A', generation: 13 });
+        });
+
+        it('asks BOTH child windows to close, each with its own catch: a close that fails (or a lookup that rejects) does not skip the other', async () => {
+            const closeBuild = vi.fn().mockRejectedValue(new Error('window already gone'));
+            const closeAdd = vi.fn().mockResolvedValue(undefined);
+            mockGetByLabel.mockImplementation((label: string) => (
+                label === 'build-model' ? Promise.resolve({ close: closeBuild }) : Promise.resolve({ close: closeAdd })
+            ));
+            const { unmount } = renderDashboard();
+            unmount();
+            await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+            expect(closeBuild).toHaveBeenCalledTimes(1);
+            expect(closeAdd).toHaveBeenCalledTimes(1);
+
+            // A lookup that rejects outright for the first label.
+            closeAdd.mockClear();
+            mockGetByLabel.mockImplementation((label: string) => (
+                label === 'build-model' ? Promise.reject(new Error('ipc down')) : Promise.resolve({ close: closeAdd })
+            ));
+            renderDashboard().unmount();
+            await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+            expect(closeAdd).toHaveBeenCalledTimes(1);
+        });
+
+        it('a failing "workspace-closing" emit does not break unmounting', () => {
+            mockEmit.mockImplementation(() => { throw new Error('ipc down'); });
+            const { unmount } = renderDashboard();
+            expect(() => unmount()).not.toThrow();
+        });
+    });
+
+    describe('autosave flush on leaving (Back to Import) -- a change made < 250 ms earlier used to be lost', () => {
+        it('writes the pending state, for this workspace, when the Dashboard unmounts before the debounce fires', async () => {
+            vi.useFakeTimers();
+            const { unmount } = renderDashboard({ initialState: makeInitialState({ id: 'ws-A', selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); }); // on-mount autosave settles
+            mockSaveWorkspaceData.mockClear();
+
+            act(() => { fireEvent.click(screen.getByText('select-none')); }); // a REAL change, debounce armed
+            expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+            await act(async () => { unmount(); await Promise.resolve(); });
+            await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+            const saved = mockSaveWorkspaceData.mock.calls[0][0];
+            expect(saved.id).toBe('ws-A');
+            expect(saved.selectedSensors).toEqual([]);
+            // ... and the timer that was cleared does not write a second time.
+            await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+            expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+        });
+
+        it('still re-reads failureGroupState from disk before the flush (the 2026-09-18 rule), so the flush cannot clobber another window\'s fresher write', async () => {
+            vi.useFakeTimers();
+            const { unmount } = renderDashboard({ initialState: makeInitialState({ id: 'ws-A', selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            mockSaveWorkspaceData.mockClear();
+            const fresher = { groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'Written by Build Model' }], models: [] };
+            mockLoadWorkspaceData.mockResolvedValue({ id: 'ws-A', failureGroupState: fresher });
+
+            act(() => { fireEvent.click(screen.getByText('select-none')); });
+            await act(async () => { unmount(); await Promise.resolve(); });
+            await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+
+            expect(mockLoadWorkspaceData).toHaveBeenCalledWith('ws-A');
+            expect(mockSaveWorkspaceData.mock.calls[0][0].failureGroupState).toEqual(fresher);
+        });
+
+        it('writes nothing when nothing is pending (an already-saved Dashboard leaves quietly)', async () => {
+            vi.useFakeTimers();
+            const { unmount } = renderDashboard();
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            mockSaveWorkspaceData.mockClear();
+            await act(async () => { unmount(); await Promise.resolve(); });
+            await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+            expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+        });
+    });
+});

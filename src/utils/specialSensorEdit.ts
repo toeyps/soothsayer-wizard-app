@@ -7,6 +7,7 @@ import { recomputeSpecialSensors, Invoker } from './specialSensorRecompute';
 import { renameTagInRecipes } from './specialSensorRename';
 import { replaySpecialSensorRecipes } from './specialSensorReplay';
 import { sameTag } from './specialSensorNaming';
+import { isSessionLostError } from './staleSession';
 
 /**
  * The backend half of "edit (or rename) a special sensor": work out what is
@@ -180,6 +181,7 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
         // Without it this could neither find what is built on the sensor (to
         // recompute it) nor rewrite those dependents on a rename -- and would
         // then drop the old column from under them. Refuse; nothing changed.
+        if (isSessionLostError(err)) throw err;
         console.error('Failed to read formula references:', err);
         const refused = new Error('Still working out which sensors are built on this one. Try again in a moment.');
         // Set rather than passed to the constructor: the project's TS lib
@@ -257,6 +259,10 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
     try {
         await recomputeSpecialSensors([next, ...renamedDownstream], invoker, r => done.push(r));
     } catch (err) {
+        // The session is no longer this edit's (stale generation, or the window
+        // was re-pointed): the columns in it are not ours to roll back. Stop
+        // here -- no recompute, no replay, no remove -- and let the caller say so.
+        if (isSessionLostError(err)) throw err;
         const failure = new SpecialSensorEditError(err instanceof Error ? err.message : String(err));
         failure.touched = done.length > 0;
         if (done.length > 0) {

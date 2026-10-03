@@ -1,4 +1,5 @@
 import { SpecialSensorRecipe } from '../types';
+import { isSessionLostError } from './staleSession';
 
 /**
  * Re-running a special sensor's recipe against the loaded data.
@@ -61,6 +62,10 @@ export async function recomputeSpecialSensors(
             await invoker(cmd, args);
             onRecomputed?.(recipe);
         } catch (err) {
+            // The dataset is not ours any more (stale generation / window
+            // re-pointed): pass it through unwrapped so the caller can stop
+            // WITHOUT rolling back.
+            if (isSessionLostError(err)) throw err;
             const failure = new Error(`Could not recompute "${recipe.tag}": ${String(err)}`);
             // Set rather than passed to the constructor: the project's TS lib
             // target predates `ErrorOptions`.

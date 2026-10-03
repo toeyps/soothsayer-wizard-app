@@ -1298,3 +1298,209 @@ describe('J. Onboarding flow', () => {
     expect(screen.queryByText('Prepare your dataset')).toBeNull();
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// K. 2026-10-03 -- dataset generation + "latest click wins"
+//   `load_csv` returns the generation of the Rust session it installed; the
+//   page hands it to the Dashboard (inside the metadata), pins every recipe
+//   replay command to it, and -- because the Rust session is ONE shared object
+//   -- never lets an older, slower load hand over or mix its dataset with a
+//   newer one's.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('K. dataset generation and latest-click-wins', () => {
+  const STALE = 'STALE_SESSION: the dataset changed since this window was opened';
+  const wsOf = (id: string, path: string, recipes: WorkspaceState['specialSensorRecipes'] = []): WorkspaceState => ({
+    ...baseLoadedWs,
+    id,
+    name: id === 'ws_1' ? 'Engine pressure run' : 'Compressor health',
+    dataFilePaths: [path],
+    specialSensorRecipes: recipes,
+  });
+  const R = (tag: string) => ({ kind: 'formula' as const, tag, formula: '$sensor_a * 2' });
+
+  /** A tiny stand-in for the Rust session: `load_csv` installs a new generation
+   *  (when its deferred, if any, is released) and the replay commands refuse a
+   *  pinned generation that is not the session's. */
+  function session() {
+    let gen = 0;
+    const loads: Array<{ path: string; generation: number | null }> = [];
+    const gates = new Map<string, () => void>();
+    const hold = new Set<string>();
+    const evaluated: Array<{ expected: unknown; ok: boolean }> = [];
+    const impl = (cmd: string, args?: any) => {
+      if (cmd === 'load_csv') {
+        const path = String(args.paths[0]);
+        const land = () => {
+          gen += 1;
+          loads.push({ path, generation: gen });
+          return { headers: ['timestamp', 'sensor_a'], total_rows: 3, generation: gen };
+        };
+        if (hold.has(path)) {
+          hold.delete(path);
+          loads.push({ path, generation: null });
+          return new Promise(resolve => { gates.set(path, () => resolve(land())); });
+        }
+        return Promise.resolve(land());
+      }
+      if (cmd === 'get_session_generation') return Promise.resolve(gen === 0 ? null : gen);
+      if (cmd === 'evaluate_formula') {
+        const ok = args.expectedGeneration === undefined || args.expectedGeneration === gen;
+        evaluated.push({ expected: args.expectedGeneration, ok });
+        return ok ? Promise.resolve(args.customName) : Promise.reject(STALE);
+      }
+      return Promise.resolve(null);
+    };
+    return {
+      impl, loads, evaluated, hold: (p: string) => hold.add(p),
+      release: (p: string) => gates.get(p)?.(),
+      bump: () => { gen += 1; },
+    };
+  }
+
+  const open = async (name: string) => {
+    render(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => screen.getByText(name));
+  };
+
+  beforeEach(() => {
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    dismissAllErrors();
+  });
+
+  it('K1. the generation load_csv returned reaches onDataReady (inside the metadata) and pins every replay command', async () => {
+    mockLoadWorkspace.mockResolvedValue(wsOf('ws_1', '/data/a.csv', [R('CALC1')]));
+    const s = session();
+    s.bump(); s.bump(); // the app has loaded other things before: generation 2 -> this load is 3
+    mockInvoke.mockImplementation(s.impl);
+    await open('Engine pressure run');
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    expect((onDataReady.mock.calls[0][0] as CsvMetadata).generation).toBe(3);
+    expect(s.evaluated).toEqual([{ expected: 3, ok: true }]);
+    expect(getErrors()).toHaveLength(0);
+  });
+
+  it('K2. Create-project Continue hands the Dashboard the generation of the Parse that produced the dataset', async () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: { ...FAKE_REPORT, generation: 21 } })
+    );
+    mockSaveWorkspace.mockResolvedValue(undefined);
+    renderAtStep2();
+    fireEvent.click(continueButton());
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect((onDataReady.mock.calls[0][0] as CsvMetadata).generation).toBe(21);
+  });
+
+  it('K3. a replay refused as STALE_SESSION (another load replaced the session) reloads and rebuilds -- no "couldn\'t be restored" toast, onDataReady once, with the NEW generation', async () => {
+    mockLoadWorkspace.mockResolvedValue(wsOf('ws_1', '/data/a.csv', [R('CALC1')]));
+    const s = session();
+    let first = true;
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'evaluate_formula' && first) { first = false; s.bump(); } // something replaced the session mid-replay
+      return s.impl(cmd, args);
+    });
+    await open('Engine pressure run');
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    expect(s.loads.map(l => l.path)).toEqual(['/data/a.csv', '/data/a.csv']);
+    const generation = (onDataReady.mock.calls[0][0] as CsvMetadata).generation;
+    expect(generation).toBe(3); // 1 = first load, 2 = the intruder, 3 = the reload
+    expect(s.evaluated.map(e => e.ok)).toEqual([false, true]);
+    expect(getErrors()).toHaveLength(0);
+  });
+
+  it('K4. a dataset that keeps changing under the load ends in an error on the import page (not a Dashboard on mixed data)', async () => {
+    mockLoadWorkspace.mockResolvedValue(wsOf('ws_1', '/data/a.csv', [R('CALC1')]));
+    const s = session();
+    mockInvoke.mockImplementation((cmd: string, args?: any) => {
+      if (cmd === 'evaluate_formula') s.bump();
+      return s.impl(cmd, args);
+    });
+    await open('Engine pressure run');
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    await waitFor(() => expect(screen.getByText(/kept changing/)).toBeTruthy());
+    expect(onDataReady).not.toHaveBeenCalled();
+    expect(screen.queryByText('Loading workspace…')).toBeNull();
+  });
+
+  it('K5. latest click wins: Alpha\'s slow load_csv lands AFTER Beta\'s -- only Beta hands over, and Beta reloads so the session is Beta\'s', async () => {
+    mockLoadWorkspace.mockImplementation(async (id: string) =>
+      id === 'ws_1' ? wsOf('ws_1', '/data/a.csv', [R('CALC1')]) : wsOf('ws_2', '/data/b.csv', [R('CALC2')]));
+    const s = session();
+    s.hold('/data/a.csv');
+    mockInvoke.mockImplementation(s.impl);
+    await open('Engine pressure run');
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    await waitFor(() => expect(s.loads.some(l => l.path === '/data/a.csv')).toBe(true)); // A's load_csv is running
+    fireEvent.click(screen.getByText('Compressor health'));
+    await waitFor(() => expect(s.loads.filter(l => l.path === '/data/b.csv').length).toBe(1));
+    expect(onDataReady).not.toHaveBeenCalled(); // Beta is waiting for Alpha's load to land
+
+    await act(async () => { s.release('/data/a.csv'); });
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+
+    const [meta, state] = onDataReady.mock.calls[0] as [CsvMetadata, WorkspaceState];
+    expect(state.id).toBe('ws_2');
+    // A landed last (generation 2); Beta reloaded (3) and replayed pinned to 3.
+    expect(s.loads.map(l => [l.path, l.generation])).toEqual([
+      ['/data/a.csv', null], ['/data/b.csv', 1], ['/data/a.csv', 2], ['/data/b.csv', 3],
+    ]);
+    expect(meta.generation).toBe(3);
+    expect(s.evaluated).toEqual([{ expected: 3, ok: true }]);
+    expect(getErrors()).toHaveLength(0);
+  });
+
+  it('K6. an older load that is still reading its workspace file when a newer click happens never touches the backend', async () => {
+    let releaseA!: (ws: WorkspaceState) => void;
+    mockLoadWorkspace.mockImplementation((id: string) =>
+      id === 'ws_1' ? new Promise<WorkspaceState>(r => { releaseA = r; }) : Promise.resolve(wsOf('ws_2', '/data/b.csv')));
+    const s = session();
+    mockInvoke.mockImplementation(s.impl);
+    await open('Engine pressure run');
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    fireEvent.click(screen.getByText('Compressor health'));
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    await act(async () => { releaseA(wsOf('ws_1', '/data/a.csv')); });
+    await new Promise(r => setTimeout(r, 20));
+    expect(s.loads.map(l => l.path)).toEqual(['/data/b.csv']);
+    expect(onDataReady).toHaveBeenCalledTimes(1);
+    expect((onDataReady.mock.calls[0][1] as WorkspaceState).id).toBe('ws_2');
+  });
+
+  it('K7. an older load that FAILS after a newer click shows no error (the newer load owns the page)', async () => {
+    let rejectA!: (e: Error) => void;
+    mockLoadWorkspace.mockImplementation((id: string) =>
+      id === 'ws_1' ? new Promise<WorkspaceState>((_, rej) => { rejectA = rej; }) : Promise.resolve(wsOf('ws_2', '/data/b.csv')));
+    mockInvoke.mockImplementation(session().impl);
+    await open('Engine pressure run');
+    fireEvent.click(screen.getByText('Engine pressure run'));
+    fireEvent.click(screen.getByText('Compressor health'));
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    await act(async () => { rejectA(new Error('old failure')); });
+    expect(screen.queryByText(/old failure/)).toBeNull();
+  });
+
+  it('K8. focus fallback: a window focus >2 s into a load that is really talking to the backend does NOT clear the loading overlay (a second workspace could be clicked mid-load)', async () => {
+    vi.useFakeTimers();
+    try {
+      mockLoadWorkspace.mockResolvedValue(wsOf('ws_1', '/data/a.csv'));
+      const s = session();
+      s.hold('/data/a.csv');
+      mockInvoke.mockImplementation(s.impl);
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await vi.waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await vi.waitFor(() => expect(s.loads.some(l => l.path === '/data/a.csv')).toBe(true));
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      expect(lastFocusHandler).not.toBeNull();
+      await act(async () => { lastFocusHandler!({ payload: true }); });
+      expect(screen.getByText('Loading workspace…')).toBeTruthy(); // still loading: overlay stays
+      await act(async () => { s.release('/data/a.csv'); });
+      await vi.waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -4,6 +4,9 @@ export interface CsvLoadReport {
   total_rows: number;
   columns: ColumnInfo[];
   warnings: string[];
+  /** Generation of the session this load installed (see `CsvMetadata.generation`).
+   *  Optional only for hand-built fixtures; the backend always sends it. */
+  generation?: number;
 }
 
 interface ColumnInfo {

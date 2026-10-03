@@ -1326,8 +1326,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // unless it matches.
     const workspaceIdRef = useRef(initialState?.id);
     workspaceIdRef.current = initialState?.id;
-    const forThisWorkspace = (payload: unknown) =>
-        (payload as { workspaceId?: string } | null | undefined)?.workspaceId === workspaceIdRef.current;
+    // Same for the DATASET: the Rust session generation this Dashboard was
+    // opened on (`metadata.generation`, from `load_csv`). A window bound to an
+    // earlier load of the SAME workspace (A -> Back -> A again) carries the
+    // same workspace id but an older generation -- its events are dropped too.
+    // A payload without a generation (older senders) is judged by id alone.
+    const forThisWorkspace = (payload: unknown) => {
+        const p = payload as { workspaceId?: string; generation?: unknown } | null | undefined;
+        if (p?.workspaceId !== workspaceIdRef.current) return false;
+        const mine = stateRef.current.metadata.generation;
+        return typeof p?.generation !== 'number' || mine === undefined || p.generation === mine;
+    };
     useEffect(() => {
         stateRef.current = { allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra };
     }, [allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra]);
@@ -1348,6 +1357,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 const { allSensorTags, selectedSensors, sensorMetadata, specialSensorRecipes, fgModels, fgExtra } = stateRef.current;
                 emit('sensors-data', {
                     workspaceId: workspaceIdRef.current,
+                    // The Rust dataset this Dashboard sits on: the window pins
+                    // it on every special-sensor command (`expectedGeneration`).
+                    generation: stateRef.current.metadata.generation,
                     sensors: allSensorTags,
                     selectedSensors: selectedSensors,
                     sensorMetadata: sensorMetadata,
@@ -1749,13 +1761,29 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // and — because its events are global broadcasts and it computes columns
     // in the ONE shared Rust session — kept feeding that project's special
     // sensors into whichever project was open next.
+    //
+    // 2026-10-03: closing is fire-and-forget IPC (it can be lost or late), so it
+    // is no longer the ONLY thing standing between a leftover window and the
+    // next project. (1) Every close is awaited with its own catch, so one failing
+    // does not skip the other. (2) A workspace-scoped `workspace-closing` goes
+    // out first: a window that outlives the close drops its state at once
+    // instead of waiting for the close. (3) Special-sensor commands are pinned
+    // to this dataset's generation anyway (`expectedGeneration`), so a window
+    // that survives both still cannot touch the next project's session.
     useEffect(() => {
         return () => {
-            for (const label of ['build-model', 'add-sensor']) {
-                WebviewWindow.getByLabel(label)
-                    .then(w => w?.close())
-                    .catch(() => { /* ignore — window may already be gone */ });
-            }
+            const closing = { workspaceId: workspaceIdRef.current, generation: stateRef.current.metadata.generation };
+            try {
+                Promise.resolve(emit('workspace-closing', closing)).catch(() => { /* best effort */ });
+            } catch { /* best effort */ }
+            void (async () => {
+                for (const label of ['build-model', 'add-sensor']) {
+                    try {
+                        const w = await WebviewWindow.getByLabel(label);
+                        await w?.close();
+                    } catch { /* ignore — window may already be gone */ }
+                }
+            })();
         };
     }, []);
 
@@ -1966,6 +1994,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // points at "the save that still needs to land on disk", never a stale
     // one from an edit that's already been superseded by a newer one.
     const pendingSaveRef = useRef<Promise<void> | null>(null);
+    // The autosave below is a debounce whose timer its cleanup CLEARS -- on a
+    // dependency change that is right (the next run re-arms it), but on UNMOUNT
+    // ("Back to Import") it silently dropped whatever was changed in the last
+    // AUTOSAVE_DEBOUNCE_MS (a special sensor created just before Back was gone
+    // on the next open). `autosaveDirtyRef` is true while a timer is armed and
+    // has not started its write; the unmount effect flushes it through
+    // `runAutosaveRef`, which is the very same routine the timer runs.
+    const autosaveDirtyRef = useRef(false);
+    const runAutosaveRef = useRef<(() => Promise<void>) | null>(null);
 
     // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
     // burst of rapid edits (typing, dragging a slider, resizing panels)
@@ -2007,40 +2044,65 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     useEffect(() => {
         if (!initialState) return;
         let timer: ReturnType<typeof setTimeout>;
+        // The write itself: also what the unmount flush runs. Always for THIS
+        // Dashboard's own workspace (`initialState.id`), built from this
+        // render's state.
+        const runAutosave = async () => {
+            let freshFailureGroupState: FailureGroupStateSlice = { ...fgExtra, groups: fgGroups, models: fgModels };
+            try {
+                const onDisk = await loadWorkspaceData(initialState.id);
+                if (onDisk?.failureGroupState) {
+                    // The whole slice as it is on disk — never a field list.
+                    freshFailureGroupState = onDisk.failureGroupState;
+                }
+            } catch (e) {
+                // Disk read failed — fall back to this window's own
+                // mirror rather than blocking the autosave entirely.
+                console.warn('Autosave: failed to re-read failureGroupState from disk, using local copy:', e);
+            }
+            const next = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
+            const payload = JSON.stringify(next);
+            // 2026-09-03: skip the write when the state is byte-identical
+            // to what is already on disk. Primarily this removes the
+            // second of the two writes every failure-group toggle used to
+            // cause — persistFailureGroupState writes immediately (so a
+            // Build Model window opened right after reads fresh data),
+            // then this autosave rewrote the exact same content 250ms
+            // later — but it also covers any other path that reschedules
+            // an autosave without actually changing anything.
+            if (payload !== lastSavedPayloadRef.current) {
+                await saveWorkspaceData(next);
+                lastSavedPayloadRef.current = payload;
+            }
+        };
+        autosaveDirtyRef.current = true;
+        runAutosaveRef.current = runAutosave;
         pendingSaveRef.current = new Promise<void>((resolve) => {
             timer = setTimeout(async () => {
-                let freshFailureGroupState: FailureGroupStateSlice = { ...fgExtra, groups: fgGroups, models: fgModels };
+                autosaveDirtyRef.current = false;
                 try {
-                    const onDisk = await loadWorkspaceData(initialState.id);
-                    if (onDisk?.failureGroupState) {
-                        // The whole slice as it is on disk — never a field list.
-                        freshFailureGroupState = onDisk.failureGroupState;
-                    }
-                } catch (e) {
-                    // Disk read failed — fall back to this window's own
-                    // mirror rather than blocking the autosave entirely.
-                    console.warn('Autosave: failed to re-read failureGroupState from disk, using local copy:', e);
+                    await runAutosave();
+                } finally {
+                    pendingSaveRef.current = null;
+                    resolve();
                 }
-                const next = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
-                const payload = JSON.stringify(next);
-                // 2026-09-03: skip the write when the state is byte-identical
-                // to what is already on disk. Primarily this removes the
-                // second of the two writes every failure-group toggle used to
-                // cause — persistFailureGroupState writes immediately (so a
-                // Build Model window opened right after reads fresh data),
-                // then this autosave rewrote the exact same content 250ms
-                // later — but it also covers any other path that reschedules
-                // an autosave without actually changing anything.
-                if (payload !== lastSavedPayloadRef.current) {
-                    await saveWorkspaceData(next);
-                    lastSavedPayloadRef.current = payload;
-                }
-                pendingSaveRef.current = null;
-                resolve();
             }, AUTOSAVE_DEBOUNCE_MS);
         });
         return () => clearTimeout(timer);
     }, [buildWorkspaceState, initialState, fgGroups, fgModels, fgExtra]);
+
+    // Leaving the Dashboard (Back to Import, closing the workspace, the key
+    // changing for another one): write what the debounce had not written yet.
+    // Runs on UNMOUNT only (empty deps), so a normal re-render never causes an
+    // early write. Still re-reads `failureGroupState` from disk first (inside
+    // `runAutosave`) -- the 2026-09-18 rule holds -- and writes under this
+    // Dashboard's own workspace id.
+    useEffect(() => () => {
+        if (!autosaveDirtyRef.current) return;
+        autosaveDirtyRef.current = false;
+        const run = runAutosaveRef.current;
+        if (run) void run().catch(e => console.warn('Autosave flush on leaving the Dashboard failed:', e));
+    }, []);
 
     // 2026-09-01: flush a pending autosave before the window is actually
     // allowed to close, instead of letting a change made in the last
@@ -2834,6 +2896,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 const cur = stateRef.current;
                                 emit('sensors-data', {
                                     workspaceId: workspaceIdRef.current,
+                                    generation: cur.metadata.generation,
                                     sensors: cur.allSensorTags,
                                     selectedSensors: cur.selectedSensors,
                                     sensorMetadata: cur.sensorMetadata,

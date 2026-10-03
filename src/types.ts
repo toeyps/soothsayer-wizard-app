@@ -6,6 +6,12 @@ export interface CsvRecord {
 export interface CsvMetadata {
     headers: string[];
     total_rows: number;
+    /** Generation of the Rust session this load created (2026-10-03). Strictly
+     *  increases with every `load_csv`. Special-sensor commands are bound to it
+     *  (`expectedGeneration`) so a window left over from another project cannot
+     *  touch this dataset -- see `utils/staleSession.ts`. Optional only for
+     *  hand-built fixtures; the backend always sends it. */
+    generation?: number;
 }
 
 export interface SensorMetadata {

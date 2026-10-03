@@ -1,6 +1,7 @@
 import { SpecialSensorRecipe } from '../types';
 import { orderRecipesByDependency } from './specialSensorDeps';
 import { recomputeCall, Invoker } from './specialSensorRecompute';
+import { isSessionLostError } from './staleSession';
 
 /**
  * Rebuild every special sensor's column in the Rust session right after a
@@ -74,6 +75,10 @@ export async function replaySpecialSensorRecipes(
             const { cmd, args } = recomputeCall(recipe);
             await invoker(cmd, args);
         } catch (err) {
+            // The session was replaced under this replay (a stale generation):
+            // every remaining recipe would fail the same way, and "couldn't be
+            // restored" would be a lie -- stop and let the caller reload.
+            if (isSessionLostError(err)) throw err;
             console.warn(`Failed to restore special sensor "${recipe.tag}":`, err);
             failed.push(recipe.tag);
             broken.add(key(recipe.tag));

@@ -33,6 +33,7 @@ import {
 import { formatDateTime } from "../../utils/dateFormat";
 import { reportError } from "../../errorReporter";
 import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
+import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
 
 interface DataUploadPageProps {
   onDataReady: (
@@ -60,11 +61,17 @@ interface DataUploadPageProps {
  * all failures are surfaced together as ONE toast via the global error
  * reporter. Returns the tags that have no data this session (failed +
  * skipped) so the caller can keep them off the plot.
+ *
+ * 2026-10-03: every replay command is pinned to `generation` -- the generation
+ * of the `load_csv` that produced THIS dataset -- so a second load that
+ * overlapped this one (and replaced the Rust session) makes the replay fail
+ * with `StaleSessionError` instead of building this workspace's sensors on
+ * another workspace's data. The caller reloads and retries.
  */
-async function restoreSpecialSensors(recipes: SpecialSensorRecipe[]): Promise<string[]> {
+async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation: number | undefined): Promise<string[]> {
   const { failed, skipped } = await replaySpecialSensorRecipes(
     recipes,
-    (cmd, args) => invoke(cmd, args),
+    bindToGeneration((cmd, args) => invoke(cmd, args), generation),
   );
   if (failed.length + skipped.length > 0) {
     const parts = [
@@ -178,6 +185,19 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   // focus-fallback below to decide whether to nuke a stuck loading state.
   const loadingStartedAtRef = useRef<number | null>(null);
 
+  // 2026-10-03: "latest click wins". Every open-workspace click takes the next
+  // sequence number; only the newest load may replay sensors and hand over to
+  // the Dashboard -- an older one that finishes late is discarded. The Rust
+  // session is ONE shared object, so an older load_csv that lands after a
+  // newer one REPLACES the newer one's dataset: `loadCsvInFlightRef` lets the
+  // newer load wait for those to land (then re-check / reload) before it
+  // replays anything. `backendPhaseRef` counts loads between their first
+  // `load_csv` and their end -- the window in which a focus event is NOT a
+  // sign of a stuck spinner (see the focus fallback below).
+  const loadSeqRef = useRef(0);
+  const loadCsvInFlightRef = useRef(new Map<number, Promise<unknown>>());
+  const backendPhaseRef = useRef(0);
+
   const clearLoadingState = () => {
     setLoadingWorkspace(false);
     setActiveWorkspaceId(null);
@@ -218,6 +238,10 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
       const started = loadingStartedAtRef.current;
+      // A load that is really talking to the backend (load_csv / replay) is
+      // not "stuck": clearing its overlay would let a second workspace be
+      // clicked mid-load and the two would interleave on the one Rust session.
+      if (backendPhaseRef.current > 0) return;
       if (started !== null && Date.now() - started > 2000) {
         clearLoadingState();
         refreshWorkspaces();
@@ -280,6 +304,9 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       const metadata: CsvMetadata = {
         headers: report.headers,
         total_rows: report.total_rows,
+        // The dataset this Dashboard sits on -- special-sensor commands are
+        // pinned to it (see `utils/staleSession.ts`).
+        generation: report.generation,
       };
       const state: WorkspaceState = {
         id: workspaceId,
@@ -306,22 +333,82 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   };
 
   const handleLoadWorkspace = async (id: string) => {
+    const seq = ++loadSeqRef.current;
+    const isLatest = () => seq === loadSeqRef.current;
+    let inBackendPhase = false;
     setLoadingWorkspace(true);
     setWorkspaceError(null);
     setActiveWorkspaceId(id);
     loadingStartedAtRef.current = Date.now();
     try {
       const state = await loadWorkspaceData(id);
+      // A newer click took over while the file was being read: this load never
+      // touches the backend at all.
+      if (!isLatest()) return;
       if (!state) throw new Error("Workspace not found");
-      const dataMetadata = await invoke<CsvMetadata>("load_csv", { paths: state.dataFilePaths });
 
-      // Must happen before `onDataReady` hands off to Dashboard, so the
-      // very first chart render already has real data for every special
-      // sensor instead of a "ghost" entry that only gets fixed on the next
-      // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
+      backendPhaseRef.current += 1;
+      inBackendPhase = true;
+      const olderLoads = () =>
+        [...loadCsvInFlightRef.current.entries()].filter(([k]) => k < seq).map(([, p]) => p);
+
+      // load_csv + replay, retried while the Rust session is replaced under it
+      // (an older, slower load_csv landing after ours). Each attempt is bound
+      // to the generation ITS load_csv returned.
+      const MAX_ATTEMPTS = 3;
+      let dataMetadata: CsvMetadata | null = null;
+      let noData: string[] = [];
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !dataMetadata; attempt++) {
+        const call = invoke<CsvMetadata>("load_csv", { paths: state.dataFilePaths });
+        loadCsvInFlightRef.current.set(seq, call);
+        let loaded: CsvMetadata;
+        try {
+          loaded = await call;
+        } finally {
+          if (loadCsvInFlightRef.current.get(seq) === call) loadCsvInFlightRef.current.delete(seq);
+        }
+        if (!isLatest()) return;
+
+        // An older load_csv still running will replace the session the moment
+        // it lands. Let it land, then make sure the session is still OURS.
+        const before = olderLoads();
+        if (before.length > 0) {
+          await Promise.allSettled(before);
+          if (!isLatest()) return;
+          let current: unknown;
+          try { current = await invoke<number | null>("get_session_generation"); } catch { current = undefined; }
+          if (typeof current === "number" && typeof loaded.generation === "number" && current !== loaded.generation) continue;
+        }
+
+        // Must happen before `onDataReady` hands off to Dashboard, so the
+        // very first chart render already has real data for every special
+        // sensor instead of a "ghost" entry that only gets fixed on the next
+        // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
+        if (state.specialSensorRecipes?.length) {
+          try {
+            noData = await restoreSpecialSensors(state.specialSensorRecipes, loaded.generation);
+          } catch (err) {
+            // The session was replaced mid-replay: reload and rebuild.
+            if (err instanceof StaleSessionError) continue;
+            throw err;
+          }
+          if (!isLatest()) return;
+          // An older load that only just started landing: wait, then redo.
+          const after = olderLoads();
+          if (after.length > 0) {
+            await Promise.allSettled(after);
+            continue;
+          }
+        }
+        dataMetadata = loaded;
+      }
+      if (!dataMetadata) {
+        throw new Error("The dataset kept changing while the project was loading. Please try again.");
+      }
+      if (!isLatest()) return;
+
       let stateForDashboard = state;
       if (state.specialSensorRecipes?.length) {
-        const noData = await restoreSpecialSensors(state.specialSensorRecipes);
         if (noData.length > 0) {
           // A sensor with no column behind it must not stay plotted: its chart
           // series would be empty (or the scatter/pair cell blank). Its recipe
@@ -373,12 +460,19 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       // Dashboard.tsx. (The Predictive Model page no longer has its own
       // route at all — it's reached only via Build Model's "Build Model →"
       // button and never auto-resumes on workspace open.)
+      // Only the newest click hands over (a mapping load above may have taken
+      // long enough for another workspace to be clicked).
+      if (!isLatest()) return;
       onDataReady(dataMetadata, stateForDashboard, sm);
     } catch (err) {
+      // An older load's failure is not the user's concern any more.
+      if (!isLatest()) return;
       setWorkspaceError(String(err));
       setLoadingWorkspace(false);
       setActiveWorkspaceId(null);
       loadingStartedAtRef.current = null;
+    } finally {
+      if (inBackendPhase) backendPhaseRef.current -= 1;
     }
   };
 

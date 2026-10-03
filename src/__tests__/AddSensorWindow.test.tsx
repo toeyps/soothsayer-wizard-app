@@ -2000,6 +2000,9 @@ describe('AddSensorWindow: one serial queue for create / edit / delete', () => {
         await flush();
         expect(rust.names('remove_sensor_columns')).toHaveLength(0);
         expect(mockEmit).not.toHaveBeenCalledWith('delete-special-sensors', expect.anything());
+        // A re-point resets the window to the Create tab (a different project:
+        // nothing of the old binding's UI state survives) -- look at Manage again.
+        await goManage();
         expect(screen.getByLabelText('Delete A')).toBeTruthy();
     });
 });
@@ -2256,5 +2259,334 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         await save();
         expect(editorAlert()).toMatch(/Can't rename "A" right now: couldn't check whether a model uses it \(disk unavailable\)/);
         expect(writes(rust)).toHaveLength(0);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// 2026-10-03 -- the window is BOUND to the dataset it was handed. The Dashboard
+// sends `generation` (from `load_csv`) with `sensors-data`; every guarded Rust
+// command carries it as `expectedGeneration`; a STALE_SESSION refusal stops the
+// task without rollback; a different project / dataset resets the whole window
+// (epoch); an OLDER payload never re-points it backwards.
+// ═════════════════════════════════════════════════════════════════════════
+
+import { STALE_SESSION_ERROR } from './helpers/fakeRustSession';
+
+describe('AddSensorWindow: bound to the dataset generation', () => {
+    beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+    afterEach(() => vi.useRealTimers());
+
+    const GUARDED = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns'];
+    const guardedCalls = (rust: ReturnType<typeof fakeRust>) => rust.calls.filter(c => GUARDED.includes(c.cmd));
+    const sessionGen = (rust: ReturnType<typeof fakeRust>) => rust.inner.generation();
+
+    /** Hand the window data for `workspaceId` at `generation`, like the Dashboard does. */
+    const deliver = async (payload: Record<string, unknown>) => {
+        await act(async () => {
+            for (const cb of listenCallbacks['sensors-data'] ?? []) {
+                cb({ payload: { sensors: ['TAG1', 'TAG2'], selectedSensors: [], sensorMetadata: [], models: [], ...payload } });
+            }
+        });
+        await flush();
+    };
+    const closing = async (payload: Record<string, unknown>) => {
+        await act(async () => { for (const cb of listenCallbacks['workspace-closing'] ?? []) cb({ payload }); });
+        await flush();
+    };
+    const lostBanner = () => screen.queryByTestId('special-sensor-session-lost');
+    const saveEditUi = async (tag: string, patch: { name?: string; formula?: string }) => {
+        await act(async () => { fireEvent.click(screen.getByLabelText(`Edit ${tag}`)); });
+        if (patch.name) fireEvent.change(screen.getByLabelText('Name'), { target: { value: patch.name } });
+        if (patch.formula) fireEvent.change(screen.getByLabelText('Formula'), { target: { value: patch.formula } });
+        fillEditor();
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
+        await flush(40);
+    };
+    const addFormulaSensor = async () => {
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('submit-formula'));
+        fillMeta();
+        await act(async () => { fireEvent.click(addBtn()); });
+        await flush(40);
+    };
+
+    describe('every guarded command carries expectedGeneration (camelCase)', () => {
+        it('create (formula and operation), edit, rename (incl. the old-column removal) and delete all pin the generation the Dashboard sent', async () => {
+            const rust = fakeRust({ derived: ['A', 'B'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'TAG2', 'A', 'B'], specialSensorRecipes: [recA, recB] });
+
+            // create: formula
+            await addFormulaSensor();
+            // create: operation
+            fireEvent.click(screen.getByText('toggle-tag2'));
+            fireEvent.click(screen.getByText('set-config'));
+            fillMeta();
+            await act(async () => { fireEvent.click(addBtn()); });
+            await flush(40);
+            // edit (recomputes A and B), then rename A -> A2 (recompute + old column removal)
+            await goManage();
+            await saveEditUi('A', { formula: '$TAG1 * 5' });
+            await saveEditUi('A', { name: 'A2' });
+            // delete
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete B')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(8100); });
+            await flush(40);
+
+            const calls = guardedCalls(rust);
+            expect(calls.map(c => c.cmd)).toEqual(expect.arrayContaining(['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns']));
+            for (const c of calls) {
+                expect(c.args.expectedGeneration, `${c.cmd} ${JSON.stringify(c.args)}`).toBe(g);
+                expect('expected_generation' in c.args).toBe(false);
+            }
+            // The create/edit/rename/delete all really happened (nothing was refused).
+            expect(calls.filter(c => c.error)).toEqual([]);
+            expect(rust.names('remove_sensor_columns').map(c => c.args.names)).toEqual(expect.arrayContaining([['A'], ['B']]));
+        });
+
+        it('a payload with no generation (an older sender) leaves the arguments exactly as before -- no expectedGeneration key at all', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ workspaceId: 'ws-A' });
+            await addFormulaSensor();
+            expect(rust.names('evaluate_formula')).toHaveLength(1);
+            expect('expectedGeneration' in rust.names('evaluate_formula')[0].args).toBe(false);
+        });
+
+        it('the generation is re-read from each sensors-data: after a re-bind the NEW generation is pinned', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g });
+            await deliver({ workspaceId: 'ws-A', generation: g + 7 });
+            await addFormulaSensor();
+            expect(rust.names('evaluate_formula')[0].args.expectedGeneration).toBe(g + 7);
+        });
+    });
+
+    describe('STALE_SESSION: stop, no rollback, say so, refuse until re-bound', () => {
+        it('create refused as stale: nothing is announced, the banner says what to do, Add is disabled and a further attempt sends nothing', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ workspaceId: 'ws-A', generation: sessionGen(rust) + 40 }); // the session has moved on
+            await addFormulaSensor();
+
+            expect(rust.names('evaluate_formula')[0].error).toBe(STALE_SESSION_ERROR);
+            expect(lostBanner()?.textContent).toBe('This project was closed or reloaded — reopen Add Special Sensor from the Dashboard.');
+            expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
+            expect(addBtn().disabled).toBe(true);
+            const before = rust.calls.length;
+            await act(async () => { fireEvent.click(addBtn()); });
+            await flush();
+            expect(rust.calls.length).toBe(before);
+        });
+
+        it('an edit refused as stale does NOT roll back (no recompute of the original recipes, no replay, no removal), says so in the editor and sends nothing to the Dashboard', async () => {
+            const rust = fakeRust({ derived: ['A', 'B'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ workspaceId: 'ws-A', generation: sessionGen(rust) + 40, sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB] });
+            await goManage();
+            rust.calls.length = 0;
+            await saveEditUi('A', { name: 'A2' }); // rename: recompute A2, recompute B ..., remove old A
+            // Exactly ONE guarded command went out (the first write, refused); nothing after it.
+            expect(guardedCalls(rust).map(c => [c.cmd, c.error])).toEqual([['evaluate_formula', STALE_SESSION_ERROR]]);
+            expect(screen.getAllByRole('alert').map(a => a.textContent).join(' / ')).toContain('This project was closed or reloaded');
+            expect(mockEmit).not.toHaveBeenCalledWith('rename-special-sensor', expect.anything());
+            expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
+            expect(mockEmit).not.toHaveBeenCalledWith('special-sensor-data-changed', expect.anything());
+            expect(lostBanner()).toBeTruthy();
+        });
+
+        it('a delete commit refused as stale drops nothing and tells the Dashboard nothing; Delete is refused afterwards', async () => {
+            const rust = fakeRust({ derived: ['A', 'Z'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ workspaceId: 'ws-A', generation: sessionGen(rust) + 40, sensors: ['TAG1', 'A', 'Z'], specialSensorRecipes: [recA, { kind: 'formula', tag: 'Z', formula: '$TAG1 + 1' }] });
+            await goManage();
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete Z')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(8100); });
+            await flush(40);
+            expect(rust.names('remove_sensor_columns').map(c => c.error)).toEqual([STALE_SESSION_ERROR]);
+            expect(rust.has('Z')).toBe(true);
+            expect(mockEmit).not.toHaveBeenCalledWith('delete-special-sensors', expect.anything());
+            expect(lostBanner()).toBeTruthy();
+            // Further mutations are refused: no new command goes out.
+            const before = rust.calls.length;
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete A')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+            expect(rust.calls.length).toBe(before);
+        });
+
+        it('a fresh sensors-data with a NEWER generation re-binds the window: banner gone, mutations work again (with the new generation)', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g + 40 });
+            await addFormulaSensor();
+            expect(lostBanner()).toBeTruthy();
+
+            // The SAME stale generation again (a dead Dashboard) does not re-bind ...
+            await deliver({ workspaceId: 'ws-A', generation: g + 40 });
+            expect(lostBanner()).toBeTruthy();
+            // ... a newer one does.
+            await deliver({ workspaceId: 'ws-A', generation: g + 41 });
+            expect(lostBanner()).toBeNull();
+            expect(addBtn()).toBeTruthy();
+            await act(async () => { await Promise.resolve(); });
+        });
+
+        it('a normal (non-stale) failure still rolls back exactly as before', async () => {
+            const rust = fakeRust({ derived: ['A', 'B'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB] });
+            await goManage();
+            rust.inner.failOn('evaluate_formula', a => a.customName === 'B' && a.replace === true, 'injected');
+            await saveEditUi('A', { formula: '$TAG1 * 9' });
+            const writes = rust.names('evaluate_formula').filter(c => c.args.replace && !c.error).map(c => `${c.args.customName}=${c.args.formula}`);
+            // A was written, B failed; the one column that HAD been overwritten (A) is put back.
+            expect(writes).toEqual(['A=$TAG1 * 9', 'A=$TAG1 * 2']);
+            expect(lostBanner()).toBeNull();
+        });
+    });
+
+    describe('epoch: a different project / dataset resets the WHOLE window', () => {
+        it('selected sources, formula draft, search, tab and the open editor are all dropped (the tooling is remounted)', async () => {
+            const rust = fakeRust({ derived: ['A'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'TAG2', 'A'], specialSensorRecipes: [recA] });
+            // A picked source and a formula draft (what the tooling reports up).
+            fireEvent.click(screen.getByText('toggle-tag1'));
+            fireEvent.click(screen.getByText('submit-formula'));
+            fillMeta();
+            expect(last(toolingProps).selectedSensors).toEqual(['TAG1']);
+            const toolingBefore = toolingProps.length;
+            // An editor open on A, with a draft in it.
+            await goManage();
+            await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+            fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 99' } });
+
+            await deliver({ workspaceId: 'ws-B', generation: g + 1, sensors: ['TAG1', 'TAG2', 'A'], specialSensorRecipes: [recA] });
+
+            // Back on Create, editor gone.
+            expect(screen.queryByText('Save changes')).toBeNull();
+            expect(screen.getByRole('tab', { name: /Create/ }).getAttribute('aria-selected')).toBe('true');
+            // The tooling was remounted (a fresh instance) and the picker is empty.
+            expect(toolingProps.length).toBeGreaterThan(toolingBefore);
+            expect(last(toolingProps).selectedSensors).toEqual([]);
+            // The old draft is gone: clicking Add builds nothing from it.
+            await act(async () => { fireEvent.click(addBtn()); });
+            await flush();
+            expect(rust.names('evaluate_formula').filter(c => c.args.customName === 'FormulaCalc')).toHaveLength(0);
+        });
+
+        it('queued and in-flight work of the old project is dropped: a held edit is refused and a create queued behind it never runs or announces anything', async () => {
+            const rust = fakeRust({ derived: ['A'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'TAG2', 'A'], specialSensorRecipes: [recA] });
+            await goManage();
+            const gate = rust.inner.gate('evaluate_formula', a => a.customName === 'A' && a.replace === true);
+            await saveEditUi('A', { formula: '$TAG1 * 7' });          // computing, held in Rust
+            await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
+            await addFormulaSensor();                                   // a create, queued behind the edit
+            expect(rust.names('evaluate_formula').filter(c => c.args.customName === 'FormulaCalc')).toHaveLength(0);
+
+            await deliver({ workspaceId: 'ws-B', generation: g + 1 });  // re-pointed
+            void rust.inner.invoke('load_csv', { paths: ['x'] });       // Rust moved on too
+            await act(async () => { gate.release(); });
+            await flush(60);
+
+            expect(rust.names('evaluate_formula').filter(c => c.args.customName === 'FormulaCalc')).toHaveLength(0);
+            const announced = mockEmit.mock.calls.filter(c => ['add-sensor-selection', 'update-special-sensor', 'rename-special-sensor', 'special-sensor-data-changed'].includes(c[0]));
+            expect(announced).toEqual([]);
+            // The new project's window is healthy (no banner for something that happened to the old one).
+            expect(lostBanner()).toBeNull();
+        });
+
+        it('a pending undo is cancelled on re-bind and never commits against the new project', async () => {
+            const rust = fakeRust({ derived: ['A'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] });
+            await goManage();
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete A')); });
+            await deliver({ workspaceId: 'ws-A', generation: g + 1, sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] }); // same project, reloaded
+            await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+            expect(rust.names('remove_sensor_columns')).toHaveLength(0);
+            expect(mockEmit).not.toHaveBeenCalledWith('delete-special-sensors', expect.anything());
+        });
+
+        it('the SAME workspace and generation again is only a data refresh: the form is kept', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g });
+            fireEvent.click(screen.getByText('toggle-tag1'));
+            await deliver({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'TAG2', 'NEW'] });
+            expect(last(toolingProps).selectedSensors).toEqual(['TAG1']);
+            expect(last(explorerProps).sensors).toEqual(['TAG1', 'TAG2', 'NEW']);
+        });
+    });
+
+    describe('monotonic rule: an OLDER payload never re-points the window backwards', () => {
+        it('a sensors-data at a lower generation (the old project, or the same one) arriving after the window was re-pointed is ignored', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            // A is the older load (generation g-1), B the session's current one (g).
+            await openWindow({ workspaceId: 'ws-A', generation: g - 1, sensors: ['TAG1', 'TAG2'] });
+            await deliver({ workspaceId: 'ws-B', generation: g, sensors: ['TAG1', 'TAG2', 'BONLY'] });
+            await deliver({ workspaceId: 'ws-A', generation: g - 1, sensors: ['TAG1', 'TAG2', 'AONLY'] }); // late copy
+            expect(last(explorerProps).sensors).toEqual(['TAG1', 'TAG2', 'BONLY']);
+            // Even a same-workspace payload at a lower generation is ignored.
+            await deliver({ workspaceId: 'ws-B', generation: g - 1, sensors: ['TAG1', 'OLD'] });
+            expect(last(explorerProps).sensors).toEqual(['TAG1', 'TAG2', 'BONLY']);
+            // And what the window emits (and pins on Rust) is still B's.
+            await addFormulaSensor();
+            expect(rust.names('evaluate_formula')[0].args.expectedGeneration).toBe(g);
+            expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({ workspaceId: 'ws-B', generation: g }));
+        });
+    });
+
+    describe('workspace-closing: the Dashboard that bound this window is going away', () => {
+        it('for the workspace/dataset this window holds: banner, Add disabled, a pending undo dropped (never committed)', async () => {
+            const rust = fakeRust({ derived: ['A'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g, sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] });
+            await goManage();
+            await act(async () => { fireEvent.click(screen.getByLabelText('Delete A')); });
+            await closing({ workspaceId: 'ws-A', generation: g });
+            expect(lostBanner()).toBeTruthy();
+            await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
+            expect(addBtn().disabled).toBe(true);
+            await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+            expect(rust.names('remove_sensor_columns')).toHaveLength(0);
+        });
+
+        it('a closing for ANOTHER workspace, or another generation of this one, is ignored', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-B', generation: g });
+            await closing({ workspaceId: 'ws-A', generation: g - 1 });
+            await closing({ workspaceId: 'ws-B', generation: g - 1 });
+            await closing({});
+            expect(lostBanner()).toBeNull();
+        });
+
+        it('after it, the dead Dashboard\'s payload (same generation) is refused; a newer one re-binds', async () => {
+            const rust = fakeRust();
+            mockInvoke.mockImplementation(rust.invoke);
+            const g = sessionGen(rust);
+            await openWindow({ workspaceId: 'ws-A', generation: g });
+            await closing({ workspaceId: 'ws-A', generation: g });
+            await deliver({ workspaceId: 'ws-A', generation: g });
+            expect(lostBanner()).toBeTruthy();
+            await deliver({ workspaceId: 'ws-A', generation: g + 1 });
+            expect(lostBanner()).toBeNull();
+        });
     });
 });
