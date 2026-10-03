@@ -181,11 +181,11 @@ async function settle(ms = 0) {
 
 async function mountBuildModel() {
     render(<BuildModelWindow />);
-    await waitFor(() => expect(screen.getByTestId('rc-bar')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('rc-card')).toBeTruthy());
     await settle(30);
 }
 
-const rcModal = () => screen.queryByRole('dialog', { name: 'Running Condition Filter' });
+const rcModal = () => screen.queryByRole('dialog', { name: 'Running condition' });
 function closeRcModal() {
     const d = rcModal();
     if (d) fireEvent.click(within(d).getByLabelText('Close'));
@@ -366,7 +366,7 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
     it('control: the same clustering model trains fresh once a draft edit is committed with it (the workaround users would stumble on)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
-        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'QA model edited' } });
         await clickTrain();
         expect(diskModel('c1').clusterRanges).toEqual([]);
@@ -397,7 +397,8 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(diskModel('i1').lastTrainedAt).toBe(before.lastTrainedAt);
         // Staleness after reload is computed exactly as before it.
         expect(diskFresh('i1')).toBe(true);
-        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(1); // the silent auto-recompute
+        // 2 = the Step-1 card's row count (unfiltered workspace -> ONE query) + the silent auto-recompute.
+        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
         expect(screen.getByTestId('results-chart')).toBeTruthy();
         expect(pill()).toBe('Trained');
         expect(markCompleteBtn().disabled).toBe(false);
@@ -418,7 +419,9 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(diskFresh('i1')).toBe(false);
         expect(screen.getByTestId('results-stale')).toBeTruthy();
         expect(footerStatus()).toBe('Settings changed — re-train');
-        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(0);
+        expect(screen.queryByTestId('results-chart')).toBeNull();
+        // Only the Step-1 card's row count (filtered + unfiltered = 2 queries) — no model auto-recompute.
+        expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
     });
 
     it('a Complete model keeps its training metadata through reload and shows "Last trained …"', async () => {
@@ -560,7 +563,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         await clickTrain();
         expect(pill()).toBe('Trained');
 
-        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
         expect(screen.getByText('edited')).toBeTruthy(); // really a pending draft
         expect(screen.queryByTestId('results-chart')).toBeNull();
@@ -606,7 +609,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
             await emit('build-model-data', { ...BUILD_DATA, sensorHeaders: ['TAG1', 'TAG3'], metadata: { headers: ['timestamp', 'TAG1', 'TAG3'], total_rows: 100 } });
         });
         await settle(30);
-        expect(screen.getByTestId('results-incomplete')).toBeTruthy();
+        expect(screen.getByTestId('results-rc-locked')).toBeTruthy(); // the workspace condition's only sensor is gone -> Step 1 is not done
         expect(markCompleteBtn().disabled).toBe(true); // the gate itself still works
         expect(pill()).not.toBe('Trained');
     });
@@ -624,7 +627,7 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         await act(async () => { fireEvent.click(screen.getByText('Mark incomplete')); });
         await settle(30);
         expect(pill()).toBe('Trained');
-        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
         await settle(30);
@@ -660,7 +663,7 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         // persisted yet.
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
-        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
         // Nothing to seed from (the workspace has no conditions of its own,
@@ -683,7 +686,8 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         // filter (which the old, always-satisfied-in-Workspace-mode gate
         // would have silently done if the commit-before-train ordering were
         // wrong).
-        const statsCall = h.invokes.find(c => c.cmd === 'compute_sensor_stats');
+        // (the first stats query is the Step-1 card's row count; Train's is the last)
+        const statsCall = h.invokes.filter(c => c.cmd === 'compute_sensor_stats').slice(-1)[0];
         expect(statsCall?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG1', operation: 'greater_than', value1: 42, value2: null }]);
 
         expect(diskFresh('i1')).toBe(true);
@@ -694,11 +698,11 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
     it('the collapsed "Model settings" summary reflects the live-edited Custom condition/period counts, not a stale "Custom data" label', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
-        fireEvent.click(screen.getByText('Model settings'));
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         fireEvent.click(screen.getByText('+ Add condition'));
         fireEvent.click(screen.getByText('No condition — use all rows'));
-        fireEvent.click(screen.getByText('Model settings')); // collapse
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse
         expect(screen.getByText(/Custom · no cond · 0 periods/)).toBeTruthy();
     });
 });

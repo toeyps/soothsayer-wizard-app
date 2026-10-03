@@ -1,22 +1,54 @@
-import { ChevronDown, Gauge, Plus, X } from 'lucide-react';
+import { Fragment } from 'react';
+import { Plus, X } from 'lucide-react';
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
+import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
 import { SensorPickerModal } from './PredictiveModelBuild';
-import { PeriodChipsLine, RuleFormula } from './RunningConditionParts';
+import { RuleSentence } from './RunningConditionParts';
 import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
-import { conditionSymbol } from './periodDisplay';
+import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 
 /*
- * Overview "Running Condition Filter" panel - workspace default training
- * periods + value conditions. Visual spec: approved mockups time-ranges.html
- * and rc-gate.html. Presentation only: all state and persistence stay in
- * BuildModelWindow and arrive through props.
+ * Body of BuildModelWindow's "Running condition" settings modal — the
+ * 2026-10-03 redesign (approved mockup 1pp59aydphzaDu2R1SvKGh): two columns.
+ *   left   "1 Which time"  (period cards)  and  "2 When the plant is running"
+ *          (two choice cards, condition rows, AND/OR pill between rows)
+ *   right  "Data used for training": row count + bar, summary sentence, warnings
+ * Presentation only: every value and handler arrives through props from
+ * BuildModelWindow, which feeds it the modal's local DRAFT (nothing here
+ * writes anything — Apply lives in the modal footer).
  */
 
+type Operation = WorkspaceSensorFilter['operation'];
+
+const OPERATORS: { op: Operation; glyph: string; label: string }[] = [
+    { op: 'greater_than', glyph: '>', label: 'Greater than' },
+    { op: 'less_than', glyph: '<', label: 'Less than' },
+    { op: 'between', glyph: '↔', label: 'Between' },
+    { op: 'equals', glyph: '=', label: 'Equals' },
+];
+
+/** Header pills of the modal: Fix period / Required / "No condition" / "N conditions". */
+export function RunningConditionPills({ configured, noneConfirmed, conditionCount, periodInvalid }: {
+    configured: boolean;
+    noneConfirmed: boolean;
+    conditionCount: number;
+    periodInvalid: boolean;
+}) {
+    return (
+        <>
+            {periodInvalid && <span data-testid="rc-fix-period-pill" className="f4-pill f4-pill--bad">Fix period</span>}
+            {!configured
+                ? <span data-testid="rc-required-pill" className="f4-pill f4-pill--warn">Required</span>
+                : noneConfirmed
+                ? <span data-testid="rc-none-pill" className="f4-pill f4-pill--grey">No condition</span>
+                : <span data-testid="rc-count-pill" className="f4-pill f4-pill--blue">{conditionCount} condition{conditionCount === 1 ? '' : 's'}</span>}
+        </>
+    );
+}
+
 interface RunningConditionPanelProps {
-    open: boolean;
-    onToggle: () => void;
-    /** Workspace running condition is configured (>= 1 complete condition or "No condition" confirmed). */
+    /** Workspace running condition (as drafted) is configured. */
     configured: boolean;
     periods: TimePeriod[];
     onPeriodsChange: (next: TimePeriod[]) => void;
@@ -32,211 +64,217 @@ interface RunningConditionPanelProps {
     sensors: string[];
     getDesc: (tag: string) => string;
     getComponent: (tag: string) => string;
-    /** 2026-09-29: true when rendered inside `BuildModelWindow`'s own Edit…
-     *  modal, which already supplies its own title bar + close button and
-     *  is always open (never collapsed). Suppresses this panel's own
-     *  collapsible header (icon/title/summary chips/pill/chevron) and the
-     *  card border/background around it, so the result is one card with
-     *  one header instead of a card nested inside the modal's own card
-     *  with two stacked, overlapping-looking titles. `open`/`onToggle`
-     *  still control the body — the modal always passes `open={true}`. */
-    embedded?: boolean;
+    getUnit: (tag: string) => string;
+    /** Row count of what Apply would commit (the draft). */
+    preview: RowCountPreview;
 }
 
 export default function RunningConditionPanel({
-    open, onToggle, configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
-    onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent,
-    embedded = false,
+    configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
+    onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent, getUnit,
+    preview,
 }: RunningConditionPanelProps) {
     const status = validatePeriods(periods);
     const firstBad = status.findIndex(s => s.invalid);
     const validCount = status.filter(s => !s.invalid).length;
+    const headers = sensors.length ? sensors : null;
     const label = (tag: string) => getDesc(tag) || tag;
 
-    const condText = noneConfirmed
-        ? 'No condition — every row in the periods'
-        : filters.length === 0
-        ? 'Not set — add a condition that tells running from idle, or choose "No condition — use all rows".'
-        : filters.map(f => `${label(f.sensor)} ${conditionSymbol(f.operation)} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`)
-            .join(combine === 'or' ? ' OR ' : ' AND ');
-
-    // The header pill owns the `rc-required-pill` test id; the copy inside the
-    // body's "Running condition" block is the same pill under its own id.
-    const pill = (testId: string) => !configured
-        ? <span data-testid={testId} className="f4-pill f4-pill--warn">Required</span>
-        : noneConfirmed
-        ? <span className="f4-pill f4-pill--grey">No condition</span>
-        : <span className="f4-pill f4-pill--blue">{filters.length} condition{filters.length === 1 ? '' : 's'}</span>;
+    const hasCount = preview.used !== null && preview.total !== null && (preview.status === 'ok' || preview.status === 'loading');
+    const pct = hasCount && preview.total ? Math.min(100, ((preview.used ?? 0) / preview.total) * 100) : 0;
 
     return (
-        <div data-testid="rc-panel" className={`f4-rc ${configured ? 'f4-rc--set' : 'f4-rc--req'}${embedded ? ' f4-rc--embedded' : ''}`}>
-            {!embedded && (
-                <div
-                    className="f4-rc-h"
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={open}
-                    onClick={onToggle}
-                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
-                >
-                    <div className="f4-rc-t">
-                        <div className="f4-ico"><Gauge size={15} /></div>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                            <div className="f4-ttl">Running Condition Filter</div>
-                            <div className="f4-hline" data-testid="rc-summary">
-                                {validCount > 0
-                                    ? <><PeriodChipsLine periods={periods} /><span style={{ color: 'var(--text-faint)' }}>·</span></>
-                                    : <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>Any time ·</span>}
-                                <span className={`f4-hline-cx${!configured ? ' f4-hline-cx--warn' : ''}`}>{condText}</span>
-                            </div>
-                        </div>
+        <div data-testid="rc-panel" className="rcm-body">
+            <div className="rcm-form">
+                <section className="rcm-step" data-testid="rc-periods">
+                    <div className="rcm-step-h">
+                        <span className="rcm-num">1</span>
+                        <b>Which time</b>
+                        <span className="rcm-q">Training periods · optional — a row inside any period is used · none = whole dataset</span>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                        {firstBad >= 0 && <span data-testid="rc-fix-period-pill" className="f4-pill f4-pill--bad">Fix period</span>}
-                        {pill('rc-required-pill')}
-                        <ChevronDown size={14} color="var(--text-faint)" style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
-                    </div>
-                </div>
-            )}
+                    <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} />
+                </section>
 
-            {open && (
-                <div className="f4-rc-b">
-                    <p className="f4-note">Workspace default for every model. A model can override all of it on its own Build page (Custom).</p>
-
-                    <div className="f4-blk" data-testid="rc-periods">
-                        <div className="f4-blk-h">
-                            <span className="f4-blk-n">Training periods</span>
-                            <span className="f4-count">{periods.length}</span>
-                            <span className="f4-blk-hint">optional · a row inside <b>any</b> period is used · none = full dataset</span>
-                        </div>
-                        <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} />
+                <section className="rcm-step" data-testid="rc-condition">
+                    <div className="rcm-step-h">
+                        <span className="rcm-num">2</span>
+                        <b>When the plant is running</b>
+                        <span className="rcm-q">required to build a model</span>
                     </div>
 
-                    <div className="f4-divider" />
-
-                    {/* Value conditions vs. an explicit "No condition" - exactly one is
+                    {/* Value conditions vs. an explicit "No condition" — exactly one is
                         active; a running condition is REQUIRED before any model can be
-                        built (soft gate A). "No condition" clears nothing stored, it
+                        built (soft gate A). "Use all rows" clears nothing stored, it
                         just stops the saved conditions applying. */}
-                    <div className="f4-blk">
-                        <div className="f4-blk-h">
-                            <span className="f4-blk-n">Running condition</span>
-                            {pill('rc-required-pill-inline')}
-                            <span className="f4-blk-hint">required to build · applied inside the periods above</span>
-                        </div>
-                        <div role="group" aria-label="Condition mode" className="f4-seg f4-seg--full">
-                            {([['condition', 'Filter by condition'], ['none', 'No condition — use all rows']] as const).map(([mode, text]) => {
-                                const active = (mode === 'none') === noneConfirmed;
-                                return (
-                                    <button
-                                        key={mode}
-                                        type="button"
-                                        className={active ? 'on' : undefined}
-                                        aria-pressed={active}
-                                        onClick={() => { if ((mode === 'none') !== noneConfirmed) onNoneChange(mode === 'none'); }}
-                                    >
-                                        {text}
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        {noneConfirmed ? (
-                            <div className="f4-nofilter">
-                                <div data-testid="rc-none-note" className="f4-note">
-                                    <b style={{ color: 'var(--text-primary)' }}>Every row inside the training periods is used</b>, idle time included.{' '}
-                                    {validCount > 0
-                                        ? `The ${validCount} period${validCount > 1 ? 's' : ''} above still limit${validCount > 1 ? '' : 's'} the time.`
-                                        : 'No periods are set, so that means the full dataset.'}
-                                    {filters.length > 0 && ' Your saved conditions are kept but not applied.'}
-                                </div>
-                                <span className="f4-pill f4-pill--ok">✓ Confirmed</span>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="f4-acts">
-                                    <span className="f4-note">Match</span>
-                                    <div className="f4-seg f4-seg--andor">
-                                        {(['and', 'or'] as const).map(mode => (
-                                            <button
-                                                key={mode}
-                                                type="button"
-                                                className={combine === mode ? 'on' : undefined}
-                                                aria-pressed={combine === mode}
-                                                onClick={() => onCombineChange(mode)}
-                                            >
-                                                {mode.toUpperCase()}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <span className="f4-note f4-note--faint">— value conditions only; periods always combine with OR</span>
-                                </div>
-
-                                {filters.map(f => (
-                                    <div key={f.id} className="f4-cond">
-                                        <div className="f4-cond-s">
-                                            <SensorPickerModal
-                                                sensors={sensors}
-                                                getDesc={getDesc}
-                                                getComponent={getComponent}
-                                                single
-                                                mutedTag
-                                                value={f.sensor}
-                                                onSelect={sensor => onUpdateFilter(f.id, { sensor })}
-                                                noun="sensor"
-                                            />
-                                        </div>
-                                        <select
-                                            className="f4-cond-o"
-                                            aria-label="Operator"
-                                            value={f.operation}
-                                            onChange={e => onUpdateFilter(f.id, { operation: e.target.value as WorkspaceSensorFilter['operation'] })}
-                                        >
-                                            <option value="greater_than">&gt;</option>
-                                            <option value="less_than">&lt;</option>
-                                            <option value="between">between</option>
-                                            <option value="equals">=</option>
-                                        </select>
-                                        <input
-                                            type="number"
-                                            className="f4-cond-v"
-                                            value={f.value1}
-                                            onChange={e => onUpdateFilter(f.id, { value1: e.target.value })}
-                                            placeholder="val"
-                                        />
-                                        {f.operation === 'between' && (
-                                            <input
-                                                type="number"
-                                                className="f4-cond-v"
-                                                value={f.value2}
-                                                onChange={e => onUpdateFilter(f.id, { value2: e.target.value })}
-                                                placeholder="max"
-                                            />
-                                        )}
-                                        <button type="button" className="f4-x" onClick={() => onRemoveFilter(f.id)} title="Remove condition" aria-label="Remove condition">
-                                            <X size={13} />
-                                        </button>
-                                    </div>
-                                ))}
-                                <div className="f4-acts">
-                                    <button type="button" className="f4-btn f4-btn--small" onClick={onAddFilter} disabled={sensors.length === 0}>
-                                        <Plus size={11} />Add condition
-                                    </button>
-                                </div>
-                            </>
-                        )}
+                    <div role="group" aria-label="Condition mode" className="rcm-mode">
+                        {([
+                            ['condition', 'Only when running', 'Keep rows that meet a condition, e.g. power above a level'],
+                            ['none', 'Use all rows', 'No condition — idle and shutdown time included'],
+                        ] as const).map(([mode, title, hint]) => {
+                            const active = (mode === 'none') === noneConfirmed;
+                            return (
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    data-testid={`rc-mode-${mode}`}
+                                    className={`rcm-mcard${active ? ' rcm-mcard--on' : ''}`}
+                                    aria-pressed={active}
+                                    onClick={() => { if ((mode === 'none') !== noneConfirmed) onNoneChange(mode === 'none'); }}
+                                >
+                                    <span className="rcm-rd" aria-hidden="true" />
+                                    <span><b>{title}</b><small>{hint}</small></span>
+                                </button>
+                            );
+                        })}
                     </div>
 
-                    <RuleFormula periods={periods} filters={filters} combine={combine} none={noneConfirmed} />
-
-                    {firstBad >= 0 && (
-                        <div data-testid="rc-invalid-reason" className="f4-reason f4-reason--bad">
-                            ⚠ Period {firstBad + 1} is invalid — models that follow the workspace can't be built until it's fixed.
+                    {noneConfirmed ? (
+                        <div data-testid="rc-none-note" className="rcm-none">
+                            <span>
+                                <b>Every row inside the training periods is used</b>, idle time included.{' '}
+                                {validCount > 0
+                                    ? `The ${validCount} period${validCount > 1 ? 's' : ''} above still limit${validCount > 1 ? '' : 's'} the time.`
+                                    : 'No periods are set, so that means the full dataset.'}
+                                {filters.length > 0 && ' Your saved conditions are kept but not applied.'}
+                            </span>
                         </div>
+                    ) : (
+                        <>
+                            <div className="rcm-conds">
+                                {filters.length === 0 && (
+                                    <div className="rcm-none" data-testid="rc-no-conditions">
+                                        <span>Add a condition that tells running from idle — for example <b>active power &gt; a level</b>.</span>
+                                    </div>
+                                )}
+                                {filters.map((f, i) => {
+                                    const incomplete = !isCompleteCondition(f, headers);
+                                    const unit = getUnit(f.sensor);
+                                    return (
+                                        <Fragment key={f.id}>
+                                            {i > 0 && (
+                                                <div className="rcm-join">
+                                                    <button
+                                                        type="button"
+                                                        className="rcm-joinbtn"
+                                                        data-testid="rc-combine"
+                                                        title="Switch between AND / OR"
+                                                        aria-label={`Conditions are combined with ${combine.toUpperCase()} — click to switch to ${combine === 'and' ? 'OR' : 'AND'}`}
+                                                        onClick={() => onCombineChange(combine === 'and' ? 'or' : 'and')}
+                                                    >
+                                                        {combine.toUpperCase()}
+                                                    </button>
+                                                    <small data-testid="rc-combine-caption">{combine === 'and' ? 'both must be true' : 'either one is enough'}</small>
+                                                </div>
+                                            )}
+                                            <div className={`rcm-cond${f.operation === 'between' ? ' rcm-cond--between' : ''}${incomplete ? ' rcm-cond--incomplete' : ''}`} data-testid={`rc-cond-${i + 1}`}>
+                                                <div className="rcm-cond-s">
+                                                    <SensorPickerModal
+                                                        sensors={sensors}
+                                                        getDesc={getDesc}
+                                                        getComponent={getComponent}
+                                                        single
+                                                        mutedTag
+                                                        value={f.sensor}
+                                                        onSelect={sensor => onUpdateFilter(f.id, { sensor })}
+                                                        noun="sensor"
+                                                    />
+                                                    {getComponent(f.sensor) && <small className="rcm-cond-comp">{getComponent(f.sensor)}</small>}
+                                                </div>
+                                                <div role="group" aria-label="Condition operator" className="rcm-ops">
+                                                    {OPERATORS.map(o => (
+                                                        <button
+                                                            key={o.op}
+                                                            type="button"
+                                                            className={f.operation === o.op ? 'on' : undefined}
+                                                            aria-pressed={f.operation === o.op}
+                                                            aria-label={o.label}
+                                                            title={o.label}
+                                                            onClick={() => { if (f.operation !== o.op) onUpdateFilter(f.id, { operation: o.op }); }}
+                                                        >
+                                                            {o.glyph}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <div className="rcm-vals">
+                                                    <label className={`rcm-val${!(f.value1 ?? '').trim() ? ' rcm-val--empty' : ''}`}>
+                                                        <input
+                                                            type="number"
+                                                            value={f.value1}
+                                                            aria-label={f.operation === 'between' ? 'Minimum value' : 'Value'}
+                                                            placeholder={f.operation === 'between' ? 'min' : 'value'}
+                                                            onChange={e => onUpdateFilter(f.id, { value1: e.target.value })}
+                                                        />
+                                                        {f.operation !== 'between' && unit && <span>{unit}</span>}
+                                                    </label>
+                                                    {f.operation === 'between' && (
+                                                        <>
+                                                            <span className="rcm-dash" aria-hidden="true">–</span>
+                                                            <label className={`rcm-val${!(f.value2 ?? '').trim() ? ' rcm-val--empty' : ''}`}>
+                                                                <input
+                                                                    type="number"
+                                                                    value={f.value2}
+                                                                    aria-label="Maximum value"
+                                                                    placeholder="max"
+                                                                    onChange={e => onUpdateFilter(f.id, { value2: e.target.value })}
+                                                                />
+                                                                {unit && <span>{unit}</span>}
+                                                            </label>
+                                                        </>
+                                                    )}
+                                                </div>
+                                                <button type="button" className="rcm-ib" onClick={() => onRemoveFilter(f.id)} title="Remove condition" aria-label="Remove condition">
+                                                    <X size={14} aria-hidden="true" />
+                                                </button>
+                                            </div>
+                                        </Fragment>
+                                    );
+                                })}
+                            </div>
+                            <button type="button" className="rcm-add" data-testid="rc-add-condition" onClick={onAddFilter} disabled={sensors.length === 0}>
+                                <Plus size={13} aria-hidden="true" />Add condition
+                            </button>
+                        </>
                     )}
-                    <div className="f4-foot-note">Default for every model — override per model on its own Build page.</div>
+                </section>
+            </div>
+
+            <aside className="rcm-preview" data-testid="rc-preview" aria-label="Data used for training">
+                <div className="rcm-pv-h">Data used for training</div>
+                <div className="rcm-big" data-testid="rc-preview-count" aria-live="polite">
+                    {hasCount ? (
+                        <>
+                            <b className={preview.status === 'loading' ? 'rcm-stale' : undefined}>{(preview.used ?? 0).toLocaleString()}</b>
+                            <span>of {(preview.total ?? 0).toLocaleString()} rows · {formatPercent(preview.used, preview.total)}</span>
+                        </>
+                    ) : preview.status === 'loading' ? (
+                        <span data-testid="rc-preview-loading">Counting rows…</span>
+                    ) : preview.status === 'error' ? (
+                        <span data-testid="rc-preview-error" className="rcm-pv-muted">Couldn't count the rows right now.</span>
+                    ) : (
+                        <span data-testid="rc-preview-idle" className="rcm-pv-muted">{firstBad >= 0 ? 'Fix the period to see the row count.' : '—'}</span>
+                    )}
                 </div>
-            )}
+                <div className="rcm-meter" role="img" aria-label="Share of rows used"><span style={{ width: `${pct}%` }} /></div>
+                <RuleSentence
+                    periods={periods}
+                    filters={filters}
+                    combine={combine}
+                    none={noneConfirmed}
+                    headers={headers}
+                    getLabel={label}
+                    getUnit={getUnit}
+                />
+                {firstBad >= 0 && (
+                    <div data-testid="rc-invalid-reason" className="rcm-warn rcm-warn--bad">
+                        ⚠ {status[firstBad].reason ?? `Period ${firstBad + 1} is invalid.`} Models that follow this setting can't be built until it's fixed.
+                    </div>
+                )}
+                {!configured && (
+                    <div data-testid="rc-unset-warning" className="rcm-warn">
+                        Choose “Only when running” with a condition, or “Use all rows”, before building a model.
+                    </div>
+                )}
+            </aside>
         </div>
     );
 }

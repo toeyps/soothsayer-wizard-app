@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Calendar, X } from 'lucide-react';
+import { Calendar, Plus, Trash2, X } from 'lucide-react';
 import type { TimePeriod } from '../../types';
 import {
     isRangeFullyCovered,
@@ -26,8 +26,12 @@ import { PeriodCoverageBar } from './RunningConditionParts';
  * Edits stay in a local draft and are committed (sorted) on blur / Enter, never
  * per keystroke, so rows don't jump around while a date is being typed.
  *
- * Visual spec: the approved time-ranges.html mockup - wide rows on the
- * Overview, collapsible compact rows in the 300 px Build-page sidebar.
+ * Visual spec: the approved time-ranges.html mockup - collapsible compact rows
+ * in the 300 px Build-page sidebar. The wide (non-compact) variant, used only
+ * by the Overview's Running condition modal, is the 2026-10-03 redesign (mockup
+ * 1pp59aydphzaDu2R1SvKGh): one card per period "P1 [start] -> [end] 31 d [bin]",
+ * open ends as "Start of data" / "End of data" with Set date / x, overlap in a
+ * yellow frame with Merge into one, an invalid period in a red frame.
  */
 
 export interface PeriodBounds {
@@ -111,9 +115,12 @@ interface DateFieldProps {
     onOpen: () => void;
     onSetDate: () => void;
     setDateDisabled: boolean;
+    /** Wide (modal) variant: plain "Start of data" / "End of data" and an x to
+     *  go back to open-ended, instead of the compact arrows. */
+    wide?: boolean;
 }
 
-function DateField({ ariaLabel, side, value, committedBlank, min, max, bad, canOpen, onType, onCommit, onOpen, onSetDate, setDateDisabled }: DateFieldProps) {
+function DateField({ ariaLabel, side, value, committedBlank, min, max, bad, canOpen, onType, onCommit, onOpen, onSetDate, setDateDisabled, wide = false }: DateFieldProps) {
     const ref = useRef<HTMLInputElement>(null);
     if (committedBlank && !value.trim()) {
         return (
@@ -122,7 +129,7 @@ function DateField({ ariaLabel, side, value, committedBlank, min, max, bad, canO
                 data-testid={`period-open-${side}`}
                 title={side === 'start' ? 'No start bound — begins at the first row of data' : 'No end bound — runs to the last row of data'}
             >
-                <span>{side === 'start' ? '⟵ Start of data' : 'End of data ⟶'}</span>
+                <span>{wide ? (side === 'start' ? 'Start of data' : 'End of data') : (side === 'start' ? '⟵ Start of data' : 'End of data ⟶')}</span>
                 <button type="button" className="f4-link" disabled={setDateDisabled} onClick={onSetDate} aria-label={`Set ${side} date`}>Set date</button>
             </div>
         );
@@ -149,7 +156,7 @@ function DateField({ ariaLabel, side, value, committedBlank, min, max, bad, canO
                     title={side === 'start' ? 'Start from the first row of data' : 'Run to the last row of data'}
                     onClick={onOpen}
                 >
-                    {side === 'start' ? '⟵' : '⟶'}
+                    {wide ? <X size={12} aria-hidden="true" /> : side === 'start' ? '⟵' : '⟶'}
                 </button>
             )}
             <button
@@ -236,11 +243,12 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
                     if (v) commit(draft.map((x, j) => (j === i ? { ...x, [which]: v } : x)), p.id);
                 }}
                 setDateDisabled={!(which === 'start' ? minAttr : maxAttr)}
+                wide={!compact}
             />
         );
     };
 
-    const message = (i: number, cls: 'pmsg' | 'cmsg') => {
+    const message = (i: number, cls: 'cmsg') => {
         const st = statuses[i];
         const p = draft[i];
         if (st.invalid) {
@@ -274,12 +282,80 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
 
     const rowClass = (i: number) => (statuses[i].invalid ? 'bad' : statuses[i].overlapsPrev ? 'ovl' : '');
 
+    // Wide variant (Running condition modal): one card per period.
+    if (!compact) {
+        const wideMessage = (i: number) => {
+            const st = statuses[i];
+            const p = draft[i];
+            if (st.invalid) {
+                const reversed = (st.reason ?? '').includes('ends before');
+                return (
+                    <div role="alert" data-testid={`period-invalid-${i + 1}`} className="rcm-permsg rcm-permsg--bad">
+                        {reversed
+                            ? `End is before start — pick an end after ${formatDate(p.start)}. This period is ignored and building is blocked until fixed.`
+                            : `${st.reason} This period is ignored and building is blocked until fixed.`}
+                    </div>
+                );
+            }
+            if (st.overlapsPrev) {
+                const d = overlapDays(draft[i - 1], p, boundsForCover);
+                return (
+                    <div data-testid={`period-overlap-${i + 1}`} className="rcm-permsg rcm-permsg--ovl">
+                        <span>Overlaps P{i}{d !== null ? ` by ${d} d` : ''} — rows in both are used once.</span>
+                        <button
+                            type="button"
+                            className="rcx-btn rcx-btn--sm"
+                            data-testid={`period-merge-${i + 1}`}
+                            onClick={() => commit([...draft.slice(0, i - 1), mergeOverlapping(draft[i - 1], p), ...draft.slice(i + 1)], draft[i - 1].id)}
+                        >
+                            Merge into one
+                        </button>
+                    </div>
+                );
+            }
+            return null;
+        };
+        return (
+            <div data-testid="time-periods-editor" className="rcm-periods">
+                {draft.length === 0 ? (
+                    <div data-testid="periods-empty" className="rcm-none">
+                        <span><b>No period</b> — the whole dataset{totalDays !== null ? ` (${totalDays} days)` : ''} is used.</span>
+                    </div>
+                ) : draft.map((p, i) => {
+                    const st = statuses[i];
+                    const days = periodDays(p, boundsForCover);
+                    return (
+                        <div key={p.id} data-testid={`period-row-${i + 1}`} className={`rcm-per${st.invalid ? ' rcm-per--bad' : st.overlapsPrev ? ' rcm-per--ovl' : ''}${flashId === p.id ? ' f4-flash' : ''}`}>
+                            <span className="rcm-pn">P{i + 1}</span>
+                            <div>{field(i, 'start')}</div>
+                            <span className="rcm-arrow">→</span>
+                            <div className="f4-dt-end">{field(i, 'end')}</div>
+                            <span className="rcm-dur">{st.invalid || days === null ? '—' : `${days} d`}</span>
+                            <button type="button" className="rcm-ib" aria-label={`Remove period ${i + 1}`} title="Remove period" onClick={() => commit(draft.filter((_, j) => j !== i))}>
+                                <Trash2 size={14} aria-hidden="true" />
+                            </button>
+                            {wideMessage(i)}
+                        </div>
+                    );
+                })}
+                <button type="button" className="rcm-add" data-testid="period-add" disabled={addDisabled} title={addTitle} onClick={addPeriod}>
+                    <Plus size={13} aria-hidden="true" />Add period
+                </button>
+                {draft.length > 0 && (
+                    <span className="rcm-add-note">
+                        {covered ? 'Periods already cover all data' : 'new period starts after the last one'}
+                    </span>
+                )}
+            </div>
+        );
+    }
+
     return (
-        <div data-testid="time-periods-editor" style={{ display: 'grid', gap: compact ? '6px' : '8px' }}>
+        <div data-testid="time-periods-editor" style={{ display: 'grid', gap: '6px' }}>
             {draft.length === 0 ? (
-                <div data-testid="periods-empty" className="f4-empty" style={compact ? { padding: '8px 9px' } : undefined}>
+                <div data-testid="periods-empty" className="f4-empty" style={{ padding: '8px 9px' }}>
                     <span>
-                        <b>No limit</b> — {compact ? 'full dataset' : `the full dataset${totalDays !== null ? ` (${totalDays} days)` : ''} is used.`}
+                        <b>No limit</b> — full dataset
                     </span>
                     <button type="button" className="f4-btn f4-btn--small" data-testid="period-add" disabled={addDisabled} title={addTitle} onClick={addPeriod}>
                         + Add period
@@ -288,26 +364,11 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
             ) : (
                 <>
                     <PeriodCoverageBar periods={draft} bounds={boundsForCover} />
-                    <div className="f4-plist" style={compact ? { gap: '4px' } : undefined}>
+                    <div className="f4-plist" style={{ gap: '4px' }}>
                         {draft.map((p, i) => {
                             const st = statuses[i];
                             const cls = rowClass(i);
                             const days = periodDays(p, boundsForCover);
-                            if (!compact) {
-                                return (
-                                    <div key={p.id} data-testid={`period-row-${i + 1}`} className={`f4-prow${cls ? ` f4-prow--${cls}` : ''}${flashId === p.id ? ' f4-flash' : ''}`}>
-                                        <span className="f4-pnum">{i + 1}</span>
-                                        <div>{field(i, 'start')}</div>
-                                        <span className="f4-arrow">→</span>
-                                        <div className="f4-dt-end">{field(i, 'end')}</div>
-                                        <span className="f4-dur">{st.invalid || days === null ? '—' : `${days} d`}</span>
-                                        <button type="button" className="f4-x" aria-label={`Remove period ${i + 1}`} onClick={() => commit(draft.filter((_, j) => j !== i))}>
-                                            <X size={13} />
-                                        </button>
-                                        {message(i, 'pmsg')}
-                                    </div>
-                                );
-                            }
                             const open = expandedId === p.id;
                             return (
                                 <div key={p.id} data-testid={`period-row-${i + 1}`} className={`f4-crow${cls ? ` f4-crow--${cls}` : ''}${flashId === p.id ? ' f4-flash' : ''}`}>

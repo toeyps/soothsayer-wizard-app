@@ -65,6 +65,25 @@ export function formatPeriod(p: TimePeriod): string {
     return `${left} – ${right}`;
 }
 
+/**
+ * Step-1 card / rule-sentence chip: "1 Jan 2026 → 31 Mar 2026". Always the year
+ * on both sides; a side that is not a whole-day boundary (start 00:00 / end
+ * 23:59) also gets its time. An open side reads "Start" / "End"; both open
+ * reads "Whole dataset". Unparseable text is shown as typed.
+ */
+export function formatPeriodChip(p: TimePeriod): string {
+    const sBlank = isBlank(p.start);
+    const eBlank = isBlank(p.end);
+    if (sBlank && eBlank) return 'Whole dataset';
+    const side = (raw: string, blank: boolean, openLabel: string, wholeTime: string): string => {
+        if (blank) return openLabel;
+        const ms = parseLocal(raw);
+        if (ms === null) return raw;
+        return hhmm(ms) === wholeTime ? dateTxt(ms, true) : `${dateTxt(ms, true)} ${hhmm(ms)}`;
+    };
+    return `${side(p.start, sBlank, 'Start', '00:00')} → ${side(p.end, eBlank, 'End', '23:59')}`;
+}
+
 /** "1 Jun 2025" for a single bound (falls back to the raw text). */
 export function formatDate(s: string | null | undefined): string {
     const ms = parseLocal(s);
@@ -165,6 +184,28 @@ export function conditionSymbol(op: WorkspaceSensorFilter['operation']): string 
 export function conditionText(f: WorkspaceSensorFilter, label?: (tag: string) => string): string {
     const name = label ? label(f.sensor) : f.sensor;
     return `${name} ${conditionSymbol(f.operation)} ${f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1}`;
+}
+
+export interface ConditionChipParts {
+    /** Sensor name (description, else the tag). */
+    name: string;
+    /** "> 4000 kW" / "between 1–5 kW" — everything after the name. */
+    rest: string;
+}
+
+/** Condition chip for the Step-1 card and the rule sentence. `label` / `unit`
+ *  resolve a tag to its description / unit (both optional). */
+export function conditionChipParts(
+    f: WorkspaceSensorFilter,
+    label?: (tag: string) => string,
+    unit?: (tag: string) => string,
+): ConditionChipParts {
+    const u = (unit ? unit(f.sensor) : '').trim();
+    const value = f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1;
+    return {
+        name: (label ? label(f.sensor) : '') || f.sensor,
+        rest: `${conditionSymbol(f.operation)} ${value}${u ? ` ${u}` : ''}`,
+    };
 }
 
 export interface RuleInput {

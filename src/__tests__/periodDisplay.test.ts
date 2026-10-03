@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    buildRuleModel, computeCoverage, conditionSymbol, formatDate, formatPeriod, overlapDays, periodDays, ruleText,
+    buildRuleModel, computeCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, overlapDays, periodDays, ruleText,
 } from '../components/windows/periodDisplay';
 import type { WorkspaceSensorFilter } from '../types';
 
@@ -151,5 +151,42 @@ describe('rule line ("Row is used when ...")', () => {
     it('condition symbols', () => {
         expect(['greater_than', 'less_than', 'between', 'equals'].map(o => conditionSymbol(o as WorkspaceSensorFilter['operation'])))
             .toEqual(['>', '<', 'between', '=']);
+    });
+});
+
+describe('formatPeriodChip (Step-1 card / summary sentence)', () => {
+    it('whole days: "1 Jan 2026 → 31 Mar 2026" - the year on BOTH sides, even inside one year', () => {
+        expect(formatPeriodChip(p('a', '2026-01-01T00:00', '2026-03-31T23:59'))).toBe('1 Jan 2026 → 31 Mar 2026');
+    });
+    it('open ends read Start / End; both open reads "Whole dataset"', () => {
+        expect(formatPeriodChip(p('a', '', '2026-03-31T23:59'))).toBe('Start → 31 Mar 2026');
+        expect(formatPeriodChip(p('a', '2026-04-15T00:00', ''))).toBe('15 Apr 2026 → End');
+        expect(formatPeriodChip(p('a', '', ''))).toBe('Whole dataset');
+    });
+    it('a side that is not a day boundary (start 00:00 / end 23:59) also shows its time', () => {
+        expect(formatPeriodChip(p('a', '2025-11-03T06:00', '2025-12-19T18:00'))).toBe('3 Nov 2025 06:00 → 19 Dec 2025 18:00');
+        expect(formatPeriodChip(p('a', '2025-11-03T00:00', '2025-12-19T18:00'))).toBe('3 Nov 2025 → 19 Dec 2025 18:00');
+    });
+    it('date-only text counts as local midnight; unparseable text is shown as typed', () => {
+        expect(formatPeriodChip(p('a', '2026-01-01', '2026-02-01T23:59'))).toBe('1 Jan 2026 → 1 Feb 2026');
+        expect(formatPeriodChip(p('a', 'garbage', '2026-02-01T23:59'))).toBe('garbage → 1 Feb 2026');
+    });
+});
+
+describe('conditionChipParts (Step-1 card / summary sentence)', () => {
+    const desc = (t: string) => ({ POWER: 'GENERATOR ACTIVE POWER' } as Record<string, string>)[t] ?? '';
+    const unit = (t: string) => ({ POWER: 'kW' } as Record<string, string>)[t] ?? '';
+
+    it('name (description) and "> 4000 kW": symbol, value, unit', () => {
+        expect(conditionChipParts(f('POWER', 'greater_than', '4000'), desc, unit)).toEqual({ name: 'GENERATOR ACTIVE POWER', rest: '> 4000 kW' });
+        expect(conditionChipParts(f('POWER', 'less_than', '12'), desc, unit).rest).toBe('< 12 kW');
+        expect(conditionChipParts(f('POWER', 'equals', '3'), desc, unit).rest).toBe('= 3 kW');
+    });
+    it('between shows both bounds with one unit', () => {
+        expect(conditionChipParts(f('POWER', 'between', '1', '5'), desc, unit).rest).toBe('between 1–5 kW');
+    });
+    it('no description falls back to the tag; no unit leaves it out; label/unit callbacks are optional', () => {
+        expect(conditionChipParts(f('X_TAG', 'greater_than', '1'), desc, unit)).toEqual({ name: 'X_TAG', rest: '> 1' });
+        expect(conditionChipParts(f('POWER', 'greater_than', '1'))).toEqual({ name: 'POWER', rest: '> 1' });
     });
 });

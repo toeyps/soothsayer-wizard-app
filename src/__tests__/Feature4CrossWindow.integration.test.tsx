@@ -169,7 +169,7 @@ async function mountBoth() {
     // Workbench (2026-09-29 Phase A): wait for the one-line Running Condition
     // bar — the inline "Running Condition Filter" panel now lives only in the
     // Edit… modal (auto-opened when the workspace condition is unset).
-    await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-bar')).toBeTruthy());
+    await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-card')).toBeTruthy());
     await settle(350); // hydration write-back + Dashboard's on-mount autosave
 }
 

@@ -193,7 +193,7 @@ async function mountBoth() {
             <div data-testid="build-model-window"><BuildModelWindow /></div>
         </>,
     );
-    await waitFor(() => expect(bmw().getByTestId('rc-bar')).toBeTruthy());
+    await waitFor(() => expect(bmw().getByTestId('rc-card')).toBeTruthy());
     await settle(350);
     openDashFgTab();
 }
@@ -294,9 +294,9 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
         expect(bmwDot('i1')).toBe('trained');
 
         // Workspace running-condition edit in Build Model -> the model is stale.
-        fireEvent.click(bmw().getByText('Edit…'));
-        const modal = within(bmw().getByRole('dialog', { name: 'Running Condition Filter' }));
-        await act(async () => { fireEvent.change(modal.getByPlaceholderText('val'), { target: { value: '20' } }); });
+        fireEvent.click(bmw().getByTestId('rc-card-open'));
+        const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
+        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value: '20' } }); });
         await settle(30);
         await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
         await settle(30);
@@ -405,9 +405,9 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         await waitFor(() => expect(dashDot(1)).toBe('trained'));
 
         dropBuildModelBroadcasts();
-        fireEvent.click(bmw().getByText('Edit…'));
-        const modal = within(bmw().getByRole('dialog', { name: 'Running Condition Filter' }));
-        await act(async () => { fireEvent.change(modal.getByPlaceholderText('val'), { target: { value: '20' } }); });
+        fireEvent.click(bmw().getByTestId('rc-card-open'));
+        const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
+        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value: '20' } }); });
         await settle(30);
         await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
         await settle(30);

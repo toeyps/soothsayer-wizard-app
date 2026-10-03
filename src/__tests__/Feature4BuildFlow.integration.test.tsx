@@ -166,13 +166,13 @@ async function settle(ms = 0) {
  *  used to wait for now only exists inside the "Edit…" modal). */
 async function mountBuildModel() {
     render(<BuildModelWindow />);
-    await waitFor(() => expect(screen.getByTestId('rc-bar')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('rc-card')).toBeTruthy());
     await settle(30);
 }
 
 /** The "Edit…" modal wrapping RunningConditionPanel (auto-opens at hydration
  *  when the workspace running condition is unset). */
-const rcModal = () => screen.queryByRole('dialog', { name: 'Running Condition Filter' });
+const rcModal = () => screen.queryByRole('dialog', { name: 'Running condition' });
 /** Close the modal the way a user must before touching the Workbench behind
  *  it (its backdrop covers the whole window in the real app). No-op if closed. */
 function closeRcModal() {
@@ -286,9 +286,9 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         // Workbench (Phase A): the always-visible Running Condition bar says
         // Required, and the unset workspace auto-opened the Edit… modal, which
         // holds the same RunningConditionPanel the old inline card showed.
-        expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
+        expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(rcModal()).toBeTruthy();
-        expect(screen.getByTestId('rc-required-pill-inline')).toBeTruthy();
+        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         expect(screen.getAllByLabelText('Period 1 end').map(e => (e as HTMLInputElement).value)).toContain('2026-06-30T23:59');
         openFirstRow();
         expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
@@ -367,8 +367,8 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND] })])));
         await mountBuildModel();
         // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
-        expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
-        expect(screen.getByTestId('rc-required-pill-inline')).toBeTruthy();
+        expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
+        expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
         // 🆕 Phase B (2026-09-29): Finish now ALSO requires a fresh Trained
         // result (SPEC FINAL scope-gap fix — "Mark complete replaces Finish
         // everywhere") — train it from the Workbench before opening the full

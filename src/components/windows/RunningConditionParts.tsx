@@ -1,12 +1,14 @@
 import { Fragment } from 'react';
 import type { TimePeriod } from '../../types';
+import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
-import { buildRuleModel, computeCoverage, formatPeriod, type DataBounds, type RuleInput } from './periodDisplay';
+import { buildRuleModel, computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds, type RuleInput } from './periodDisplay';
 
 /*
  * Small presentational pieces of the Running Condition UI (approved mockup
  * time-ranges.html): the coverage bar, the "Row is used when ..." rule line and
- * the collapsed-header period chips. All maths lives in `periodDisplay.ts`.
+ * the settings modal's "Train on rows inside ..." sentence. All maths lives in
+ * `periodDisplay.ts`.
  */
 
 /** Dataset timeline with one block per period and "N of M days used". */
@@ -63,24 +65,42 @@ export function RuleFormula({ compact = false, ...input }: RuleInput & { compact
     );
 }
 
-/** First `max` valid periods as chips plus "+N more" (collapsed panel header). */
-export function PeriodChipsLine({ periods, max = 2 }: { periods: TimePeriod[]; max?: number }) {
+/**
+ * Settings-modal summary sentence (preview column): "Train on rows inside
+ * 1 Jan 2026 → 31 Mar 2026 OR 15 Apr 2026 → End AND GEN POWER > 4000 kW".
+ * Same inputs and the same rule as `RuleFormula` (periods OR together, then
+ * AND the value conditions with the chosen combine), but with readable dates
+ * and sensor names instead of P1/P2 labels.
+ */
+export function RuleSentence({ periods, filters, combine, none, headers, getLabel, getUnit }: RuleInput & {
+    headers?: string[] | null;
+    getLabel: (tag: string) => string;
+    getUnit: (tag: string) => string;
+}) {
     const status = validatePeriods(periods);
-    const ok = periods.filter((_, i) => !status[i].invalid);
-    if (ok.length === 0) return null;
+    const valid = periods.filter((_, i) => !status[i].invalid);
+    const conds = filters.filter(f => isCompleteCondition(f, headers));
     return (
-        <span className="f4-chips" data-testid="period-chips">
-            {ok.slice(0, max).map(p => (
-                <span
-                    key={p.id}
-                    data-testid="period-chip"
-                    className={`f4-pchip${!(p.start ?? '').trim() || !(p.end ?? '').trim() ? ' f4-pchip--open' : ''}`}
-                    title={formatPeriod(p)}
-                >
-                    {formatPeriod(p)}
-                </span>
+        <div data-testid="rule-sentence" className="rcm-sentence">
+            Train on rows inside{' '}
+            {valid.length === 0 ? <b>any time</b> : valid.map((p, i) => (
+                <Fragment key={p.id}>
+                    {i > 0 && <span className="f4-op f4-op--or">OR</span>}
+                    <b>{formatPeriodChip(p)}</b>
+                </Fragment>
             ))}
-            {ok.length > max && <span data-testid="period-chips-more" className="f4-pchip f4-pchip--more">+{ok.length - max} more</span>}
-        </span>
+            <span className="f4-op">AND</span>
+            {none ? <><b>every row</b> (no condition)</>
+                : conds.length === 0 ? <b className="rcm-sentence-miss">— not set yet</b>
+                : conds.map((f, i) => {
+                    const c = conditionChipParts(f, getLabel, getUnit);
+                    return (
+                        <Fragment key={f.id}>
+                            {i > 0 && <span className="f4-op">{combine.toUpperCase()}</span>}
+                            <b>{c.name} {c.rest}</b>
+                        </Fragment>
+                    );
+                })}
+        </div>
     );
 }

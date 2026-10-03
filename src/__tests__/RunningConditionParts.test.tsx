@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { PeriodChipsLine, PeriodCoverageBar, RuleFormula } from '../components/windows/RunningConditionParts';
+import { PeriodCoverageBar, RuleFormula, RuleSentence } from '../components/windows/RunningConditionParts';
 import type { WorkspaceSensorFilter } from '../types';
 
 afterEach(cleanup);
@@ -86,23 +86,59 @@ describe('RuleFormula', () => {
     });
 });
 
-describe('PeriodChipsLine (collapsed panel header)', () => {
-    it('first two periods as chips and "+N more"', () => {
-        render(<PeriodChipsLine periods={P3} />);
-        expect(screen.getAllByTestId('period-chip').map(c => c.textContent)).toEqual(['1 Jan – 28 Feb 2025', '1 Jun – 31 Jul 2025']);
-        expect(screen.getByTestId('period-chips-more').textContent).toBe('+1 more');
+describe('RuleSentence (settings modal summary)', () => {
+    const desc = (t: string) => ({ I_MOT_A: 'Motor current', PT_2041: 'Pump pressure' } as Record<string, string>)[t] ?? '';
+    const unit = (t: string) => ({ I_MOT_A: 'A', PT_2041: 'bar' } as Record<string, string>)[t] ?? '';
+    const two = [
+        p('a', '2026-01-01T00:00', '2026-03-31T23:59'),
+        p('b', '2026-04-15T00:00', ''),
+    ];
+
+    it('"Train on rows inside <dates> OR <dates> AND <conditions>" with readable dates, names and units', () => {
+        const { container } = render(
+            <RuleSentence periods={two} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'less_than', '2.4')]} combine="and" none={false} getLabel={desc} getUnit={unit} />,
+        );
+        const box = screen.getByTestId('rule-sentence');
+        expect(box.className).toContain('rcm-sentence');
+        expect(box.textContent).toBe('Train on rows inside 1 Jan 2026 → 31 Mar 2026OR15 Apr 2026 → EndANDMotor current > 12 AANDPump pressure < 2.4 bar');
+        expect(Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent)).toEqual(['OR', 'AND', 'AND']);
+        expect(container.querySelectorAll('.f4-op--or')).toHaveLength(1); // only the period OR is blue
     });
 
-    it('all fit: no "+N more"; open-ended periods get the dashed variant; invalid ones are skipped', () => {
-        render(<PeriodChipsLine periods={[p('a', '', '2025-02-28T23:59'), p('b', '2025-06-01T00:00', '2025-05-20T23:59')]} />);
-        const chips = screen.getAllByTestId('period-chip');
-        expect(chips).toHaveLength(1);
-        expect(chips[0].className).toContain('f4-pchip--open');
-        expect(screen.queryByTestId('period-chips-more')).toBeNull();
+    it('Match OR joins the conditions with OR', () => {
+        const { container } = render(
+            <RuleSentence periods={[]} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', '2')]} combine="or" none={false} getLabel={desc} getUnit={unit} />,
+        );
+        expect(Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent)).toEqual(['AND', 'OR']);
     });
 
-    it('renders nothing when there is no valid period', () => {
-        const { container } = render(<PeriodChipsLine periods={[]} />);
-        expect(container.firstChild).toBeNull();
+    it('no periods = "any time"; use-all-rows = "every row (no condition)"; nothing set = "not set yet" (amber)', () => {
+        const { rerender, container } = render(<RuleSentence periods={[]} filters={[]} combine="and" none getLabel={desc} getUnit={unit} />);
+        expect(screen.getByTestId('rule-sentence').textContent).toContain('any time');
+        expect(screen.getByTestId('rule-sentence').textContent).toContain('every row (no condition)');
+        rerender(<RuleSentence periods={[]} filters={[]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
+        expect(screen.getByTestId('rule-sentence').textContent).toContain('not set yet');
+        expect(container.querySelector('.rcm-sentence-miss')).not.toBeNull();
+    });
+
+    it('invalid periods and conditions the build would not apply (incomplete / sensor missing from the dataset) are left out', () => {
+        render(
+            <RuleSentence
+                periods={[two[0], p('x', '2026-06-01T00:00', '2026-05-20T23:59')]}
+                filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', ''), f('GONE', 'greater_than', '3')]}
+                combine="and" none={false} headers={['I_MOT_A', 'PT_2041']} getLabel={desc} getUnit={unit}
+            />,
+        );
+        const t = screen.getByTestId('rule-sentence').textContent!;
+        expect(t).toContain('1 Jan 2026 → 31 Mar 2026');
+        expect(t).not.toContain('2026-06-01');
+        expect(t).toContain('Motor current > 12 A');
+        expect(t).not.toContain('Pump pressure');
+        expect(t).not.toContain('GONE');
+    });
+
+    it('a sensor without a description falls back to its tag; between shows both bounds', () => {
+        render(<RuleSentence periods={[]} filters={[{ ...f('X_TAG', 'between', '1'), value2: '5' }]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
+        expect(screen.getByTestId('rule-sentence').textContent).toContain('X_TAG between 1–5');
     });
 });

@@ -216,7 +216,7 @@ async function settle(ms = 0) {
 
 async function mountBuildModel() {
     render(<div data-testid="build-model-window"><BuildModelWindow /></div>);
-    await waitFor(() => expect(screen.getByTestId('rc-bar')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('rc-card')).toBeTruthy());
     await settle(30);
 }
 
@@ -234,7 +234,7 @@ async function mountBoth() {
             <div data-testid="build-model-window"><BuildModelWindow /></div>
         </>,
     );
-    await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-bar')).toBeTruthy());
+    await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-card')).toBeTruthy());
     await settle(350);
 }
 
@@ -248,7 +248,7 @@ const dropBuildModelBroadcasts = () => {
 const selectRow = (tag: string) => fireEvent.click(bmw().getByTestId(`sensor-list-row-fg:1-${tag.toLowerCase()}`));
 
 function openSettings() {
-    if (!bmw().queryByTestId('add-model-form')) fireEvent.click(bmw().getByText('Model settings'));
+    if (!bmw().queryByTestId('add-model-form')) fireEvent.click(bmw().getByText('Model settings', { selector: 'b' }));
 }
 
 async function clickTrain() {
@@ -436,14 +436,15 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         cleanup();
         h.invokes.length = 0;
         await mountBuildModel();
-        expect(statsCalls('TAG1')).toHaveLength(0); // never trained -> no auto-recompute
+        // never trained -> no auto-recompute (no chart; the only stats queries are the Step-1 card's row count)
+        expect(bmw().queryByTestId('results-chart')).toBeNull();
         openSettings();
         // Custom already has its own rows — no re-seed, no seed note, the saved value.
         expect(bmw().queryByTestId('pm-seed-note')).toBeNull();
         expect((bmw().getByPlaceholderText('val') as HTMLInputElement).value).toBe('42');
 
         await clickTrain();
-        const call = statsCalls('TAG1')[0];
+        const call = statsCalls('TAG1').slice(-1)[0]; // Train's query is the last (the first ones are the Step-1 card's row count)
         expect(call?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG3', operation: 'greater_than', value1: 42, value2: null }]);
         expect(call?.args?.filter?.timestamp_ranges).toHaveLength(1);
         expect(call?.args?.filter?.timestamp_ranges[0].end).toBe('2026-03-15T12:00');
@@ -685,9 +686,10 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         fireEvent.click(bmw().getByRole('button', { name: 'Custom' }));
         expect(bmw().getByTestId('custom-condition-required')).toBeTruthy();
 
+        const before = statsCalls('TAG1').length; // the Step-1 card's own row count is already in here
         await act(async () => { fireEvent.click(bmw().getByText('▶ Train model')); });
         await settle(30);
-        expect(statsCalls('TAG1')).toHaveLength(0);
+        expect(statsCalls('TAG1')).toHaveLength(before); // Train added nothing
     });
 
     it('FIXED (2026-09-30, same root cause, mirror case): a persisted-but-unconfigured Custom model unblocks as soon as the user fills in a condition in the Workbench, without needing Save first', async () => {
@@ -710,7 +712,65 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
         await mountBuildModel();
         const results = within(bmw().getByTestId('results-incomplete'));
         fireEvent.click(results.getByText('Set a running condition first, or choose "No condition — use all rows".'));
-        expect(screen.queryByRole('dialog', { name: 'Running Condition Filter' })).toBeNull();
+        expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
         expect(bmw().getByTestId('custom-rc-editor')).toBeTruthy();
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// (6) 🆕 2026-10-03: the redesigned Running condition modal with the REAL
+//     SensorPickerModal nested inside it (BuildModelWindow.test.tsx stubs the
+//     picker, so Esc ownership and a real pick are only provable here).
+// ─────────────────────────────────────────────────────────────────────────
+describe('(6) Running condition modal + the real nested sensor picker (2026-10-03)', () => {
+    const COND5 = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
+    const esc = () => act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }); await Promise.resolve(); });
+    const rcDialog = () => screen.queryByRole('dialog', { name: 'Running condition' });
+    const pickerDialog = () => screen.queryByRole('dialog', { name: 'Select sensor' });
+
+    async function openModalWithPicker() {
+        writeDisk(wsState([dashModel({ id: 'i1' })], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND5] }));
+        await mountBuildModel();
+        fireEvent.click(bmw().getByTestId('rc-card-open'));
+        fireEvent.click(within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: /Pump Pressure/ }));
+        expect(pickerDialog()).toBeTruthy();
+    }
+
+    it('Esc inside the nested picker closes ONLY the picker (the modal stays, no discard prompt); the next Esc closes the modal', async () => {
+        await openModalWithPicker();
+        await esc();
+        expect(pickerDialog()).toBeNull();
+        expect(rcDialog()).toBeTruthy();
+        expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
+        await esc();
+        expect(rcDialog()).toBeNull();
+    });
+
+    it('Esc inside the picker over a DIRTY draft still only closes the picker; the following Esc asks before discarding', async () => {
+        await openModalWithPicker();
+        // the picker covers the modal; edit the draft first, then reopen the picker
+        await esc();
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: /Pump Pressure/ }));
+        await esc();
+        expect(pickerDialog()).toBeNull();
+        expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
+        await esc();
+        expect(screen.getByTestId('rc-discard-prompt')).toBeTruthy();
+        expect(rcDialog()).toBeTruthy();
+    });
+
+    it('picking a sensor through the real picker changes the DRAFT only; Apply writes it once', async () => {
+        await openModalWithPicker();
+        const writesBefore = h.files.get(WS_FILE);
+        fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'TAG3' } });
+        fireEvent.click(within(pickerDialog()!).getByText('TAG3'));
+        expect(pickerDialog()).toBeNull();
+        expect(within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: /Motor Current/ })).toBeTruthy();
+        expect(h.files.get(WS_FILE)).toBe(writesBefore); // nothing on disk yet
+        await act(async () => { fireEvent.click(screen.getByTestId('rc-apply')); });
+        await settle(30);
+        expect(readDisk().failureGroupState.runningConditionFilters[0]).toMatchObject({ sensor: 'TAG3', value1: '5' });
+        expect(bmw().getByTestId('rc-card-cond-chip').textContent).toBe('Motor Current > 5 A');
     });
 });

@@ -16,10 +16,11 @@ import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from 
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useChartData } from "../../hooks/useChartData";
-import { conditionText } from "./periodDisplay";
 import { validatePeriods, toFilterRanges, newPeriodId } from "../../utils/timePeriods";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
-import RunningConditionPanel from "./RunningConditionPanel";
+import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
+import { RunningConditionCard, RunningConditionStepBar, type RcStepState } from "./RunningConditionCard";
+import { useRowCountPreview } from "./useRowCountPreview";
 import PredictiveModelBuild, { SensorPickerModal, SensorAutocomplete } from "./PredictiveModelBuild";
 import TimePeriodsEditor from "./TimePeriodsEditor";
 import LineChart from "../charts/LineChart";
@@ -214,7 +215,7 @@ function flushFocusedInput(): void {
     if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
 }
 
-/** 🆕 2026-10-03: the four workspace Running Condition fields the Edit… modal
+/** 🆕 2026-10-03: the four workspace Running condition fields the settings modal
  *  edits as ONE local draft (nothing is written until Apply — see
  *  `applyRcDraft`). Same shape `persistRunningCondition` takes. */
 interface RcDraft {
@@ -433,7 +434,9 @@ function buildClusteringScatterOption(preview: ClusteringPreview) {
  *     per-model footer (status pill, Open full view, Save, Mark complete).
  *   - The workspace-wide Running Condition Filter moved from an always-
  *     visible inline panel to a one-line summary bar + "Edit…" modal
- *     wrapping the same, unchanged `RunningConditionPanel`.
+ *     wrapping `RunningConditionPanel`. (2026-10-03: the bar is now the
+ *     Step-1 card + a header step bar, and the modal body is the
+ *     two-column redesign — see RunningConditionCard / RunningConditionPanel.)
  *   - Train/lastTrainedAt/staleness and the Failure-Groups-tab status dots
  *     are explicitly NOT part of this phase (Phase B/C) — the results area
  *     is a placeholder only.
@@ -469,7 +472,8 @@ export default function BuildModelWindow() {
     // `filterTimePeriods`.
     const [runningConditionTimePeriods, setRunningConditionTimePeriods] = useState<TimePeriod[]>([]);
     const { bounds: datasetBounds } = useDatasetTimeBounds();
-    // Drives the Workbench's "Edit…" Running Condition modal (was an inline
+    // Drives the Workbench's Running condition settings modal (opened from the
+    // Step-1 card's Edit / Set running condition / Fix period button; was an inline
     // collapsible panel before Phase A; same underlying state, now shown in
     // a modal overlay instead of an always-present card).
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
@@ -582,6 +586,8 @@ export default function BuildModelWindow() {
     // below builds) — matches `SensorAutocomplete`'s own `getDesc` contract,
     // which appends the tag itself separately.
     const getDesc = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description ?? '', [sensorMetaMap]);
+    // Unit text for the Running condition chips / value fields ("kW", "BAR"...).
+    const getUnit = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.unit ?? '', [sensorMetaMap]);
     // "description (tag)" everywhere a sensor is shown to the user (picker
     // options, predictor chips, the summary line) — the raw tag alone isn't
     // enough to recognize a sensor by; falls back to the bare tag when no
@@ -887,7 +893,7 @@ export default function BuildModelWindow() {
     // ---- Running Condition modal: local draft + explicit Apply (2026-10-03) ----
     // Every edit in the modal lands in `rcDraft` only. Nothing is written to
     // disk or broadcast until Apply (`applyRcDraft`), which is ONE
-    // `persistRunningCondition` call carrying all four fields. The rcbar
+    // `persistRunningCondition` call carrying all four fields. The Step-1 card
     // summary, the build gate and the per-model Workspace mode keep reading the
     // PERSISTED state vars above, so a dirty draft can never leak into them.
     //
@@ -973,7 +979,7 @@ export default function BuildModelWindow() {
         const d = rcDraftRef.current;
         if (!d || rcDraftEqual(d, rcPersistedRef.current)) { closeRc(); return; }
         if (validatePeriods(d.periods).some(s => s.invalid)) return;
-        // Optimistic local mirror (the persisted state vars) so the rcbar and
+        // Optimistic local mirror (the persisted state vars) so the Step-1 card and
         // the gate are right the moment the modal closes; the write's own
         // `applyFg` then confirms it from disk.
         setRunningConditionFilters(d.filters);
@@ -1684,6 +1690,56 @@ export default function BuildModelWindow() {
         patchDraft(activeModel, { ranges });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, numClustersForActive, clusterRangesLenForActive, criteriaStats, persistedClusterKeyForActive]);
+
+    // ---- Running condition: row-count previews (2026-10-03) ----
+    // Two instances of the same hook: one for the PERSISTED condition (the
+    // Step-1 card) and one for the modal's DRAFT (what Apply would commit).
+    // They share a cache, so opening the modal on an unedited draft costs no
+    // query, and the draft one waits for typing to settle.
+    const rowCountCache = useRef(new Map<string, number>());
+    const rcCountSensor = allSensors[0] ?? null;
+    const persistedCountFilter = useMemo(
+        () => buildPreviewFilterPayload(
+            { filters: runningConditionFilters, combine: runningConditionCombine, noneConfirmed: runningConditionNoneConfirmed, periods: runningConditionTimePeriods },
+            gateHeaders,
+        ),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
+    );
+    const draftCountFilter = useMemo(
+        () => buildPreviewFilterPayload(
+            rcDraft ?? { filters: runningConditionFilters, combine: runningConditionCombine, noneConfirmed: runningConditionNoneConfirmed, periods: runningConditionTimePeriods },
+            gateHeaders,
+        ),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [rcDraft, runningConditionFilters, runningConditionCombine, runningConditionNoneConfirmed, runningConditionTimePeriods, allSensors],
+    );
+    const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
+    const draftPeriodsInvalid = validatePeriods((rcDraft ?? { periods: runningConditionTimePeriods }).periods).some(st => st.invalid);
+    const persistedRows = useRowCountPreview({
+        enabled: !loading && activePage === 'overview' && rcConfigured && !persistedPeriodsInvalid,
+        workspaceId, sensor: rcCountSensor, filter: persistedCountFilter, cache: rowCountCache,
+    });
+    const draftRows = useRowCountPreview({
+        enabled: !loading && rcFilterOpen && !draftPeriodsInvalid,
+        workspaceId, sensor: rcCountSensor, filter: draftCountFilter, cache: rowCountCache, debounceMs: 300,
+    });
+
+    // Esc closes the Running condition modal — through the same dirty-draft
+    // guard as X / backdrop. Registered in the CAPTURE phase and ignored while a
+    // nested sensor picker is open: that picker closes itself on Esc (its own
+    // window listener), and by the time a bubble-phase listener of ours ran,
+    // React may already have unmounted it, so this one Esc would close both.
+    useEffect(() => {
+        if (!rcFilterOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape' || e.defaultPrevented) return;
+            if (document.querySelector('.predictor-picker-backdrop')) return;
+            requestCloseRc();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, [rcFilterOpen, requestCloseRc]);
 
     if (loading) {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
@@ -2455,21 +2511,44 @@ export default function BuildModelWindow() {
         }
         const reason = buildBlockReason(m);
         if (reason !== null) {
-            const items = incompleteItems(m);
+            // Step 1 not done (2026-10-03): a model that FOLLOWS the workspace
+            // condition is locked until the workspace running condition is
+            // set / fixed — say that first, with a button straight into the
+            // settings. A model on its own Custom condition is not affected by
+            // the workspace one, so it keeps the plain list below.
+            const gr = gateReasonOf(m);
+            const wsLocked = gr !== null && categoryOf(m) !== null
+                && effectiveModelFor(m).runningConditionMode !== 'custom'
+                && (rcStepState !== 'set');
+            const items = incompleteItems(m).filter(it => !(wsLocked && it.text === gr));
             return (
-                <div className="bmw-stage">
-                    <div className="bmw-stage-empty" data-testid="results-incomplete" style={{ textAlign: 'left', alignItems: 'flex-start' }}>
-                        <div style={{ fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
-                            {items.length} item{items.length === 1 ? '' : 's'} to fix before training
+                <div className="bmw-stage" style={wsLocked ? { flexDirection: 'column', gap: '12px' } : undefined}>
+                    {wsLocked && (
+                        <div className="bmw-stage-empty bmw-stage-lock" data-testid="results-rc-locked">
+                            <Lock size={22} aria-hidden="true" />
+                            <div>
+                                <b>{rcStepState === 'invalid' ? 'Fix the running condition first' : 'Set the running condition first'}</b>
+                                <span>Training is locked until Step 1 is done.</span>
+                            </div>
+                            <button type="button" className="rcx-btn" data-testid="results-rc-locked-open" onClick={() => setRcFilterOpen(true)}>
+                                {rcStepState === 'invalid' ? 'Fix period' : 'Set running condition'}
+                            </button>
                         </div>
-                        <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                            {items.map((it, i) => (
-                                <li key={i}>
-                                    <button type="button" className="bmw-fix-link" onClick={it.onClick}>{it.text}</button>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
+                    )}
+                    {items.length > 0 && (
+                        <div className="bmw-stage-empty" data-testid="results-incomplete" style={{ textAlign: 'left', alignItems: 'flex-start' }}>
+                            <div style={{ fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
+                                {items.length} item{items.length === 1 ? '' : 's'} to fix before training
+                            </div>
+                            <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                                {items.map((it, i) => (
+                                    <li key={i}>
+                                        <button type="button" className="bmw-fix-link" onClick={it.onClick}>{it.text}</button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -2738,17 +2817,12 @@ export default function BuildModelWindow() {
     };
 
     const periodStatus = validatePeriods(runningConditionTimePeriods);
-    const validPeriodCount = runningConditionTimePeriods.filter((_, i) => !periodStatus[i]?.invalid).length;
-    const periodsText = validPeriodCount > 0 ? `${validPeriodCount} period${validPeriodCount === 1 ? '' : 's'}` : 'Any time';
-    const rcCondText = runningConditionNoneConfirmed
-        ? 'No condition — every row'
-        : runningConditionFilters.length === 0
-        ? 'Not set'
-        : runningConditionFilters.map(f => conditionText(f, sensorLabel)).join(runningConditionCombine === 'or' ? ' OR ' : ' AND ');
-    const rcOneLiner = `${rcCondText} · ${periodsText}`;
+    // Step-1 card / step bar / lock message all read the PERSISTED condition.
+    const rcPersistedInvalid = periodStatus.some(st => st.invalid);
+    const rcStepState: RcStepState = !rcConfigured ? 'unset' : rcPersistedInvalid ? 'invalid' : 'set';
 
-    // The Edit… modal's own view: its draft once edited, else the persisted
-    // values. Only the modal reads these — everything above (rcbar, gate,
+    // The settings modal's own view: its draft once edited, else the persisted
+    // values. Only the modal reads these — everything above (Step-1 card, gate,
     // models) stays on the persisted state.
     const rcView = rcDraft ?? rcPersisted;
     const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
@@ -2767,6 +2841,12 @@ export default function BuildModelWindow() {
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     {pmPageModel ? `Build Model — ${modelDisplayLabel(pmPageModel)}` : 'Build Model — Overview'}
                 </h2>
+                {/* Step bar (2026-10-03): Running condition -> Model settings ->
+                    Train & complete. Overview only; not interactive, so it is
+                    transparent to the drag region like the title. */}
+                <div className="pointer-events-none" style={{ flex: 1, minWidth: 0 }}>
+                    {!pmPageModel && <RunningConditionStepBar state={rcStepState} />}
+                </div>
                 <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
                     <X size={14} />
                 </button>
@@ -2793,12 +2873,18 @@ export default function BuildModelWindow() {
                 />
             ) : (
                 <div className="flex flex-col" style={{ flex: 1, minHeight: 0 }}>
-                    <div className="bmw-rcbar" data-testid="rc-bar">
-                        <span className="bmw-rcbar-lbl">Running condition</span>
-                        <span data-testid="rc-bar-pill" className={`f4-pill ${rcConfigured ? 'f4-pill--ok' : 'f4-pill--warn'}`}>{rcConfigured ? '✓ Set' : 'Required'}</span>
-                        <span className="bmw-rcbar-rule" title={rcOneLiner}>{rcOneLiner}</span>
-                        <button type="button" className="f4-btn f4-btn--small" onClick={() => setRcFilterOpen(true)}>Edit…</button>
-                    </div>
+                    <RunningConditionCard
+                        state={rcStepState}
+                        periods={runningConditionTimePeriods}
+                        filters={runningConditionFilters}
+                        combine={runningConditionCombine}
+                        noneConfirmed={runningConditionNoneConfirmed}
+                        headers={gateHeaders}
+                        getDesc={getDesc}
+                        getUnit={getUnit}
+                        rows={persistedRows}
+                        onOpen={() => setRcFilterOpen(true)}
+                    />
 
                     {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
                         <div
@@ -2939,14 +3025,25 @@ export default function BuildModelWindow() {
 
             {rcFilterOpen && (
                 // 🆕 2026-10-03: edits go to a local draft; only Apply writes
-                // (see `applyRcDraft`). X / backdrop go through
+                // (see `applyRcDraft`). X / backdrop / Esc go through
                 // `requestCloseRc`, which `flushFocusedInput()`s first (a
                 // half-typed period date commits on blur only — 2026-09-30
                 // data-loss fix) and then asks before discarding a dirty draft.
+                // Same day: the body was redesigned (two columns + live row
+                // count, mockup 1pp59aydphzaDu2R1SvKGh) — see RunningConditionPanel.
                 <div className="bmw-modal-backdrop" role="presentation" onClick={requestCloseRc}>
-                    <div className="bmw-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running Condition Filter">
-                        <div className="bmw-modal-head">
-                            <span>Running Condition Filter</span>
+                    <div className="bmw-modal bmw-modal--rc" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running condition">
+                        <div className="bmw-modal-head rcm-head">
+                            <div className="rcm-head-t">
+                                <h2>Running condition</h2>
+                                <div className="rcm-sub">Default for every model · a model can use its own on its settings (Custom)</div>
+                            </div>
+                            <RunningConditionPills
+                                configured={rcViewConfigured}
+                                noneConfirmed={rcView.noneConfirmed}
+                                conditionCount={rcView.filters.length}
+                                periodInvalid={rcViewInvalid}
+                            />
                             <button type="button" className="bmw-modal-x" onClick={requestCloseRc} aria-label="Close">
                                 <X size={16} />
                             </button>
@@ -2959,9 +3056,6 @@ export default function BuildModelWindow() {
                             onBlur={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"]')) setRcPeriodTyping(false); }}
                         >
                             <RunningConditionPanel
-                                embedded
-                                open={true}
-                                onToggle={requestCloseRc}
                                 configured={rcViewConfigured}
                                 periods={rcView.periods}
                                 onPeriodsChange={updateRunningConditionPeriods}
@@ -2977,6 +3071,8 @@ export default function BuildModelWindow() {
                                 sensors={allSensors}
                                 getDesc={getDesc}
                                 getComponent={getComponent}
+                                getUnit={getUnit}
+                                preview={draftRows}
                             />
                         </div>
                         <div className="bmw-modal-foot" data-testid="rc-modal-foot">
