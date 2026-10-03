@@ -34,6 +34,8 @@ import { useChartData } from '../../hooks/useChartData';
 import { useDatasetTimeBounds } from '../../hooks/useDatasetTimeBounds';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { renameTagInArray, renameTagInRecord, renameTagInModels } from '../../utils/specialSensorRename';
+import { mergeIntoPlot, type AddSensorSelectionPayload } from '../../utils/specialSensorPlot';
+import { reorderRecipesByTags } from '../../utils/specialSensorDeps';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
@@ -1337,29 +1339,53 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 });
             });
 
-            // Listen for new selections from child window
-            unlistenAdd = subscribe<{ sensors: string[], operation: SensorOperationConfig | null, newMetadata?: SensorMetadata[], newRecipes?: SpecialSensorRecipe[], workspaceId?: string }>('add-sensor-selection', async (event) => {
+            // A sensor was created (or raw sensors were "added as-is") in the
+            // add-sensor window. `sensors` is a DELTA: what to ADD to the plot,
+            // not a replacement for it. The window only learns the plotted list
+            // once, when it opens, so treating its copy as the truth threw away
+            // any selection change made in the Dashboard afterwards -- and,
+            // since the old copy included the sensors a new one was built FROM,
+            // plotted those too. Merge into the CURRENT selection instead.
+            unlistenAdd = subscribe<AddSensorSelectionPayload>('add-sensor-selection', async (event) => {
                 if (!forThisWorkspace(event.payload)) return;
                 debugLog("Dashboard received 'add-sensor-selection'", event.payload);
 
-                let newSelectedSensors: string[] = [];
+                let toPlot: string[] = [];
                 let newOperationConfig: SensorOperationConfig | null = null;
                 let newMetadata: SensorMetadata[] = [];
                 let newRecipes: SpecialSensorRecipe[] = [];
 
                 if (Array.isArray(event.payload)) {
-                    newSelectedSensors = event.payload;
+                    toPlot = event.payload;
                     newOperationConfig = null;
                 } else {
-                    newSelectedSensors = event.payload.sensors;
+                    toPlot = event.payload.sensors ?? [];
                     newOperationConfig = event.payload.operation;
                     newMetadata = event.payload.newMetadata ?? [];
                     newRecipes = event.payload.newRecipes ?? [];
                 }
 
-                // Update selection
-                setSelectedSensors(newSelectedSensors);
+                // Pair Plot can't draw more than MAX_PAIR_PLOT_SENSORS (WebGL
+                // contexts) -- the sensor list blocks picking a 5th there
+                // (`maxSelectable`), so adding past it here must not slip
+                // through. Anything that doesn't fit is reported, not dropped
+                // silently: the sensor still exists, it just isn't plotted.
+                const cap = chartTypeRef.current === 'pair' ? MAX_PAIR_PLOT_SENSORS : undefined;
+                const { next, blocked } = mergeIntoPlot(stateRef.current.selectedSensors, toPlot, cap);
+                // Eagerly, so a second event arriving before the next render
+                // merges into this result instead of the pre-merge selection.
+                stateRef.current = { ...stateRef.current, selectedSensors: next };
+                setSelectedSensors(prev => mergeIntoPlot(prev, toPlot, cap).next);
                 setOperationConfig(newOperationConfig);
+
+                if (blocked.length > 0) {
+                    const text = `Pair Plot supports at most ${MAX_PAIR_PLOT_SENSORS} sensors, so ${blocked.join(', ')} ${blocked.length === 1 ? 'was' : 'were'} added to the workspace but not plotted. Deselect a sensor first, or switch chart type.`;
+                    void (async () => {
+                        try {
+                            await message(text, { title: 'Not plotted', kind: 'warning' });
+                        } catch { /* dialog unavailable -- the sensor is still in the list */ }
+                    })();
+                }
 
                 if (newMetadata.length > 0) {
                     setExtraSensorMetadata(prev => {
@@ -1378,14 +1404,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         for (const r of newRecipes) byTag.set(r.tag.toLowerCase(), r);
                         return Array.from(byTag.values());
                     });
+                    // A column was just (re)created in the Rust session. A name
+                    // reused after a delete would otherwise be served from
+                    // whatever the chart/scatter queries last fetched for it.
+                    setDataRevision(n => n + 1);
                 }
 
-                // Manually update sensor headers to include any new sensors from the selection
-                // This ensures immediate UI update without waiting for backend fetch
+                // Manually update sensor headers to include any new sensors,
+                // so the Sensor list shows them immediately without waiting
+                // for a backend fetch (a created sensor is listed even when the
+                // plot cap kept it off the chart).
                 setSensorHeaders(prevHeaders => {
                     const newHeaders = [...prevHeaders];
                     let changed = false;
-                    newSelectedSensors.forEach(s => {
+                    [...toPlot, ...newMetadata.map(m => m.tag)].forEach(s => {
                         // Check case-insensitive existence
                         const exists = newHeaders.some(h => h.toLowerCase() === s.toLowerCase());
                         if (!exists) {
@@ -1406,11 +1438,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // what DataUploadPage replays to rebuild these columns on the
             // next workspace open.
             //
-            // The column itself stays in the Rust session's in-memory data
-            // until then: there is no command to drop one, and adding one is
-            // not worth it for state that is discarded at app close anyway.
-            // Removing the tag from all three lists below is what takes it
-            // out of every list, picker and chart in the meantime.
+            // The window drops the computed column from the Rust session
+            // (`remove_sensor_columns`) BEFORE sending this, so nothing here
+            // needs to touch the data -- and a sensor created later under the
+            // same name gets a fresh column rather than the deleted one's
+            // numbers. Removing the tag from the lists below is what takes it
+            // out of every list, picker and chart.
             //
             // No explicit save call — every setter here feeds
             // `buildWorkspaceState`, so the debounced autosave writes it.
@@ -1441,14 +1474,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // sensor` instead (below), which is where every tag-keyed piece
             // of this file's own state gets re-keyed. This listener only
             // ever sees an edit that keeps the same tag.
-            unlistenUpdate = subscribe<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata; workspaceId?: string }>('update-special-sensor', (event) => {
+            unlistenUpdate = subscribe<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata; recipeOrder?: string[]; workspaceId?: string }>('update-special-sensor', (event) => {
                 if (!forThisWorkspace(event.payload)) return;
-                const { recipe, metadata } = event.payload ?? {};
+                const { recipe, metadata, recipeOrder } = event.payload ?? {};
                 if (!recipe) return;
                 debugLog('Dashboard received update-special-sensor', event.payload);
                 const isTarget = (tag: string) => tag.trim().toLowerCase() === recipe.tag.trim().toLowerCase();
 
-                setSpecialSensorRecipes(prev => prev.map(r => (isTarget(r.tag) ? recipe : r)));
+                // `recipeOrder` is present only when the edit made the stored
+                // order an invalid build order (the sensor now reads one that
+                // sits further down) -- the reopen replay runs top to bottom.
+                setSpecialSensorRecipes(prev => reorderRecipesByTags(prev.map(r => (isTarget(r.tag) ? recipe : r)), recipeOrder));
                 if (metadata) {
                     setExtraSensorMetadata(prev => (
                         prev.some(m => isTarget(m.tag))
@@ -1475,19 +1511,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 recipe: SpecialSensorRecipe;
                 metadata: SensorMetadata;
                 updatedRecipes: SpecialSensorRecipe[];
+                recipeOrder?: string[];
                 workspaceId?: string;
             }>('rename-special-sensor', (event) => {
                 if (!forThisWorkspace(event.payload)) return;
-                const { oldTag, newTag, recipe, metadata, updatedRecipes } = event.payload ?? {};
+                const { oldTag, newTag, recipe, metadata, updatedRecipes, recipeOrder } = event.payload ?? {};
                 if (!oldTag || !newTag || !recipe) return;
                 debugLog('Dashboard received rename-special-sensor', event.payload);
                 const isOld = (tag: string) => sameTag(tag, oldTag);
 
-                setSpecialSensorRecipes(prev => prev.map(r => {
+                setSpecialSensorRecipes(prev => reorderRecipesByTags(prev.map(r => {
                     if (isOld(r.tag)) return recipe;
                     const rewritten = (updatedRecipes ?? []).find(u => sameTag(u.tag, r.tag));
                     return rewritten ?? r;
-                }));
+                }), recipeOrder));
                 setExtraSensorMetadata(prev => {
                     const withoutOld = prev.filter(m => !isOld(m.tag));
                     return withoutOld.some(m => sameTag(m.tag, newTag))
@@ -1535,6 +1572,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     const [filters, setFilters] = useState<FilterState>(initialState?.filters ?? { timestampStart: '', timestampEnd: '', sensorFilters: [] });
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
+    // The Add Sensor listener (registered once, above) reads the chart type
+    // through this to apply Pair Plot's sensor cap when merging a new sensor in.
+    const chartTypeRef = useRef(chartType);
+    chartTypeRef.current = chartType;
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
     // The Selected Sensor tab's colour/pin-Y-axis popovers only render while

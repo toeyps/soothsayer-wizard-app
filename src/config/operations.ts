@@ -55,3 +55,17 @@ export function findOperation(
     (op) => op.id === id,
   );
 }
+
+/**
+ * Short helper text for operations whose handling of missing readings is not
+ * obvious from their name. Shown on the operation's card (tooltip) and under
+ * the group while it is selected. Kept next to the registry, not inside
+ * `OperationDefinition`, so the shared type stays untouched.
+ *
+ * Sum is the one that differs from its siblings (user decision 2026-10-03):
+ * Rust's `calculate_new_sensor` leaves a row EMPTY when any source is missing
+ * for `sum`, while `mean`/`median` skip missing sources and use the rest.
+ */
+export const OPERATION_HINTS: Record<string, string> = {
+  sum: 'Rows where any source is missing are left empty',
+};

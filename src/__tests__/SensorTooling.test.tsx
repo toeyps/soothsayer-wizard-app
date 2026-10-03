@@ -134,6 +134,26 @@ describe('SensorTooling', () => {
             expect(onConfigChange).not.toHaveBeenCalled(); // shortcut wasn't deselected
         });
 
+        // User decision 2026-10-03: Sum leaves a row empty when ANY source is
+        // missing (Average/Median skip missing sources) -- not guessable from
+        // the name, so the card says so.
+        it('Sum all carries the "left empty" hint as a tooltip, and shows it as helper text once picked', () => {
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
+            const sumCard = screen.getByText('Sum all').closest('button')!;
+            expect(sumCard.title).toBe('Rows where any source is missing are left empty');
+            // Not nagging before it is picked...
+            expect(screen.queryByText('Rows where any source is missing are left empty')).toBeNull();
+            fireEvent.click(sumCard);
+            expect(screen.getByText('Rows where any source is missing are left empty')).toBeTruthy();
+        });
+
+        it('Average all / Median carry no such hint (they skip missing sources)', () => {
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
+            expect(screen.getByText('Average all').closest('button')!.title).toBe('');
+            fireEvent.click(screen.getByText('Average all'));
+            expect(screen.queryByText(/left empty/)).toBeNull();
+        });
+
         it('re-enables the chain-operator buttons once the shortcut is cleared', () => {
             render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
             fireEvent.click(screen.getByText('Sum all'));
@@ -404,5 +424,26 @@ describe('SensorTooling', () => {
             fireEvent.click(screen.getByText('Formula Syntax Help'));
             expect(screen.getByText('Supported syntax:')).toBeTruthy();
         });
+    });
+});
+
+describe('SensorTooling: name error (decided by AddSensorWindow, shown inline under the Name field)', () => {
+    const withCalc = () => makeProps({ selectedSensors: ['A'] });
+
+    it('shows the error under the Name field in place of the helper line, and marks the field invalid', () => {
+        render(<SensorTooling {...withCalc()} nameError='A sensor named "A" already exists. Pick another name.' />);
+        fireEvent.click(screen.getByText('Absolute value'));
+        const input = screen.getByPlaceholderText('e.g. Total Power') as HTMLInputElement;
+        expect(screen.getByRole('alert').textContent).toContain('already exists');
+        expect(input.getAttribute('aria-invalid')).toBe('true');
+        expect(screen.queryByText(/Becomes this sensor's tag/)).toBeNull();
+    });
+
+    it('without an error, shows the usual helper line and no alert', () => {
+        render(<SensorTooling {...withCalc()} nameError={null} />);
+        fireEvent.click(screen.getByText('Absolute value'));
+        expect(screen.getByText(/Becomes this sensor's tag/)).toBeTruthy();
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect((screen.getByPlaceholderText('e.g. Total Power') as HTMLInputElement).getAttribute('aria-invalid')).toBeNull();
     });
 });

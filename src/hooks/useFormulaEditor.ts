@@ -1,6 +1,11 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { FormulaValidationResult } from '../types/calculationEngine';
+import { sensorRef } from '../utils/specialSensorNaming';
+
+// The `$partial` text right before the cursor that autocomplete replaces.
+// Unicode-aware: a Thai or other non-ASCII sensor name is a valid bare ref too.
+const PARTIAL_REF = /\$([\p{Alphabetic}\p{N}_]*)$/u;
 
 export interface UseFormulaEditorReturn {
   formula: string;
@@ -92,7 +97,7 @@ export function useFormulaEditor(
       // Check if user just typed '$' -- trigger autocomplete
       if (cursorPos !== undefined) {
         const beforeCursor = value.substring(0, cursorPos);
-        const dollarMatch = beforeCursor.match(/\$(\w*)$/);
+        const dollarMatch = beforeCursor.match(PARTIAL_REF);
         if (dollarMatch) {
           setShowAutocomplete(true);
           setAutocompleteFilter(dollarMatch[1] || '');
@@ -117,15 +122,15 @@ export function useFormulaEditor(
       const afterCursor = formula.substring(cursorPosition);
 
       // Replace the $partial with the full sensor reference
-      const dollarMatch = beforeCursor.match(/\$(\w*)$/);
+      const dollarMatch = beforeCursor.match(PARTIAL_REF);
       const insertStart = dollarMatch
         ? cursorPosition - dollarMatch[0].length
         : cursorPosition;
 
-      const needsBraces = sensorName.includes(' ') || sensorName.includes('.');
-      const insertion = needsBraces
-        ? `\${${sensorName}}`
-        : `$${sensorName}`;
+      // Same spelling rule the button builder and Rust use (see
+      // `utils/specialSensorNaming.ts`) -- not just spaces/dots: `-`, `/`,
+      // `%`, parentheses ... all need the braced form too.
+      const insertion = sensorRef(sensorName);
 
       const newFormula =
         formula.substring(0, insertStart) + insertion + afterCursor;

@@ -60,7 +60,24 @@ vi.mock('../components/windows/SensorTooling', async (importOriginal) => ({
                 <button onClick={() => props.onConfigChange({ mode: 'single', singleOp: { type: 'add', value: 1 } })}>
                     set-config-no-name
                 </button>
+                <button onClick={() => props.onConfigChange({ mode: 'single', singleOp: { type: 'add', value: 1 }, customName: 'tag1' })}>
+                    set-config-tag1
+                </button>
+                <button onClick={() => props.onConfigChange({ mode: 'single', singleOp: { type: 'add', value: 1 }, customName: '  Tag2  ' })}>
+                    set-config-padded-tag2
+                </button>
+                <button onClick={() => props.onConfigChange({ mode: 'single', singleOp: { type: 'add', value: 1 }, customName: 'SPECIAL a' })}>
+                    set-config-special-a
+                </button>
+                <button onClick={() => props.onConfigChange({ mode: 'single', singleOp: { type: 'add', value: 1 }, customName: 'A' })}>
+                    set-config-name-a
+                </button>
+                <button onClick={() => props.onConfigChange({ mode: 'single', singleOp: { type: 'add', value: 1 }, customName: 'a}b' })}>
+                    set-config-brace
+                </button>
                 <button onClick={() => props.onConfigChange(null)}>clear-config</button>
+                <button onClick={() => props.onFormulaSubmit('$TAG1 * 2', 'special A')}>submit-formula-special-a</button>
+                {props.nameError && <p data-testid="tooling-name-error">{props.nameError}</p>}
                 <button onClick={() => props.onFormulaSubmit('$TAG1 + $TAG2', 'FormulaCalc')}>submit-formula</button>
                 <button onClick={() => props.onRemoveSensor('TAG1')}>remove-tag1</button>
                 <button onClick={() => props.onDescriptionChange('My Description')}>set-description</button>
@@ -214,8 +231,10 @@ describe('AddSensorWindow', () => {
             sensors: ['TAG1'],
             config: { mode: 'single', singleOp: { type: 'add', value: 1 }, customName: 'MyCalc' },
         });
+        // `sensors` is a DELTA for the Dashboard's plot: just the new sensor,
+        // never the source ('TAG1') it was built from.
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', {
-            sensors: ['TAG1', 'CALC1'],
+            sensors: ['CALC1'],
             operation: null,
             newMetadata: [{ tag: 'CALC1', description: 'My Description', unit: 'bar', component: 'Pump' }],
             newRecipes: [{
@@ -254,8 +273,9 @@ describe('AddSensorWindow', () => {
             formula: '$TAG1 + $TAG2',
             customName: 'FormulaCalc',
         });
+        // Only the new sensor is plotted -- not TAG1/TAG2, the inputs.
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
-            sensors: ['TAG1', 'TAG2', 'FORMULA1'],
+            sensors: ['FORMULA1'],
         }));
         // 2026-09-01: the recipe (not just the metadata) is what lets a
         // reopened workspace recreate this column — see
@@ -265,7 +285,7 @@ describe('AddSensorWindow', () => {
         }));
     });
 
-    it('accumulates pending sensors across multiple Add clicks (deduplicated)', async () => {
+    it('each Add click sends only ITS OWN delta -- nothing is accumulated or replayed (the Dashboard merges deltas into its current selection)', async () => {
         mockInvoke.mockResolvedValue([]);
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1', 'TAG2']);
@@ -283,11 +303,11 @@ describe('AddSensorWindow', () => {
             await Promise.resolve();
         });
 
-        const lastEmitCall = last(mockEmit.mock.calls.filter((c) => c[0] === 'add-sensor-selection'))!;
-        expect(lastEmitCall[1].sensors).toEqual(['TAG1', 'TAG2']);
+        const sent = mockEmit.mock.calls.filter((c) => c[0] === 'add-sensor-selection');
+        expect(sent.map(c => c[1].sensors)).toEqual([['TAG1'], ['TAG2']]);
     });
 
-    it('shows an alert and stops loading when the backend call fails', async () => {
+    it('shows the backend error inline (no blocking alert) and unlocks the button when the backend call fails', async () => {
         mockInvoke.mockImplementation((cmd: string) => {
             if (cmd === 'calculate_new_sensor') return Promise.reject(new Error('boom'));
             return Promise.resolve([]);
@@ -305,7 +325,11 @@ describe('AddSensorWindow', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('boom'));
+        expect(window.alert).not.toHaveBeenCalled();
+        expect(screen.getByRole('alert').textContent).toContain('boom');
+        expect((screen.getByText('Add sensor').closest('button') as HTMLButtonElement).disabled).toBe(false);
+        // Nothing was told to the Dashboard about a sensor that was never made.
+        expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
     });
 
     // ---- Manage tab -----------------------------------------------------
@@ -809,5 +833,588 @@ describe('AddSensorWindow multi-project isolation', () => {
         const sent = mockEmit.mock.calls.filter((c) => c[0] === 'add-sensor-selection');
         expect(sent).toHaveLength(1);
         expect(sent[0][1].workspaceId).toBe('ws-B');
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// 2026-10-03 -- special sensor fixes: real column removal, name validation,
+// plot delta, rename cleanup. These run against a FAKE BACKEND that enforces
+// the same rules as the Rust side (`store_derived_column`,
+// `remove_sensor_columns`), so "creating X again only works because the old X
+// column was dropped" is actually exercised rather than assumed.
+// ═════════════════════════════════════════════════════════════════════════
+
+import { sensorRef } from '../utils/specialSensorNaming';
+
+const tkey = (s: string) => s.trim().toLowerCase();
+
+function fakeRust(opts: { raw?: string[]; derived?: string[]; failRemove?: boolean; failEval?: string[] } = {}) {
+    const columns: string[] = [...(opts.raw ?? ['TAG1', 'TAG2']), ...(opts.derived ?? [])];
+    const derived = new Set((opts.derived ?? []).map(tkey));
+    const find = (n: string) => columns.findIndex(c => tkey(c) === tkey(n));
+    const refsOf = (f: string): string[] =>
+        [...f.matchAll(/\$\{([^}]+)\}|\$([\p{L}\p{N}_]+)/gu)].map(m => (m[1] ?? m[2]) as string);
+    const write = (name: string, replace: boolean): string => {
+        const clean = name.trim();
+        const i = find(clean);
+        if (i >= 0) {
+            if (!replace) throw `A sensor named '${clean}' already exists`;
+            if (!derived.has(tkey(clean))) throw `'${clean}' is an imported data column and cannot be overwritten`;
+            columns[i] = clean; // header takes the new casing, position kept
+        } else {
+            columns.push(clean);
+            derived.add(tkey(clean));
+        }
+        return clean;
+    };
+    const calls: Array<{ cmd: string; args: any }> = [];
+    const invoke = async (cmd: string, args?: any): Promise<unknown> => {
+        calls.push({ cmd, args });
+        switch (cmd) {
+            case 'extract_formula_refs':
+                return (args.formulas as string[]).map(refsOf);
+            case 'rename_formula_refs':
+                return (args.formula as string).replace(/\$\{([^}]+)\}|\$([\p{L}\p{N}_]+)/gu, (m: string, a?: string, b?: string) =>
+                    tkey((a ?? b) as string) === tkey(args.oldName) ? sensorRef(args.newName.trim()) : m);
+            case 'remove_sensor_columns': {
+                if (opts.failRemove) throw 'disk on fire';
+                let n = 0;
+                for (const name of args.names as string[]) {
+                    const i = find(name);
+                    if (i >= 0 && derived.has(tkey(columns[i]))) {
+                        derived.delete(tkey(columns[i]));
+                        columns.splice(i, 1);
+                        n++;
+                    }
+                }
+                return n;
+            }
+            case 'evaluate_formula': {
+                if (opts.failEval?.includes(args.customName)) throw new Error(`boom ${args.customName}`);
+                for (const r of refsOf(args.formula)) if (find(r) < 0) throw `Sensor not found: ${r}`;
+                return write(args.customName, !!args.replace);
+            }
+            case 'calculate_new_sensor': {
+                for (const s of args.sensors as string[]) if (find(s) < 0) throw `Sensor not found: ${s}`;
+                return write(args.config.customName, !!args.replace);
+            }
+            default:
+                return [];
+        }
+    };
+    return { columns, derived, calls, invoke, has: (n: string) => find(n) >= 0, names: (cmd: string) => calls.filter(c => c.cmd === cmd) };
+}
+
+async function openWindow(payload: Record<string, unknown> = {}) {
+    render(<AddSensorWindow />);
+    await act(async () => {
+        for (const cb of listenCallbacks['sensors-data'] ?? []) {
+            cb({ payload: { sensors: ['TAG1', 'TAG2'], selectedSensors: [], sensorMetadata: [], ...payload } });
+        }
+    });
+    // Let the extract_formula_refs lookup settle.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+}
+
+const goManage = async () => { await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Manage/ })); }); };
+const flush = async (n = 6) => { for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); }); };
+const addBtn = () => screen.getByText('Add sensor').closest('button') as HTMLButtonElement;
+const fillMeta = () => {
+    fireEvent.click(screen.getByText('set-description'));
+    fireEvent.click(screen.getByText('set-unit'));
+    fireEvent.click(screen.getByText('set-component'));
+};
+const fillEditor = () => {
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+    fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
+};
+
+const recA = { kind: 'formula' as const, tag: 'A', formula: '$TAG1 * 2' };
+const recB = { kind: 'formula' as const, tag: 'B', formula: '${A} + 1' };
+
+describe('AddSensorWindow: create -- name validation, double submit, backend errors', () => {
+    it('A: a created sensor reports ONLY itself to plot; the picked source sensors are not sent', async () => {
+        const rust = fakeRust();
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('toggle-tag2'));
+        fireEvent.click(screen.getByText('set-config'));
+        fillMeta();
+        await act(async () => { fireEvent.click(addBtn()); });
+        await flush();
+        const payload = last(mockEmit.mock.calls.filter(c => c[0] === 'add-sensor-selection'))![1];
+        expect(payload.sensors).toEqual(['MyCalc']);
+        expect(payload.newRecipes[0].sourceSensors).toEqual(['TAG1', 'TAG2']); // still remembered as the recipe's inputs
+    });
+
+    it('A: "add as-is" has nothing to create, so it sends the picked raw sensors to plot', async () => {
+        mockInvoke.mockImplementation(fakeRust().invoke);
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('toggle-tag2'));
+        await act(async () => { fireEvent.click(addBtn()); });
+        await flush();
+        expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
+            sensors: ['TAG1', 'TAG2'], newMetadata: [], newRecipes: [],
+        }));
+    });
+
+    it('D: a name that equals an existing sensor is flagged inline on the Name field and Add stays disabled -- nothing is sent to the backend', async () => {
+        mockInvoke.mockImplementation(fakeRust().invoke);
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config-tag1')); // customName 'tag1' vs existing 'TAG1'
+        fillMeta();
+        expect(screen.getByTestId('tooling-name-error').textContent).toMatch(/"TAG1" already exists/);
+        expect(addBtn().disabled).toBe(true);
+        expect(screen.getByText('Fix the name before adding.')).toBeTruthy();
+        await act(async () => { fireEvent.click(addBtn()); });
+        expect(mockInvoke).not.toHaveBeenCalledWith('calculate_new_sensor', expect.anything());
+        expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
+    });
+
+    it('D: the check ignores case and surrounding whitespace', async () => {
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config-padded-tag2')); // '  Tag2  '
+        expect(screen.getByTestId('tooling-name-error').textContent).toMatch(/already exists/);
+    });
+
+    it('D: it covers existing SPECIAL sensors too (from the Dashboard\'s sensor list and from the recipes), not only imported columns', async () => {
+        await openWindow({ sensors: ['TAG1', 'special A'], specialSensorRecipes: [{ kind: 'formula', tag: 'special A', formula: '$TAG1' }] });
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config-special-a'));
+        expect(screen.getByTestId('tooling-name-error')).toBeTruthy();
+    });
+
+    it('D: the formula path\'s name is checked as well', async () => {
+        await openWindow({ sensors: ['TAG1', 'special A'], specialSensorRecipes: [{ kind: 'formula', tag: 'special A', formula: '$TAG1' }] });
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('submit-formula-special-a'));
+        fillMeta();
+        expect(screen.getByTestId('tooling-name-error').textContent).toMatch(/"special A" already exists/);
+        expect(addBtn().disabled).toBe(true);
+    });
+
+    it('E: a name containing "}" is blocked at naming time with a clear message', async () => {
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config-brace'));
+        fillMeta();
+        expect(screen.getByTestId('tooling-name-error').textContent).toMatch(/can't contain "}"/);
+        expect(addBtn().disabled).toBe(true);
+    });
+
+    it('D: a free name shows no conflict', async () => {
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config')); // 'MyCalc'
+        expect(screen.queryByTestId('tooling-name-error')).toBeNull();
+    });
+
+    it('D: a double click creates ONCE -- the second click is swallowed by the in-flight guard, not turned into a duplicate-name error', async () => {
+        const rust = fakeRust();
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
+            if (cmd === 'calculate_new_sensor') await gate;
+            return rust.invoke(cmd, args);
+        });
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config'));
+        fillMeta();
+
+        await act(async () => {
+            const b = addBtn();
+            b.click();
+            b.click(); // both land before React re-renders the button disabled
+        });
+        expect(addBtn().disabled).toBe(true); // locked while the call is in flight
+        await act(async () => { release(); await gate; });
+        await flush();
+
+        expect(rust.names('calculate_new_sensor')).toHaveLength(1);
+        expect(mockEmit.mock.calls.filter(c => c[0] === 'add-sensor-selection')).toHaveLength(1);
+        expect(screen.queryByRole('alert')).toBeNull(); // no "already exists" from a second attempt
+    });
+
+    it('D: the picker does not flash to "Loading..." while a sensor is being created', async () => {
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        const rust = fakeRust();
+        mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
+            if (cmd === 'calculate_new_sensor') await gate;
+            return rust.invoke(cmd, args);
+        });
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config'));
+        fillMeta();
+        await act(async () => { addBtn().click(); });
+        expect(screen.queryByText('Loading...')).toBeNull();
+        expect(screen.getByTestId('sensor-explorer')).toBeTruthy();
+        await act(async () => { release(); await gate; });
+        await flush();
+    });
+
+    it('D: when the backend still says "already exists" (a race), it is shown inline, the name is flagged, and no blocking alert pops up', async () => {
+        const rust = fakeRust({ raw: ['TAG1', 'TAG2', 'MyCalc'] }); // window doesn't know about 'MyCalc'
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config')); // 'MyCalc'
+        fillMeta();
+        await act(async () => { fireEvent.click(addBtn()); });
+        await flush();
+
+        expect(window.alert).not.toHaveBeenCalled();
+        // Surfaced as the name's own problem, so the same click can't fail again.
+        expect(screen.getByTestId('tooling-name-error').textContent).toMatch(/"MyCalc" already exists/);
+        expect(addBtn().disabled).toBe(true);
+        expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
+    });
+
+    it('D: a generic backend error stays inline until the user changes something, then goes away', async () => {
+        mockInvoke.mockImplementation(async (cmd: string) => {
+            if (cmd === 'calculate_new_sensor') throw 'Sensor not found: GONE';
+            return [];
+        });
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config'));
+        fillMeta();
+        await act(async () => { fireEvent.click(addBtn()); });
+        await flush();
+        expect(screen.getByRole('alert').textContent).toContain('Sensor not found: GONE');
+        expect(window.alert).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByText('toggle-tag2')); // the selection changed -> the old failure no longer applies
+        expect(screen.queryByText(/Sensor not found: GONE/)).toBeNull();
+    });
+});
+
+describe('AddSensorWindow: delete really drops the column', () => {
+    async function deleteViaUi(tag: string) {
+        await act(async () => { fireEvent.click(screen.getByLabelText(`Delete ${tag}`)); });
+    }
+
+    it('B: after the undo window it calls remove_sensor_columns with the deleted name BEFORE telling the Dashboard', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            const rust = fakeRust({ derived: ['A'] });
+            const timeline: string[] = [];
+            mockInvoke.mockImplementation(async (cmd: string, args?: any) => { timeline.push(`invoke:${cmd}`); return rust.invoke(cmd, args); });
+            mockEmit.mockImplementation(async (e: string) => { timeline.push(`emit:${e}`); });
+            await openWindow({ sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] });
+            await goManage();
+            await deleteViaUi('A');
+            expect(rust.names('remove_sensor_columns')).toHaveLength(0); // still inside the undo window
+
+            await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+            expect(rust.names('remove_sensor_columns').map(c => c.args)).toEqual([{ names: ['A'] }]);
+            expect(timeline.indexOf('invoke:remove_sensor_columns')).toBeGreaterThan(-1);
+            expect(timeline.indexOf('invoke:remove_sensor_columns')).toBeLessThan(timeline.indexOf('emit:delete-special-sensors'));
+            expect(rust.has('A')).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('B: Undo never touches the backend', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            const rust = fakeRust({ derived: ['A'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] });
+            await goManage();
+            await deleteViaUi('A');
+            await act(async () => { fireEvent.click(screen.getByText('Undo')); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+            expect(rust.names('remove_sensor_columns')).toHaveLength(0);
+            expect(rust.has('A')).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('B: closing the window mid-undo drops the column too', async () => {
+        const rust = fakeRust({ derived: ['A'] });
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({ sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] });
+        await goManage();
+        await deleteViaUi('A');
+        await act(async () => { fireEvent.click(screen.getByText('Close')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        await flush();
+        expect(rust.names('remove_sensor_columns').map(c => c.args)).toEqual([{ names: ['A'] }]);
+        expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('B: a failing removal is surfaced (not swallowed) but the UI deletion still completes and the Dashboard is still told', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const rust = fakeRust({ derived: ['A'], failRemove: true });
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ sensors: ['TAG1', 'A'], specialSensorRecipes: [recA] });
+            await goManage();
+            await deleteViaUi('A');
+            await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+
+            const toast = screen.getByRole('alert');
+            expect(toast.textContent).toMatch(/couldn't free its data/);
+            expect(toast.textContent).toContain('disk on fire');
+            expect(mockEmit).toHaveBeenCalledWith('delete-special-sensors', { tags: ['A'], workspaceId: undefined });
+            expect(screen.queryByLabelText('Delete A')).toBeNull();
+            expect(errSpy).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('B: a sensor something else is built on is still refused -- nothing is removed', async () => {
+        const rust = fakeRust({ derived: ['A', 'B'] });
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({ sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB] });
+        await goManage();
+        expect((screen.getByLabelText('Delete A') as HTMLButtonElement).disabled).toBe(true);
+        expect(rust.names('remove_sensor_columns')).toHaveLength(0);
+    });
+
+    it('G (the reported bug, end to end): delete X, then create X again with different numbers -- the new sensor works only because the old column was really dropped', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            const rust = fakeRust({ derived: ['special A'] });
+            mockInvoke.mockImplementation(rust.invoke);
+            await openWindow({ sensors: ['TAG1', 'TAG2', 'special A'], specialSensorRecipes: [{ kind: 'formula', tag: 'special A', formula: '$TAG1 * 2' }] });
+            await goManage();
+            await deleteViaUi('special A');
+            await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+            expect(rust.has('special A')).toBe(false);
+
+            // Back to Create: the same name is free again.
+            await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
+            fireEvent.click(screen.getByText('toggle-tag2'));
+            fireEvent.click(screen.getByText('submit-formula-special-a')); // $TAG1 * 2 named 'special A'
+            fillMeta();
+            expect(screen.queryByTestId('tooling-name-error')).toBeNull();
+            await act(async () => { fireEvent.click(addBtn()); });
+            await flush();
+
+            expect(rust.columns.filter(c => tkey(c) === 'special a')).toHaveLength(1); // one column, not two
+            expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({ sensors: ['special A'] }));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('G: the same fake backend REFUSES the recreate when remove_sensor_columns was never called (proves the fake enforces the new Rust rule the test above depends on)', async () => {
+        const rust = fakeRust({ derived: ['special A'] });
+        await expect(rust.invoke('evaluate_formula', { formula: '$TAG1', customName: 'special A' }))
+            .rejects.toMatch(/already exists/);
+    });
+
+    it('G: a name still inside its undo window can be reused at once -- the pending delete is settled first, then the sensor is created', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+            const rust = fakeRust({ derived: ['special A'] });
+            const timeline: string[] = [];
+            mockInvoke.mockImplementation(async (cmd: string, args?: any) => { timeline.push(cmd); return rust.invoke(cmd, args); });
+            mockEmit.mockImplementation(async (e: string) => { timeline.push(`emit:${e}`); });
+            await openWindow({ sensors: ['TAG1', 'TAG2', 'special A'], specialSensorRecipes: [{ kind: 'formula', tag: 'special A', formula: '$TAG1 * 2' }] });
+            await goManage();
+            await deleteViaUi('special A'); // inside the 8 s undo window now
+            await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
+            fireEvent.click(screen.getByText('toggle-tag1'));
+            fireEvent.click(screen.getByText('submit-formula-special-a'));
+            fillMeta();
+            expect(screen.queryByTestId('tooling-name-error')).toBeNull(); // not flagged as taken
+            await act(async () => { fireEvent.click(addBtn()); });
+            await flush();
+
+            expect(timeline.indexOf('remove_sensor_columns')).toBeLessThan(timeline.indexOf('evaluate_formula'));
+            expect(rust.columns.filter(c => tkey(c) === 'special a')).toHaveLength(1);
+            expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({ sensors: ['special A'] }));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('AddSensorWindow: rename drops the OLD column, last', () => {
+    async function openChain(extra: Record<string, unknown> = {}, rustOpts = {}) {
+        const rust = fakeRust({ derived: ['A', 'B'], ...rustOpts });
+        const timeline: string[] = [];
+        mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
+            const r = await rust.invoke(cmd, args);
+            timeline.push(cmd === 'evaluate_formula' ? `eval:${args.customName}` : cmd === 'remove_sensor_columns' ? `remove:${args.names.join(',')}` : cmd);
+            return r;
+        });
+        mockEmit.mockImplementation(async (e: string) => { timeline.push(`emit:${e}`); });
+        await openWindow({ sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB], ...extra });
+        await goManage();
+        return { rust, timeline };
+    }
+    async function renameTo(from: string, to: string) {
+        await act(async () => { fireEvent.click(screen.getByLabelText(`Edit ${from}`)); });
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: to } });
+        fillEditor();
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
+        await flush(10);
+    }
+
+    it('C: the new column is built first, the downstream recipe is replayed against the NEW name, the Dashboard is told, and only then the OLD column is removed', async () => {
+        const { rust, timeline } = await openChain();
+        await renameTo('A', 'A2');
+
+        const steps = timeline.filter(t => t.startsWith('eval:') || t.startsWith('remove:') || t.startsWith('emit:rename'));
+        expect(steps).toEqual(['eval:A2', 'eval:B', 'emit:rename-special-sensor', 'remove:A']);
+        // B was replayed with the rewritten formula -- no recipe was ever run against the old name after it went.
+        const evalB = rust.names('evaluate_formula').find(c => c.args.customName === 'B')!;
+        expect(evalB.args.formula).toBe('$A2 + 1'); // bare: A2 is alphanumeric
+        expect(rust.has('A')).toBe(false);
+        expect(rust.has('A2')).toBe(true);
+        expect(rust.has('B')).toBe(true);
+    });
+
+    it('C: a rename that only changes the CASE does not remove anything (the backend overwrites that very column in place; removing "the old one" would delete the new)', async () => {
+        const { rust } = await openChain();
+        await renameTo('A', 'a');
+        expect(rust.names('remove_sensor_columns')).toHaveLength(0);
+        expect(rust.columns.filter(c => tkey(c) === 'a')).toEqual(['a']); // one column, new casing
+        expect(mockEmit).toHaveBeenCalledWith('rename-special-sensor', expect.objectContaining({ oldTag: 'A', newTag: 'a' }));
+        // The dependent still resolves: its formula was rewritten to the new spelling and replayed.
+        expect(rust.names('evaluate_formula').find(c => c.args.customName === 'B')!.args.formula).toBe('$a + 1');
+    });
+
+    it('C: if a downstream recompute fails, the old column is NOT removed, the Dashboard is NOT told, and the half-built new column is cleaned up', async () => {
+        const { rust } = await openChain({}, { failEval: ['B'] });
+        await renameTo('A', 'A2');
+
+        expect(screen.getByRole('alert').textContent).toContain('Could not recompute "B"');
+        expect(rust.names('remove_sensor_columns').map(c => c.args.names)).toEqual([['A2']]); // only the orphan, never 'A'
+        expect(rust.has('A')).toBe(true);
+        expect(rust.has('A2')).toBe(false);
+        expect(mockEmit).not.toHaveBeenCalledWith('rename-special-sensor', expect.anything());
+    });
+
+    it('C: if removing the old column fails AFTER everything else worked, the rename still stands and the problem is reported', async () => {
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { rust } = await openChain({}, { failRemove: true });
+        await renameTo('A', 'A2');
+        expect(mockEmit).toHaveBeenCalledWith('rename-special-sensor', expect.objectContaining({ oldTag: 'A', newTag: 'A2' }));
+        expect(screen.queryByLabelText('Name')).toBeNull(); // editor closed -- not reported as a failed save
+        expect(screen.getByLabelText('Edit A2')).toBeTruthy();
+        expect(screen.getByRole('alert').textContent).toMatch(/couldn't free the old data/);
+        expect(rust.has('A2')).toBe(true);
+        errSpy.mockRestore();
+    });
+
+    it('C: refuses to edit while the "what depends on this" lookup has failed -- it could not rewrite dependents it does not know about, then drop the old column from under them', async () => {
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const rust = fakeRust({ derived: ['A', 'B'] });
+        mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
+            if (cmd === 'extract_formula_refs' && (args.formulas as string[]).length > 1) throw new Error('lookup down');
+            return rust.invoke(cmd, args);
+        });
+        await openWindow({ sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB] });
+        await goManage();
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'A2' } });
+        fillEditor();
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
+        await flush();
+        expect(screen.getByRole('alert').textContent).toMatch(/Still working out which sensors/);
+        expect(rust.names('remove_sensor_columns')).toHaveLength(0);
+        expect(rust.names('evaluate_formula')).toHaveLength(0);
+        errSpy.mockRestore();
+    });
+
+    it('C: after a rename the old name is free again, end to end (the "reused an old name after a rename" bug)', async () => {
+        const { rust } = await openChain();
+        // While A exists, the name is taken...
+        await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config-name-a'));
+        expect(screen.getByTestId('tooling-name-error')).toBeTruthy();
+        // ...rename it away...
+        await goManage();
+        await renameTo('A', 'A2');
+        // ...and "A" can be created again (the fake backend would refuse it if A's column were still there).
+        await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('set-config-name-a'));
+        fillMeta();
+        expect(screen.queryByTestId('tooling-name-error')).toBeNull();
+        await act(async () => { fireEvent.click(addBtn()); });
+        await flush();
+        expect(rust.columns.filter(c => tkey(c) === 'a')).toEqual(['A']);
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('G: an edit that points an early sensor at a LATER one reports a recipeOrder, so a reopened workspace replays them in a valid order', async () => {
+        // A = $TAG1 * 2 (first), C = $TAG1 + 1 (created later). Edit A to read C.
+        const recC = { kind: 'formula' as const, tag: 'C', formula: '$TAG1 + 1' };
+        const rust = fakeRust({ derived: ['A', 'C'] });
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({ sensors: ['TAG1', 'A', 'C'], specialSensorRecipes: [recA, recC] });
+        await goManage();
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$C * 2' } });
+        fillEditor();
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
+        await flush(10);
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({ recipeOrder: ['C', 'A'] }));
+    });
+
+    it('G: an edit that keeps the order valid sends no recipeOrder at all', async () => {
+        const rust = fakeRust({ derived: ['A', 'B'] });
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({ sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB] });
+        await goManage();
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+        fillEditor();
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
+        await flush(10);
+        const sent = last(mockEmit.mock.calls.filter(c => c[0] === 'update-special-sensor'))![1];
+        expect(sent.recipeOrder).toBeUndefined();
+    });
+});
+
+describe('AddSensorWindow: delete protection follows models that change while the window is open', () => {
+    const usingA = {
+        id: 'm1', groupNos: [1], name: 'Uses A', kind: 'individual', category: null,
+        notes: '', status: false, targetSensor: 'A', predictorSensors: [], xSensor: '', ySensor: '',
+        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
+        clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
+        filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+    };
+    const broadcast = async (payload: Record<string, unknown>) => {
+        await act(async () => {
+            for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) cb({ payload });
+        });
+    };
+
+    it('a model that starts using a special sensor AFTER the window opened blocks its deletion (a delete now drops the column for real)', async () => {
+        const rust = fakeRust({ derived: ['A'] });
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({ workspaceId: 'ws-1', sensors: ['TAG1', 'A'], specialSensorRecipes: [recA], models: [] });
+        await goManage();
+        expect((screen.getByLabelText('Delete A') as HTMLButtonElement).disabled).toBe(false);
+
+        await broadcast({ workspaceId: 'ws-1', groups: [], models: [usingA] });
+        expect((screen.getByLabelText('Delete A') as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('ignores a broadcast from another project (or one with no workspace id)', async () => {
+        mockInvoke.mockImplementation(fakeRust({ derived: ['A'] }).invoke);
+        await openWindow({ workspaceId: 'ws-1', sensors: ['TAG1', 'A'], specialSensorRecipes: [recA], models: [] });
+        await goManage();
+        await broadcast({ workspaceId: 'ws-OTHER', groups: [], models: [usingA] });
+        await broadcast({ groups: [], models: [usingA] });
+        expect((screen.getByLabelText('Delete A') as HTMLButtonElement).disabled).toBe(false);
     });
 });

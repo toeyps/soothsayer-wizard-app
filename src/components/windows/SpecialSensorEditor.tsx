@@ -6,6 +6,7 @@ import {
 } from "../../types";
 import { useCalculationEngine, CalculationEngineSeed } from "../../hooks/useCalculationEngine";
 import { ButtonBuilder, BASE_OP_IDS, ComponentSelect } from "./SensorTooling";
+import { nameProblem } from "../../utils/specialSensorNaming";
 
 /**
  * Edit one special sensor in place.
@@ -114,7 +115,9 @@ export default function SpecialSensorEditor({
             s => s.toLowerCase() !== recipe.tag.toLowerCase() && s.toLowerCase() === trimmedTag.toLowerCase(),
         )
             ? `"${trimmedTag}" is already in use by another sensor`
-            : null;
+            // `}` / reserved time-column names: the collision list is passed
+            // empty because the check above already owns "in use".
+            : tagChanged ? nameProblem(trimmedTag, []) : null;
 
     const isFormula = recipe.kind === 'formula';
 

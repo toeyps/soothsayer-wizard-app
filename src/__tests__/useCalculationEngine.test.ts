@@ -203,6 +203,30 @@ describe('useCalculationEngine', () => {
         });
     });
 
+    // The full name table (and its Rust twin) is pinned in
+    // specialSensorNaming.test.ts; these check the engine really routes every
+    // reference it writes through that one rule, for each shape of formula it builds.
+    it('sensorRef braces every name that is not purely alphanumeric/underscore -- hyphen, slash, percent, parentheses, not just space and dot', () => {
+        const { result } = renderHook(() => useCalculationEngine(['Total-Power', 'A/B', 'Eff%', '(x)', '11PT1214A']));
+        expect(result.current.build()).toEqual({
+            kind: 'formula',
+            expression: '${Total-Power} + ${A/B} + ${Eff%} + ${(x)} + $11PT1214A',
+        });
+    });
+
+    it('sensorRef applies inside the named shortcuts too (Absolute difference, Spread, Efficiency %)', () => {
+        const { result } = renderHook(() => useCalculationEngine(['Total-Power', 'A/B']));
+        act(() => result.current.setOperationId('abs_diff'));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: 'abs(${Total-Power} - ${A/B})' });
+        act(() => result.current.setOperationId('temp_spread'));
+        expect(result.current.build()).toEqual({
+            kind: 'formula',
+            expression: 'max(${Total-Power}, ${A/B}) - min(${Total-Power}, ${A/B})',
+        });
+        act(() => result.current.setOperationId('efficiency_pct'));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: '(${A/B} / ${Total-Power}) * 100' });
+    });
+
     // ── build(): wrapFunc post-processing ─────────────────────────────
 
     it('applyWrap wraps the chain result with a simple function call', () => {

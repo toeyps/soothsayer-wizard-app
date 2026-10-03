@@ -5,6 +5,8 @@ import {
     usageFor,
     dependentsToRecompute,
     cycleConflicts,
+    orderRecipesByDependency,
+    reorderRecipesByTags,
 } from '../utils/specialSensorDeps';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
@@ -237,5 +239,85 @@ describe('cycleConflicts', () => {
 
     it('names each offending input once, in the order given', () => {
         expect(cycleConflicts(chain, usage(), 'A', ['RAW.PV', 'C', 'B', 'c'])).toEqual(['C', 'B']);
+    });
+});
+
+describe('orderRecipesByDependency', () => {
+    const A = formula('A', '$RAW * 2');
+    const B = formula('B', '${A} + 1');
+    const C = formula('C', '${B} * 3');
+    const inputsOf = (r: SpecialSensorRecipe): string[] => {
+        if (r.kind === 'operation') return r.sourceSensors;
+        return ({ A: ['RAW'], B: ['A'], C: ['B'], D: ['c', 'RAW'], E: ['E'] } as Record<string, string[]>)[r.tag] ?? [];
+    };
+    const tags = (list: SpecialSensorRecipe[]) => list.map(r => r.tag);
+
+    it('leaves an already-valid order exactly as it is', () => {
+        expect(tags(orderRecipesByDependency([A, B, C], inputsOf))).toEqual(['A', 'B', 'C']);
+    });
+
+    it('moves a recipe after a later recipe it reads (the edit-A-to-read-C case that broke the workspace-reopen replay)', () => {
+        // A was edited to read C; C itself reads raw only.
+        const editedA = formula('A', '$C * 2');
+        const c = formula('C', '$RAW + 1');
+        const inputs = (r: SpecialSensorRecipe) => (r.tag === 'A' ? ['C'] : r.tag === 'C' ? ['RAW'] : []);
+        expect(tags(orderRecipesByDependency([editedA, c], inputs))).toEqual(['C', 'A']);
+    });
+
+    it('is stable: unrelated recipes keep their relative order', () => {
+        const x = formula('X', '$RAW');
+        const y = formula('Y', '$RAW');
+        const dependsOnLast = formula('D', '${C} + $RAW');
+        expect(tags(orderRecipesByDependency([dependsOnLast, x, C, y, B, A], inputsOf)))
+            // D waits for C (and C for B, B for A); X and Y never move relative to each other.
+            .toEqual(['X', 'Y', 'A', 'B', 'C', 'D']);
+    });
+
+    it('matches tags case-insensitively (D reads "c")', () => {
+        const D = formula('D', '$c');
+        expect(tags(orderRecipesByDependency([D, A, B, C], inputsOf))).toEqual(['A', 'B', 'C', 'D']);
+    });
+
+    it('treats operation recipes through their sourceSensors', () => {
+        const op = operation('OP', ['A', 'RAW']);
+        expect(tags(orderRecipesByDependency([op, A], inputsOf))).toEqual(['A', 'OP']);
+    });
+
+    it('ignores a recipe reading itself and inputs that are raw columns', () => {
+        const E = formula('E', '$E');
+        expect(tags(orderRecipesByDependency([E, A], inputsOf))).toEqual(['E', 'A']);
+    });
+
+    it('a cycle keeps the original relative order of what is left instead of dropping recipes', () => {
+        const p = formula('P', '$Q');
+        const q = formula('Q', '$P');
+        const inputs = (r: SpecialSensorRecipe) => (r.tag === 'P' ? ['Q'] : ['P']);
+        expect(tags(orderRecipesByDependency([p, q], inputs))).toEqual(['P', 'Q']);
+    });
+
+    it('does not mutate its input', () => {
+        const list = [B, A];
+        orderRecipesByDependency(list, inputsOf);
+        expect(tags(list)).toEqual(['B', 'A']);
+    });
+});
+
+describe('reorderRecipesByTags', () => {
+    const A = formula('A', '$RAW');
+    const B = formula('B', '$RAW');
+    const C = formula('C', '$RAW');
+
+    it('follows the given order', () => {
+        expect(reorderRecipesByTags([A, B, C], ['C', 'A', 'B']).map(r => r.tag)).toEqual(['C', 'A', 'B']);
+    });
+
+    it('is a no-op (same array) when no order is given', () => {
+        const list = [A, B];
+        expect(reorderRecipesByTags(list, undefined)).toBe(list);
+        expect(reorderRecipesByTags(list, [])).toBe(list);
+    });
+
+    it('keeps recipes missing from the order after the listed ones, in their own order, and ignores unknown tags', () => {
+        expect(reorderRecipesByTags([A, B, C], ['ghost', 'c']).map(r => r.tag)).toEqual(['C', 'A', 'B']);
     });
 });

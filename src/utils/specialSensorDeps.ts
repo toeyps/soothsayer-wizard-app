@@ -229,3 +229,67 @@ export function cycleConflicts(
         return true;
     });
 }
+
+/**
+ * Put recipes in an order where every recipe comes AFTER the special sensors
+ * it is built from, changing nothing that is already in a valid order.
+ *
+ * The workspace-reopen replay runs recipes in array order, so the array must
+ * always be a valid build order. Creating a sensor keeps it (the new recipe
+ * lands last and only reads sensors that already exist), but EDITING can break
+ * it: pointing an early sensor at one created later (`A` was `$raw * 2`, now
+ * `$C + 1` with `C` further down the list) is allowed -- both columns exist in
+ * the live session -- yet on the next open `A` would replay before `C` exists.
+ *
+ * Stable: repeatedly takes the first not-yet-placed recipe whose special-sensor
+ * inputs are all placed. Inputs naming raw columns are ignored. A cycle (which
+ * `cycleConflicts` refuses before it can be saved) falls back to the original
+ * relative order for whatever is left, rather than dropping recipes.
+ *
+ * `inputsOf` answers what a recipe reads -- for formulas that is Rust's
+ * `extract_formula_refs`, for operations its `sourceSensors`.
+ */
+export function orderRecipesByDependency(
+    recipes: SpecialSensorRecipe[],
+    inputsOf: (recipe: SpecialSensorRecipe) => string[],
+): SpecialSensorRecipe[] {
+    const special = new Set(recipes.map(r => key(r.tag)));
+    const placed = new Set<string>();
+    const remaining = [...recipes];
+    const ordered: SpecialSensorRecipe[] = [];
+
+    while (remaining.length > 0) {
+        const idx = remaining.findIndex(r =>
+            inputsOf(r).every(input => {
+                const k = key(input);
+                return !special.has(k) || k === key(r.tag) || placed.has(k);
+            }),
+        );
+        if (idx === -1) {
+            ordered.push(...remaining);
+            break;
+        }
+        const [next] = remaining.splice(idx, 1);
+        placed.add(key(next.tag));
+        ordered.push(next);
+    }
+    return ordered;
+}
+
+/**
+ * Re-sequence `recipes` to follow `order` (a list of tags). Tags missing from
+ * `order` keep their relative order after the listed ones; tags in `order`
+ * that match no recipe are ignored. Used by the Dashboard to apply the order
+ * the Add Sensor window worked out after an edit.
+ */
+export function reorderRecipesByTags(
+    recipes: SpecialSensorRecipe[],
+    order: string[] | undefined,
+): SpecialSensorRecipe[] {
+    if (!order || order.length === 0) return recipes;
+    const rank = new Map(order.map((tag, i) => [key(tag), i]));
+    const listed = recipes.filter(r => rank.has(key(r.tag)));
+    const unlisted = recipes.filter(r => !rank.has(key(r.tag)));
+    listed.sort((a, b) => rank.get(key(a.tag))! - rank.get(key(b.tag))!);
+    return [...listed, ...unlisted];
+}

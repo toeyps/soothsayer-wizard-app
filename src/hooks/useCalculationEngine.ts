@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import type { SensorOperationConfig, SingleOperationType, MultiOperationType } from '../types';
 import { findOperation } from '../config/operations';
+import { sensorRef } from '../utils/specialSensorNaming';
 
 /** Legacy multi-sensor ops the Rust `calculate_new_sensor` command handles natively. */
 const LEGACY_MULTI_IDS = new Set(['sum', 'mean', 'median']);
@@ -59,10 +60,11 @@ export interface UseCalculationEngineReturn {
   build: () => CalcBuildResult;
 }
 
-function sensorRef(tag: string): string {
-  const needsBraces = tag.includes(' ') || tag.includes('.');
-  return needsBraces ? `\${${tag}}` : `$${tag}`;
-}
+// How a sensor is spelled inside a formula -- bare `$Name` only when every
+// character is alphanumeric/underscore, `${Name}` otherwise. Mirrors Rust's
+// `sensor_ref_token`; lives in a util so useFormulaEditor and the tests share
+// the one implementation. Re-exported for callers that already import from here.
+export { sensorRef };
 
 /**
  * Wrap an already-built expression with a "Then apply to the result"

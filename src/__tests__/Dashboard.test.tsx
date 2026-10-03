@@ -1775,7 +1775,7 @@ describe('Dashboard', () => {
             }));
         });
 
-        it('applies "add-sensor-selection" payload — new selection, operation config, and merged metadata', async () => {
+        it('applies "add-sensor-selection" payload — the delta added to the plot, operation config, and merged metadata', async () => {
             renderDashboard();
             // `add-sensor-selection` is registered only after the first
             // `await listen(...)` (for `request-sensors`) resolves, so a
@@ -1798,6 +1798,173 @@ describe('Dashboard', () => {
                 expect.arrayContaining([expect.objectContaining({ tag: 'CALC1', description: 'Calculated' })]),
             );
             expect(lastProps.sensors).toContain('CALC1'); // merged into sensorHeaders too
+        });
+
+        // ---- add-sensor-selection is a DELTA, merged into the CURRENT plot --
+        //
+        // 2026-10-03: it used to replace the whole selection with the Add
+        // Sensor window's own copy -- which plotted the sensors a new one was
+        // built FROM and threw away anything changed in the Dashboard after
+        // the window opened.
+        describe('"add-sensor-selection" merges into the current plot instead of replacing it', () => {
+            async function fire(payload: Record<string, unknown>) {
+                await act(async () => {
+                    for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
+                        cb({ payload: { workspaceId: 'ws1', operation: null, ...payload } });
+                    }
+                });
+            }
+            const newMeta = (tag: string) => [{ tag, description: tag, unit: '', component: '' }];
+
+            it('plots ONLY the new sensor: the sources it was built from are never added', async () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG3'], visibleSensors: ['TAG3'] }) });
+                await act(async () => { await Promise.resolve(); });
+                // The window sends just the new tag; TAG1/TAG2 (its sources)
+                // must stay off the plot.
+                await fire({ sensors: ['CALC1'], newMetadata: newMeta('CALC1') });
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG3', 'CALC1']);
+            });
+
+            it('keeps a selection change made in the Dashboard after the window opened (the window only ever receives the plotted list once)', async () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                await act(async () => { await Promise.resolve(); });
+                // The window was opened while only TAG1 was plotted; the user
+                // then adds TAG2 to the plot in the Dashboard.
+                fireEvent.click(screen.getByText('select-tag1-tag2'));
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2']);
+
+                await fire({ sensors: ['CALC1'], newMetadata: newMeta('CALC1') });
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2', 'CALC1']);
+            });
+
+            it('dedupes case-insensitively and never double-adds a tag that is already plotted', async () => {
+                renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+                await act(async () => { await Promise.resolve(); });
+                await fire({ sensors: ['tag1', 'TAG2', 'tag2'], newMetadata: [] });
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2']);
+            });
+
+            it('two events in a row both land (the second merges into the first\'s result)', async () => {
+                renderDashboard();
+                await act(async () => { await Promise.resolve(); });
+                await fire({ sensors: ['CALC1'], newMetadata: newMeta('CALC1') });
+                await fire({ sensors: ['CALC2'], newMetadata: newMeta('CALC2') });
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['CALC1', 'CALC2']);
+            });
+
+            it('Pair Plot cap: a sensor that does not fit is NOT plotted, is still listed, and the user is told (not silently dropped)', async () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], chartType: 'pair',
+                    }),
+                });
+                await act(async () => { await Promise.resolve(); });
+                mockMessage.mockClear();
+
+                await fire({ sensors: ['CALC1'], newMetadata: newMeta('CALC1') });
+
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2', 'TAG3', 'TAG4']);
+                expect(last(sensorSelectionProps).sensors).toContain('CALC1'); // created, just not plotted
+                await waitFor(() => expect(mockMessage).toHaveBeenCalledTimes(1));
+                expect(mockMessage.mock.calls[0][0]).toContain('CALC1');
+                expect(mockMessage.mock.calls[0][0]).toContain('at most 4 sensors');
+                expect(mockMessage.mock.calls[0][1]).toMatchObject({ kind: 'warning' });
+            });
+
+            it('Pair Plot cap: fills the remaining slots and reports only the overflow', async () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        selectedSensors: ['TAG1', 'TAG2', 'TAG3'], visibleSensors: ['TAG1', 'TAG2', 'TAG3'], chartType: 'pair',
+                    }),
+                });
+                await act(async () => { await Promise.resolve(); });
+                mockMessage.mockClear();
+
+                await fire({ sensors: ['CALC1', 'CALC2'], newMetadata: [...newMeta('CALC1'), ...newMeta('CALC2')] });
+
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2', 'TAG3', 'CALC1']);
+                await waitFor(() => expect(mockMessage).toHaveBeenCalledTimes(1));
+                expect(mockMessage.mock.calls[0][0]).toContain('CALC2');
+                expect(mockMessage.mock.calls[0][0]).not.toContain('CALC1,');
+            });
+
+            it('no cap applies on the line chart (only Pair Plot is limited)', async () => {
+                renderDashboard({
+                    initialState: makeInitialState({
+                        selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'],
+                    }),
+                });
+                await act(async () => { await Promise.resolve(); });
+                mockMessage.mockClear();
+                await fire({ sensors: ['CALC1'], newMetadata: newMeta('CALC1') });
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2', 'TAG3', 'TAG4', 'CALC1']);
+                expect(mockMessage).not.toHaveBeenCalled();
+            });
+
+            it('bumps the data revision when a sensor is created, so a name reused after a delete refetches instead of showing the old values', async () => {
+                renderDashboard();
+                await act(async () => { await Promise.resolve(); });
+                const before = last(mockUseChartData.mock.calls)[0]?.revision ?? 0;
+                await fire({
+                    sensors: ['CALC1'], newMetadata: newMeta('CALC1'),
+                    newRecipes: [{ kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 2' }],
+                });
+                expect(last(mockUseChartData.mock.calls)[0]?.revision).toBe(before + 1);
+            });
+
+            it('adding raw sensors "as-is" (no recipe) plots them and does not bump the revision', async () => {
+                renderDashboard();
+                await act(async () => { await Promise.resolve(); });
+                const before = last(mockUseChartData.mock.calls)[0]?.revision ?? 0;
+                await fire({ sensors: ['TAG1', 'TAG2'], newMetadata: [], newRecipes: [] });
+                expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2']);
+                expect(last(mockUseChartData.mock.calls)[0]?.revision ?? 0).toBe(before);
+            });
+        });
+
+        it('"update-special-sensor" / "rename-special-sensor" apply a recipeOrder so the stored recipe list stays a valid build order (an edit can point an early sensor at a later one)', async () => {
+            const a = { kind: 'formula' as const, tag: 'A', formula: '$TAG1 * 2' };
+            const c = { kind: 'formula' as const, tag: 'C', formula: '$TAG2 + 1' };
+            renderDashboard({
+                initialState: makeInitialState({
+                    specialSensorRecipes: [a, c],
+                    extraSensorMetadata: [
+                        { tag: 'A', description: '', unit: '', component: '' },
+                        { tag: 'C', description: '', unit: '', component: '' },
+                    ],
+                }),
+            });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+            // A was edited to read C, which is created after it.
+            const editedA = { kind: 'formula' as const, tag: 'A', formula: '$C * 2' };
+            await act(async () => {
+                for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                    cb({ payload: { workspaceId: 'ws1', recipe: editedA, recomputed: ['A'], recipeOrder: ['C', 'A'] } });
+                }
+            });
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['C', 'A']);
+                expect(saved.specialSensorRecipes[1]).toEqual(editedA);
+            });
+
+            // A rename carries the same order information.
+            await act(async () => {
+                for (const cb of listenCallbacks['rename-special-sensor'] ?? []) {
+                    cb({ payload: {
+                        workspaceId: 'ws1', oldTag: 'C', newTag: 'C2',
+                        recipe: { ...c, tag: 'C2' },
+                        metadata: { tag: 'C2', description: '', unit: '', component: '' },
+                        updatedRecipes: [{ kind: 'formula', tag: 'A', formula: '$C2 * 2' }],
+                        recipeOrder: ['C2', 'A'],
+                    } });
+                }
+            });
+            await waitFor(() => {
+                const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+                expect(saved.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['C2', 'A']);
+            });
         });
 
         it('seeds sensorHeaders with a special sensor\'s tag from initialState.extraSensorMetadata on mount, not just on the live "add-sensor-selection" event (2026-09-01 fix — a special sensor has no row in the CSV at all, so it was completely absent from the Sensor tab\'s list on every reopen, reported by the user: "ปิดโปรแกรมเปิดใหม่แล้ว special sensor หาย")', () => {

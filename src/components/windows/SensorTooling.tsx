@@ -3,7 +3,7 @@ import { SensorOperationConfig, SensorMetadata } from "../../types";
 import { useCalculationEngine, FORMULA_MULTI_IDS } from "../../hooks/useCalculationEngine";
 import type { UseCalculationEngineReturn } from "../../hooks/useCalculationEngine";
 import { useFormulaEditor } from "../../hooks/useFormulaEditor";
-import { findOperation } from "../../config/operations";
+import { findOperation, OPERATION_HINTS } from "../../config/operations";
 import {
   Star,
   ChevronDown,
@@ -27,6 +27,10 @@ interface SensorToolingProps {
   onDescriptionChange?: (description: string) => void;
   onUnitChange?: (unit: string) => void;
   onComponentChange?: (component: string) => void;
+  // Why the name typed in "Name this sensor" can't be used (already taken,
+  // contains "}", ...). Decided by AddSensorWindow, which knows every existing
+  // tag; shown inline under the field in place of the usual helper line.
+  nameError?: string | null;
 }
 
 const NUMBER_OP_IDS = ["add", "subtract", "multiply", "divide", "power"];
@@ -57,6 +61,7 @@ export default function SensorTooling({
   onDescriptionChange,
   onUnitChange,
   onComponentChange,
+  nameError,
 }: SensorToolingProps) {
   const engine = useCalculationEngine(selectedSensors);
   // Autocomplete suggests ONLY the checked sensors so users can't reference
@@ -262,11 +267,19 @@ export default function SensorTooling({
                 value={engine.customName}
                 onChange={(e) => engine.setCustomName(e.target.value)}
                 placeholder="e.g. Total Power"
+                aria-invalid={nameError ? true : undefined}
                 className="w-full bg-[var(--card-bg)] border border-[var(--border)] text-[var(--text-primary)] rounded p-2 text-sm focus:outline-none focus:border-[var(--accent-color)]"
+                style={nameError ? { borderColor: "var(--danger)" } : undefined}
               />
-              <p className="text-[10px] text-[var(--text-secondary)] mt-1">
-                Becomes this sensor's tag. Also used as its description below unless you set one.
-              </p>
+              {nameError ? (
+                <p role="alert" className="text-[11px] mt-1" style={{ color: "var(--danger)" }}>
+                  {nameError}
+                </p>
+              ) : (
+                <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                  Becomes this sensor's tag. Also used as its description below unless you set one.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-bold uppercase text-[var(--text-secondary)] mb-1">
@@ -578,6 +591,7 @@ function OpGroup({ title, ids, engine }: { title: string; ids: string[]; engine:
               key={id}
               onClick={() => engine.setOperationId(active ? null : id)}
               className={`special-sensor-op-card${active ? ' is-on' : ''}`}
+              title={OPERATION_HINTS[id]}
             >
               {op.symbol && <span className="special-sensor-op-sym">{op.symbol}</span>}
               <b>{op.label}</b>
@@ -585,6 +599,11 @@ function OpGroup({ title, ids, engine }: { title: string; ids: string[]; engine:
           );
         })}
       </div>
+      {engine.operationId && ids.includes(engine.operationId) && OPERATION_HINTS[engine.operationId] && (
+        <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+          {OPERATION_HINTS[engine.operationId]}
+        </p>
+      )}
     </div>
   );
 }

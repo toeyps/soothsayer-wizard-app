@@ -325,6 +325,30 @@ describe('SpecialSensorEditor', () => {
             expect(screen.getByText(/already in use by another sensor/)).toBeTruthy();
         });
 
+        it('blocks a name containing "}" -- a formula has no way to refer to it', () => {
+            const { props } = renderEditor();
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'bad}name' } });
+            expect(screen.getByRole('alert').textContent).toMatch(/can't contain "}"/);
+            expect(save().disabled).toBe(true);
+            fireEvent.click(save());
+            expect(props.onSave).not.toHaveBeenCalled();
+        });
+
+        it('blocks renaming to the name the time column goes by', () => {
+            renderEditor();
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Timestamp' } });
+            expect(screen.getByRole('alert').textContent).toMatch(/reserved/);
+            expect(save().disabled).toBe(true);
+        });
+
+        it('a case-only rename is allowed (the backend overwrites that same column in place)', () => {
+            const { props } = renderEditor({ availableSensors: ['TAG1', 'special A'] });
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'SPECIAL A' } });
+            expect(save().disabled).toBe(false);
+            fireEvent.click(save());
+            expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({ renamedFrom: 'special A' }));
+        });
+
         it('does not treat the sensor’s own unchanged name as a collision, even when it is in availableSensors', () => {
             renderEditor({ availableSensors: ['TAG1', 'special A'] });
             // Name field starts equal to `recipe.tag` and is never touched.

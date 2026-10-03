@@ -852,6 +852,80 @@ describe('F. Load workspace flow', () => {
       expect(errors[0].source).toBe('special-sensor-restore');
       expect(errors[0].message).toContain('BROKEN1');
     });
+
+    // 2026-10-03: a recipe that can't be rebuilt used to leave a ghost -- still
+    // plotted, no data -- and everything built on it failed one by one (or,
+    // worse, read some other column of the same name).
+    it('F35. a recipe built ON a failed one is skipped (never sent to the backend), reported in the same single toast, and every no-data sensor is dropped from the plotted selection while its recipe is kept', async () => {
+      mockLoadWorkspace.mockResolvedValue({
+        ...baseLoadedWs,
+        selectedSensors: ['sensor_a', 'BROKEN1', 'DEP1', 'CALC1'],
+        visibleSensors: ['sensor_a', 'BROKEN1', 'DEP1', 'CALC1'],
+        specialSensorRecipes: [
+          { kind: 'formula', tag: 'BROKEN1', formula: '$deleted_sensor + 1' },
+          { kind: 'formula', tag: 'DEP1', formula: '${BROKEN1} * 2' },
+          { kind: 'formula', tag: 'CALC1', formula: '$sensor_a * 2' },
+        ],
+      });
+      const refs: Record<string, string[]> = {
+        '$deleted_sensor + 1': ['deleted_sensor'], '${BROKEN1} * 2': ['BROKEN1'], '$sensor_a * 2': ['sensor_a'],
+      };
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'extract_formula_refs') return Promise.resolve((args.formulas as string[]).map(f => refs[f] ?? []));
+        if (cmd === 'evaluate_formula') {
+          if (args?.customName === 'BROKEN1') return Promise.reject(new Error('Sensor not found: deleted_sensor'));
+          return Promise.resolve(args.customName);
+        }
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+
+      const built = mockInvoke.mock.calls.filter(c => c[0] === 'evaluate_formula').map(c => c[1].customName);
+      expect(built).toEqual(['BROKEN1', 'CALC1']); // DEP1 was never attempted
+
+      const errors = getErrors();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toContain("couldn't be restored: BROKEN1");
+      expect(errors[0].message).toMatch(/Skipped.*DEP1/);
+
+      const stateArg = onDataReady.mock.calls[0][1];
+      expect(stateArg.selectedSensors).toEqual(['sensor_a', 'CALC1']);
+      expect(stateArg.visibleSensors).toEqual(['sensor_a', 'CALC1']);
+      // Recipes stay, so the sensor can still be fixed in Manage.
+      expect(stateArg.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['BROKEN1', 'DEP1', 'CALC1']);
+    });
+
+    it('F36. recipes are replayed in dependency order, not just array order (an old edit could leave a sensor stored before the one it reads)', async () => {
+      mockLoadWorkspace.mockResolvedValue({
+        ...baseLoadedWs,
+        specialSensorRecipes: [
+          { kind: 'formula', tag: 'A', formula: '$C * 2' },
+          { kind: 'formula', tag: 'C', formula: '$sensor_a + 1' },
+        ],
+      });
+      const refs: Record<string, string[]> = { '$C * 2': ['C'], '$sensor_a + 1': ['sensor_a'] };
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'extract_formula_refs') return Promise.resolve((args.formulas as string[]).map(f => refs[f] ?? []));
+        if (cmd === 'evaluate_formula') return Promise.resolve(args.customName);
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+
+      expect(mockInvoke.mock.calls.filter(c => c[0] === 'evaluate_formula').map(c => c[1].customName)).toEqual(['C', 'A']);
+      expect(getErrors()).toHaveLength(0);
+      // Nothing failed -> the loaded state is handed over untouched.
+      expect(onDataReady.mock.calls[0][1].selectedSensors).toEqual(baseLoadedWs.selectedSensors);
+    });
   });
 });
 

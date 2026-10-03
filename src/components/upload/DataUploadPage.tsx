@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
-import { recomputeCall } from "../../utils/specialSensorRecompute";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { subscribe } from "../../utils/tauriEvents";
 import { useDataUpload } from "../../hooks/useDataUpload";
@@ -33,6 +32,7 @@ import {
 } from "../../workspaceManager";
 import { formatDateTime } from "../../utils/dateFormat";
 import { reportError } from "../../errorReporter";
+import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
 
 interface DataUploadPageProps {
   onDataReady: (
@@ -44,47 +44,45 @@ interface DataUploadPageProps {
 
 /**
  * Rebuilds every "Add Special Sensor" column in the Rust backend's
- * in-memory session, in creation order, right after `load_csv` on a
- * workspace reopen -- see `WorkspaceState.specialSensorRecipes`'s own doc
- * comment for why this is necessary at all: `calculate_new_sensor`/
- * `evaluate_formula` push the computed column straight onto that session's
- * memory, which is wiped on every app restart and re-created fresh from
- * the ORIGINAL CSV (no calculated columns) -- without this replay, a
- * special sensor's name/description would still show up (from
- * `extraSensorMetadata`) but plot no data at all, silently.
+ * in-memory session right after `load_csv` on a workspace reopen -- see
+ * `WorkspaceState.specialSensorRecipes`'s own doc comment for why this is
+ * necessary at all: `calculate_new_sensor`/`evaluate_formula` push the
+ * computed column straight onto that session's memory, which is wiped on
+ * every app restart and re-created fresh from the ORIGINAL CSV (no calculated
+ * columns) -- without this replay, a special sensor's name/description would
+ * still show up (from `extraSensorMetadata`) but plot no data at all,
+ * silently.
  *
- * `customName` is always forced to the recipe's own `tag` (see
- * `recomputeCall`), so the recreated column's header matches
- * `extraSensorMetadata`/`selectedSensors` exactly regardless of Rust's own
- * auto-naming.
- *
- * A recipe that fails to replay (most likely: a source sensor was renamed
- * or removed from the mapping since) is skipped, not fatal for the whole
- * workspace open -- the rest still get their data back. Failures are
- * surfaced together as one toast via the global error reporter.
+ * The replay itself (dependency order, `customName` forced to the recipe's own
+ * tag, skipping everything built on a recipe that failed) lives in
+ * `utils/specialSensorReplay.ts`. This wrapper adds the user-facing part:
+ * recipes that fail are skipped, not fatal for the whole workspace open, and
+ * all failures are surfaced together as ONE toast via the global error
+ * reporter. Returns the tags that have no data this session (failed +
+ * skipped) so the caller can keep them off the plot.
  */
-async function replaySpecialSensorRecipes(recipes: SpecialSensorRecipe[]): Promise<void> {
-  const failed: string[] = [];
-  for (const recipe of recipes) {
-    try {
-      // Same call the "Manage" tab's edit-and-recompute path builds, from
-      // one place, so the two can't drift apart. `replace: true` makes no
-      // difference on a fresh load (nothing to replace yet) but keeps a
-      // second replay in the same session idempotent.
-      const { cmd, args } = recomputeCall(recipe);
-      await invoke(cmd, args);
-    } catch (err) {
-      console.warn(`Failed to restore special sensor "${recipe.tag}":`, err);
-      failed.push(recipe.tag);
-    }
-  }
-  if (failed.length > 0) {
+async function restoreSpecialSensors(recipes: SpecialSensorRecipe[]): Promise<string[]> {
+  const { failed, skipped } = await replaySpecialSensorRecipes(
+    recipes,
+    (cmd, args) => invoke(cmd, args),
+  );
+  if (failed.length + skipped.length > 0) {
+    const parts = [
+      failed.length > 0
+        ? `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed.join(', ')}.`
+        : null,
+      skipped.length > 0
+        ? `Skipped because they are built on a sensor that couldn't be restored: ${skipped.join(', ')}.`
+        : null,
+    ].filter(Boolean);
     reportError(
       'special-sensor-restore',
-      `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed.join(', ')}`,
-      'Their source sensor(s) may have been renamed or removed since they were created.'
+      parts.join(' '),
+      'Their source sensor(s) may have been renamed or removed since they were created. ' +
+        'They have no data until fixed in Special Sensors > Manage, and are left off the chart.'
     );
   }
+  return [...failed, ...skipped];
 }
 
 /* ---------------------------------------------------------------- */
@@ -321,8 +319,22 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       // very first chart render already has real data for every special
       // sensor instead of a "ghost" entry that only gets fixed on the next
       // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
+      let stateForDashboard = state;
       if (state.specialSensorRecipes?.length) {
-        await replaySpecialSensorRecipes(state.specialSensorRecipes);
+        const noData = await restoreSpecialSensors(state.specialSensorRecipes);
+        if (noData.length > 0) {
+          // A sensor with no column behind it must not stay plotted: its chart
+          // series would be empty (or the scatter/pair cell blank). Its recipe
+          // and metadata are kept so it can still be fixed in Manage.
+          const gone = new Set(noData.map(t => t.trim().toLowerCase()));
+          const keep = (tags: string[] | undefined) =>
+            tags?.filter(t => !gone.has(t.trim().toLowerCase()));
+          stateForDashboard = {
+            ...state,
+            selectedSensors: keep(state.selectedSensors) ?? [],
+            visibleSensors: keep(state.visibleSensors) ?? [],
+          };
+        }
       }
 
       let sm: SensorMetadata[] | null = null;
@@ -361,7 +373,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       // Dashboard.tsx. (The Predictive Model page no longer has its own
       // route at all — it's reached only via Build Model's "Build Model →"
       // button and never auto-resumes on workspace open.)
-      onDataReady(dataMetadata, state, sm);
+      onDataReady(dataMetadata, stateForDashboard, sm);
     } catch (err) {
       setWorkspaceError(String(err));
       setLoadingWorkspace(false);

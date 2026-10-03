@@ -105,6 +105,28 @@ describe('useFormulaEditor', () => {
         expect(result.current.formula).toBe('${Sensor.C} + $SensorB');
     });
 
+    it('insertSensor uses the same brace rule as the button builder and Rust: -, /, %, parentheses are braced too, Thai text is not', () => {
+        const { result } = renderHook(() => useFormulaEditor(sensors));
+        for (const [name, expected] of [
+            ['Total-Power', '${Total-Power}'],
+            ['A/B', '${A/B}'],
+            ['Eff%', '${Eff%}'],
+            ['(x)', '${(x)}'],
+            ['ไทย', '$ไทย'],
+        ] as const) {
+            act(() => result.current.setFormula('$', 1));
+            act(() => result.current.insertSensor(name));
+            expect(result.current.formula).toBe(expected);
+        }
+    });
+
+    it('typing $ followed by non-ASCII letters keeps autocomplete open with that text as the filter', () => {
+        const { result } = renderHook(() => useFormulaEditor(['ไทย1', 'Sensor']));
+        act(() => result.current.setFormula('$ไท', 3));
+        expect(result.current.showAutocomplete).toBe(true);
+        expect(result.current.suggestions).toEqual(['ไทย1']);
+    });
+
     it('insertSensor closes autocomplete and schedules a 300ms validation', async () => {
         mockInvoke.mockResolvedValue({ valid: true, error: null, referenced_sensors: [] });
         const { result } = renderHook(() => useFormulaEditor(sensors));
