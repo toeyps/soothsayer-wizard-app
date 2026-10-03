@@ -242,6 +242,13 @@ pub struct CsvLoadReport {
     pub total_rows: usize,
     pub columns: Vec<ColumnInfo>,
     pub warnings: Vec<String>,
+    /// Session generation created by the `load_csv` call that returned this
+    /// report (JSON field `generation`). `build_load_report` leaves it 0;
+    /// `load_csv` stamps the real value once the dataset is installed. A caller
+    /// bound to this dataset passes it back as `expectedGeneration` on the
+    /// special-sensor commands so a stale window can't mutate a newer dataset.
+    #[serde(default)]
+    pub generation: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -854,6 +861,7 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
         total_rows,
         columns,
         warnings,
+        generation: 0,
     }
 }
 

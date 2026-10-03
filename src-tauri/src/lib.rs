@@ -443,17 +443,51 @@ fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport,
         validate_read_path(p).map_err(|e| format!("invalid path '{}': {}", p, e))?;
     }
     let merge_result = csv_processor::read_merge_csvs_with_report(paths.clone())?;
-    let report = csv_processor::build_load_report(&merge_result);
+    let mut report = csv_processor::build_load_report(&merge_result);
+    report.generation = install_session(&state, merge_result.data, paths)?;
+    Ok(report)
+}
 
+/// Replace the session with a freshly loaded dataset and return its (new,
+/// strictly greater than any earlier) generation. The generation is allocated
+/// while the write lock is held, so it is exactly the one stored in the session.
+fn install_session(state: &AppState, data: ColumnarData, paths: Vec<String>) -> Result<u64, String> {
     let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
+    let generation = SESSION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     *state_lock = Some(SessionData {
-        data: merge_result.data,
+        data,
         paths,
         derived: std::collections::HashSet::new(),
-        generation: SESSION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
+        generation,
     });
+    Ok(generation)
+}
 
-    Ok(report)
+/// Generation of the currently loaded dataset, `None` when nothing is loaded.
+fn session_generation(state: &AppState) -> Result<Option<u64>, String> {
+    let lock = state.0.read().map_err(|e| e.to_string())?;
+    Ok(lock.as_ref().map(|s| s.generation))
+}
+
+/// Read-only diagnostic: the generation of the loaded dataset (the same value
+/// `load_csv` returned as `generation`), or `null` when nothing is loaded.
+#[tauri::command]
+fn get_session_generation(state: State<AppState>) -> Result<Option<u64>, String> {
+    session_generation(&state)
+}
+
+/// Stable prefix of the error returned when a caller bound to an older dataset
+/// (`expectedGeneration` != the session's generation) tries to mutate the
+/// session. The frontend matches on the `STALE_SESSION` prefix.
+pub const STALE_SESSION_ERROR: &str =
+    "STALE_SESSION: the dataset changed since this window was opened";
+
+/// `Ok` when the caller did not pin a generation, or pinned the current one.
+fn check_expected_generation(expected: Option<u64>, actual: u64) -> Result<(), String> {
+    match expected {
+        Some(g) if g != actual => Err(STALE_SESSION_ERROR.to_string()),
+        _ => Ok(()),
+    }
 }
 
 #[tauri::command]
@@ -2551,33 +2585,57 @@ fn remove_derived_columns(
 /// Store a computed column under a SHORT write lock. The computation itself
 /// ran under a read lock (it can take seconds on a big file — holding the
 /// write lock for that long froze every chart query), so first confirm the
-/// dataset is still the one the result was computed from.
+/// dataset is still the one the result was computed from (`generation`), and
+/// — when the caller pinned one — that the CALLER is still bound to this
+/// dataset (`expected`). Both checks run under this same write lock, so
+/// neither can be invalidated between the check and the mutation.
 fn commit_derived(
     state: &AppState,
     generation: u64,
+    expected: Option<u64>,
     name: &str,
     col: Vec<f64>,
     replace: bool,
 ) -> Result<String, String> {
     let mut lock = state.0.write().map_err(|e| e.to_string())?;
-    let session = lock.as_mut().ok_or("No data loaded")?;
+    let session = lock.as_mut().ok_or_else(|| missing_session_error(expected))?;
+    check_expected_generation(expected, session.generation)?;
     if session.generation != generation {
         return Err("The dataset changed while the sensor was being computed; please try again".to_string());
     }
     store_derived_column(&mut session.data, &mut session.derived, name, col, replace)
 }
 
-fn remove_derived_in_state(state: &AppState, names: &[String]) -> Result<usize, String> {
+/// Error for "no dataset loaded": a caller that pinned a generation is by
+/// definition stale (the dataset it was bound to is gone).
+fn missing_session_error(expected: Option<u64>) -> String {
+    if expected.is_some() {
+        STALE_SESSION_ERROR.to_string()
+    } else {
+        "No data loaded".to_string()
+    }
+}
+
+fn remove_derived_in_state(
+    state: &AppState,
+    names: &[String],
+    expected: Option<u64>,
+) -> Result<usize, String> {
     let mut lock = state.0.write().map_err(|e| e.to_string())?;
     match lock.as_mut() {
         // Nothing loaded -> nothing to remove (a delete firing after the
-        // session was reset must not surface as an error).
+        // session was reset must not surface as an error) — unless the caller
+        // pinned a generation, in which case it is stale.
+        None if expected.is_some() => Err(STALE_SESSION_ERROR.to_string()),
         None => Ok(0),
-        Some(session) => Ok(remove_derived_columns(
-            &mut session.data,
-            &mut session.derived,
-            names,
-        )),
+        Some(session) => {
+            check_expected_generation(expected, session.generation)?;
+            Ok(remove_derived_columns(
+                &mut session.data,
+                &mut session.derived,
+                names,
+            ))
+        }
     }
 }
 
@@ -2591,9 +2649,19 @@ fn remove_derived_in_state(state: &AppState, names: &[String]) -> Result<usize, 
 /// unknown, a raw CSV column, or the timestamp column is skipped (not an
 /// error). Returns the number of columns actually removed (0 if no dataset is
 /// loaded).
+///
+/// `expected_generation` (JS key `expectedGeneration` — this command keeps
+/// Tauri's default camelCase keys like the other special-sensor commands, whose
+/// existing callers send `customName`): when `Some(g)` and `g` is not the
+/// current session generation, nothing is removed and `STALE_SESSION_ERROR` is
+/// returned.
 #[tauri::command]
-fn remove_sensor_columns(names: Vec<String>, state: State<AppState>) -> Result<usize, String> {
-    remove_derived_in_state(&state, &names)
+fn remove_sensor_columns(
+    names: Vec<String>,
+    expected_generation: Option<u64>,
+    state: State<AppState>,
+) -> Result<usize, String> {
+    remove_derived_in_state(&state, &names, expected_generation)
 }
 
 /// Pure core of `calculate_new_sensor`: validates and computes the column
@@ -2705,23 +2773,49 @@ fn compute_operation_sensor(
     Ok((name, new_col))
 }
 
+/// Session-level `calculate_new_sensor`. `between` runs after the (lock-free)
+/// compute and before the commit — a no-op in production, a seam for tests to
+/// simulate a dataset swap in that window.
+fn calculate_sensor_in_state(
+    state: &AppState,
+    sensors: &[String],
+    config: &SensorOperationConfig,
+    replace: bool,
+    expected: Option<u64>,
+    between: &dyn Fn(),
+) -> Result<String, String> {
+    // Compute under a READ lock (other queries keep running), store under a
+    // short write lock.
+    let (generation, name, col) = {
+        let lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = lock.as_ref().ok_or_else(|| missing_session_error(expected))?;
+        check_expected_generation(expected, session.generation)?;
+        let (name, col) = compute_operation_sensor(&session.data, sensors, config, replace)?;
+        (session.generation, name, col)
+    };
+    between();
+    commit_derived(state, generation, expected, &name, col, replace)
+}
+
+/// `expected_generation` (JS key `expectedGeneration`): the generation returned
+/// by the `load_csv` that produced the dataset the caller is bound to. A
+/// mismatch returns `STALE_SESSION_ERROR` and mutates nothing.
 #[tauri::command]
 fn calculate_new_sensor(
     sensors: Vec<String>,
     config: SensorOperationConfig,
     replace: Option<bool>,
+    expected_generation: Option<u64>,
     state: State<AppState>,
 ) -> Result<String, String> {
-    let replace = replace.unwrap_or(false);
-    // Compute under a READ lock (other queries keep running), store under a
-    // short write lock.
-    let (generation, name, col) = {
-        let lock = state.0.read().map_err(|e| e.to_string())?;
-        let session = lock.as_ref().ok_or("No data loaded")?;
-        let (name, col) = compute_operation_sensor(&session.data, &sensors, &config, replace)?;
-        (session.generation, name, col)
-    };
-    commit_derived(&state, generation, &name, col, replace)
+    calculate_sensor_in_state(
+        &state,
+        &sensors,
+        &config,
+        replace.unwrap_or(false),
+        expected_generation,
+        &|| {},
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -3183,26 +3277,254 @@ mod special_sensor_tests {
     #[test]
     fn commit_derived_refuses_a_result_computed_from_a_replaced_dataset() {
         let state = app_state(5);
-        let err = commit_derived(&state, 4, "X", vec![1.0; 3], false).unwrap_err();
+        let err = commit_derived(&state, 4, None, "X", vec![1.0; 3], false).unwrap_err();
         assert!(err.contains("changed"), "{err}");
         assert_eq!(state.0.read().unwrap().as_ref().unwrap().data.headers.len(), 3);
-        assert_eq!(commit_derived(&state, 5, "X", vec![1.0; 3], false).unwrap(), "X");
+        assert_eq!(commit_derived(&state, 5, None, "X", vec![1.0; 3], false).unwrap(), "X");
     }
 
     #[test]
     fn commit_and_remove_through_the_session() {
         let state = app_state(1);
-        commit_derived(&state, 1, "X", vec![1.0; 3], false).unwrap();
-        assert!(commit_derived(&state, 1, "x", vec![2.0; 3], false).is_err());
-        assert_eq!(remove_derived_in_state(&state, &strs(&["X", "A"])).unwrap(), 1);
+        commit_derived(&state, 1, None, "X", vec![1.0; 3], false).unwrap();
+        assert!(commit_derived(&state, 1, None, "x", vec![2.0; 3], false).is_err());
+        assert_eq!(remove_derived_in_state(&state, &strs(&["X", "A"]), None).unwrap(), 1);
         assert_eq!(state.0.read().unwrap().as_ref().unwrap().data.headers, vec!["timestamp", "A", "B"]);
     }
 
     #[test]
     fn with_no_dataset_remove_is_a_noop_and_commit_errors() {
         let state = AppState(RwLock::new(None));
-        assert_eq!(remove_derived_in_state(&state, &strs(&["X"])).unwrap(), 0);
-        assert!(commit_derived(&state, 1, "X", vec![], false).is_err());
+        assert_eq!(remove_derived_in_state(&state, &strs(&["X"]), None).unwrap(), 0);
+        assert!(commit_derived(&state, 1, None, "X", vec![], false).is_err());
+    }
+
+    // ── expected_generation (stale-caller guard) ─────────────────────
+
+    fn headers_of(state: &AppState) -> Vec<String> {
+        state.0.read().unwrap().as_ref().unwrap().data.headers.clone()
+    }
+
+    fn derived_of(state: &AppState) -> HashSet<String> {
+        state.0.read().unwrap().as_ref().unwrap().derived.clone()
+    }
+
+    fn bump_generation(state: &AppState) {
+        state.0.write().unwrap().as_mut().unwrap().generation += 1;
+    }
+
+    fn calc(state: &AppState, name: &str, replace: bool, expected: Option<u64>) -> Result<String, String> {
+        calculate_sensor_in_state(
+            state,
+            &strs(&["A"]),
+            &single("multiply", 2.0, Some(name)),
+            replace,
+            expected,
+            &|| {},
+        )
+    }
+
+    fn formula(state: &AppState, name: &str, replace: bool, expected: Option<u64>) -> Result<String, String> {
+        evaluate_formula_in_state(state, "$A + 1", Some(name), replace, expected, &|| {})
+    }
+
+    #[test]
+    fn stale_error_prefix_is_stable() {
+        assert!(STALE_SESSION_ERROR.starts_with("STALE_SESSION"));
+        assert_eq!(
+            STALE_SESSION_ERROR,
+            "STALE_SESSION: the dataset changed since this window was opened"
+        );
+    }
+
+    #[test]
+    fn matching_generation_succeeds_for_all_three_commands() {
+        let state = app_state(7);
+        assert_eq!(calc(&state, "C1", false, Some(7)).unwrap(), "C1");
+        assert_eq!(formula(&state, "F1", false, Some(7)).unwrap(), "F1");
+        assert_eq!(
+            remove_derived_in_state(&state, &strs(&["C1"]), Some(7)).unwrap(),
+            1
+        );
+        assert_eq!(headers_of(&state), vec!["timestamp", "A", "B", "F1"]);
+    }
+
+    #[test]
+    fn mismatching_generation_rejects_and_mutates_nothing() {
+        let state = app_state(7);
+        calc(&state, "Keep", false, Some(7)).unwrap();
+        let headers_before = headers_of(&state);
+        let derived_before = derived_of(&state);
+
+        for bad in [6u64, 8, 0] {
+            assert_eq!(calc(&state, "N1", false, Some(bad)).unwrap_err(), STALE_SESSION_ERROR);
+            // `replace` must not overwrite the derived column either.
+            assert_eq!(calc(&state, "Keep", true, Some(bad)).unwrap_err(), STALE_SESSION_ERROR);
+            assert_eq!(formula(&state, "N2", false, Some(bad)).unwrap_err(), STALE_SESSION_ERROR);
+            assert_eq!(formula(&state, "Keep", true, Some(bad)).unwrap_err(), STALE_SESSION_ERROR);
+            assert_eq!(
+                remove_derived_in_state(&state, &strs(&["Keep"]), Some(bad)).unwrap_err(),
+                STALE_SESSION_ERROR
+            );
+        }
+        assert_eq!(headers_of(&state), headers_before);
+        assert_eq!(derived_of(&state), derived_before);
+        // The kept column still has its original values (2 * A).
+        let lock = state.0.read().unwrap();
+        let s = lock.as_ref().unwrap();
+        assert_eq!(s.data.columns[3], vec![2.0, 4.0, 6.0]);
+    }
+
+    #[test]
+    fn a_stale_caller_is_rejected_even_when_the_formula_or_config_is_invalid() {
+        // The guard runs before the compute, so a stale window never even
+        // reaches name/collision validation of the new dataset.
+        let state = app_state(3);
+        let err = evaluate_formula_in_state(&state, "$Nope +", None, false, Some(2), &|| {}).unwrap_err();
+        assert_eq!(err, STALE_SESSION_ERROR);
+    }
+
+    #[test]
+    fn generation_change_between_compute_and_commit_is_rejected() {
+        // Caller pinned the (then current) generation: the swap in between is
+        // detected at commit and reported as stale.
+        let state = app_state(10);
+        let err = calculate_sensor_in_state(
+            &state,
+            &strs(&["A"]),
+            &single("multiply", 2.0, Some("X")),
+            false,
+            Some(10),
+            &|| bump_generation(&state),
+        )
+        .unwrap_err();
+        assert_eq!(err, STALE_SESSION_ERROR);
+        assert_eq!(headers_of(&state), vec!["timestamp", "A", "B"]);
+        assert!(derived_of(&state).is_empty());
+
+        let state = app_state(10);
+        let err = evaluate_formula_in_state(&state, "$A + 1", Some("X"), false, Some(10), &|| {
+            bump_generation(&state)
+        })
+        .unwrap_err();
+        assert_eq!(err, STALE_SESSION_ERROR);
+        assert_eq!(headers_of(&state), vec!["timestamp", "A", "B"]);
+        assert!(derived_of(&state).is_empty());
+    }
+
+    #[test]
+    fn generation_change_between_compute_and_commit_is_rejected_without_a_pin_too() {
+        // `None` keeps the pre-existing behaviour: refused with the old message.
+        let state = app_state(10);
+        let err = calculate_sensor_in_state(
+            &state,
+            &strs(&["A"]),
+            &single("multiply", 2.0, Some("X")),
+            false,
+            None,
+            &|| bump_generation(&state),
+        )
+        .unwrap_err();
+        assert!(err.contains("changed while"), "{err}");
+        assert_eq!(headers_of(&state), vec!["timestamp", "A", "B"]);
+    }
+
+    #[test]
+    fn dataset_removed_between_compute_and_commit_is_rejected_for_a_pinned_caller() {
+        let state = app_state(10);
+        let err = calculate_sensor_in_state(
+            &state,
+            &strs(&["A"]),
+            &single("multiply", 2.0, Some("X")),
+            false,
+            Some(10),
+            &|| {
+                *state.0.write().unwrap() = None;
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, STALE_SESSION_ERROR);
+    }
+
+    #[test]
+    fn none_behaves_exactly_as_before() {
+        let state = app_state(7);
+        assert_eq!(calc(&state, "C1", false, None).unwrap(), "C1");
+        assert_eq!(formula(&state, "F1", false, None).unwrap(), "F1");
+        assert!(calc(&state, "c1", false, None).is_err(), "collision rule unchanged");
+        assert_eq!(calc(&state, "C1", true, None).unwrap(), "C1", "replace rule unchanged");
+        assert_eq!(remove_derived_in_state(&state, &strs(&["C1", "F1", "A"]), None).unwrap(), 2);
+        assert_eq!(headers_of(&state), vec!["timestamp", "A", "B"]);
+    }
+
+    #[test]
+    fn with_no_dataset_a_pinned_caller_is_stale_but_an_unpinned_one_keeps_the_old_behaviour() {
+        let state = AppState(RwLock::new(None));
+        assert_eq!(remove_derived_in_state(&state, &strs(&["X"]), None).unwrap(), 0);
+        assert_eq!(
+            remove_derived_in_state(&state, &strs(&["X"]), Some(1)).unwrap_err(),
+            STALE_SESSION_ERROR
+        );
+        assert_eq!(calc(&state, "X", false, None).unwrap_err(), "No data loaded");
+        assert_eq!(calc(&state, "X", false, Some(1)).unwrap_err(), STALE_SESSION_ERROR);
+        assert_eq!(formula(&state, "X", false, None).unwrap_err(), "No data loaded");
+        assert_eq!(formula(&state, "X", false, Some(1)).unwrap_err(), STALE_SESSION_ERROR);
+        assert_eq!(
+            commit_derived(&state, 1, Some(1), "X", vec![], false).unwrap_err(),
+            STALE_SESSION_ERROR
+        );
+    }
+
+    #[test]
+    fn install_session_returns_a_strictly_greater_generation_each_time_and_matches_the_session() {
+        let state = AppState(RwLock::new(None));
+        assert_eq!(session_generation(&state).unwrap(), None);
+
+        let g1 = install_session(&state, dataset(), vec!["a.csv".into()]).unwrap();
+        assert_eq!(session_generation(&state).unwrap(), Some(g1));
+        let g2 = install_session(&state, dataset(), vec!["b.csv".into()]).unwrap();
+        assert!(g2 > g1, "{g2} should be > {g1}");
+        assert_eq!(session_generation(&state).unwrap(), Some(g2));
+        let g3 = install_session(&state, dataset(), vec![]).unwrap();
+        assert!(g3 > g2);
+        assert_eq!(session_generation(&state).unwrap(), Some(g3));
+    }
+
+    #[test]
+    fn a_window_bound_to_the_previous_dataset_cannot_touch_the_new_one() {
+        let state = AppState(RwLock::new(None));
+        let g_a = install_session(&state, dataset(), vec![]).unwrap();
+        calc(&state, "Mine", false, Some(g_a)).unwrap();
+        // Workspace B is loaded; the leftover window still holds g_a.
+        let g_b = install_session(&state, dataset(), vec![]).unwrap();
+        calc(&state, "Mine", false, Some(g_b)).unwrap();
+
+        assert_eq!(calc(&state, "Mine", true, Some(g_a)).unwrap_err(), STALE_SESSION_ERROR);
+        assert_eq!(formula(&state, "Other", false, Some(g_a)).unwrap_err(), STALE_SESSION_ERROR);
+        assert_eq!(
+            remove_derived_in_state(&state, &strs(&["Mine"]), Some(g_a)).unwrap_err(),
+            STALE_SESSION_ERROR
+        );
+        assert_eq!(headers_of(&state), vec!["timestamp", "A", "B", "Mine"]);
+    }
+
+    #[test]
+    fn load_report_json_carries_the_generation_field() {
+        let report = CsvLoadReport {
+            headers: vec![],
+            total_rows: 0,
+            columns: vec![],
+            warnings: vec![],
+            generation: 42,
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["generation"], 42);
+        // Older payloads without the field still deserialize (default 0).
+        let back: CsvLoadReport = serde_json::from_str(
+            r#"{"headers":[],"total_rows":0,"columns":[],"warnings":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(back.generation, 0);
     }
 
     // ── resolve_sensor ───────────────────────────────────────────────
@@ -3845,26 +4167,50 @@ fn compute_formula_sensor(
     Ok((name, new_col))
 }
 
-#[tauri::command]
-fn evaluate_formula(
-    formula: String,
-    custom_name: Option<String>,
-    replace: Option<bool>,
-    state: State<AppState>,
+/// Session-level `evaluate_formula` (see [`calculate_sensor_in_state`] for
+/// the `between` seam).
+fn evaluate_formula_in_state(
+    state: &AppState,
+    formula: &str,
+    custom_name: Option<&str>,
+    replace: bool,
+    expected: Option<u64>,
+    between: &dyn Fn(),
 ) -> Result<String, String> {
-    check_formula_limits(&formula)?;
-    let replace = replace.unwrap_or(false);
+    check_formula_limits(formula)?;
 
     // Evaluate under a READ lock, store under a short write lock (see
     // `commit_derived`).
     let (generation, name, col) = {
         let lock = state.0.read().map_err(|e| e.to_string())?;
-        let session = lock.as_ref().ok_or("No data loaded")?;
-        let (name, col) =
-            compute_formula_sensor(&session.data, &formula, custom_name.as_deref(), replace)?;
+        let session = lock.as_ref().ok_or_else(|| missing_session_error(expected))?;
+        check_expected_generation(expected, session.generation)?;
+        let (name, col) = compute_formula_sensor(&session.data, formula, custom_name, replace)?;
         (session.generation, name, col)
     };
-    commit_derived(&state, generation, &name, col, replace)
+    between();
+    commit_derived(state, generation, expected, &name, col, replace)
+}
+
+/// `expected_generation` (JS key `expectedGeneration`): the generation returned
+/// by the `load_csv` that produced the dataset the caller is bound to. A
+/// mismatch returns `STALE_SESSION_ERROR` and mutates nothing.
+#[tauri::command]
+fn evaluate_formula(
+    formula: String,
+    custom_name: Option<String>,
+    replace: Option<bool>,
+    expected_generation: Option<u64>,
+    state: State<AppState>,
+) -> Result<String, String> {
+    evaluate_formula_in_state(
+        &state,
+        &formula,
+        custom_name.as_deref(),
+        replace.unwrap_or(false),
+        expected_generation,
+        &|| {},
+    )
 }
 
 #[tauri::command]
@@ -4342,6 +4688,7 @@ pub fn run() {
             compute_sensor_stats,
             preview_relationship_model,
             get_loaded_paths,
+            get_session_generation,
             calculate_new_sensor,
             remove_sensor_columns,
             load_mapping_csv,
