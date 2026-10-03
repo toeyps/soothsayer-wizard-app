@@ -63,6 +63,18 @@ pub struct Issue {
     pub field: String,
 }
 
+/// A set point that is NaN or infinite (code `not_finite`, every kind except
+/// Clustering, whose own `outer_sd_not_a_number` code is kept for compatibility).
+/// JSON cannot carry these, so they only come from a bug in a caller — but
+/// every kind must refuse them the same way.
+fn not_finite_issue(field: &str, v: f64) -> Issue {
+    issue(
+        "not_finite",
+        field,
+        format!("The set point for {field} must be a finite number; got {v}."),
+    )
+}
+
 fn issue(code: &str, field: &str, message: String) -> Issue {
     Issue {
         code: code.to_string(),
@@ -205,6 +217,18 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                 .into(),
         ));
     }
+    // A NaN / infinite L or H is refused with its own stable code (`not_finite`)
+    // and then ignored by every other rule (every comparison with NaN is false,
+    // and an infinite 0-point would make the curve never reach 0).
+    for (field, v) in [("lower", sp.lower), ("upper", sp.upper)] {
+        if let Some(x) = v.filter(|x| !x.is_finite()) {
+            out.push(not_finite_issue(field, x));
+        }
+    }
+    let (lower, upper) = (
+        sp.lower.filter(|x| x.is_finite()),
+        sp.upper.filter(|x| x.is_finite()),
+    );
     let degenerate = band.is_degenerate();
     if degenerate {
         out.push(issue(
@@ -218,7 +242,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
             ),
         ));
     }
-    if let (Some(l), Some(h)) = (sp.lower, sp.upper) {
+    if let (Some(l), Some(h)) = (lower, upper) {
         if l >= h {
             out.push(issue(
                 "ordering",
@@ -232,7 +256,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
         }
     }
     if !degenerate {
-        if let Some(l) = sp.lower {
+        if let Some(l) = lower {
             if l == band.lower_3sd {
                 out.push(issue(
                     "lower_equals_3sd",
@@ -256,7 +280,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                 ));
             }
         }
-        if let Some(h) = sp.upper {
+        if let Some(h) = upper {
             if h == band.upper_3sd {
                 out.push(issue(
                     "upper_equals_3sd",
@@ -377,8 +401,11 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
         ),
     ];
     for (name, v, label) in fields {
-        if v.is_none() {
-            out.push(issue("required", name, format!("Enter {label}.")));
+        match v {
+            None => out.push(issue("required", name, format!("Enter {label}."))),
+            // NaN / infinite: its own code, then ignored by every other rule.
+            Some(x) if !x.is_finite() => out.push(not_finite_issue(name, x)),
+            Some(_) => {}
         }
     }
     let band_ok = match w {
@@ -425,6 +452,8 @@ pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
             Side::Lower => ("must_be_negative", "negative"),
             Side::Upper => ("must_be_positive", "positive"),
         };
+        // A non-finite point was already reported as `not_finite` above.
+        let (v80, v0) = (v80.filter(|x| x.is_finite()), v0.filter(|x| x.is_finite()));
         let mut v80_ok = false;
         let mut v0_ok = false;
         if let Some(v) = v80 {
@@ -1051,6 +1080,12 @@ pub struct RelCache {
     entries: Vec<(String, Arc<RelFit>)>,
     max_entries: usize,
     max_bytes: usize,
+    /// "Derived epoch": bumped by every [`RelCache::clear`] — i.e. by every
+    /// special-sensor recompute / removal, which can change the columns a fit
+    /// was computed from. A Train captures `(generation, epoch)` when it reads
+    /// the columns and `store_rel_fit` refuses a fit whose epoch is no longer
+    /// current, so a fit that straddled such a change is never cached.
+    epoch: u64,
 }
 
 pub const REL_CACHE_MAX_ENTRIES: usize = 8;
@@ -1069,7 +1104,13 @@ impl RelCache {
             entries: Vec::new(),
             max_entries: max_entries.max(1),
             max_bytes,
+            epoch: 0,
         }
+    }
+
+    /// Current derived epoch (see the field doc).
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn len(&self) -> usize {
@@ -1080,8 +1121,12 @@ impl RelCache {
         self.entries.is_empty()
     }
 
+    /// Drop every entry AND bump the derived epoch (even when the cache is
+    /// empty: a fit may be in flight). Called when a special sensor is
+    /// recomputed or removed.
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.epoch += 1;
     }
 
     fn total_bytes(&self) -> usize {
@@ -1851,5 +1896,38 @@ mod tests {
         assert_eq!(j["severity"], "error");
         assert_eq!(j["field"], "lower");
         assert!(j["message"].as_str().unwrap().len() > 10);
+    }
+
+    // ---------- 2026-10-04: non-finite set points ----------
+
+    #[test]
+    fn non_finite_individual_set_points_are_refused_with_one_not_finite_issue_each() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let v = validate_individual(&band(), &sp_ind(Some(bad), Some(160.0)));
+            assert_eq!(codes(&v), vec!["not_finite"], "L={bad}");
+            assert_eq!(v[0].field, "lower");
+            let v = validate_individual(&band(), &sp_ind(Some(40.0), Some(bad)));
+            assert_eq!(codes(&v), vec!["not_finite"], "H={bad}");
+            assert_eq!(v[0].field, "upper");
+            assert!(IndividualParams::new(band(), &sp_ind(Some(bad), Some(160.0))).is_err());
+        }
+        // Both bad: one issue per field. Missing + bad: `required` for the missing one.
+        let v = validate_individual(&band(), &sp_ind(Some(f64::NAN), Some(f64::NAN)));
+        assert_eq!(codes(&v), vec!["not_finite", "not_finite"]);
+        let v = validate_individual(&band(), &sp_ind(None, Some(f64::INFINITY)));
+        assert_eq!(codes(&v), vec!["required", "not_finite"]);
+    }
+
+    #[test]
+    fn non_finite_relationship_set_points_are_refused_without_cascading_rules() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let sp = sp_rel(-4.0, 6.0, bad, 20.0);
+            let v = validate_relationship(Some(2.0), &sp);
+            assert_eq!(codes(&v), vec!["not_finite"], "{bad}");
+            assert_eq!(v[0].field, "residual_at_0_lower");
+            assert!(RelationshipParams::new(2.0, &sp).is_err());
+        }
+        // Finite values keep their old behaviour.
+        assert!(validate_relationship(Some(2.0), &sp_rel(-4.0, 6.0, -10.0, 20.0)).is_empty());
     }
 }

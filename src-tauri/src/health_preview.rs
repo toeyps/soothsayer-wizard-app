@@ -28,6 +28,7 @@ use crate::health_score::{
     MAX_SERIES_POINTS,
 };
 use crate::metrics::{self, round_metric, round_metric_scaled};
+use crate::model_export::unsafe_name_warnings;
 use crate::{
     clustering_preview_in, individual_rounded_metrics, ClusterRange, PreviewFilter, ResolvedFilter,
 };
@@ -339,6 +340,78 @@ fn mean_sd(values: &[f64]) -> (f64, f64) {
 }
 
 // ---------------------------------------------------------------------------
+// Request checks shared by the preview and the export (coded `BAD_REQUEST`)
+// ---------------------------------------------------------------------------
+
+/// The training scope must resolve (parseable bounds, no both-legacy-and-ranges,
+/// no period that ends before it starts).
+pub fn check_scope(data: &ColumnarData, filter: Option<&PreviewFilter>) -> Result<(), String> {
+    ResolvedFilter::resolve(filter, &data.headers)
+        .map(|_| ())
+        .map_err(|e| bad_request(format!("invalid training scope: {e}")))
+}
+
+/// Individual: the target sensor exists and the scope resolves.
+pub fn check_individual_request(
+    data: &ColumnarData,
+    target: &str,
+    filter: Option<&PreviewFilter>,
+) -> Result<(), String> {
+    col_index(data, target, "Sensor")?;
+    check_scope(data, filter)
+}
+
+/// Relationship: target and every predictor exist and the scope resolves.
+pub fn check_relationship_request(
+    data: &ColumnarData,
+    target: &str,
+    predictors: &[String],
+    filter: Option<&PreviewFilter>,
+) -> Result<(), String> {
+    col_index(data, target, "Target")?;
+    for p in predictors {
+        col_index(data, p, "Predictor")?;
+    }
+    check_scope(data, filter)
+}
+
+/// Clustering: both sensors exist, the scope resolves and — for more than one
+/// cluster — the criteria sensor exists and there is exactly one range per
+/// cluster.
+pub fn check_clustering_request(
+    data: &ColumnarData,
+    first: &str,
+    second: &str,
+    n_clusters: u32,
+    criteria_sensor: Option<&str>,
+    cluster_ranges: Option<&[ClusterRange]>,
+    filter: Option<&PreviewFilter>,
+) -> Result<(), String> {
+    if n_clusters == 0 {
+        return Err(bad_request("n_clusters must be at least 1"));
+    }
+    col_index(data, first, "Sensor")?;
+    col_index(data, second, "Sensor")?;
+    check_scope(data, filter)?;
+    if n_clusters > 1 {
+        let criteria = criteria_sensor
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| bad_request("criteria_sensor is required when n_clusters > 1"))?;
+        col_index(data, criteria, "Criteria sensor")?;
+        let ranges = cluster_ranges
+            .ok_or_else(|| bad_request("cluster_ranges is required when n_clusters > 1"))?;
+        if ranges.len() as u32 != n_clusters {
+            return Err(bad_request(format!(
+                "cluster_ranges length ({}) must equal n_clusters ({})",
+                ranges.len(),
+                n_clusters
+            )));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Individual
 // ---------------------------------------------------------------------------
 
@@ -349,7 +422,8 @@ pub fn individual_preview(
     let target = required(&req.target, "target")?;
     let idx = col_index(data, target, "Sensor")?;
     let col = &data.columns[idx];
-    let resolved = ResolvedFilter::resolve(req.filter.as_ref(), &data.headers)?;
+    let resolved = ResolvedFilter::resolve(req.filter.as_ref(), &data.headers)
+        .map_err(|e| bad_request(format!("invalid training scope: {e}")))?;
     let noop = resolved.is_noop();
     let include_out = req.include_out_of_scope.unwrap_or(false);
 
@@ -406,8 +480,9 @@ pub fn individual_preview(
     };
 
     let sp = req.set_points();
-    let validation = validate_individual(&band, &sp);
+    let mut validation = validate_individual(&band, &sp);
     let valid = !has_errors(&validation);
+    validation.extend(unsafe_name_warnings(&[("target", target)]));
     let params = if valid {
         IndividualParams::new(band, &sp).ok()
     } else {
@@ -468,9 +543,28 @@ pub fn individual_preview(
 // Relationship
 // ---------------------------------------------------------------------------
 
+/// The residual of one row exactly as the sidecar writes it to
+/// `REL_DATASET_*.csv` (`backend.py::train_relationship`):
+/// `RESIDUAL = round_metric(actual − round_metric(predicted))` — the residual
+/// is taken from the ROUNDED prediction and then rounded itself.
+///
+/// The FILE is canonical: a consumer re-scoring from `REL_DATASET` must
+/// reproduce the preview exactly, so the preview scores, plots and summarises
+/// THIS residual (never the raw `actual − predicted`). **This function and
+/// `backend.py::train_relationship` must stay in sync** (same rounding, same
+/// order of operations). Non-finite input gives NaN (an unscored row).
+pub fn file_residual(actual: f64, predicted: f64) -> f64 {
+    if actual.is_finite() && predicted.is_finite() {
+        round_metric(actual - round_metric(predicted))
+    } else {
+        f64::NAN
+    }
+}
+
 /// Statistics of a cached fit, computed the way `train_relationship` writes
 /// them to `REL_INFO_*.json`: predictions rounded with `round_metric`, `r2`
-/// to 2 decimals, `2rmse = round_metric(2 · RMSE)`.
+/// to 2 decimals, `2rmse = round_metric(2 · RMSE)`. The residual statistics
+/// use [`file_residual`] (the residual the file stores).
 pub fn relationship_stats(fit: &RelFit) -> Result<RelationshipStats, String> {
     let mut y = Vec::new();
     let mut p = Vec::new();
@@ -479,7 +573,7 @@ pub fn relationship_stats(fit: &RelFit) -> Result<RelationshipStats, String> {
         if a.is_finite() && b.is_finite() {
             y.push(*a);
             p.push(round_metric(*b));
-            resid.push(a - b);
+            resid.push(file_residual(*a, *b));
         }
     }
     if y.is_empty() {
@@ -542,20 +636,19 @@ pub fn relationship_preview(
         return Err(not_fitted("the cached fit does not belong to the loaded dataset"));
     }
 
+    // The residual the FILE stores (see `file_residual`) — scored, plotted and
+    // summarised as such so the preview and `REL_DATASET_*.csv` agree.
     let residual: Vec<f64> = (0..n)
-        .map(|i| {
-            let (a, b) = (fit.actual[i], fit.predicted[i]);
-            if a.is_finite() && b.is_finite() {
-                a - b
-            } else {
-                f64::NAN
-            }
-        })
+        .map(|i| file_residual(fit.actual[i], fit.predicted[i]))
         .collect();
 
     let sp = req.set_points();
-    let validation = validate_relationship(Some(stats.two_rmse), &sp);
+    let mut validation = validate_relationship(Some(stats.two_rmse), &sp);
     let valid = !has_errors(&validation);
+    let names: Vec<(&str, &str)> = std::iter::once(("target", fit.target.as_str()))
+        .chain(fit.predictors.iter().map(|p| ("predictor", p.as_str())))
+        .collect();
+    validation.extend(unsafe_name_warnings(&names));
     let scores: Option<Vec<f64>> = if valid {
         RelationshipParams::new(stats.two_rmse, &sp).ok().map(|p| {
             residual
@@ -635,6 +728,18 @@ pub fn clustering_preview(
     if n_clusters == 0 {
         return Err(bad_request("n_clusters must be at least 1"));
     }
+    // Request-shaped problems are all caught HERE, coded `BAD_REQUEST`, before
+    // the shared fit (`clustering_preview_in`, whose plain messages are also
+    // used by the PM-page commands and must stay as they are).
+    check_clustering_request(
+        data,
+        first,
+        second,
+        n_clusters,
+        req.criteria_sensor.as_deref(),
+        req.cluster_ranges.as_deref(),
+        req.filter.as_ref(),
+    )?;
     // Fit exactly the way the PM preview and the exported file do.
     let preview = clustering_preview_in(
         data,
@@ -692,7 +797,8 @@ pub fn clustering_preview(
 
     let i1 = col_index(data, first, "Sensor")?;
     let i2 = col_index(data, second, "Sensor")?;
-    let resolved = ResolvedFilter::resolve(req.filter.as_ref(), &data.headers)?;
+    let resolved = ResolvedFilter::resolve(req.filter.as_ref(), &data.headers)
+        .map_err(|e| bad_request(format!("invalid training scope: {e}")))?;
     let noop = resolved.is_noop();
     let (c1, c2) = (&data.columns[i1], &data.columns[i2]);
 
@@ -720,8 +826,9 @@ pub fn clustering_preview(
     let assigned = assign.iter().filter(|&&a| a != NONE).count();
 
     let sp = req.set_points();
-    let validation = validate_clustering(&geoms, &sp);
+    let mut validation = validate_clustering(&geoms, &sp);
     let valid = !has_errors(&validation);
+    validation.extend(unsafe_name_warnings(&[("first_sensor", first), ("second_sensor", second)]));
     let params = if valid {
         ClusteringParams::new(geoms.clone(), &sp).ok()
     } else {
@@ -1574,5 +1681,143 @@ mod tests {
         assert!(j["histogram"]["bin_edges"].is_array());
         // No NaN leaked: every number in the value array is finite.
         assert!(j["series"]["value"].as_array().unwrap().iter().all(|v| v.is_number()));
+    }
+
+    // ---------- 2026-10-04: canonical residual (the FILE's), coded errors, warnings ----------
+
+    #[test]
+    fn file_residual_is_what_the_sidecar_writes_and_nan_for_missing() {
+        // round_metric(actual - round_metric(predicted)), in this order.
+        for (a, p) in [(10.0, 9.123_456_7), (0.000_412_345, 0.000_411_111), (-3.3, 1.234_567_8), (1234.5678, 1234.1111)] {
+            assert_eq!(file_residual(a, p), round_metric(a - round_metric(p)), "{a} {p}");
+        }
+        // It really differs from the raw residual for a many-decimal prediction.
+        assert_ne!(file_residual(10.0, 9.123_456_7), 10.0 - 9.123_456_7);
+        for (a, p) in [(f64::NAN, 1.0), (1.0, f64::NAN), (f64::INFINITY, 1.0), (1.0, f64::NEG_INFINITY)] {
+            assert!(file_residual(a, p).is_nan());
+        }
+    }
+
+    #[test]
+    fn relationship_preview_series_and_stats_use_the_file_residual() {
+        let mut fit = rel_fit(500);
+        // Many-decimal predictions, like the sidecar's raw output before rounding.
+        for (i, p) in fit.predicted.iter_mut().enumerate() {
+            *p += 0.000_123_456_7 * (1 + i % 7) as f64;
+        }
+        let d = dataset(vec![("X", vec![0.0; 500])]);
+        let p = relationship_preview(&d, &fit, &rel_req(None)).unwrap();
+        let (st, se) = rel(&p);
+        for (k, &row) in se.rows.iter().enumerate() {
+            let i = row as usize;
+            assert_eq!(se.residual[k], Some(round_metric(fit.actual[i] - round_metric(fit.predicted[i]))));
+        }
+        // The reported residual statistics are over the same numbers.
+        let res: Vec<f64> = (0..500).map(|i| file_residual(fit.actual[i], fit.predicted[i])).collect();
+        let (mean, _) = mean_sd(&res);
+        assert_eq!(st.residual_mean, mean);
+        assert_eq!(st.residual_min, res.iter().cloned().fold(f64::INFINITY, f64::min));
+        assert_eq!(st.residual_max, res.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
+        // W is unchanged (it was already computed from the rounded predictions).
+        assert_eq!(st.two_rmse, relationship_stats(&fit).unwrap().two_rmse);
+    }
+
+    #[test]
+    fn request_shaped_errors_are_all_coded_bad_request() {
+        let d = cl_data();
+        let coded = |e: String| assert!(e.starts_with("BAD_REQUEST: "), "{e}");
+        // unknown clustering sensor / criteria sensor
+        let mut r = cl_req(2, Some(5.0));
+        r.first_sensor = Some("NOPE".into());
+        coded(clustering_preview(&d, &r).unwrap_err());
+        let mut r = cl_req(2, Some(5.0));
+        r.criteria_sensor = Some("NOPE".into());
+        coded(clustering_preview(&d, &r).unwrap_err());
+        // missing criteria sensor / ranges, ranges length mismatch
+        let mut r = cl_req(2, Some(5.0));
+        r.criteria_sensor = None;
+        coded(clustering_preview(&d, &r).unwrap_err());
+        let mut r = cl_req(2, Some(5.0));
+        r.cluster_ranges = None;
+        coded(clustering_preview(&d, &r).unwrap_err());
+        let mut r = cl_req(2, Some(5.0));
+        r.n_clusters = Some(3);
+        coded(clustering_preview(&d, &r).unwrap_err());
+        // invalid training scope, all three kinds
+        let bad = PreviewFilter {
+            timestamp_ranges: vec![crate::TimeRangeArg {
+                start: Some("2024-01-01T05:00:00".into()),
+                end: Some("2024-01-01T01:00:00".into()),
+            }],
+            ..Default::default()
+        };
+        let mut r = cl_req(1, Some(5.0));
+        r.filter = Some(bad.clone());
+        coded(clustering_preview(&d, &r).unwrap_err());
+        let (ind, ..) = ind_data();
+        let mut r = ind_req(None, None);
+        r.filter = Some(bad);
+        coded(individual_preview(&ind, &r).unwrap_err());
+        // The data-shaped ones keep their own codes.
+        let mut r = cl_req(1, Some(5.0));
+        r.filter = Some(PreviewFilter {
+            value_filters: vec![crate::PreviewValueFilter {
+                sensor: "X".into(),
+                operation: "greater_than".into(),
+                value1: Some(1e9),
+                value2: None,
+            }],
+            ..Default::default()
+        });
+        assert!(clustering_preview(&d, &r).unwrap_err().starts_with("NO_DATA"));
+    }
+
+    #[test]
+    fn check_helpers_agree_with_the_previews_and_accept_good_requests() {
+        let d = cl_data();
+        assert!(check_individual_request(&d, "X", None).is_ok());
+        assert!(check_individual_request(&d, "x", None).unwrap_err().starts_with("BAD_REQUEST"));
+        assert!(check_relationship_request(&d, "Y", &["X".into(), "C".into()], None).is_ok());
+        assert!(check_relationship_request(&d, "Y", &["nope".into()], None).unwrap_err().starts_with("BAD_REQUEST: Predictor"));
+        assert!(check_relationship_request(&d, "nope", &["X".into()], None).unwrap_err().starts_with("BAD_REQUEST: Target"));
+        let ranges = [ClusterRange { min: None, max: Some(1.0) }, ClusterRange { min: Some(1.0), max: None }];
+        assert!(check_clustering_request(&d, "X", "Y", 2, Some("C"), Some(&ranges), None).is_ok());
+        assert!(check_clustering_request(&d, "X", "Y", 1, None, None, None).is_ok());
+        assert!(check_clustering_request(&d, "X", "Y", 0, None, None, None).is_err());
+        assert!(check_clustering_request(&d, "X", "Y", 3, Some("C"), Some(&ranges), None).is_err());
+    }
+
+    #[test]
+    fn unsafe_sensor_names_add_a_warning_but_never_block_the_preview() {
+        let v: Vec<f64> = (0..300).map(|i| 10.0 + (i % 9) as f64).collect();
+        let d = dataset(vec![("A/B", v)]);
+        let mut r = ind_req(None, None);
+        r.target = Some("A/B".into());
+        let p = individual_preview(&d, &r).unwrap();
+        assert!(p.validation.iter().any(|i| i.code == "unsafe_file_name"
+            && i.severity == crate::health_score::Severity::Warning
+            && i.field == "target"));
+        // Scores still come out once the set points are valid.
+        let st = individual(&p).0;
+        r.set_points = Some(SetPointsArg {
+            lower: Some(st.boundary_3sd[0] - 1.0),
+            upper: Some(st.boundary_3sd[1] + 1.0),
+            ..Default::default()
+        });
+        let p = individual_preview(&d, &r).unwrap();
+        assert!(p.valid && individual(&p).1.score.is_some());
+        // A normal name gets no warning.
+        let (ind, ..) = ind_data();
+        let p = individual_preview(&ind, &ind_req(None, None)).unwrap();
+        assert!(p.validation.iter().all(|i| i.code != "unsafe_file_name"));
+        // Relationship: one warning per bad name (target and predictors).
+        let mut fit = rel_fit(100);
+        fit.predictors = vec!["X".into(), "Z:1".into()];
+        let dd = dataset(vec![("X", vec![0.0; 100])]);
+        let mut rq = rel_req(None);
+        rq.predictors = vec![];
+        let p = relationship_preview(&dd, &fit, &rq).unwrap();
+        let w: Vec<&str> = p.validation.iter().filter(|i| i.code == "unsafe_file_name").map(|i| i.field.as_str()).collect();
+        assert_eq!(w, vec!["predictor"]);
     }
 }

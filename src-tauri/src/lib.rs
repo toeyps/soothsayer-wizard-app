@@ -6,6 +6,10 @@ mod health_preview;
 pub mod metrics;
 mod model_export;
 pub mod operation_registry;
+// QA-owned in-crate tests (private surface); the file lives in tests/internal/.
+#[cfg(test)]
+#[path = "../tests/internal/qa_health_internal.rs"]
+mod qa_health_internal;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
     CsvRecord, MappingData, MappingResult, SensorMetadata, TS_MISSING,
@@ -436,7 +440,8 @@ struct SessionData {
     /// re-running the sidecar. Lives INSIDE the session: every `load_csv`
     /// installs a fresh `SessionData`, which drops the cache with the dataset
     /// it described (and a fit whose sidecar run straddled a reload is refused
-    /// by the generation check in `store_rel_fit`).
+    /// by the [`SessionStamp`] check in `store_rel_fit`, as is a fit that
+    /// straddled a special-sensor recompute / removal).
     rel_cache: health_score::RelCache,
 }
 
@@ -474,20 +479,56 @@ fn install_session(state: &AppState, data: ColumnarData, paths: Vec<String>) -> 
     Ok(generation)
 }
 
-/// Cache a Relationship fit under `key` — but only if the loaded dataset is
-/// still the one the fit was computed from (`generation`); a `load_csv` that
-/// landed while the sidecar ran makes this a silent no-op (returns `false`).
-fn store_rel_fit(state: &AppState, generation: u64, key: String, fit: health_score::RelFit) -> bool {
+/// What a Relationship Train captured when it read the columns: the dataset
+/// (`generation`, bumped by `load_csv`) AND the special-sensor state
+/// (`derived_epoch`, bumped by every special-sensor recompute / removal — see
+/// `RelCache::epoch`). A fit is only cached if BOTH are still current: the
+/// generation alone does not change when a special sensor is recomputed in
+/// place, and the frontend's cache key (model id + training fingerprint) does
+/// not include special-sensor formulas, so a stale fit would be served forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionStamp {
+    generation: u64,
+    derived_epoch: u64,
+}
+
+impl SessionStamp {
+    fn new(generation: u64, derived_epoch: u64) -> Self {
+        SessionStamp { generation, derived_epoch }
+    }
+}
+
+impl SessionData {
+    fn stamp(&self) -> SessionStamp {
+        SessionStamp::new(self.generation, self.rel_cache.epoch())
+    }
+}
+
+/// Cache a Relationship fit under `key` — but only if the loaded dataset and
+/// its special sensors are still exactly what the fit was computed from
+/// (`stamp`, captured under the same read lock that copied the columns). A
+/// `load_csv`, or a special sensor recomputed / removed, while the sidecar ran
+/// makes this a no-op that returns `false` (the Train response then carries
+/// `cached: false` and the page asks the user to train again).
+fn store_rel_fit(state: &AppState, stamp: SessionStamp, key: String, fit: health_score::RelFit) -> bool {
     let Ok(mut lock) = state.0.write() else {
         return false;
     };
     match lock.as_mut() {
-        Some(s) if s.generation == generation => {
+        Some(s) if s.stamp() == stamp => {
             s.rel_cache.insert(key, fit);
             true
         }
         _ => false,
     }
+}
+
+/// `(generation, derived epoch)` of the loaded session, `None` when nothing is
+/// loaded (what a Train captures; used by tests to model a Train in flight).
+#[cfg(test)]
+fn session_stamp(state: &AppState) -> Result<Option<SessionStamp>, String> {
+    let lock = state.0.read().map_err(|e| e.to_string())?;
+    Ok(lock.as_ref().map(|s| s.stamp()))
 }
 
 /// Generation of the currently loaded dataset, `None` when nothing is loaded.
@@ -1400,11 +1441,12 @@ async fn preview_relationship_model(
     // Phase 1 contract: the sidecar receives pre-cleaned arrays. Rust owns
     // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
     // `y` is n_rows.  We collect into owned data and drop the lock before any await.
-    let (x_matrix, y_vector, row_idx, generation) = {
+    let (x_matrix, y_vector, row_idx, stamp) = {
         let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
-        let generation = session.generation;
+        // Captured under the same read lock that copies the columns below.
+        let stamp = session.stamp();
 
         // Resolve predictor indices first, then the target.
         let mut predictor_indices: Vec<usize> = Vec::with_capacity(predictors.len());
@@ -1470,7 +1512,7 @@ async fn preview_relationship_model(
             return Err("No rows remain after dropping nulls.".into());
         }
 
-        (x_matrix, y_vector, row_idx, generation)
+        (x_matrix, y_vector, row_idx, stamp)
     };
 
     let payload = serde_json::json!({
@@ -1543,7 +1585,7 @@ async fn preview_relationship_model(
                 let bounded = {
                     let lock = state.0.read().map_err(|e| e.to_string())?;
                     lock.as_ref()
-                        .filter(|s| s.generation == generation)
+                        .filter(|s| s.stamp() == stamp)
                         .and_then(|s| {
                             let req = health_preview::HealthPreviewRequest {
                                 kind: "relationship".into(),
@@ -1555,7 +1597,7 @@ async fn preview_relationship_model(
                             health_preview::relationship_preview(&s.data, &fit, &req).ok()
                         })
                 };
-                let cached = store_rel_fit(&state, generation, key.clone(), fit);
+                let cached = store_rel_fit(&state, stamp, key.clone(), fit);
                 if let Some(obj) = parsed.as_object_mut() {
                     obj.insert("cache_key".into(), serde_json::Value::String(key));
                     obj.insert("cached".into(), serde_json::Value::Bool(cached));
@@ -2158,9 +2200,12 @@ const CLUSTER_KEY_LOWER_LEGACY: &str = "critera_sensor_value_lower_than";
 /// — always the case for the single-cluster path (`range: None`) — gets
 /// neither pair, exactly as before.
 ///
-/// Numbers go through `metrics::round_metric` (3 decimals, or 4 significant
-/// digits for small magnitudes); a centre is rounded at least as finely as
-/// its own axis SD so a tiny SD next to a large centre stays resolvable.
+/// FITTED numbers (centre / SD / angle) go through `metrics::round_metric`
+/// (3 decimals, or 4 significant digits for small magnitudes); a centre is
+/// rounded at least as finely as its own axis SD so a tiny SD next to a large
+/// centre stays resolvable. The criteria range BOUNDS are user inputs and are
+/// written verbatim (full f64) — a consumer assigning rows from the file must
+/// land in the same cluster the preview used.
 /// `outer_sd` fills every cluster's `boundary_sd_health_score` (health-score
 /// set point N, > 3).
 fn build_cluster_info(clusters: &[ClusterDetail], outer_sd: Option<f64>) -> serde_json::Value {
@@ -2171,12 +2216,15 @@ fn build_cluster_info(clusters: &[ClusterDetail], outer_sd: Option<f64>) -> serd
         let mut entry = serde_json::Map::new();
         if let Some(range) = &cluster.range {
             if let Some(lo) = range.min {
-                let v = serde_json::json!(round_metric(lo));
+                // User input, written VERBATIM (never `round_metric`): rows are
+                // assigned with the raw bound, so a rounded copy in the file
+                // would send rows between the two values to another cluster.
+                let v = serde_json::json!(lo);
                 entry.insert(CLUSTER_KEY_HIGHER.into(), v.clone());
                 entry.insert(CLUSTER_KEY_HIGHER_LEGACY.into(), v);
             }
             if let Some(hi) = range.max {
-                let v = serde_json::json!(round_metric(hi));
+                let v = serde_json::json!(hi);
                 entry.insert(CLUSTER_KEY_LOWER.into(), v.clone());
                 entry.insert(CLUSTER_KEY_LOWER_LEGACY.into(), v);
             }
@@ -4978,7 +5026,13 @@ fn get_model_output_dir(workspace_id: String, app: tauri::AppHandle) -> Result<S
 ///     call's freshly computed statistics);
 ///   - `Err(...)` = hard failure (sidecar, disk) - also nothing left behind;
 ///   - `ok: true` = every file written (all-or-nothing, previous export of the
-///     same model overwritten).
+///     same model overwritten); `warnings` then lists a file that replaced
+///     ANOTHER model's export (same file name, different predictors / criteria).
+/// Stable error prefixes (nothing is written for any of them): `BAD_REQUEST`
+/// (missing / unknown sensor, invalid training scope, a sensor name or
+/// workspace id that cannot become a safe file name), `NOT_FITTED` (the
+/// Relationship `cache_key` belongs to another target / predictor list),
+/// `STALE_SESSION`.
 /// Relationship re-runs the sidecar (~15 s).
 #[tauri::command(rename_all = "snake_case")]
 async fn export_model_files(
@@ -4994,40 +5048,72 @@ async fn export_model_files(
     export_model_files_in(&request, &app_data, &app, &state).await
 }
 
-async fn export_model_files_in(
+/// What [`plan_export`] decided before any sidecar run.
+enum ExportPlan {
+    /// Nothing more to do: an Individual / Clustering export that already ran,
+    /// or a Relationship refused by the fail-fast validation (`ok: false`).
+    Finished(model_export::ModelFilesResult),
+    /// A Relationship export that must now run the sidecar (~15 s).
+    RunSidecar,
+}
+
+/// Everything an export can decide WITHOUT the sidecar: the generation guard,
+/// every request-shaped refusal (coded `BAD_REQUEST`, before the disk), the
+/// cached fit check (`NOT_FITTED` when the key belongs to another model) and the
+/// fail-fast set-point validation. Individual / Clustering run to completion
+/// here (`model_export::export_sync`).
+fn plan_export(
     request: &model_export::ModelFilesRequest,
     app_data: &std::path::Path,
-    app: &tauri::AppHandle,
     state: &AppState,
-) -> Result<model_export::ModelFilesResult, String> {
-    // Generation guard + (for Relationship) the cached fit's 2RMSE.
-    let cached_two_rmse = {
+) -> Result<ExportPlan, String> {
+    // Generation guard + (for Relationship) the cached fit.
+    let cached_fit = {
         let lock = state.0.read().map_err(|e| e.to_string())?;
         let session = lock
             .as_ref()
             .ok_or_else(|| missing_session_error(request.expected_generation))?;
         check_expected_generation(request.expected_generation, session.generation)?;
         if request.kind != "relationship" {
-            return model_export::export_sync(&session.data, request, app_data);
+            return model_export::export_sync(&session.data, request, app_data)
+                .map(ExportPlan::Finished);
         }
-        request
-            .cache_key
+        // Everything request-shaped is refused here (coded, before the disk
+        // and before the ~15 s sidecar run).
+        let target = request
+            .target
             .as_deref()
-            .and_then(|k| session.rel_cache.peek(k))
-            .and_then(|fit| health_preview::relationship_stats(&fit).ok())
-            .map(|s| s.two_rmse)
+            .filter(|s| !s.is_empty())
+            .ok_or("BAD_REQUEST: target is required")?;
+        if request.predictors.is_empty() {
+            return Err("BAD_REQUEST: at least one predictor is required".into());
+        }
+        if request.lambda.is_none() {
+            return Err("BAD_REQUEST: lambda is required".into());
+        }
+        model_export::check_export_names(request)?;
+        health_preview::check_relationship_request(
+            &session.data,
+            target,
+            &request.predictors,
+            request.filter.as_ref(),
+        )?;
+        request.cache_key.as_deref().and_then(|k| session.rel_cache.peek(k))
     };
 
-    // ---- Relationship ----
-    let target = request
-        .target
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or("BAD_REQUEST: target is required")?;
-    if request.predictors.is_empty() {
-        return Err("BAD_REQUEST: at least one predictor is required".into());
-    }
-    let lambda = request.lambda.ok_or("BAD_REQUEST: lambda is required")?;
+    let target = request.target.as_deref().unwrap_or_default();
+    // The cached fit's 2RMSE is only trusted for THIS model: a cache entry
+    // for another target / predictor list (a stale or wrong key) must not
+    // validate — or wrongly refuse — these set points.
+    let cached_two_rmse = match cached_fit {
+        Some(fit) if fit.target != target || fit.predictors != request.predictors => {
+            return Err(health_preview::not_fitted(
+                "the cached fit belongs to a different target / predictors than this export - train the model again",
+            ));
+        }
+        Some(fit) => health_preview::relationship_stats(&fit).ok().map(|s| s.two_rmse),
+        None => None,
+    };
     let empty = health_score::SetPointsArg::default();
     let sp = request.set_points.as_ref().unwrap_or(&empty);
 
@@ -5035,7 +5121,7 @@ async fn export_model_files_in(
     // checked: required/sign always, the 2RMSE rules when the fit is cached.
     let pre = health_score::validate_relationship(cached_two_rmse, sp);
     if health_score::has_errors(&pre) {
-        return Ok(model_export::ModelFilesResult {
+        return Ok(ExportPlan::Finished(model_export::ModelFilesResult {
             ok: false,
             files: Vec::new(),
             output_dir: model_export::output_dir_path(app_data, &request.workspace_id)?
@@ -5043,8 +5129,27 @@ async fn export_model_files_in(
                 .into_owned(),
             validation: pre,
             warnings: Vec::new(),
-        });
+        }));
     }
+    Ok(ExportPlan::RunSidecar)
+}
+
+async fn export_model_files_in(
+    request: &model_export::ModelFilesRequest,
+    app_data: &std::path::Path,
+    app: &tauri::AppHandle,
+    state: &AppState,
+) -> Result<model_export::ModelFilesResult, String> {
+    match plan_export(request, app_data, state)? {
+        ExportPlan::Finished(result) => return Ok(result),
+        ExportPlan::RunSidecar => {}
+    }
+
+    // ---- Relationship ----
+    let target = request.target.as_deref().unwrap_or_default();
+    let lambda = request.lambda.unwrap_or_default();
+    let empty = health_score::SetPointsArg::default();
+    let sp = request.set_points.as_ref().unwrap_or(&empty);
 
     let dirs = model_export::prepare_workspace(app_data, &request.workspace_id)?;
     let staging = model_export::Staging::create(&dirs.ws_dir)?;
@@ -5064,7 +5169,8 @@ async fn export_model_files_in(
     )
     .await
     .map(|_| ());
-    model_export::finalize(staging, &dirs.output_dir, outcome)
+    let warnings = model_export::overwrite_warnings(request, &dirs.output_dir);
+    model_export::finalize_with(staging, &dirs.output_dir, outcome, warnings)
 }
 
 /// Health score phase 2: the session cache, the set-point values written into
@@ -5151,7 +5257,7 @@ mod health_export_tests {
     #[test]
     fn cache_hit_serves_relationship_preview_and_a_wrong_key_misses() {
         let state = state_with(ds(vec![("S", vec![0.0; 50])]), 7);
-        assert!(store_rel_fit(&state, 7, "m1:abc".into(), fit()));
+        assert!(store_rel_fit(&state, SessionStamp::new(7, 0), "m1:abc".into(), fit()));
         let ok = health_preview_in(&state, &rel_request(Some("m1:abc"))).unwrap();
         assert_eq!(ok.kind, "relationship");
         // Editing set points = just another call; the sidecar is never involved.
@@ -5165,7 +5271,7 @@ mod health_export_tests {
     #[test]
     fn a_new_load_clears_the_cache() {
         let state = state_with(ds(vec![("S", vec![0.0; 50])]), 1);
-        assert!(store_rel_fit(&state, 1, "k".into(), fit()));
+        assert!(store_rel_fit(&state, SessionStamp::new(1, 0), "k".into(), fit()));
         assert!(health_preview_in(&state, &rel_request(Some("k"))).is_ok());
         // What `load_csv` does with a freshly loaded dataset:
         install_session(&state, ds(vec![("S", vec![0.0; 50])]), vec![]).unwrap();
@@ -5178,11 +5284,11 @@ mod health_export_tests {
     fn a_fit_from_a_replaced_dataset_generation_is_not_cached() {
         let state = state_with(ds(vec![("S", vec![0.0; 50])]), 5);
         // The sidecar run started under generation 4, a reload landed meanwhile.
-        assert!(!store_rel_fit(&state, 4, "k".into(), fit()));
+        assert!(!store_rel_fit(&state, SessionStamp::new(4, 0), "k".into(), fit()));
         assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
         // No dataset at all: also refused, no panic.
         let none = AppState(RwLock::new(None));
-        assert!(!store_rel_fit(&none, 1, "k".into(), fit()));
+        assert!(!store_rel_fit(&none, SessionStamp::new(1, 0), "k".into(), fit()));
     }
 
     #[test]
@@ -5216,18 +5322,23 @@ mod health_export_tests {
     fn recomputing_or_removing_a_special_sensor_invalidates_cached_fits() {
         let state = state_with(ds(vec![("S", vec![1.0; 50])]), 9);
         // A brand-new special sensor does not touch an existing fit...
-        assert!(store_rel_fit(&state, 9, "k".into(), fit()));
+        assert!(store_rel_fit(&state, SessionStamp::new(9, 0), "k".into(), fit()));
         commit_derived(&state, 9, None, "SP", vec![2.0; 50], false).unwrap();
         assert!(health_preview_in(&state, &rel_request(Some("k"))).is_ok());
         // ...recomputing it in place does (it may have been the predictor)...
+        let in_flight = session_stamp(&state).unwrap().unwrap();
         commit_derived(&state, 9, None, "SP", vec![3.0; 50], true).unwrap();
         assert!(health_preview_in(&state, &rel_request(Some("k"))).unwrap_err().starts_with("NOT_FITTED"));
+        // (a fit that was in flight across the recompute is refused, not cached)
+        assert!(!store_rel_fit(&state, in_flight, "k".into(), fit()));
         // ...and so does removing one.
-        assert!(store_rel_fit(&state, 9, "k".into(), fit()));
+        let stamp = session_stamp(&state).unwrap().unwrap();
+        assert!(store_rel_fit(&state, stamp, "k".into(), fit()));
         assert_eq!(remove_derived_in_state(&state, &["SP".to_string()], None).unwrap(), 1);
         assert!(health_preview_in(&state, &rel_request(Some("k"))).unwrap_err().starts_with("NOT_FITTED"));
         // Removing a name that is not a special sensor changes nothing.
-        assert!(store_rel_fit(&state, 9, "k".into(), fit()));
+        let stamp = session_stamp(&state).unwrap().unwrap();
+        assert!(store_rel_fit(&state, stamp, "k".into(), fit()));
         assert_eq!(remove_derived_in_state(&state, &["S".to_string()], None).unwrap(), 0);
         assert!(health_preview_in(&state, &rel_request(Some("k"))).is_ok());
     }
@@ -5915,6 +6026,243 @@ mod health_export_tests {
         assert_eq!(compared, 500);
         // 7. The training window written to the file is the in-scope span.
         assert!(j["model_training_set_info"]["training_set_start_date"].as_str().unwrap().starts_with("2024-05-01T"));
+    }
+}
+
+/// QA-fix pass (2026-10-04): criteria bounds written verbatim, the derived
+/// epoch, the Relationship export pre-checks and the coded export refusals.
+#[cfg(test)]
+mod health_fix_tests {
+    use super::*;
+    use crate::health_score::{RelFit, SetPointsArg};
+    use crate::model_export::ModelFilesRequest;
+    use std::collections::HashSet;
+
+    fn state_with(n: usize, generation: u64) -> AppState {
+        let headers = vec!["timestamp".to_string(), "X".to_string(), "Y".to_string()];
+        let timestamps: Vec<Option<String>> = (0..n)
+            .map(|i| Some(format!("2024-03-01T{:02}:{:02}:00", (i / 60) % 24, i % 60)))
+            .collect();
+        let cols = vec![vec![f64::NAN; n], vec![1.0; n], vec![2.0; n]];
+        AppState(RwLock::new(Some(SessionData {
+            data: ColumnarData::from_parts(headers, timestamps, cols),
+            paths: vec![],
+            derived: HashSet::new(),
+            generation,
+            rel_cache: Default::default(),
+        })))
+    }
+
+    fn fit(target: &str, preds: &[&str]) -> RelFit {
+        RelFit {
+            target: target.into(),
+            predictors: preds.iter().map(|s| s.to_string()).collect(),
+            lambda: 1.0,
+            rows: (0..50).collect(),
+            actual: (0..50).map(|i| i as f64).collect(),
+            predicted: (0..50).map(|i| i as f64 + 0.5).collect(),
+            x_cols: preds.iter().map(|_| (0..50).map(|i| i as f64).collect()).collect(),
+            r2_per_step: vec![],
+            rmse2_per_step: vec![],
+        }
+    }
+
+    fn rel_export(target: &str, preds: &[&str], key: Option<&str>, sp: Option<SetPointsArg>) -> ModelFilesRequest {
+        ModelFilesRequest {
+            kind: "relationship".into(),
+            workspace_id: "ws".into(),
+            target: Some(target.into()),
+            predictors: preds.iter().map(|s| s.to_string()).collect(),
+            lambda: Some(1000.0),
+            cache_key: key.map(String::from),
+            set_points: sp,
+            ..Default::default()
+        }
+    }
+
+    // ---------- bug 2: criteria bounds verbatim ----------
+
+    #[test]
+    fn cluster_info_writes_criteria_bounds_verbatim_and_still_rounds_fitted_numbers() {
+        let ellipse = clustering::EllipseFit {
+            x_center: 1.234_567_8,
+            y_center: 2.0,
+            x_sd: 0.987_654_3,
+            y_sd: 0.5,
+            angle_deg: 12.345_678,
+        };
+        let mk = |id, min, max| ClusterDetail {
+            cluster_id: id,
+            range: Some(ClusterRange { min, max }),
+            n_rows: 3,
+            ellipse: ellipse.clone(),
+            xs: vec![],
+            ys: vec![],
+        };
+        let info = build_cluster_info(
+            &[mk(1, None, Some(10.12345)), mk(2, Some(10.12345), Some(0.000_123_45))],
+            Some(5.0),
+        );
+        for (id, key, want) in [
+            ("1", "criteria_sensor_value_lower_than", 10.12345),
+            ("1", "critera_sensor_value_lower_than", 10.12345),
+            ("2", "criteria_sensor_value_higher_than", 10.12345),
+            ("2", "critera_sensor_value_higher_than", 10.12345),
+            ("2", "criteria_sensor_value_lower_than", 0.000_123_45),
+            ("2", "critera_sensor_value_lower_than", 0.000_123_45),
+        ] {
+            assert_eq!(info[id][key].as_f64(), Some(want), "{id}.{key}");
+        }
+        // Fitted numbers are still rounded (4 significant digits / 3 decimals).
+        assert_eq!(info["1"]["x_sd"].as_f64(), Some(metrics::round_metric(0.987_654_3)));
+        assert_ne!(info["1"]["angle_deg"].as_f64(), Some(12.345_678));
+    }
+
+    // ---------- bug 1: derived epoch ----------
+
+    #[test]
+    fn stamp_changes_on_replace_and_remove_but_not_on_add_or_a_noop_remove() {
+        let state = state_with(50, 3);
+        let s0 = session_stamp(&state).unwrap().unwrap();
+        assert_eq!(s0, SessionStamp::new(3, 0));
+        commit_derived(&state, 3, None, "SP", vec![0.0; 50], false).unwrap();
+        assert_eq!(session_stamp(&state).unwrap().unwrap(), s0, "adding a column cannot affect a fit");
+        commit_derived(&state, 3, None, "SP", vec![1.0; 50], true).unwrap();
+        let s1 = session_stamp(&state).unwrap().unwrap();
+        assert_eq!(s1, SessionStamp::new(3, 1), "replace bumps the epoch, never the generation");
+        assert_eq!(remove_derived_in_state(&state, &["Y".to_string()], None).unwrap(), 0);
+        assert_eq!(session_stamp(&state).unwrap().unwrap(), s1, "removing nothing changes nothing");
+        assert_eq!(remove_derived_in_state(&state, &["SP".to_string()], None).unwrap(), 1);
+        assert_eq!(session_stamp(&state).unwrap().unwrap(), SessionStamp::new(3, 2));
+        // A reload resets everything (fresh session, new generation).
+        let fresh = ColumnarData::from_parts(
+            vec!["timestamp".into(), "X".into()],
+            vec![Some("2024-03-01T00:00:00".into())],
+            vec![vec![f64::NAN], vec![1.0]],
+        );
+        let g = install_session(&state, fresh, vec![]).unwrap();
+        assert_eq!(session_stamp(&state).unwrap().unwrap(), SessionStamp::new(g, 0));
+    }
+
+    #[test]
+    fn a_stale_stamp_is_refused_by_the_epoch_alone_not_only_the_generation() {
+        let state = state_with(50, 3);
+        let before = session_stamp(&state).unwrap().unwrap();
+        commit_derived(&state, 3, None, "SP", vec![0.0; 50], false).unwrap();
+        commit_derived(&state, 3, None, "SP", vec![1.0; 50], true).unwrap();
+        // Same generation, older epoch.
+        assert_eq!(before.generation, session_stamp(&state).unwrap().unwrap().generation);
+        assert!(!store_rel_fit(&state, before, "k".into(), fit("Y", &["X"])));
+        assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
+    }
+
+    // ---------- bug 8: relationship export pre-checks ----------
+
+    #[test]
+    fn export_plan_refuses_a_cache_entry_of_another_model_with_not_fitted() {
+        let state = state_with(50, 1);
+        let app = tempfile::tempdir().unwrap();
+        store_rel_fit(&state, SessionStamp::new(1, 0), "k".into(), fit("Y", &["X"]));
+        for req in [
+            rel_export("X", &["X"], Some("k"), None),       // other target
+            rel_export("Y", &["Y"], Some("k"), None),       // other predictors
+            rel_export("Y", &["X", "Y"], Some("k"), None),  // more predictors
+        ] {
+            let e = plan_export(&req, app.path(), &state).err().expect("must refuse");
+            assert!(e.starts_with("NOT_FITTED"), "{e}");
+        }
+        assert!(!app.path().join("workspaces").exists(), "nothing touched the disk");
+        // The matching entry is accepted (and, with no set points, refused only by validation).
+        match plan_export(&rel_export("Y", &["X"], Some("k"), None), app.path(), &state).unwrap() {
+            ExportPlan::Finished(r) => assert!(!r.ok && !r.validation.is_empty()),
+            ExportPlan::RunSidecar => panic!("missing set points must be refused before the sidecar"),
+        }
+        // No cache entry at all: nothing to compare, the sidecar would run.
+        let sp = SetPointsArg {
+            residual_at_80_lower: Some(-3.0),
+            residual_at_80_upper: Some(3.0),
+            residual_at_0_lower: Some(-5.0),
+            residual_at_0_upper: Some(5.0),
+            ..Default::default()
+        };
+        assert!(matches!(
+            plan_export(&rel_export("Y", &["X"], None, Some(sp.clone())), app.path(), &state).unwrap(),
+            ExportPlan::RunSidecar
+        ));
+        assert!(matches!(
+            plan_export(&rel_export("Y", &["X"], Some("unknown"), Some(sp)), app.path(), &state).unwrap(),
+            ExportPlan::RunSidecar
+        ));
+    }
+
+    #[test]
+    fn export_plan_refuses_bad_relationship_requests_with_bad_request_before_the_disk() {
+        let state = state_with(50, 1);
+        let app = tempfile::tempdir().unwrap();
+        let mut cases: Vec<(&str, ModelFilesRequest)> = vec![
+            ("slash target", rel_export("Y/Z", &["X"], None, None)),
+            ("star predictor", rel_export("Y", &["X*"], None, None)),
+            ("NUL target", rel_export("NUL", &["X"], None, None)),
+            ("long target", rel_export(&"y".repeat(300), &["X"], None, None)),
+            ("trailing space", rel_export("Y ", &["X"], None, None)),
+            ("unknown target", rel_export("nope", &["X"], None, None)),
+            ("unknown predictor", rel_export("Y", &["nope"], None, None)),
+            ("no predictors", rel_export("Y", &[], None, None)),
+        ];
+        let mut no_lambda = rel_export("Y", &["X"], None, None);
+        no_lambda.lambda = None;
+        cases.push(("no lambda", no_lambda));
+        let mut bad_ws = rel_export("Y", &["X"], None, None);
+        bad_ws.workspace_id = "../evil".into();
+        cases.push(("bad workspace id", bad_ws));
+        let mut bad_scope = rel_export("Y", &["X"], None, None);
+        bad_scope.filter = Some(PreviewFilter {
+            timestamp_ranges: vec![TimeRangeArg { start: Some("2024-03-01T02:00:00".into()), end: Some("2024-03-01T01:00:00".into()) }],
+            ..Default::default()
+        });
+        cases.push(("reversed period", bad_scope));
+        for (name, req) in cases {
+            let e = plan_export(&req, app.path(), &state).err().unwrap_or_else(|| panic!("{name} must be refused"));
+            assert!(e.starts_with("BAD_REQUEST"), "{name}: {e}");
+        }
+        assert!(!app.path().join("workspaces").exists(), "nothing touched the disk");
+    }
+
+    // ---------- bug 8: Individual / Clustering export refusals are coded ----------
+
+    #[test]
+    fn export_sync_refuses_unsafe_names_with_a_coded_error_and_creates_nothing() {
+        let app = tempfile::tempdir().unwrap();
+        let state = state_with(50, 1);
+        let lock = state.0.read().unwrap();
+        let data = &lock.as_ref().unwrap().data;
+        let sp = Some(SetPointsArg { lower: Some(0.0), upper: Some(9.0), ..Default::default() });
+        let ind = |t: &str| ModelFilesRequest {
+            kind: "individual".into(),
+            workspace_id: "ws".into(),
+            target: Some(t.into()),
+            set_points: sp.clone(),
+            ..Default::default()
+        };
+        for bad in ["a/b", "a\\b", "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b", "NUL", "con", "COM1", "lpt9", "a.", "a ", " a", "..", "x\u{1}y", &"x".repeat(300)] {
+            let e = model_export::export_sync(data, &ind(bad), app.path()).unwrap_err();
+            assert!(e.starts_with("BAD_REQUEST"), "{bad:?}: {e}");
+        }
+        // A sensor that is simply not in the data is coded too (was a plain message).
+        assert!(model_export::export_sync(data, &ind("Nope"), app.path()).unwrap_err().starts_with("BAD_REQUEST"));
+        let clu = ModelFilesRequest {
+            kind: "clustering".into(),
+            workspace_id: "ws".into(),
+            first_sensor: Some("X".into()),
+            second_sensor: Some("Y".into()),
+            n_clusters: Some(2),
+            criteria_sensor: Some("X".into()),
+            cluster_ranges: Some(vec![ClusterRange { min: None, max: Some(1.0) }]),
+            ..Default::default()
+        };
+        let e = model_export::export_sync(data, &clu, app.path()).unwrap_err();
+        assert!(e.starts_with("BAD_REQUEST") && e.contains("cluster_ranges"), "{e}");
+        assert!(!app.path().join("workspaces").exists(), "no directory was created for a bad request");
     }
 }
 
