@@ -6,6 +6,7 @@ import { debugLog } from './utils/debugLog';
 import { migrateHealthSetPoints } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
 import { applyIncompleteRule } from './utils/incompleteRule';
+import { withFailureGroupState } from './utils/failureGroupState';
 
 const STORE_FILE = 'settings.json';
 
@@ -471,11 +472,27 @@ export async function duplicateWorkspace(id: string) {
     try {
         const state = await loadWorkspaceData(id);
         if (state) {
-            const newState: WorkspaceState = {
+            const copy: WorkspaceState = {
                 ...state,
                 id: `ws_${Date.now()}`,
                 name: `${state.name} (Copy)`
             };
+            // QA fix (2026-10-04): the files a model's "Mark complete" wrote live in
+            // the ORIGINAL workspace's output folder, which is deliberately not
+            // copied. A copy must not claim them (nor lose them the day the original
+            // is deleted): its models become Incomplete and drop the export record,
+            // keeping everything else (set points, train record, verdict, settings) —
+            // the user marks them complete again to write files for the copy.
+            const newState: WorkspaceState = state.failureGroupState
+                ? withFailureGroupState(copy, {
+                    models: (state.failureGroupState.models ?? []).map(m => {
+                        if (!m.status && m.healthExport === undefined) return m;
+                        const { healthExport: dropped, ...rest } = m;
+                        void dropped;
+                        return { ...rest, status: false };
+                    }),
+                })
+                : copy;
             await saveWorkspaceData(newState);
             return newState;
         }

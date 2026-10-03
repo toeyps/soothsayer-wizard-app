@@ -9,7 +9,7 @@ import type {
 import type { HealthIssue, HealthPreview } from '../../../types/health';
 import { canResetToMaster, resetToMaster, setPointSource, type SetPointSide } from '../../../utils/healthSetPoints';
 import { fmtNum } from './chartTheme';
-import { fieldState, RING_QUICK, stepRing, type FieldState, type HealthVerdict } from './healthChecks';
+import { fieldState, formatSetPointText, RING_QUICK, stepRing, type FieldState, type HealthVerdict } from './healthChecks';
 
 /*
  * The "Health set points" card of the Health score page (mockup `panel()`): the
@@ -49,7 +49,7 @@ function parseNum(text: string): number | null {
     return Number.isFinite(n) ? n : null;
 }
 
-const toText = (v: number | null): string => (v === null ? '' : String(+v.toFixed(6)));
+const toText = (v: number | null): string => (v === null ? '' : formatSetPointText(v));
 
 interface NumFieldProps {
     testId: string;
@@ -65,11 +65,14 @@ interface NumFieldProps {
     /** Only the input box, without the label row (the outer-ring field). */
     bare?: boolean;
     ariaLabel?: string;
+    /** Extra words for a screen reader only, appended to the visible label (the
+     *  accessible name of the input comes from its `<label>`). */
+    srLabel?: string;
 }
 
 /** A number input with its own text state, so "-", "1." and "" can be typed
  *  without the field fighting the parsed number. */
-function NumField({ testId, label, unit, value, state, onChange, onCommit, extra, suffix, bare, ariaLabel }: NumFieldProps) {
+function NumField({ testId, label, unit, value, state, onChange, onCommit, extra, suffix, bare, ariaLabel, srLabel }: NumFieldProps) {
     const [text, setText] = useState(toText(value));
     // The draft changed from outside (reset to master, a stepper, a broadcast):
     // follow it - but never rewrite what the user is typing when it parses to the
@@ -99,7 +102,7 @@ function NumField({ testId, label, unit, value, state, onChange, onCommit, extra
     if (bare) return box;
     return (
         <div className="hs-fld">
-            <label htmlFor={testId}>{label}{extra}</label>
+            <label htmlFor={testId}>{label}{srLabel && <span className="sr-only"> {srLabel}</span>}{extra}</label>
             {box}
         </div>
     );
@@ -208,10 +211,11 @@ function IndividualLadder({ data, sp, unit, issues, onChange, onCommit }: Ladder
 function RelationshipLadder({ data, sp, unit, issues, onChange, onCommit }: LadderProps<RelationshipHealthSetPoints>) {
     if (data.stats.kind !== 'relationship') return null;
     const w = data.stats.two_rmse;
-    const field = (key: keyof Omit<RelationshipHealthSetPoints, 'kind'>, wire: string, label: string) => (
+    const field = (key: keyof Omit<RelationshipHealthSetPoints, 'kind'>, wire: string, label: string, srLabel: string) => (
         <NumField
             testId={`sp-${wire}`}
             label={label}
+            srLabel={srLabel}
             unit={unit}
             value={sp[key]}
             state={fieldState(issues, wire)}
@@ -226,14 +230,14 @@ function RelationshipLadder({ data, sp, unit, issues, onChange, onCommit }: Ladd
             </Rung>
             <Rung score={80} tone="warn" testId="rung-80" what="Residual at score 80">
                 <div className="hs-pair">
-                    {field('residualAt80Lower', 'residual_at_80_lower', 'Lower')}
-                    {field('residualAt80Upper', 'residual_at_80_upper', 'Upper')}
+                    {field('residualAt80Lower', 'residual_at_80_lower', 'Lower', 'residual at score 80')}
+                    {field('residualAt80Upper', 'residual_at_80_upper', 'Upper', 'residual at score 80')}
                 </div>
             </Rung>
             <Rung score={0} tone="danger" testId="rung-0" what="Residual at score 0">
                 <div className="hs-pair">
-                    {field('residualAt0Lower', 'residual_at_0_lower', 'Lower')}
-                    {field('residualAt0Upper', 'residual_at_0_upper', 'Upper')}
+                    {field('residualAt0Lower', 'residual_at_0_lower', 'Lower', 'residual at score 0')}
+                    {field('residualAt0Upper', 'residual_at_0_upper', 'Upper', 'residual at score 0')}
                 </div>
             </Rung>
         </>

@@ -129,6 +129,7 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 
@@ -3421,6 +3422,18 @@ const hsInput = (id: string) => screen.getByTestId(id) as HTMLInputElement;
 const hsType = (id: string, value: string) => fireEvent.change(hsInput(id), { target: { value } });
 const hsLastModel = async (i = 0) =>
     (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[i];
+/** How many of the recorded workspace writes CHANGED the first model's set points (a write that only
+ *  stores the saved validation verdict - `healthVerdict`, QA fix 2026-10-04 - is not one). */
+const hsSetPointWrites = async (before: unknown) => {
+    let prev = JSON.stringify(before);
+    let n = 0;
+    for (const r of mockUpdateWorkspaceData.mock.results) {
+        const cur = JSON.stringify((await r.value).failureGroupState.models[0].healthSetPoints);
+        if (cur !== prev) n++;
+        prev = cur;
+    }
+    return n;
+};
 const hsMarkBtn = () => screen.getByTestId('mark-complete') as HTMLButtonElement;
 const hsClickMark = async () => { await act(async () => { fireEvent.click(hsMarkBtn()); await Promise.resolve(); }); };
 const hsBlur = async (id: string) => { await act(async () => { fireEvent.blur(hsInput(id)); await Promise.resolve(); await Promise.resolve(); }); await flush(); };
@@ -3609,7 +3622,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             mockUpdateWorkspaceData.mockClear();
             await openHealthPage();
             await flush();
-            expect(mockUpdateWorkspaceData.mock.calls.length).toBe(1);
+            expect(await hsSetPointWrites(undefined)).toBe(1);
             expect((await hsLastModel()).healthSetPoints).toEqual({ kind: 'individual', lower: 1, upper: 90, masterLower: 1, masterUpper: 90 });
             expect(screen.getByTestId('sp-lower-source').textContent).toBe('master data');
             expect(hsInput('sp-upper').value).toBe('90');
@@ -3644,7 +3657,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             mockUpdateWorkspaceData.mockClear();
             await openHealthPage();
             await flush();
-            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(await hsSetPointWrites(HS_SNAP)).toBe(0); // (the saved verdict may be written)
             expect(hsInput('sp-upper').value).toBe('9');
         });
 
@@ -3663,7 +3676,7 @@ describe('Health score page - draft set points and when they are persisted (heal
             mockUpdateWorkspaceData.mockClear();
             await openHealthPage();
             await flush();
-            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            expect(await hsSetPointWrites({ kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null })).toBe(0);
         });
     });
 });
@@ -3974,5 +3987,276 @@ describe('Health score page - edge cases', () => {
             expect(screen.getByTestId('mark-block-reason').textContent).toMatch(/Re-train first/);
             expect((screen.getByTestId('mark-complete') as HTMLButtonElement).disabled).toBe(true);
         }
+    });
+});
+
+// 🆕 2026-10-04 (QA fixes after the health-score integration sweep): the persisted validation verdict, the
+// dataset-generation guard on Train, a window close during "Mark complete", and the refusal notice that
+// also shows on the Model fit page. The cross-window / multi-workspace halves of these live in the
+// HealthScore*.integration tests.
+describe('Health score - QA fixes 2026-10-04', () => {
+    const META1 = [{ tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmL: 1, alarmH: 90 }];
+    const BAD_SP = { kind: 'individual', lower: 3, upper: 9, masterLower: null, masterUpper: null };
+    const updateCalls = () => mockUpdateWorkspaceData.mock.calls.length;
+
+    describe('the validation verdict is persisted on the model (healthVerdict) so the Dashboard dot can show it', () => {
+        it('a rejected saved set point -> healthVerdict "invalid" is written and broadcast with the whole slice', async () => {
+            await hsMount([HS_IND({ healthSetPoints: BAD_SP })]);
+            await waitFor(async () => expect((await hsLastModel()).healthVerdict).toBe('invalid'));
+            const emitted = mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed').pop()![1];
+            expect(emitted).toMatchObject({ workspaceId: 'ws1', origin: 'build-model' });
+            expect(emitted.models[0].healthVerdict).toBe('invalid');
+            // only the verdict was written: set points and status untouched
+            expect((await hsLastModel()).healthSetPoints).toEqual(BAD_SP);
+            expect((await hsLastModel()).status).toBe(false);
+        });
+
+        it('empty set points -> "incomplete"; valid ones -> "valid"', async () => {
+            await hsMount([HS_IND({ healthSetPoints: HS_EMPTY_IND })]);
+            await waitFor(async () => expect((await hsLastModel()).healthVerdict).toBe('incomplete'));
+            cleanup();
+            mockUpdateWorkspaceData.mockReset();
+            await hsMount([HS_IND()]);
+            await waitFor(async () => expect((await hsLastModel()).healthVerdict).toBe('valid'));
+        });
+
+        it('a verdict that already equals the saved one writes nothing', async () => {
+            await hsMount([HS_IND({ healthSetPoints: BAD_SP, healthVerdict: 'invalid' })]);
+            await waitFor(() => expect(healthCalls().length).toBeGreaterThan(0));
+            await flush();
+            await flush();
+            expect(updateCalls()).toBe(0);
+        });
+
+        it('a wrong saved verdict is corrected from the preview (self-healing)', async () => {
+            await hsMount([HS_IND({ healthVerdict: 'invalid' })]); // valid set points, stale "invalid"
+            await waitFor(async () => expect((await hsLastModel()).healthVerdict).toBe('valid'));
+        });
+
+        it('nothing is written while a set point is typed but not saved (the verdict is about what is on disk); the pill follows the typing live; blur saves, the old verdict is dropped, the new one lands', async () => {
+            await hsMount([HS_IND({ healthVerdict: 'valid' })]);
+            await openHealthPage();
+            await waitFor(() => expect(healthCalls().slice(-1)[0].set_points).toEqual({ lower: 1, upper: 9 }));
+            await flush();
+            mockUpdateWorkspaceData.mockClear();
+            hsType('sp-lower', '3');
+            await waitFor(() => expect(healthCalls().slice(-1)[0].set_points).toEqual({ lower: 3, upper: 9 }));
+            await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Fix set point')); // live
+            await flush();
+            expect(updateCalls()).toBe(0);
+            await hsBlur('sp-lower');
+            await waitFor(async () => expect((await hsLastModel()).healthVerdict).toBe('invalid'));
+            const results = await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value));
+            const saved = results.find(s => s.failureGroupState.models[0].healthSetPoints.lower === 3)!;
+            expect(saved.failureGroupState.models[0]).not.toHaveProperty('healthVerdict'); // the set-point write dropped the old one
+        });
+
+        it('a model that is not trained-and-fresh gets no verdict (a stale model\'s old data does not count)', async () => {
+            await hsMount([{ ...HS_IND({ healthSetPoints: BAD_SP }), trainedFingerprint: 'old' }]);
+            await flush();
+            await flush();
+            expect(updateCalls()).toBe(0);
+        });
+
+        it('an Individual model whose master prefill has not been saved yet (page not opened) gets no verdict for numbers that are not on disk', async () => {
+            await hsMount([HS_IND({ healthSetPoints: { kind: 'individual', lower: null, upper: null } })], { sensorMetadata: META1 });
+            await waitFor(() => expect(healthCalls().length).toBeGreaterThan(0));
+            await flush();
+            await flush();
+            expect(updateCalls()).toBe(0);
+        });
+
+        it('a new Train drops the old verdict in the same write that stamps the new fit', async () => {
+            await hsMount([makeModel({ healthVerdict: 'invalid' })]); // untrained, with a leftover verdict
+            await act(async () => {
+                fireEvent.click(screen.getByText('▶ Train model'));
+                await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            });
+            const stamped = (await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value))).find(s => s.failureGroupState.models[0].lastTrainedAt)!;
+            expect(stamped.failureGroupState.models[0]).not.toHaveProperty('healthVerdict');
+        });
+
+        it('the tab pill and the left-list dot read the PERSISTED verdict (no live preview needed)', async () => {
+            await hsMount([HS_IND({ healthSetPoints: HS_EMPTY_IND, healthVerdict: 'invalid' })]);
+            // before / without any answer yet the persisted verdict already colours them
+            expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toMatch(/f4-kb-dot--bad|f4-kb-dot--need/);
+        });
+    });
+
+    describe('Train is bound to the dataset this window was opened on', () => {
+        const PAYLOAD = { metadata: { headers: ['timestamp', 'TAG1', 'TAG2'], total_rows: 100, generation: 5 } };
+        const genIs = (...gens: Array<number | null | 'reject'>) => {
+            let i = 0;
+            mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                if (cmd !== 'get_session_generation') return healthInvoke(cmd, args);
+                const g = gens[Math.min(i++, gens.length - 1)];
+                return g === 'reject' ? Promise.reject(new Error('no such command')) : Promise.resolve(g);
+            });
+        };
+        const clickTrain = () => { mockInvoke.mockClear(); return act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await flush(); await flush(); }); };
+        const stats = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats');
+        const stamped = async () => (await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value))).some(s => s.failureGroupState.models[0].lastTrainedAt);
+
+        it('dataset replaced (generation differs): nothing is trained, nothing is stamped, a clear message is shown', async () => {
+            await hsMount([makeModel()], PAYLOAD);
+            genIs(6);
+            await clickTrain();
+            expect(stats()).toHaveLength(0);
+            expect(await stamped()).toBe(false);
+            expect(screen.getByTestId('results-error').textContent).toMatch(/dataset changed since this window was opened/i);
+            expect(screen.getByTestId('results-error').textContent).toMatch(/reopen Build Model/i);
+        });
+
+        it('replaced WHILE the commands ran: the result is thrown away, not stamped', async () => {
+            await hsMount([makeModel()], PAYLOAD);
+            genIs(5, 6);
+            await clickTrain();
+            expect(stats()).toHaveLength(1);
+            expect(await stamped()).toBe(false);
+            expect(screen.getByTestId('results-error')).toBeTruthy();
+        });
+
+        it('same generation: trains and stamps as always', async () => {
+            await hsMount([makeModel()], PAYLOAD);
+            genIs(5);
+            await clickTrain();
+            expect(stats()).toHaveLength(1);
+            expect(await stamped()).toBe(true);
+        });
+
+        it('the generation command failing or answering null never blocks a Train (diagnostic only)', async () => {
+            await hsMount([makeModel()], PAYLOAD);
+            genIs('reject');
+            await clickTrain();
+            expect(await stamped()).toBe(true);
+            cleanup();
+            mockUpdateWorkspaceData.mockReset();
+            await hsMount([makeModel()], PAYLOAD);
+            genIs(null);
+            await clickTrain();
+            expect(await stamped()).toBe(true);
+        });
+
+        it('a window opened without a generation never asks for one', async () => {
+            await hsMount([makeModel()]);
+            genIs(99);
+            await clickTrain();
+            expect(mockInvoke.mock.calls.some(c => c[0] === 'get_session_generation')).toBe(false);
+            expect(await stamped()).toBe(true);
+        });
+    });
+
+    describe('closing while "Mark complete" is exporting waits for the whole run', () => {
+        let finishExport!: () => void;
+        const slowExport = () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'export_model_files' ? new Promise(res => { finishExport = () => res(EXPORT_OK); }) : healthInvoke(cmd, args));
+        };
+        const startMark = async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            slowExport();
+            await hsClickMark();
+            await waitFor(() => expect(exportCalls()).toHaveLength(1));
+        };
+
+        it('a native close is held until the files are written AND the status is saved, then goes through', async () => {
+            await startMark();
+            const preventDefault = vi.fn();
+            let closing!: Promise<void>;
+            await act(async () => { closing = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>; await Promise.resolve(); });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(mockClose).not.toHaveBeenCalled();
+            await act(async () => { finishExport(); await closing; });
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect((await hsLastModel()).status).toBe(true); // saved BEFORE the window went away
+        });
+
+        it('the toolbar Close button does the same', async () => {
+            await startMark();
+            fireEvent.click(screen.getByTitle('Close'));
+            await act(async () => { await Promise.resolve(); });
+            expect(mockClose).not.toHaveBeenCalled();
+            await act(async () => { finishExport(); });
+            await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
+            expect((await hsLastModel()).status).toBe(true);
+        });
+
+        it('a hung export does not make the window impossible to close: it stays open ONCE with a notice, the next close goes through', async () => {
+            const wait = MARK_COMPLETE_CLOSE_WAIT.ms;
+            MARK_COMPLETE_CLOSE_WAIT.ms = 20;
+            try {
+                await startMark();
+                const first = vi.fn();
+                await act(async () => { await mockCloseRequestedHandler!({ preventDefault: first }); });
+                expect(first).toHaveBeenCalledTimes(1);
+                expect(mockClose).not.toHaveBeenCalled();
+                expect(screen.getByTestId('close-wait-notice').textContent).toMatch(/Still saving the model files/);
+                const second = vi.fn();
+                await act(async () => { await mockCloseRequestedHandler!({ preventDefault: second }); });
+                expect(mockClose).toHaveBeenCalledTimes(1); // gave up waiting
+            } finally {
+                MARK_COMPLETE_CLOSE_WAIT.ms = wait;
+                finishExport?.();
+            }
+        });
+
+        it('with no Mark complete running the close is not delayed or intercepted (nothing typed, nothing saving)', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await flush();
+            const preventDefault = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            expect(preventDefault).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('a refused / failed Mark complete is also visible on the Model fit page', () => {
+        it('shows "not marked complete" + the reason as a dismissible banner after going back to Model fit; dismiss removes it; the Health page keeps its own banner', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'export_model_files' ? Promise.reject(new Error('Failed to write INDV_INFO: access denied')) : healthInvoke(cmd, args));
+            await hsClickMark();
+            await waitFor(() => expect(screen.getByTestId('save-error').textContent).toMatch(/access denied/));
+            expect(screen.queryByTestId('save-notice')).toBeNull(); // the Health page shows its own banner, not both
+            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            const notice = screen.getByTestId('save-notice');
+            expect(notice.textContent).toMatch(/not marked complete/);
+            expect(notice.textContent).toMatch(/access denied/);
+            fireEvent.click(screen.getByTestId('save-notice-dismiss'));
+            expect(screen.queryByTestId('save-notice')).toBeNull();
+        });
+
+        it('a successful Mark complete shows no such banner on the Model fit page', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            await hsClickMark();
+            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            expect(screen.queryByTestId('save-notice')).toBeNull();
+        });
+    });
+
+    describe('a one-off preview failure keeps the Health score page (inputs + Retry)', () => {
+        it('the inputs stay, an error banner with Retry shows, Retry asks again and the banner goes when it answers', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(healthCalls().slice(-1)[0].set_points).toEqual({ lower: 1, upper: 9 }));
+            let fail = true;
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_health_preview' && fail ? Promise.reject('Failed to read column: transient I/O error') : healthInvoke(cmd, args));
+            hsType('sp-upper', '9.5');
+            await waitFor(() => expect(screen.getByTestId('health-error').textContent).toMatch(/transient I\/O error/));
+            expect(hsInput('sp-upper').value).toBe('9.5'); // the page and its inputs are still here
+            expect(hsMarkBtn().disabled).toBe(true); // nothing is judged, so nothing can be marked complete
+            fail = false;
+            fireEvent.click(screen.getByTestId('health-retry'));
+            await waitFor(() => expect(screen.getByTestId('check-valid')).toBeTruthy());
+            expect(screen.queryByTestId('health-error')).toBeNull();
+        });
     });
 });

@@ -266,7 +266,24 @@ export interface FailureModel extends PredictiveModelStateSlice {
      *  makes a model stale). Kept when a model is marked Incomplete -- the
      *  files stay on disk. */
     healthExport?: HealthExportRecord;
+    /** The last validation verdict Rust gave on this model's SAVED set points
+     *  (QA fix, 2026-10-04): `'valid'` = the score can be calculated,
+     *  `'incomplete'` = only empty points ("Set points needed"), `'invalid'` =
+     *  a point is rejected ("Fix set point"). Persisted so the Dashboard's
+     *  Failure Groups dot can show the same "Fix set point" the Build Model list
+     *  does -- the verdict used to live only in the Build Model window's
+     *  session. ONE source of truth: `modelSetPointFlag` in
+     *  `utils/modelStatus.ts` is what every surface reads. Written by
+     *  `commitHealthVerdict` (utils/healthPersist.ts) once the preview of the
+     *  SAVED set points lands; dropped when the set point numbers change
+     *  (`commitSetPoints`), when a re-train starts a new run, and when a training
+     *  input changes (`applyIncompleteRule`) -- so it never describes numbers or a
+     *  fit it was not computed from. Optional, spread-safe, NOT part of
+     *  `computeTrainFingerprint`. */
+    healthVerdict?: HealthVerdictValue;
 }
+
+export type HealthVerdictValue = 'valid' | 'incomplete' | 'invalid';
 
 export interface HealthExportRecord {
     /** ISO timestamp of the export. */

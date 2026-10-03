@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { FailureModel, HealthSetPoints } from '../types';
 import type { HealthErrorCode, HealthPreview } from '../types/health';
@@ -57,17 +57,28 @@ export interface UseHealthPreviewResult {
      *  was trained but its inputs changed since; `'inputs'` = a required sensor
      *  is missing; `'disabled'` = `enabled` is false / no model. */
     idle: 'stale' | 'inputs' | 'disabled' | null;
+    /** The last SUCCESSFUL response for THIS model, kept even after a later
+     *  request failed (`data` is `null` then, because it no longer matches the
+     *  request that failed). The Health score page draws its page and inputs
+     *  from it while an error banner shows, so a one-off failure never makes
+     *  the page disappear. `null` before the first success and for another model.
+     *  (Optional in the type only so hand-built fixtures need not spell it; the
+     *  hook always returns it.) */
+    lastData?: HealthPreview | null;
+    /** Ask again for the same request (the error banner's Retry button). */
+    retry?: () => void;
 }
 
 interface State {
     modelId: string | null;
     data: HealthPreview | null;
+    lastData: HealthPreview | null;
     loading: boolean;
     error: string | null;
     errorCode: HealthErrorCode | null;
 }
 
-const EMPTY: State = { modelId: null, data: null, loading: false, error: null, errorCode: null };
+const EMPTY: State = { modelId: null, data: null, lastData: null, loading: false, error: null, errorCode: null };
 
 /**
  * `compute_health_preview` for one model: the bounded series / stats / score /
@@ -88,6 +99,9 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     const { model, fg, headers, enabled = true } = opts;
     const [state, setState] = useState<State>(EMPTY);
     const seqRef = useRef(0);
+    // Bumped by `retry`: part of the effect's key, never sent.
+    const [retryTick, setRetryTick] = useState(0);
+    const retry = useCallback(() => setRetryTick(n => n + 1), []);
 
     let idle: UseHealthPreviewResult['idle'] = null;
     let request = null as ReturnType<typeof buildHealthPreviewRequest>;
@@ -113,7 +127,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     // The request, serialised: the effect's only trigger (callers pass freshly
     // built objects every render). `revision` is part of the key but never sent.
     const requestKey = healthRequestKey(request);
-    const key = requestKey === null ? null : `${model?.id}|${opts.revision ?? 0}|${requestKey}`;
+    const key = requestKey === null ? null : `${model?.id}|${opts.revision ?? 0}|${retryTick}|${requestKey}`;
     const requestRef = useRef(request);
     requestRef.current = request;
     const modelId = model?.id ?? null;
@@ -132,6 +146,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
             modelId,
             // Another model's data must never be shown for this one.
             data: s.modelId === modelId ? s.data : null,
+            lastData: s.modelId === modelId ? s.lastData : null,
             loading: true,
             error: null,
             errorCode: null,
@@ -140,13 +155,14 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
             invoke<HealthPreview>('compute_health_preview', { request: req })
                 .then(data => {
                     if (seqRef.current !== mySeq) return; // superseded
-                    setState({ modelId, data, loading: false, error: null, errorCode: null });
+                    setState({ modelId, data, lastData: data, loading: false, error: null, errorCode: null });
                 })
                 .catch(err => {
                     if (seqRef.current !== mySeq) return;
                     const { code, message } = parseHealthError(err);
-                    // The old data no longer matches the request that failed.
-                    setState({ modelId, data: null, loading: false, error: message, errorCode: code });
+                    // The old data no longer matches the request that failed (`data` is
+                    // null), but the last good answer stays available as `lastData`.
+                    setState(s => ({ modelId, data: null, lastData: s.modelId === modelId ? s.lastData : null, loading: false, error: message, errorCode: code }));
                 });
         }, debounceMs);
         return () => {
@@ -172,5 +188,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
         notFitted: errorCode === 'NOT_FITTED',
         needsRetrain: errorCode === 'NOT_FITTED',
         idle,
+        lastData: mine ? state.lastData : null,
+        retry,
     };
 }

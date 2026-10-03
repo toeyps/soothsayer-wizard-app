@@ -4,7 +4,7 @@ import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMe
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
 import type { RunningConditionFg } from '../../utils/runningCondition';
-import { isModelComplete, modelDotState } from '../../utils/modelStatus';
+import { isModelComplete, modelDotState, modelSetPointFlag } from '../../utils/modelStatus';
 
 // Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
 // for the model-kind badge's tooltip (see renderModelRow below).
@@ -148,9 +148,19 @@ export default function FailureGroupsPanel({
     // here either — the write side sets it Incomplete immediately; this is the
     // read side for old data / a write that raced. `stale`/`blocked` keep
     // drawing no dot, as before.
-    const dotStatusFor = (m: FailureModel): 'none' | 'trained' | 'complete' => {
+    //
+    // 2026-10-04 (QA fix): a TRAINED model whose saved set points Rust rejected /
+    // left empty now reads red / yellow here too — `modelSetPointFlag`
+    // (utils/modelStatus.ts) reads the verdict persisted on the model
+    // (`healthVerdict`), the same value the Build Model list dot and tab pill read,
+    // so the two windows can no longer disagree ("Fix set point").
+    const dotStatusFor = (m: FailureModel): 'none' | 'trained' | 'complete' | 'need' | 'bad' => {
         const s = modelDotState(m, fg, datasetHeaders);
-        return s === 'complete' || s === 'trained' ? s : 'none';
+        if (s === 'trained') {
+            const flag = modelSetPointFlag(m, fg, datasetHeaders, s);
+            return flag === 'fix' ? 'bad' : flag === 'needed' ? 'need' : 'trained';
+        }
+        return s === 'complete' ? s : 'none';
     };
     const isDone = (m: FailureModel): boolean => isModelComplete(m, fg);
     // Model name if the user set one; otherwise the target sensor's

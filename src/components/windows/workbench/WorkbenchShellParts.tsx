@@ -81,3 +81,21 @@ export function StaleBanner({ training, disabled, disabledTitle, onRetrain }: St
         </div>
     );
 }
+
+/**
+ * "The model was not saved. <why>" — shown on the Model fit page when a "Mark
+ * complete" was refused or failed (QA fix, 2026-10-04). The Health score page
+ * renders the same message in its own banner, but that page cannot be shown for
+ * a model that went stale during the export (the usual reason the save is
+ * refused AFTER the files were written), so without this the user never learned
+ * that their Mark complete did not take effect. Dismissible.
+ */
+export function SaveErrorNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+    return (
+        <div className="wb2-stale" role="alert" data-testid="save-notice">
+            <span><b>The model was not marked complete.</b> {message}</span>
+            <span className="wb2-sp" />
+            <button type="button" className="rcx-btn rcx-btn--sm" data-testid="save-notice-dismiss" onClick={onDismiss}>Dismiss</button>
+        </div>
+    );
+}

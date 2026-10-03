@@ -222,6 +222,38 @@ describe('FailureGroupsPanel', () => {
             });
         });
 
+        // 2026-10-04 (QA fix): the Dashboard dot reads the verdict PERSISTED on the model
+        // (`healthVerdict`), the same value the Build Model list dot / tab pill read.
+        describe('a trained model whose saved set points were judged (persisted healthVerdict)', () => {
+            const rc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true };
+            const trainedWith = (over: Partial<FailureModel> = {}) => {
+                const model = makeModel({ status: false, category: 'performance', ...over });
+                return { ...model, lastTrainedAt: '2026-09-30T00:00:00.000Z', trainedFingerprint: computeTrainFingerprint(model, { ...rc, models: [model] }) };
+            };
+            const dotClass = (m: FailureModel) => {
+                const { unmount } = render(<FailureGroupsPanel {...makeProps({ fgModels: [m], runningConditionFg: rc })} />);
+                const cls = dotOn(badgeFor('I'))?.className ?? 'none';
+                unmount();
+                return cls;
+            };
+
+            it('invalid -> the red "bad" dot ("Fix set point")', () => {
+                expect(dotClass(trainedWith({ healthVerdict: 'invalid' }))).toContain('f4-kb-dot--bad');
+            });
+            it('incomplete -> the yellow "need" dot ("Set points needed")', () => {
+                expect(dotClass(trainedWith({ healthVerdict: 'incomplete' }))).toContain('f4-kb-dot--need');
+            });
+            it('valid, or never judged -> the plain "trained" dot', () => {
+                expect(dotClass(trainedWith({ healthVerdict: 'valid' }))).toContain('f4-kb-dot--trained');
+                expect(dotClass(trainedWith())).toContain('f4-kb-dot--trained');
+            });
+            it('a verdict never colours a model that is not "trained": Complete stays green, stale / never trained draw nothing', () => {
+                expect(dotClass(trainedWith({ status: true, healthVerdict: 'invalid' }))).toContain('f4-kb-dot--complete');
+                expect(dotClass({ ...trainedWith({ healthVerdict: 'invalid' }), trainedFingerprint: 'old' })).toBe('none');
+                expect(dotClass(makeModel({ category: 'performance', healthVerdict: 'invalid' }))).toBe('none');
+            });
+        });
+
         it('does NOT show the blue dot for a fingerprint-fresh model that is blocked by an unrelated gate reason (running-condition sensor missing from the dataset) — mirrors BuildModelWindow.tsx\'s Phase B gate-consistency fix', () => {
             const runningConditionFg: Partial<FailureGroupStateSlice> = {
                 runningConditionFilters: [{ id: 'c1', sensor: 'TEMP1', operation: 'greater_than', value1: '10', value2: '' }],

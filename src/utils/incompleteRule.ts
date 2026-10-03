@@ -18,6 +18,8 @@ import { migratePeriods } from './workspaceMigrations';
  * set points, `lastTrainedAt` and `trainedFingerprint`; the mismatch with the
  * current inputs is what then shows it as out of date with a Re-train.
  *
+ * The same change also drops a saved `healthVerdict` (it described the old fit).
+ *
  * What does NOT trigger it: set points, name, notes, category, status, group
  * membership, `scatterXSensor` — none of them is in `computeTrainFingerprint`.
  *
@@ -79,7 +81,10 @@ export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceSta
  */
 export function applyIncompleteRule(prev: WorkspaceState, next: WorkspaceState): WorkspaceState {
     const fg = next.failureGroupState;
-    if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status)) return next;
+    // A model also needs the pass when it only carries a saved set-point verdict:
+    // that verdict describes the OLD fit and is dropped with the change (QA fix,
+    // 2026-10-04) even though a not-yet-Complete model has no status to demote.
+    if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status || m.healthVerdict !== undefined)) return next;
     let changed: Set<string>;
     try {
         changed = new Set(modelsWithChangedInputs(prev, next));
@@ -92,9 +97,11 @@ export function applyIncompleteRule(prev: WorkspaceState, next: WorkspaceState):
     if (changed.size === 0) return next;
     let demoted = false;
     const models = fg.models.map(m => {
-        if (!m.status || !changed.has(m.id)) return m;
+        if ((!m.status && m.healthVerdict === undefined) || !changed.has(m.id)) return m;
         demoted = true;
-        return { ...m, status: false };
+        const { healthVerdict: dropped, ...rest } = m;
+        void dropped;
+        return m.status ? { ...rest, status: false } : rest;
     });
     return demoted ? withFailureGroupState(next, { models }) : next;
 }

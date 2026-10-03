@@ -598,3 +598,119 @@ describe('the page never decides a value is wrong by itself', () => {
         expect(screen.queryByTestId('hs-verdict')).toBeNull();
     });
 });
+
+describe('a failed request keeps the page (QA 2026-10-04)', () => {
+    const onRetry = vi.fn();
+    beforeEach(() => onRetry.mockClear());
+    const failed = (code: string | null, last: HealthPreview | null) => ({
+        data: null, lastData: last, loading: false, error: 'Failed to read column: transient I/O error', errorCode: code as any, notFitted: false, needsRetrain: false, idle: null as null, retry: onRetry,
+    });
+
+    it('with an earlier answer: the inputs and charts stay under an error banner with a Retry button', () => {
+        mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
+        const banner = screen.getByTestId('health-error');
+        expect(banner.textContent).toMatch(/Couldn't load the health score/);
+        expect(banner.textContent).toMatch(/transient I\/O error/);
+        expect(screen.getByTestId('set-points-card')).toBeTruthy();
+        expect(input('sp-lower').value).toBe('1'); // still editable
+        fireEvent.click(screen.getByTestId('health-retry'));
+        expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it('while the error shows nothing is judged: no verdict, Checks say so, the score stays locked (the old answer does not describe what is typed)', () => {
+        mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
+        expect(screen.queryByTestId('hs-verdict')).toBeNull();
+        expect(screen.queryByTestId('check-valid')).toBeNull();
+        expect(screen.getByTestId('checks-unavailable')).toBeTruthy();
+        expect(screen.getByTestId('score-locked').textContent).toMatch(/Score not available/);
+        expect(field('sp-lower').className).not.toMatch(/hs-num--err|hs-num--req/);
+    });
+
+    it('typing still works under the banner', () => {
+        mount({ sp: IND_VALID, preview: failed(null, previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
+        type('sp-upper', '9.5');
+        expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ upper: 9.5 }), undefined);
+    });
+
+    it('STALE_SESSION: the same banner but NO Retry (asking again cannot help; the dataset changed)', () => {
+        mount({ sp: IND_VALID, preview: failed('STALE_SESSION', previewFor('individual', IND_VALID)), onRetryPreview: onRetry });
+        expect(screen.getByTestId('health-error')).toBeTruthy();
+        expect(screen.queryByTestId('health-retry')).toBeNull();
+    });
+
+    it('with NO earlier answer: the full-page message, now with a Retry button', () => {
+        mount({ data: null, preview: failed(null, null), onRetryPreview: onRetry });
+        expect(screen.getByTestId('health-error').textContent).toMatch(/Couldn't load the health score/);
+        expect(screen.queryByTestId('set-points-card')).toBeNull();
+        fireEvent.click(screen.getByTestId('health-retry'));
+        expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it('no onRetryPreview given: no Retry button is drawn (nothing to call)', () => {
+        mount({ data: null, preview: failed(null, null) });
+        expect(screen.queryByTestId('health-retry')).toBeNull();
+    });
+
+    it('NOT_FITTED keeps its own full-page "Re-train to recompute", even with an earlier answer', () => {
+        mount({ sp: IND_VALID, preview: { ...failed('NOT_FITTED', previewFor('individual', IND_VALID)), notFitted: true, needsRetrain: true, error: 'no fit' }, onRetryPreview: onRetry });
+        expect(screen.getByTestId('health-not-fitted')).toBeTruthy();
+        expect(screen.queryByTestId('set-points-card')).toBeNull();
+        expect(screen.queryByTestId('health-retry')).toBeNull();
+    });
+
+    it('the save banner (a refused / failed Mark complete) is shown on the error frame too', () => {
+        mount({ data: null, preview: failed(null, null), save: { phase: 'error', message: 'files were written, but the model was not marked complete: x' } });
+        expect(screen.getByTestId('save-error')).toBeTruthy();
+    });
+});
+
+describe('accessible names and full-precision values (QA 2026-10-04)', () => {
+    it('the four Relationship inputs have four DISTINCT accessible names while the visible labels stay Lower / Upper', () => {
+        mount({ kind: 'relationship', sp: REL_VALID });
+        const ids = ['sp-residual_at_80_lower', 'sp-residual_at_80_upper', 'sp-residual_at_0_lower', 'sp-residual_at_0_upper'];
+        const names = ids.map(id => (document.querySelector(`label[for="${id}"]`) as HTMLElement).textContent);
+        expect(new Set(names).size).toBe(4);
+        expect(names).toEqual(['Lower residual at score 80', 'Upper residual at score 80', 'Lower residual at score 0', 'Upper residual at score 0']);
+        for (const [i, id] of ids.entries()) expect(screen.getByLabelText(names[i]!)).toBe(input(id));
+        // visible text: just "Lower" / "Upper" (the rest is screen-reader only)
+        const visible = ids.map(id => (document.querySelector(`label[for="${id}"]`)!.firstChild as Text).textContent);
+        expect(visible).toEqual(['Lower', 'Upper', 'Lower', 'Upper']);
+        expect(document.querySelectorAll('label[for^="sp-residual"] .sr-only')).toHaveLength(4);
+    });
+
+    it('a stored 4e-7 is shown as itself (not "0"), and 0.00012345 is not cut to 6 decimals', () => {
+        mount({ sp: { kind: 'individual', lower: 4e-7, upper: 0.00012345, masterLower: null, masterUpper: null } });
+        expect(Number(input('sp-lower').value)).toBe(4e-7);
+        expect(input('sp-lower').value).not.toBe('0');
+        expect(input('sp-upper').value).toBe('0.00012345');
+    });
+
+    it('typing a tiny value reports exactly that number', () => {
+        mount({ sp: IND_VALID });
+        type('sp-lower', '0.0000004');
+        expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ lower: 4e-7 }), undefined);
+    });
+});
+
+describe('warning issues are shown as non-blocking notes (coordinator 2026-10-04)', () => {
+    const warn = { code: 'unsafe_file_name', severity: 'warning' as const, message: 'The model name has characters that are not allowed in a file name.', field: 'name' };
+
+    it('valid + a warning: the green "passes" line stays AND the note shows, flagged as not blocking; the score is unlocked', () => {
+        const data = { ...previewFor('individual', IND_VALID), validation: [warn] };
+        expect(data.valid).toBe(true);
+        mount({ sp: IND_VALID, data });
+        expect(screen.getByTestId('check-valid')).toBeTruthy();
+        const line = screen.getByTestId('check-line');
+        expect(line.getAttribute('data-warning')).toBe('true');
+        expect(line.textContent).toMatch(/not allowed in a file name/);
+        expect(line.textContent).toMatch(/does not stop you from marking the model complete/);
+        expect(screen.queryByTestId('score-locked')).toBeNull();
+        expect(screen.getByTestId('hs-verdict').textContent).toBe('Valid');
+    });
+
+    it('empty set points + a warning: the verdict is "Incomplete" (amber), not "Not valid"', () => {
+        const data = { ...previewFor('individual', { kind: 'individual', lower: null, upper: null }), validation: [{ code: 'required', severity: 'error' as const, message: 'L required', field: 'lower' }, warn] };
+        mount({ sp: { kind: 'individual', lower: null, upper: null }, data });
+        expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete');
+    });
+});

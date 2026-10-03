@@ -219,7 +219,11 @@ function dashDot(groupNo: number, key = 'tag1', kind = 'individual'): string {
     // Model's own dot (`bmwDot` below) already maps an unknown class to '?'.
     const state = el.className.match(/f4-kb-dot--(\w+)/)?.[1];
     expect(state, `Dashboard dot present without an f4-kb-dot--<state> class: "${el.className}"`).toBeDefined();
-    return state!;
+    // 2026-10-04: a TRAINED model whose saved set points are empty / rejected draws the yellow
+    // `need` / red `bad` dot (the persisted verdict - `modelSetPointFlag`). This file is about the
+    // CENTRAL status ("trained"), which every one of its models shares whatever its set points say;
+    // the verdict variants are covered in HealthScoreIncompleteRule.integration.test.tsx.
+    return state === 'need' || state === 'bad' ? 'trained' : state!;
 }
 
 /** Build Model left-list dot(s) for one model id — the same model can render

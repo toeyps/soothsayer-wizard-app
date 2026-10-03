@@ -46,11 +46,26 @@ import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 export default function HealthScorePage(props: HealthScorePageProps) {
     const { model, stale, preview, unit, sensorLabel, setPoints, attemptIssues, save, filesOutOfDate } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-    const data = preview.data;
+    // A failed request leaves `preview.data` null, but when an earlier answer for this
+    // model exists the page (inputs, charts) stays on screen from `lastData` under an
+    // error banner with a Retry button instead of being replaced (QA fix, 2026-10-04).
+    // "Re-train to recompute" (NOT_FITTED) keeps its own full-page message.
+    const errorMode = !preview.data && !preview.notFitted && !!preview.error && !!preview.lastData;
+    const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
+    // A new request cannot be fixed by asking again after the dataset changed.
+    const canRetry = !!props.onRetryPreview && preview.errorCode !== 'STALE_SESSION';
+    const errorBanner = errorMode ? (
+        <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="health-error">
+            <span><b>Couldn't load the health score.</b> {preview.error} The page shows the last result; the score and Checks are not available until it loads.</span>
+            <span className="wb2-sp" />
+            {canRetry && <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-retry" onClick={props.onRetryPreview}>Retry</button>}
+        </div>
+    ) : null;
 
     if (!data) {
         return (
             <div className="wb2-board" data-testid="health-page">
+                <SaveBanner save={save} />
                 <div className="wb2-lockpane" data-testid={preview.notFitted ? 'health-not-fitted' : preview.error ? 'health-error' : 'health-loading'}>
                     {preview.notFitted ? (
                         <div>
@@ -61,7 +76,14 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                             </div>
                         </div>
                     ) : preview.error ? (
-                        <div><b>Couldn't load the health score</b>{preview.error}</div>
+                        <div>
+                            <b>Couldn't load the health score</b>{preview.error}
+                            {canRetry && (
+                                <div style={{ marginTop: '10px' }}>
+                                    <button type="button" className="rcx-btn rcx-btn--sm" data-testid="health-retry" onClick={props.onRetryPreview}>Retry</button>
+                                </div>
+                            )}
+                        </div>
                     ) : (
                         <div><Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading…</div>
                     )}
@@ -70,13 +92,16 @@ export default function HealthScorePage(props: HealthScorePageProps) {
         );
     }
 
-    const issues = attemptIssues ?? data.validation;
-    const verdict = attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
-    const scoreReady = data.valid && !!data.series.score && !!data.score_summary;
+    // While an error shows, the old answer's verdict / issues / score do not describe the set
+    // points on screen: nothing is judged until the next request lands.
+    const issues = errorMode ? [] : attemptIssues ?? data.validation;
+    const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
+    const scoreReady = !errorMode && data.valid && !!data.series.score && !!data.score_summary;
 
     return (
         <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
             <SaveBanner save={save} />
+            {errorBanner}
             {preview.notFitted && (
                 <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
                     <span><b>Re-train to recompute.</b> The fitted Relation model is no longer in memory; the chart below is the last result.</span>
@@ -103,7 +128,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                     onChange={props.onSetPointsChange}
                     onCommit={props.onSetPointsCommit}
                 />
-                <ChecksCard kind={data.kind} issues={issues} verdict={verdict} />
+                <ChecksCard kind={data.kind} issues={issues} verdict={verdict} unavailable={errorMode} />
                 {model.kind === 'individual' && (
                     <div className="hs-note" data-testid="master-note">H and L entered here are saved on this model only. Master data is not changed.</div>
                 )}
@@ -127,7 +152,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                 <section className="hs-card hs-full" data-testid="score-locked">
                     <div className="wb2-card-h"><b>Health score</b></div>
                     <div className="hs-lockbig">
-                        <div><b>Set the points above</b>The score over time appears here once every set point is valid.</div>
+                        <div>{errorMode ? <><b>Score not available</b>It appears here once the health score loads again.</> : <><b>Set the points above</b>The score over time appears here once every set point is valid.</>}</div>
                     </div>
                 </section>
             )}

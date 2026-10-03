@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
 import { applyIncompleteRule, modelsWithChangedInputs } from '../utils/incompleteRule';
-import { isModelComplete, isModelStale, modelDotState, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
+import { isModelComplete, isModelStale, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
 const slice = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
@@ -245,5 +245,62 @@ describe('read side: a Complete model whose inputs no longer match its train rec
 
     it('exports the shared not-trained reason text', () => {
         expect(NOT_TRAINED_BLOCK_REASON).toBe('Train the model, then check the result before marking it complete.');
+    });
+});
+
+describe('the saved verdict (healthVerdict) follows the same inputs rule (QA 2026-10-04)', () => {
+    it('a training-input change drops the verdict - even on a model that is not Complete (nothing to demote)', () => {
+        const m = mk({ id: 'i', kind: 'individual', targetSensor: 'T', status: false, category: 'condition', healthVerdict: 'invalid' });
+        const out = editModel(m, { targetSensor: 'T2' });
+        expect(out).not.toHaveProperty('healthVerdict');
+        expect(out.status).toBe(false);
+    });
+
+    it('a Complete model keeps no verdict either, and is demoted as before', () => {
+        const out = editModel({ ...individual(), healthVerdict: 'valid' }, { targetSensor: 'T2' });
+        expect(out.status).toBe(false);
+        expect(out).not.toHaveProperty('healthVerdict');
+    });
+
+    it('a non-trigger (a set point, the name) keeps the verdict, and the same reference comes back when nothing is dropped', () => {
+        const m = mk({ id: 'i', kind: 'individual', targetSensor: 'T', status: false, category: 'condition', healthVerdict: 'incomplete' });
+        expect(editModel(m, { name: 'renamed' }).healthVerdict).toBe('incomplete');
+        const prev = ws(slice([m]));
+        const next = ws(slice([{ ...m, notes: 'n' }]));
+        expect(applyIncompleteRule(prev, next)).toBe(next);
+    });
+
+    it('a workspace Running condition change drops the verdict of a model that follows it, not of one with its own', () => {
+        const follows = mk({ id: 'a', kind: 'individual', targetSensor: 'T', category: 'condition', healthVerdict: 'valid' });
+        const own = mk({ id: 'b', kind: 'individual', targetSensor: 'U', category: 'condition', healthVerdict: 'valid', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+        const prev = ws(slice([follows, own], { runningConditionFilters: [cond('1')] }));
+        const next = ws(slice([follows, own], { runningConditionFilters: [cond('2')] }));
+        const out = applyIncompleteRule(prev, next).failureGroupState!.models;
+        expect(out[0]).not.toHaveProperty('healthVerdict');
+        expect(out[1].healthVerdict).toBe('valid');
+    });
+});
+
+describe('modelSetPointFlag - what the saved verdict says about a TRAINED model', () => {
+    const fg = slice([]);
+    const trainedModel = (over: Partial<FailureModel> = {}): FailureModel => {
+        const m = mk({ id: 'i', kind: 'individual', targetSensor: 'T', category: 'condition', ...over });
+        return { ...m, lastTrainedAt: 'x', trainedFingerprint: computeTrainFingerprint(m, fg) };
+    };
+    it('invalid -> fix, incomplete -> needed, valid / never judged -> null', () => {
+        expect(modelSetPointFlag(trainedModel({ healthVerdict: 'invalid' }), fg)).toBe('fix');
+        expect(modelSetPointFlag(trainedModel({ healthVerdict: 'incomplete' }), fg)).toBe('needed');
+        expect(modelSetPointFlag(trainedModel({ healthVerdict: 'valid' }), fg)).toBeNull();
+        expect(modelSetPointFlag(trainedModel(), fg)).toBeNull();
+    });
+    it('only a model in the "trained" state is flagged: complete, stale, blocked and never-trained ignore the verdict', () => {
+        expect(modelSetPointFlag(trainedModel({ status: true, healthVerdict: 'invalid' }), fg)).toBeNull(); // complete
+        expect(modelSetPointFlag({ ...trainedModel({ healthVerdict: 'invalid' }), trainedFingerprint: 'old' }, fg)).toBeNull(); // stale
+        expect(modelSetPointFlag(trainedModel({ category: null, healthVerdict: 'invalid' }), fg)).toBeNull(); // blocked
+        expect(modelSetPointFlag(mk({ id: 'i', kind: 'individual', targetSensor: 'T', category: 'condition', healthVerdict: 'invalid' }), fg)).toBeNull(); // never trained
+    });
+    it('a caller that overrides the dot state (a failed run of this session) can say so', () => {
+        expect(modelSetPointFlag(trainedModel({ healthVerdict: 'invalid' }), fg, null, 'stale')).toBeNull();
+        expect(modelDotState(trainedModel(), fg)).toBe('trained');
     });
 });

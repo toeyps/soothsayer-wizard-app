@@ -65,4 +65,6 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     filesOutOfDate: boolean;
     /** "Re-train to recompute" (Relationship fit gone from memory). */
     onRetrain: () => void;
+    /** The error banner's Retry: ask `compute_health_preview` again. */
+    onRetryPreview?: () => void;
 }

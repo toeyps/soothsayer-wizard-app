@@ -254,3 +254,50 @@ describe('useHealthPreview', () => {
         expect(mockInvoke.mock.calls[0][1].request.cache_key).toBe(`r1::${computeTrainFingerprint(rel, fg)}`);
     });
 });
+
+describe('useHealthPreview - lastData and retry (QA 2026-10-04)', () => {
+    it('after a later failure `data` is null but `lastData` keeps the last good answer for THIS model', async () => {
+        mockInvoke.mockResolvedValueOnce(preview('good')).mockRejectedValueOnce('BAD_REQUEST: nope');
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });
+        await settle();
+        expect(result.current.lastData).toBe(result.current.data);
+        rerender(opts({ setPoints: sp(2, 9) }));
+        await settle();
+        expect(result.current.error).toBe('nope');
+        expect(result.current.data).toBeNull();
+        expect((result.current.lastData?.series as { timestamps: string[] }).timestamps).toEqual(['good']);
+    });
+
+    it('lastData is never another model\'s answer, and is null before the first success', async () => {
+        mockInvoke.mockResolvedValueOnce(preview('first'));
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });
+        await settle();
+        mockInvoke.mockRejectedValueOnce('NO_DATA: x');
+        rerender(opts({ model: indModel({ id: 'i2', targetSensor: 'P1' }) }));
+        await settle();
+        expect(result.current.error).toBe('x');
+        expect(result.current.lastData).toBeNull();
+    });
+
+    it('retry() asks for the same request again and clears the error on success', async () => {
+        mockInvoke.mockRejectedValueOnce('Failed to read column: transient').mockResolvedValueOnce(preview('again'));
+        const { result } = renderHook(() => useHealthPreview(opts()));
+        await settle();
+        expect(result.current.error).toMatch(/transient/);
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        act(() => { result.current.retry!(); });
+        await settle();
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+        expect(mockInvoke.mock.calls[1][1]).toEqual(mockInvoke.mock.calls[0][1]); // the identical request
+        expect(result.current.error).toBeNull();
+        expect(result.current.data).not.toBeNull();
+    });
+
+    it('retry is stable between renders (safe as a prop)', async () => {
+        mockInvoke.mockResolvedValue(preview('a'));
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });
+        const first = result.current.retry;
+        rerender(opts({ setPoints: sp(2, 9) }));
+        expect(result.current.retry).toBe(first);
+    });
+});

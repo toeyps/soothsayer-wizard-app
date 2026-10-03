@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     buildCheckLines,
     fieldState,
+    formatSetPointText,
     healthVerdict,
     hoverIndexFromAxisEvent,
     nearestIndex,
@@ -186,5 +187,73 @@ describe('stepRing (Clustering outer ring stepper)', () => {
 
     it('quick buttons are 4x to 7x', () => {
         expect([...RING_QUICK]).toEqual([4, 5, 6, 7]);
+    });
+});
+
+describe('formatSetPointText - the input shows the stored value at full precision (QA 2026-10-04)', () => {
+    it('plain numbers are unchanged', () => {
+        expect(formatSetPointText(0)).toBe('0');
+        expect(formatSetPointText(12)).toBe('12');
+        expect(formatSetPointText(-3.5)).toBe('-3.5');
+        expect(formatSetPointText(10.123456789)).toBe('10.123456789');
+    });
+
+    it('a tiny value is not rounded to 0 (it used to be: 4e-7 re-opened as "0")', () => {
+        expect(formatSetPointText(4e-7)).toBe('0.0000004');
+        expect(formatSetPointText(0.00012345)).toBe('0.00012345');
+        expect(formatSetPointText(-1.6e-6)).toBe('-0.0000016');
+    });
+
+    it('a value that has no plain-decimal form that round-trips keeps the exact exponent form', () => {
+        expect(Number(formatSetPointText(1.2345e-25))).toBe(1.2345e-25);
+        expect(Number(formatSetPointText(5e-324))).toBe(5e-324);
+        expect(Number(formatSetPointText(1e300))).toBe(1e300);
+    });
+
+    it('round trip: Number(format(x)) === x for any finite x (property test over many magnitudes)', () => {
+        // small deterministic PRNG (mulberry32), so a failure is reproducible
+        let a = 0x9e3779b9;
+        const rnd = () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+        for (let i = 0; i < 5000; i++) {
+            const x = (rnd() < 0.5 ? -1 : 1) * rnd() * 10 ** Math.floor(rnd() * 60 - 30);
+            expect(Number(formatSetPointText(x)), String(x)).toBe(x);
+        }
+        for (const x of [Number.MAX_VALUE, -Number.MAX_VALUE, Number.MIN_VALUE, Number.EPSILON, 0.1 + 0.2, 1 / 3, 123456789.123456789, 4e-7, 1e21, 1e-7]) {
+            expect(Number(formatSetPointText(x)), String(x)).toBe(x);
+        }
+    });
+});
+
+describe('warning-severity issues never block (Rust: unsafe_file_name; QA/coordinator 2026-10-04)', () => {
+    const warn = issue('unsafe_file_name', 'name', 'The model name has characters that are not allowed in a file name; they are replaced.', 'warning');
+
+    it('required + a warning is still "needs" (Incomplete), never "bad"', () => {
+        expect(verdictOfIssues([issue('required', 'lower'), warn])).toBe('needs');
+        expect(verdictOfIssues([warn, issue('required', 'lower')])).toBe('needs');
+    });
+
+    it('a warning alone judges nothing (null) - and a preview that is valid with a warning stays "valid"', () => {
+        expect(verdictOfIssues([warn])).toBeNull();
+        const valid = { ...makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }), validation: [warn] };
+        expect(valid.valid).toBe(true);
+        expect(healthVerdict(valid)).toBe('valid');
+    });
+
+    it('an error next to a warning is "bad"; not_finite is an error -> "bad"', () => {
+        expect(verdictOfIssues([warn, issue('lower_inside_3sd', 'lower')])).toBe('bad');
+        expect(verdictOfIssues([issue('not_finite', 'lower', 'The lower set point must be a finite number.')])).toBe('bad');
+        expect(verdictOfIssues([issue('required', 'lower'), issue('not_finite', 'upper')])).toBe('bad');
+    });
+
+    it('a not-valid preview whose only blocking issues are required + a warning reads "needs"', () => {
+        const data = { ...makeSetPointAwarePreview({ kind: 'individual', set_points: {} }), validation: [issue('required', 'lower'), issue('required', 'upper'), warn] };
+        expect(data.valid).toBe(false);
+        expect(healthVerdict(data)).toBe('needs');
+    });
+
+    it('buildCheckLines marks warning lines (amber, flagged) and keeps errors unflagged', () => {
+        const lines = buildCheckLines('individual', [warn, issue('lower_inside_3sd', 'lower')]);
+        expect(lines[0]).toMatchObject({ tone: 'need', warning: true });
+        expect(lines[1].warning).toBeUndefined();
     });
 });

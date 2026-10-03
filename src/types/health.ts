@@ -341,4 +341,8 @@ export type HealthValidationCode =
     | 'point0_inside_point80'
     | 'outer_sd_equals_3'
     | 'outer_sd_not_above_3'
-    | 'outer_sd_not_a_number';
+    | 'outer_sd_not_a_number'
+    /** Error: a set point is NaN / infinite. */
+    | 'not_finite'
+    /** WARNING (non-blocking): the model's name cannot be used as it is in a file name. */
+    | 'unsafe_file_name';

@@ -67,3 +67,29 @@ export function modelDotState(
     if (isModelTrainedFresh(model, fg)) return 'trained';
     return model.lastTrainedAt ? 'stale' : 'none';
 }
+
+/**
+ * What the saved set points of a TRAINED model say (QA fix, 2026-10-04) — the
+ * ONE place every surface (Dashboard Failure Groups dot, Build Model list dot,
+ * the kind tab pill) reads the persisted validation verdict:
+ *   - `fix`    — Rust rejected a saved set point ("Fix set point", red)
+ *   - `needed` — only empty points left ("Set points needed", yellow)
+ *   - `null`   — nothing to flag (valid, never judged, or the model is not in
+ *                the `trained` state at all: a Complete / stale / blocked /
+ *                never-trained model has its own status and ignores the verdict).
+ * A caller that overrides the dot state (a failed run of this session) passes
+ * the state it actually shows via `state`.
+ */
+export type SetPointFlag = 'fix' | 'needed' | null;
+
+export function modelSetPointFlag(
+    model: FailureModel,
+    fg: RunningConditionFg,
+    headers?: string[] | null,
+    state: ModelDotState = modelDotState(model, fg, headers),
+): SetPointFlag {
+    if (state !== 'trained') return null;
+    if (model.healthVerdict === 'invalid') return 'fix';
+    if (model.healthVerdict === 'incomplete') return 'needed';
+    return null;
+}

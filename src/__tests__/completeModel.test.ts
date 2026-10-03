@@ -120,6 +120,29 @@ describe('parseHealthError', () => {
     });
 });
 
+describe('export error prefixes (QA/coordinator 2026-10-04)', () => {
+    for (const [text, code, msg] of [
+        ['NOT_FITTED: the cache key belongs to another model', 'NOT_FITTED', 'the cache key belongs to another model'],
+        ['STALE_SESSION: dataset reloaded', 'STALE_SESSION', 'dataset reloaded'],
+        ['BAD_REQUEST: Sensor not found: T', 'BAD_REQUEST', 'Sensor not found: T'],
+        ['NO_DATA: no rows in scope', 'NO_DATA', 'no rows in scope'],
+    ] as const) {
+        it(`${code} from export_model_files is a typed, coded error (nothing persisted)`, async () => {
+            mockInvoke.mockImplementation(async (cmd: string) => {
+                if (cmd === 'compute_health_preview') return previewOk;
+                throw text;
+            });
+            expect(await run()).toMatchObject({ ok: false, reason: 'error', code, error: msg });
+        });
+    }
+
+    it('a warning-only validation list on a valid preview does not stop the export', async () => {
+        const warn = { code: 'unsafe_file_name', severity: 'warning', message: 'm', field: 'name' };
+        mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? { ...previewOk, valid: true, validation: [warn] } : filesOk));
+        expect(await run()).toMatchObject({ ok: true });
+    });
+});
+
 describe('getModelOutputDir', () => {
     it('calls get_model_output_dir with the snake_case workspace_id key', async () => {
         mockInvoke.mockResolvedValue('C:/data/workspaces/ws1/output');

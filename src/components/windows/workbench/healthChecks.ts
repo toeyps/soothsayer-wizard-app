@@ -28,12 +28,37 @@ export type HealthVerdict = 'valid' | 'needs' | 'bad';
 export function healthVerdict(data: HealthPreview | null | undefined): HealthVerdict | null {
     if (!data) return null;
     if (data.valid) return 'valid';
+    // Warnings are not blocking: `required` + a warning is still "Incomplete", never "Not valid".
     return verdictOfIssues(data.validation);
 }
 
+/** A warning never blocks anything (Rust's `unsafe_file_name`, ...): only
+ *  error-severity issues decide the verdict. */
+export const isBlockingIssue = (i: HealthIssue): boolean => i.severity !== 'warning';
+
 export function verdictOfIssues(issues: readonly HealthIssue[]): HealthVerdict | null {
-    if (issues.length === 0) return null;
-    return issues.every(i => i.code === 'required') ? 'needs' : 'bad';
+    const blocking = issues.filter(isBlockingIssue);
+    if (blocking.length === 0) return null;
+    return blocking.every(i => i.code === 'required') ? 'needs' : 'bad';
+}
+
+// ---------------------------------------------------------------------------
+// Set-point input text
+// ---------------------------------------------------------------------------
+
+/**
+ * The text an input shows for a stored set point: the value at its FULL
+ * precision (QA fix, 2026-10-04 — it used to round to 6 decimals, so a stored
+ * 4e-7 re-opened as "0" while the model and the exported file kept the real
+ * number). `Number(formatSetPointText(x)) === x` for every finite `x`: a plain
+ * decimal when that round-trips (0.0000004, not "4e-7", reads better in a box
+ * a person types in), otherwise the shortest exact form JavaScript gives.
+ */
+export function formatSetPointText(v: number): string {
+    const s = String(v);
+    if (!/e/i.test(s)) return s;
+    const plain = v.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 });
+    return Number(plain) === v ? plain : s;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +72,8 @@ export interface CheckLine {
     text: string;
     /** What to do, when the message alone does not say. */
     fix?: string;
+    /** A warning-severity issue: shown, but it never blocks Mark complete. */
+    warning?: boolean;
 }
 
 /** The four Relationship points, in the order they are listed. */
@@ -82,7 +109,7 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
             });
             return;
         }
-        lines.push({ key: `${i.code}:${i.field}:${n}`, tone: tone(i), text: i.message });
+        lines.push({ key: `${i.code}:${i.field}:${n}`, tone: tone(i), text: i.message, ...(i.severity === 'warning' ? { warning: true } : {}) });
     });
     return lines;
 }

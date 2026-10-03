@@ -924,6 +924,48 @@ describe('duplicateWorkspace', () => {
         expect(result?.id).not.toBe('ws1');
         expect(mockWriteTextFile).toHaveBeenCalled();
     });
+    it('(QA 2026-10-04) the copy does not claim the ORIGINAL workspace\'s exported files: every model becomes Incomplete and drops healthExport, keeping everything else', async () => {
+        mockStoreGet.mockResolvedValue([
+            { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
+        ]);
+        mockExists.mockResolvedValue(true);
+        const sp = { kind: 'individual', lower: 20, upper: 80 };
+        const done = {
+            id: 'm1', kind: 'individual', status: true, healthSetPoints: sp, healthVerdict: 'valid',
+            lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp', name: 'keep me',
+            healthExport: { at: 'x', outputDir: 'C:/data/workspaces/ws1/output', setPoints: sp },
+        };
+        const incompleteWithRecord = { ...done, id: 'm2', status: false };
+        const never = { id: 'm3', kind: 'clustering', status: false };
+        mockReadTextFile.mockResolvedValue(JSON.stringify({
+            id: 'ws1', name: 'A', failureGroupState: { groups: [], models: [done, incompleteWithRecord, never], runningConditionNoneConfirmed: true },
+        }));
+        const { duplicateWorkspace } = await freshModule();
+
+        const result = await duplicateWorkspace('ws1');
+        const [m1, m2, m3] = result!.failureGroupState!.models as any[];
+        expect(m1.status).toBe(false);
+        expect(m1).not.toHaveProperty('healthExport');
+        expect(m1).toMatchObject({ healthSetPoints: sp, healthVerdict: 'valid', lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp', name: 'keep me' });
+        expect(m2).not.toHaveProperty('healthExport'); // an Incomplete model's record pointed at the original's folder too
+        expect(m3).toMatchObject({ id: 'm3', kind: 'clustering', status: false }); // nothing to change
+        expect((result!.failureGroupState as any).runningConditionNoneConfirmed).toBe(true); // slice fields carried
+        // ... and what is SAVED is the same thing
+        const saved = JSON.parse(mockWriteTextFile.mock.calls.pop()![1] as string);
+        expect(saved.failureGroupState.models[0].status).toBe(false);
+        expect(saved.failureGroupState.models[0]).not.toHaveProperty('healthExport');
+        // the ORIGINAL file is never written
+        expect(mockWriteTextFile.mock.calls.every(c => c[0] !== 'workspaces/ws1.json')).toBe(true);
+    });
+
+    it('(QA 2026-10-04) a workspace with no failure-group slice is copied as before', async () => {
+        mockStoreGet.mockResolvedValue([{ id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' }]);
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile.mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
+        const { duplicateWorkspace } = await freshModule();
+        const result = await duplicateWorkspace('ws1');
+        expect(result).not.toHaveProperty('failureGroupState');
+    });
 });
 
 describe('renameWorkspaceFile', () => {
