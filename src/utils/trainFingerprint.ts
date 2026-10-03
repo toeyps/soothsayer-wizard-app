@@ -87,9 +87,9 @@ export function computeTrainFingerprint(model: FailureModel, fg: RunningConditio
  * entry) so it has exactly one definition, shared by every reader instead of
  * being redefined per file: `BuildModelWindow.tsx`'s own `isModelTrainedFresh`
  * (component-level, folds in the live draft via `effectiveModelFor` + the
- * `status` check) and `markModelComplete` (the PM page's own "Finish"
- * button, checked directly against the model/fg read fresh off disk inside
- * that write) both import this as `trainedFreshFor`; `FailureGroupsPanel.tsx`
+ * `status` check) and `persistModelComplete` (Mark complete, checked directly
+ * against the model/fg read fresh off disk inside that write) both import this
+ * as `trainedFreshFor`; `FailureGroupsPanel.tsx`
  * (Dashboard's Sensor panel → Failure Groups tab) imports it directly to
  * color the status dot on each sensor row's I/R/C badge. None of these
  * callers duplicate the equality check itself any more.

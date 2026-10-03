@@ -481,9 +481,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // (toggle, create/rename/edit/delete group, delete model, tag rename) now
     // derives its result from disk via `persistFailureGroupStateFrom`.
 
-    // BuildModelWindow and PredictiveModelBuild persist failureGroupState
-    // independently (their own updateWorkspaceData read-modify-write calls)
-    // since they're separate OS windows. Without this listener, this
+    // BuildModelWindow persists failureGroupState independently (its own
+    // updateWorkspaceData read-modify-write calls) since it's a separate OS
+    // window. Without this listener, this
     // window's own fgGroups/fgModels would go stale the moment either of
     // them writes — and Dashboard's full-overwrite autosave below (which
     // saves `{groups: fgGroups, models: fgModels}` alongside everything
@@ -1960,7 +1960,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // Carry the LATEST fgGroups/fgModels (kept current by
         // toggleSensorGroupKind/createGroupForSensor, and by the
         // 'failure-group-state-changed' listener above whenever
-        // BuildModelWindow or PredictiveModelBuild persist independently),
+        // BuildModelWindow persists independently),
         // not the stale failureGroupState captured in `initialState` at
         // mount — otherwise this full-overwrite autosave would silently
         // erase what was just written via read-modify-write elsewhere.

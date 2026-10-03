@@ -352,7 +352,7 @@ export interface FailureGroupStateSlice {
      * the actual problem being solved. AND-combined with each model's own
      * Time start/end (which stays per-model — the training *period*
      * legitimately differs per model, only the running-condition gate
-     * doesn't) client-side in `PredictiveModelBuild.tsx` before every
+     * doesn't) client-side in `utils/trainingScope.ts` before every
      * `train_*`/preview invoke; optional so older workspaces without it
      * just read as "no filter" (`?? []`).
      */

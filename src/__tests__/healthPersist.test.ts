@@ -66,8 +66,8 @@ describe('commitSetPoints', () => {
 
     it('honours the origin it is given', async () => {
         setDisk([ind()]);
-        await commitSetPoints('ws1', 'i1', sp, 'predictive-model');
-        expect(mockEmit.mock.calls[0][1].origin).toBe('predictive-model');
+        await commitSetPoints('ws1', 'i1', sp, 'dashboard');
+        expect(mockEmit.mock.calls[0][1].origin).toBe('dashboard');
     });
 });
 

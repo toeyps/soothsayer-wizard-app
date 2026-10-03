@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useEffect } from 'react';
 import { render, screen, fireEvent, act, cleanup, within, waitFor } from '@testing-library/react';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
@@ -37,9 +36,8 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspaceData(id),
 }));
 
-// Build Model Workbench Phase B (Train in place) — same mocking pattern
-// PredictiveModelBuild.test.tsx already uses for the three preview commands
-// and the chart components they feed.
+// Build Model Workbench Phase B (Train in place) — mocks for the three preview
+// commands and the chart components they feed.
 const mockInvoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
     invoke: (cmd: string, args?: unknown) => mockInvoke(cmd, args),
@@ -62,32 +60,16 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     ),
 }));
 
-// PredictiveModelBuild is a large, heavy component with its own dedicated
-// test file (PredictiveModelBuild.test.tsx) — stub it here so
-// BuildModelWindow's tests only need to assert the page-navigation wiring
-// (props passed in, onBack switching pages), not PM's own internals.
-const predictiveModelBuildProps: any[] = [];
+// The shared sensor pickers (SensorPickers.tsx) are stubbed with minimal
+// stand-ins - their real search / grouping / single-vs-multi behaviour is
+// tested directly in SensorPickers.test.tsx. BuildModelWindow's tests only
+// assert its own wiring (props passed in, the callbacks it reacts to).
 const sensorPickerModalProps: any[] = [];
 const sensorAutocompleteProps: any[] = [];
-const pmFlushMock = vi.fn().mockResolvedValue(undefined);
-vi.mock('../components/windows/PredictiveModelBuild', () => ({
-    default: (props: any) => {
-        predictiveModelBuildProps.push(props);
-        useEffect(() => {
-            props.registerFlush?.(pmFlushMock);
-            return () => props.registerFlush?.(null);
-        }, [props.registerFlush]);
-        return (
-            <div data-testid="pm-page-mock">
-                <span>PM page for {props.modelId}</span>
-                <button onClick={props.onBack}>Mock Back</button>
-                <button onClick={props.onFinish}>Mock Finish</button>
-            </div>
-        );
-    },
+vi.mock('../components/windows/SensorPickers', () => ({
     // Minimal stand-in for the popup picker — its own search/collapsible-
     // group/checkbox/single-vs-multi behavior is tested directly against the
-    // real implementation in PredictiveModelBuild.test.tsx. Typing a value
+    // real implementation in SensorPickers.test.tsx. Typing a value
     // and firing change stands in for "open the popup, pick it" in one step,
     // branching on `single` the same way the real component's trigger does.
     SensorPickerModal: (props: any) => {
@@ -109,7 +91,7 @@ vi.mock('../components/windows/PredictiveModelBuild', () => ({
     // 🆕 2026-09-30 [X-axis switcher]: minimal stand-in for the real
     // search-dropdown component (its own search/group/select behavior is
     // tested directly against the real implementation in
-    // PredictiveModelBuild.test.tsx) — a plain `<select>` is enough to
+    // SensorPickers.test.tsx) — a plain `<select>` is enough to
     // assert BuildModelWindow's own wiring (options = the sensors passed in,
     // current value, `onSelect` fires on change).
     SensorAutocomplete: (props: any) => {
@@ -306,14 +288,12 @@ const openHealthPage = async () => {
 
 beforeEach(() => {
     listenCallbacks = {};
-    predictiveModelBuildProps.length = 0;
     sensorPickerModalProps.length = 0;
     sensorAutocompleteProps.length = 0;
     lineChartProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
-    pmFlushMock.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
         const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] } };
         return patch(prev);
@@ -994,39 +974,24 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 
     describe('footer', () => {
-        it('shows a read-only status pill, "Open full view ↗", "Save changes" and "✓ Mark complete"', async () => {
+        it('shows a read-only status pill, "Save changes" and "▶ Train model" - and NO "Open full view" control (health score phase 4: the full-view page is gone)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(screen.getByText('Incomplete')).toBeTruthy();
-            expect(screen.getByText('Open full view ↗')).toBeTruthy();
+            expect(screen.queryByText(/Open full view/)).toBeNull();
             expect(screen.getByText('Save changes')).toBeTruthy();
+            expect(screen.getByText('▶ Train model')).toBeTruthy();
             // 3b-2: a model is completed ONLY from the Health score page - never from this footer.
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
             expect(screen.queryByText('Mark incomplete')).toBeNull();
         });
 
-        it('"Open full view ↗" commits the draft then navigates to the in-window PM page (same as the old "Build Model →")', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            openSettings();
-            fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed before building' } });
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
-
-            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models[0].name).toBe('Renamed before building');
-            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
-            const lastProps = predictiveModelBuildProps[predictiveModelBuildProps.length - 1];
-            expect(lastProps.workspaceId).toBe('ws1');
-            expect(lastProps.modelId).toBe('m1');
-            expect(lastProps.kind).toBe('individual');
-        });
-
-        it('"Open full view" is disabled until settings are valid, and shows why', async () => {
+        it('"▶ Train model" is disabled until settings are valid, and shows why', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ name: '' })] } });
-            const openFull = screen.getByText('Open full view ↗') as HTMLButtonElement;
-            expect(openFull.disabled).toBe(true);
-            expect(openFull.title).toMatch(/Fill in the required fields/);
+            const train = screen.getByText('▶ Train model') as HTMLButtonElement;
+            expect(train.disabled).toBe(true);
+            expect(train.title).toMatch(/Fill in the required fields/);
         });
 
         it('"Save changes" persists the edit and clears the draft', async () => {
@@ -1088,32 +1053,22 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(exportCalls()).toHaveLength(0);
         });
 
-        it('the PM page\'s Finish control goes through the SAME flow as Mark complete (files written first) and returns to the overview', async () => {
+        it('a model can only become Complete through the Health score page: no "Open full view" / Finish control exists anywhere, and a trained model with set points is still Incomplete until Mark complete runs', async () => {
             mockInvoke.mockImplementation(healthInvoke);
             const trained = withTrained(makeModel({ healthSetPoints: VALID_IND }));
             statefulUpdateMock([trained]);
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
-            fireEvent.click(screen.getByText('Mock Finish'));
-            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
-            await waitFor(() => expect(exportCalls()).toHaveLength(1));
-            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
-            expect(state.failureGroupState.models[0].status).toBe(true);
-        });
-
-        it('the PM page\'s Finish control cannot mark a model Complete when its set points are still empty: nothing is written, the reason shows and the Health score page opens', async () => {
-            mockInvoke.mockImplementation(healthInvoke);
-            const trained = withTrained(makeModel());
-            statefulUpdateMock([trained]);
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
-            fireEvent.click(screen.getByText('Mock Finish'));
-            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
-            await waitFor(() => expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/set points are not valid/));
+            // Model fit page: nothing that could complete the model.
+            expect(screen.queryByText(/Open full view/)).toBeNull();
+            expect(screen.queryByText(/Finish/)).toBeNull();
+            expect(screen.queryByText('✓ Mark complete')).toBeNull();
+            // Health score page: Mark complete is the one control - and nothing was written by looking at it.
+            await openHealthPage();
+            expect(screen.queryByText(/Open full view/)).toBeNull();
+            expect(screen.queryByText(/Finish/)).toBeNull();
+            expect(screen.getByTestId('mark-complete')).toBeTruthy();
             expect(exportCalls()).toHaveLength(0);
-            expect(screen.getByTestId('health-page')).toBeTruthy();
             const writes = await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value));
             expect(writes.every(w => w.failureGroupState.models[0].status === false)).toBe(true);
         });
@@ -1185,17 +1140,13 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             });
         });
 
-        it('the PM page\'s Finish control does NOT mark a never-trained model Complete (same gate as Mark complete), and writes no files', async () => {
+        it('a never-trained model cannot reach Complete: the Health score page cannot be opened, nothing is exported', async () => {
             render(<BuildModelWindow />);
             await deliverData(); // fully configured, gate satisfied, but never trained
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
-            fireEvent.click(screen.getByText('Mock Finish'));
-            await waitFor(() => expect(screen.queryByTestId('pm-page-mock')).toBeNull());
+            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId('wb-step-complete') as HTMLButtonElement).disabled).toBe(true);
+            expect(screen.queryByTestId('mark-complete')).toBeNull();
             expect(exportCalls()).toHaveLength(0);
-            // (Opening the full view committed the draft; that write is the only one - and it is not "Complete".)
-            const writes = await Promise.all(mockUpdateWorkspaceData.mock.results.map(r => r.value));
-            expect(writes.every(w => w.failureGroupState.models[0].status === false)).toBe(true);
-            expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/Train the model/);
         });
     });
 
@@ -1207,44 +1158,47 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
             await deliverData({ failureGroupState: disk.failureGroupState });
         }
+        // Since the Predictive Model page was removed (health score phase 4) the footer's
+        // "▶ Train model" button is the control the running-condition gate blocks.
+        const trainButton = () => screen.getByText('▶ Train model') as HTMLButtonElement;
 
-        it('"Open full view" is disabled with the gate reason while nothing is configured', async () => {
+        it('"Train model" is disabled with the gate reason while nothing is configured', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()]);
-            const openFull = screen.getByText('Open full view ↗') as HTMLButtonElement;
-            expect(openFull.disabled).toBe(true);
-            expect(openFull.title).toBe(REASON);
+            const train = trainButton();
+            expect(train.disabled).toBe(true);
+            expect(train.title).toBe(REASON);
             expect(screen.getByTestId('build-block-reason').textContent).toBe(REASON);
         });
 
-        it('Save changes stays allowed while Open full view is blocked by the running condition', async () => {
+        it('Save changes stays allowed while Train is blocked by the running condition', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()]);
             expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
         });
 
-        it('a complete condition unlocks Open full view', async () => {
+        it('a complete condition unlocks Train', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()], { runningConditionFilters: cond });
-            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(false);
+            expect(trainButton().disabled).toBe(false);
         });
 
-        it('confirming "No condition — use all rows" from the Edit… modal enables Open full view', async () => {
+        it('confirming "No condition — use all rows" from the Edit… modal enables Train', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel()]);
             fireEvent.click(screen.getByTestId('rc-card-open'));
             fireEvent.click(screen.getByTestId('rc-mode-none'));
             // Still gated until Apply (2026-10-03): a draft never leaks into the gate.
-            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(true);
+            expect(trainButton().disabled).toBe(true);
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
-            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(false);
+            expect(trainButton().disabled).toBe(false);
         });
 
         it('a Custom-mode model is judged by its OWN list, not the workspace one', async () => {
             render(<BuildModelWindow />);
             await deliverGate([makeModel({ runningConditionMode: 'custom' })], { runningConditionFilters: cond });
-            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(true);
+            expect(trainButton().disabled).toBe(true);
         });
 
         it('the gate badge on the kind tab reflects the reason (Needs condition / Needs category / Legacy · all data)', async () => {
@@ -1387,7 +1341,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             });
             expect(screen.queryByText('Pump Temp')).toBeNull();
             await fire('failure-group-state-changed', {
-                workspaceId: 'ws1', origin: 'predictive-model',
+                workspaceId: 'ws1', origin: 'other-window',
                 groups: [makeGroup()], models: [makeModel({ id: 'p', name: 'PM Edit', targetSensor: 'TAG2' })],
             });
             expect(screen.getAllByText('Pump Temp').length).toBeGreaterThan(0);
@@ -1410,11 +1364,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             }));
         });
 
-        it('being re-pointed at a DIFFERENT workspace drops the old one\'s open PM page and shows only the new workspace\'s models', async () => {
+        it('being re-pointed at a DIFFERENT workspace shows only the new workspace\'s models', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
-            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
 
             mockLoadWorkspaceData.mockResolvedValue({
                 id: 'ws2',
@@ -1427,7 +1379,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 metadata: { headers: ['timestamp', 'OTHER1'], total_rows: 1 },
             });
 
-            expect(screen.queryByTestId('pm-page-mock')).toBeNull();
             expect(screen.getAllByText('OTHER1').length).toBeGreaterThan(0);
             expect(screen.queryByText('Pump Pressure')).toBeNull();
         });
@@ -1635,32 +1586,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(preventDefault).not.toHaveBeenCalled(); // no pending write to wait for
                 expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             });
-        });
-
-        it('also flushes the PM page\'s own pending debounced write when it is open', async () => {
-            render(<BuildModelWindow />);
-            await deliverData();
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); });
-            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
-
-            let resolveFlush!: () => void;
-            pmFlushMock.mockImplementationOnce(() => new Promise<void>((res) => { resolveFlush = res; }));
-
-            const preventDefault = vi.fn();
-            let closePromise!: Promise<void>;
-            await act(async () => {
-                closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
-                await Promise.resolve();
-            });
-            expect(preventDefault).toHaveBeenCalledTimes(1);
-            expect(mockClose).not.toHaveBeenCalled();
-
-            await act(async () => {
-                resolveFlush();
-                await closePromise;
-            });
-            expect(pmFlushMock).toHaveBeenCalled();
-            expect(mockClose).toHaveBeenCalledTimes(1);
         });
 
         it('the toolbar\'s own Close button also awaits a pending write before calling the Tauri close API', async () => {
@@ -2360,13 +2285,12 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             expect(stepLooks()).toEqual(['done', 'done', 'now', 'todo', 'todo']);
         });
 
-        it('is not shown on the full-view (PM) page', async () => {
+        it('stays on screen (with the Step-1 card) on both Workbench pages - there is no separate full-view page to hide it on any more', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
-            await act(async () => { fireEvent.click(screen.getByText('Open full view ↗')); await Promise.resolve(); await Promise.resolve(); });
-            expect(screen.getByTestId('pm-page-mock')).toBeTruthy();
-            expect(screen.queryByTestId('wb-steps')).toBeNull();
-            expect(screen.queryByTestId('rc-card')).toBeNull();
+            expect(screen.getByTestId('wb-steps')).toBeTruthy();
+            expect(screen.getByTestId('rc-card')).toBeTruthy();
+            expect(screen.queryByText(/Open full view/)).toBeNull();
         });
     });
 
@@ -2454,7 +2378,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             await deliverData({ failureGroupState: setFg() });
             await waitFor(() => expect(screen.getByTestId('rc-card-rows-error').textContent).toBe('— rows'));
             expect(state()).toBe('set');
-            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(false);
+            expect((screen.getByText('▶ Train model') as HTMLButtonElement).disabled).toBe(false);
             warn.mockRestore();
         });
 
@@ -2524,7 +2448,6 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             expect(train.title).toBe(REASON);
             expect(screen.queryByText('✓ Mark complete')).toBeNull(); // Mark complete lives on the Health score page
             expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
-            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(true);
         });
 
         it('Invalid period: same lock, "Fix period" button, Train disabled with the period reason', async () => {
@@ -3135,9 +3058,11 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('health-page')).toBeNull();
         });
 
-        it('"Open full view ↗" and the PM page are still there', async () => {
+        it('there is no "Open full view" control and no full-view page any more (health score phase 4)', async () => {
             await mount([withTrained(makeModel())]);
-            expect(screen.getByText('Open full view ↗')).toBeTruthy();
+            expect(screen.queryByText(/Open full view/)).toBeNull();
+            fireEvent.click(screen.getByTestId('page-health'));
+            expect(screen.queryByText(/Open full view/)).toBeNull();
         });
     });
 

@@ -1,5 +1,5 @@
 import { LayoutGrid } from 'lucide-react';
-import { SensorAutocomplete } from '../PredictiveModelBuild';
+import { SensorAutocomplete } from '../SensorPickers';
 import type { ClusterStat, HealthPreview } from '../../../types/health';
 import ChartCard, { LegendItem } from './ChartCard';
 import { CHART, CLUSTER_COLORS, fmtNum } from './chartTheme';

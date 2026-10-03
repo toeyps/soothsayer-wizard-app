@@ -9,7 +9,7 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
  *   (2) Relationship X-axis switcher — IMMEDIATE `scatterXSensor` write;
  *   (3) Clustering cluster-range slider + its new `compute_sensor_stats` fetch.
  *
- * Unit tests in BuildModelWindow.test.tsx mock the PM page, SensorAutocomplete
+ * Unit tests in BuildModelWindow.test.tsx mock SensorAutocomplete
  * and SensorPickerModal and feed data straight into state. Everything here is
  * REAL except the Tauri boundary — same harness as
  * BuildModelWorkbenchTrainCrossWindow.integration.test.tsx: Dashboard and
@@ -609,7 +609,7 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
         expect(bmw().queryByText('edited')).toBeNull();
     });
 
-    it('a change to the active model\'s PERSISTED training scope (PM page write, broadcast in) refetches the criteria bounds with the new filter', async () => {
+    it('a change to the active model\'s PERSISTED training scope (another window write, broadcast in) refetches the criteria bounds with the new filter', async () => {
         writeDisk(wsState([C1()]));
         await mountBuildModel();
         openSettings();
@@ -623,7 +623,7 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
                     customRunningConditionFilters: [{ id: 'pm-c', sensor: 'TAG3', operation: 'greater_than' as const, value1: '5', value2: '' }],
                 } : m),
             }));
-            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: 'ws1', origin: 'predictive-model' });
+            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: 'ws1', origin: 'other-window' });
         });
         await settle(10);
         expect(statsCalls('TAG2').slice(-1)[0]?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG3', operation: 'greater_than', value1: 5, value2: null }]);

@@ -7,7 +7,7 @@ import type { TimePeriod } from '../types';
  * Feature 4 QA — TS half of the timestamp_ranges contract. The SAME fixture is
  * read by src-tauri/tests/filter_contract_tests.rs, which checks that Rust
  * accepts every shape below and that its struct field names equal the
- * `*_fields` lists. What the PM page actually puts on the wire is checked
+ * `*_fields` lists. What the Workbench's Train actually puts on the wire is checked
  * against the same fixture in Feature4BuildFlow.integration.test.tsx.
  */
 

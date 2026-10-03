@@ -2,7 +2,7 @@ import { Fragment } from 'react';
 import type { TimePeriod } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
-import { buildRuleModel, computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds, type RuleInput } from './periodDisplay';
+import { computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds, type RuleInput } from './periodDisplay';
 
 /*
  * Small presentational pieces of the Running Condition UI (approved mockup
@@ -42,33 +42,6 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false }: 
                 <span data-testid="period-coverage-days">{days}</span>
                 <span>{cov.axisRight}</span>
             </div>
-        </div>
-    );
-}
-
-/** "Row is used when ( P1 OR P2 ) AND ( A > 1 AND B < 2 )" with OR/AND as small chips. */
-export function RuleFormula({ compact = false, ...input }: RuleInput & { compact?: boolean }) {
-    const m = buildRuleModel(input);
-    return (
-        <div data-testid="rule-formula" className={`f4-formula${compact ? ' f4-formula--compact' : ''}`}>
-            Row is used when{' '}
-            ({' '}
-            {m.periodLabels.length === 0 ? <b>any time</b> : m.periodLabels.map((l, i) => (
-                <Fragment key={l}>
-                    {i > 0 && <span className="f4-op f4-op--or">OR</span>}
-                    <b>{l}</b>
-                </Fragment>
-            ))}
-            {' '}) <span className="f4-op">AND</span> ({' '}
-            {m.condMode === 'none' ? <><b>no condition</b> (every row)</>
-                : m.condMode === 'empty' ? <b>no condition yet</b>
-                : m.conditions.map((c, i) => (
-                    <Fragment key={i}>
-                        {i > 0 && <span className="f4-op">{m.condOp}</span>}
-                        <b>{c}</b>
-                    </Fragment>
-                ))}
-            {' '})
         </div>
     );
 }

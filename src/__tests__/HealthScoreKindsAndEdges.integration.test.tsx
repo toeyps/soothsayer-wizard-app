@@ -3,15 +3,15 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 
 /*
  * Health score QA sweep (2026-10-04) — per-kind specifics and edge cases with
- * the REAL Dashboard + Build Model window (+ the real PM page for "Finish") on
- * the fake Rust health backend:
+ * the REAL Dashboard + Build Model window on the fake Rust health backend:
  *   - Individual master-data prefill: both / one / no alarm, special sensor,
  *     first-open snapshot of an old model (written once, never written back to
  *     master data), "use <master>", late metadata.
  *   - Relationship: cache_key follows the fingerprint, NOT_FITTED after a reload
  *     -> Re-train, Compare predictors, signs / asymmetric points.
  *   - Clustering: stepper / quick buttons, criteria ranges changed elsewhere.
- *   - PM page Finish goes through the same Mark complete.
+ *   - Mark complete is the ONLY way to Complete (no full-view page / Finish
+ *     control exists any more - health score phase 4, 2026-10-04).
  *   - Misc: long / unicode names, empty units, malformed previews, tiny numbers,
  *     keyboard, accessible names.
  */
@@ -49,7 +49,7 @@ import { PLANT_META, hourly, plantDataset } from './helpers/fakeHealthRust';
 import {
     WS, applyWorkspaceRc, bmw, bmwEl, dash, dashDot, diskModel, enterSp, markBtn, markComplete, model, mountWindows,
     newBackend, openDashFgTab, openDashSensorTab, openHealth, openSettings, pickInModal, pill, readDisk, saveChanges,
-    selectKindTab, selectSensor, sendBuildModelData, settle, train, typeSp, waitForCharts, writeDisk, wsState, wsTrained,
+    selectSensor, sendBuildModelData, settle, train, typeSp, waitForCharts, writeDisk, wsState, wsTrained,
 } from './helpers/healthWorkbench';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -346,7 +346,7 @@ describe('Clustering specifics', () => {
             const next = await updateWorkspaceData(WS, prev => withFailureGroupState(prev, {
                 models: prev.failureGroupState!.models.map(m => (m.id === 'c1' ? { ...m, clusterRanges: [{ min: 0, max: 40 }, { min: 40, max: 100 }] } : m)),
             }));
-            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'predictive-model' });
+            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'other-window' });
         });
         await settle(100);
         expect(diskModel('c1').status).toBe(false);
@@ -358,29 +358,33 @@ describe('Clustering specifics', () => {
 });
 
 // ---------------------------------------------------------------------------
-// PM page Finish (still present until phase 4)
+// Mark complete is the only road to Complete (the PM page + Finish were removed in phase 4)
 // ---------------------------------------------------------------------------
 
-describe('PM page "Finish" goes through the same Mark complete', () => {
-    async function openFullView(key: string, kind?: 'Relationship') {
-        selectSensor(key);
-        if (kind) selectKindTab(kind);
-        await waitForCharts();
-        await act(async () => { fireEvent.click(bmw().getByText('Open full view ↗')); });
-        await settle(300);
-        await waitFor(() => expect(screen.getByText('Finish')).toBeTruthy());
-        await settle(300);
-    }
-    const finish = async () => {
-        await act(async () => { fireEvent.click(screen.getByText('Finish').closest('button')!); });
-        await settle(400);
-    };
-
-    it('Individual with valid SAVED set points: Finish writes the files and marks Complete with an export record', async () => {
+describe('Mark complete (Health score page) is the only way a model becomes Complete', () => {
+    it('no "Open full view" / "Finish" control exists on either page, and a model with valid SAVED set points stays Incomplete until Mark complete runs', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 } })]));
         await mountWindows();
-        await openFullView('tag1');
-        await finish();
+        selectSensor('tag1');
+        await waitForCharts();
+        expect(bmw().queryByText(/Open full view/)).toBeNull();
+        expect(bmw().queryByText(/Finish/)).toBeNull();
+        await openHealth();
+        expect(bmw().queryByText(/Open full view/)).toBeNull();
+        expect(bmw().queryByText(/Finish/)).toBeNull();
+        expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
+        expect(diskModel('i1').status).toBe(false);
+    });
+
+    it('Individual with valid SAVED set points: Mark complete writes the files and marks Complete with an export record', async () => {
+        writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 } })]));
+        await mountWindows();
+        selectSensor('tag1');
+        await waitForCharts();
+        await openHealth();
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
+        await act(async () => { fireEvent.click(markBtn()); });
+        await settle(400);
         expect(env.backend!.cmds('export_model_files')).toHaveLength(1);
         expect(diskModel('i1').status).toBe(true);
         expect(diskModel('i1').healthExport.setPoints).toMatchObject({ lower: 20, upper: 80 });
@@ -388,26 +392,31 @@ describe('PM page "Finish" goes through the same Mark complete', () => {
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
     });
 
-    it('empty set points: Finish does NOT mark Complete, writes nothing, says why and opens the Health score page', async () => {
+    it('empty set points: Mark complete is disabled with the reason, nothing is written, the model stays Incomplete', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } })]));
         await mountWindows({ meta: [] });
-        await openFullView('tag1');
-        await finish();
+        selectSensor('tag1');
+        await waitForCharts();
+        await openHealth();
+        await waitFor(() => expect(bmw().getByTestId('mark-block-reason')).toBeTruthy());
+        expect(markBtn().disabled).toBe(true);
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('i1').status).toBe(false);
-        expect(bmwEl().textContent).toMatch(/The model was not marked Complete/);
-        await waitFor(() => expect(bmw().getByTestId('set-points-card')).toBeTruthy());
     });
 
-    it('Relationship whose fit is no longer in Rust memory: Finish is refused with "Re-train first", no files', async () => {
+    it('Relationship whose fit is no longer in Rust memory: Mark complete is refused (re-train first), no files, still Incomplete', async () => {
         writeDisk(wsTrained({}, [model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG3'], healthSetPoints: REL_SP })]));
         await mountWindows();
-        await openFullView('tag1');
+        selectSensor('tag1');
+        await waitForCharts();
+        await openHealth();
+        await waitFor(() => expect(markBtn().disabled).toBe(false));
         env.backend!.clearRelCache();
-        await finish();
+        await act(async () => { fireEvent.click(markBtn()); });
+        await settle(400);
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('r1').status).toBe(false);
-        expect(bmwEl().textContent).toMatch(/not marked Complete\. Re-train first/);
+        expect(bmwEl().textContent).toMatch(/Re-train/);
     });
 });
 

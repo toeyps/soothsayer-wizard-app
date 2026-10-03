@@ -1,10 +1,10 @@
 # Wizard — Manual Test Plan
 
-> 329 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) · **อัปเดต 2026-09-30 (Build Model Workbench, Phase C — จุดสถานะในแท็บ Failure Groups)** — เพิ่มข้อใหม่ FG-13 (จุดสถานะที่มุมป้าย I/R/C ในแท็บ Failure Groups ของ Dashboard — ไม่มีสี/ฟ้า/เขียว ตรงกับหน้า Build Model เป๊ะ รวมถึงกรณี gate บล็อกด้วย) — ปิด Feature 4 (Build Model Workbench) ทั้ง Phase A/B/C ครบตาม SPEC FINAL · **อัปเดต 2026-09-30 (แก้บั๊กจากทดสอบแอปจริงรอบแรก, 4 ข้อ)** — เพิ่ม **PER-12** (ค่าที่แก้ใน Training periods หายเมื่อปิดแค่ popup "Edit…" โดยไม่ blur ก่อน — บั๊กเดิมที่ PER-11 ไม่ครอบ, รายงานซ้ำเป็นครั้งที่ 2) — BMW-28/BMW-40 (Model settings row) ปรับข้อความให้ตรงกับ CSS ที่จัดใหม่ (Model name กว้างขึ้นไม่ตัดคำ, Training data กว้างคงที่ทุกชนิด, ฟิลด์เฉพาะชนิดรวมกลุ่มแยกบรรทัด) ไม่เพิ่ม id ใหม่ · **อัปเดต 2026-09-30 (พอร์ตฟีเจอร์จากหน้า PM เต็มเข้า Workbench รอบสอง)** — เพิ่มข้อใหม่ **BMW-47** (Custom running-condition editor แก้ได้ในหน้า Workbench เอง ผ่านสวิตช์ Training data — เดิมทำไม่ได้ต้องไปหน้า PM เต็ม), **BMW-48** (Cluster ranges เป็นแถบเลื่อนลากได้ตามช่วงค่าจริง แสดงตลอดเวลาแทนที่จะซ่อนจนกว่าจะเลือก criteria sensor), **BMW-49** (แกน X ของกราฟผลลัพธ์ Relationship เลือกได้ทันทีไม่ต้อง Save) — แก้ข้อความ BMW-40 ที่เคยบอกว่า Custom "ยังไม่มีที่แก้ที่นี่" (ไม่จริงแล้ว ดู BMW-47) · **อัปเดต 2026-10-03 (ปุ่ม Apply ใน popup Running Condition Filter)** — popup แก้เป็น "แบบร่าง + กด Apply": แก้อะไรก็ตามในนั้นยังไม่มีผลจนกว่าจะกด **Apply** (ปิดโดยไม่ Apply = ทิ้งแบบร่าง) · เพิ่ม **BMW-50** (Apply / Cancel / ข้อความ "Changes not applied yet" / ถามก่อนทิ้งแบบร่างเมื่อกด X) · PER-11 → **PER-13** และ PER-12 → **PER-14** (ความหมายเปลี่ยน: ต้อง Apply ก่อนค่าจึงถูกบันทึก — id เก่าถูกลบเพื่อไม่ให้ผล pass/fail ที่เคยบันทึกไว้ทำให้เข้าใจผิด) · BMW-25/BMW-34 ปรับขั้นตอนให้ใส่การกด Apply (ไม่เพิ่ม id) · **อัปเดต 2026-10-03 (แผง Failure Group Assignment)** — ตัวเลือก Failure Group ที่เปิดจากปุ่ม 📁 ในแท็บ Sensor เปลี่ยนจาก popup เล็กเป็นแผงสูงเต็มความสูงติดขอบซ้ายของแผง Sensor (ตาราง กลุ่ม × ชนิดโมเดล) และเอาโมเดลออกจากกลุ่มสุดท้ายแล้วมี Undo 7 วินาที: **ตัด SEN-5 ถึง SEN-10** (อธิบาย popup เดิมที่ไม่มีแล้ว) แล้วเพิ่ม **SEN-12 ถึง SEN-21** (เปิดแผง, ตาราง, ติ๊กหลายชนิด, แถวไม่กระโดด/All|Assigned/ค้นหา, สลับ sensor + ‹ ›, สิ่งที่ปิดแผงได้, ลบโมเดลแล้ว Undo — SEN-8 เดิมมาเป็น SEN-18, Undo ข้ามหน้าต่าง Build Model, สร้างกลุ่ม, เปลี่ยนชื่อ/ลบกลุ่ม) — id เดิมที่ความหมายเปลี่ยนจึงไม่ถูกนำกลับมาใช้ · **อัปเดต 2026-10-03 (Running condition ใหม่)** — แถบ "Running condition" บรรทัดเดียวใน Build Model เปลี่ยนเป็นการ์ด "Step 1" 3 สถานะ + แถบขั้นตอนที่หัวหน้าต่าง และ popup Edit… ถูกออกแบบใหม่เป็น 2 คอลัมน์ (ช่วงเวลาเป็นการ์ด P1..Pn, การ์ดเลือก "Only when running" / "Use all rows", ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว, จำนวนแถวที่ใช้ train แบบสด, ปิดด้วย Esc): **ตัด BMW-34 และ BMW-25** (อธิบายแถบ/หน้าตาเดิมที่ไม่มีแล้ว) แล้วเพิ่ม **BMW-51 ถึง BMW-55** — BMW-50 (ต้องกด Apply), BMW-33, BMW-24, BMW-26 และ PER-9/10/13/14 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรงหน้าตาใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-03 (แก้บั๊ก Add Special Sensor — ค่าไม่ตรง / กราฟปักเกิน)** — คอลัมน์ของ special sensor ที่ลบหรือถูกเปลี่ยนชื่อ ถูกทิ้งจากหน่วยความจำจริงแล้ว (สร้างชื่อเดิมใหม่ไม่ได้ค่าเก่าอีกต่อไป), สร้างแล้ว**ปักเฉพาะตัวใหม่** และไม่ทับสิ่งที่เลือกใน Dashboard, ตรวจชื่อซ้ำที่ช่อง Name, กันกดซ้ำ, ชื่อมีอักขระพิเศษ/ภาษาไทยใช้ในสูตรได้, Sum ว่างเมื่อ source หาย, กู้ workspace ที่มี recipe พังได้อย่างปลอดภัย: **ตัด SPC-8 และ SPC-12** (ความหมายเปลี่ยน — SPC-12 เดิมคือ "ชื่อซ้ำให้จดพฤติกรรม" ตอนนี้ถูกบล็อกแล้ว, SPC-8 เดิมบอกว่ากราฟอัปเดตโดยไม่ระบุว่าปักอะไร) แล้วเพิ่ม **SPC-15 ถึง SPC-21, MNG-16 ถึง MNG-18, EDT-27 ถึง EDT-29, PER-15** (SPC-4 เพิ่มแค่ลิงก์ไป SPC-15) · **อัปเดต 2026-10-03 (Special sensor รอบสอง — แก้ 14 ข้อที่ QA เจอ)** — ฟอร์ม Create ว่างทั้งหมดหลัง Add (SPC-22), ป้าย on chart ตามที่ Dashboard ปักจริง (SPC-23), sensor ที่กำลัง Undo ไม่ถูกเสนอเป็น source (SPC-24), สร้าง/แก้/ลบเป็นคิวทีละงาน (SPC-25, MNG-24), ลบถูกตรวจซ้ำตอนยืนยันจริงรวม Running condition (MNG-19/20/21/22), ลบแล้วเงื่อนไขในแท็บ Filter ของ Dashboard หายตาม (MNG-23), rename ตามไปถึงแท็บ Filter + Running condition (EDT-30), แก้ไม่สำเร็จย้อนกลับ (EDT-31), ลำดับคำนวณตามการพึ่งพา (EDT-32), ตรวจวงกลมสดใหม่ (EDT-33) — **ตัด MNG-10** (ช่อง "PM filter" ถูกยกเลิกไปแล้ว) แทนด้วย **MNG-25** · **อัปเดต 2026-10-03 (ล็อก special sensor ที่โมเดลใช้อยู่)** — sensor ที่โมเดล (ทุกช่อง รวม Custom running condition) หรือ Running condition ของ workspace ใช้อยู่ — รวมถึงโดยอ้อมผ่าน sensor ที่สร้างต่อ — **เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ และลบไม่ได้** (แก้ได้แค่ Description / Unit / Component): **ตัด EDT-16, EDT-18, EDT-24, EDT-30** (ความหมายเปลี่ยน — เดิมบอกว่า sensor ที่ถูกใช้ยังแก้ได้ และ rename ตามไปถึงโมเดล / Running condition) แล้วเพิ่ม **EDT-35 ถึง EDT-41** (EDT-2/25 แก้แค่ข้อความอ้างอิง) · **อัปเดต 2026-10-03 (ผูกหน้าต่าง Add Special Sensor กับ dataset + latest-click-wins)** — special sensor ของ A ไม่โผล่/ไม่โดนแตะตอนทำงานใน B แม้หน้าต่างลูกของ A ค้าง (ทุกคำสั่งที่เขียนคอลัมน์ผูกกับ generation ของ dataset, ถูกปฏิเสธเมื่อ dataset เปลี่ยน), หน้าต่างที่ถูกดึงไปโปรเจกต์ใหม่ล้างฟอร์ม/ตัวแก้ไข/งานค้างทั้งหมด, คลิกเปิดโปรเจกต์ซ้อนกัน "คลิกหลังสุดชนะ", ออกจาก Dashboard แล้วบันทึกอัตโนมัติที่ค้างอยู่ทันที — เพิ่ม **MULTI-8 ถึง MULTI-13** (ไม่ตัด id ใดเลย) · **อัปเดต 2026-10-03 (Visual refresh)** — เพิ่ม **VIS-4 ถึง VIS-14** (popover ไม่ปิดเอง/ไม่ล้นจอ/ไม่ลอยค้าง, แถบ Time range แถวเดียว, แท็บ Filter/Highlights/Sensor/Failure Groups หน้าตาใหม่, สีกราฟ Build Model/PM โทนเดียวกับ Dashboard, หน้าต่าง Add Special Sensor หน้าตาใหม่) — ไม่ตัด id ใดเลย · **อัปเดต 2026-10-04 (Health score 3b-1 — Workbench 2 หน้า ต่อ model: Model fit + Health score)** — หัวหน้าต่างเป็นแถบขั้นตอน 5 ขั้นที่กดได้ (Running condition → Model settings → Train → Health set points → Complete), มีสวิตช์ "1 Model fit / 2 Health score" ที่หัว detail pane (หน้า Health score ยังเป็นกรอบว่างไว้ก่อน — มาในเฟสถัดไป), แถบเตือน stale + ฟิล์ม "Out of date" บนกราฟ, จุดสถานะ 3 สี (เหลือง/แดง/เขียว) + legend, กราฟของหน้า Model fit เป็นกราฟใหม่ทั้งหมดที่ดึงจากข้อมูลย่อของ Rust (Individual: ค่าตามเวลา + Distribution ใหม่ + การ์ดสถิติ; Relationship: แถบสถิติ + Fit + Target vs predicted + Residual เต็มกว้าง ไม่มี distribution ของ residual; Clustering: scatter + วง SD ทุก cluster + การ์ดสรุป), ทุกกราฟมีปุ่มขยาย, "Compare predictors" เปิด Sub-models เป็น modal, โมเดล Complete เห็นกราฟเมื่อเปิดซ้ำ, และแก้บั๊ก detail pane หดหายเมื่อซ่อนลิสต์ซ้าย: **ตัด BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-56 ถึง BMW-68** — BMW-56 คือการ์ด Step 1 เดิม (BMW-51) ที่ตัดส่วนแถบขั้นตอนออก · **อัปเดต 2026-10-04 (Health score 3b-2)** — หน้า "2 Health score" เป็นหน้าจริงแล้ว: **ตัด BMW-58 และ BMW-44** (หน้า placeholder / Mark complete ที่ footer หน้า Model fit — ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-69 ถึง BMW-79** (สวิตช์ 2 หน้า, set point ของ Individual/Relationship/Clustering, Checks, กราฟคะแนน + ซิงก์เมาส์, Mark complete เขียนไฟล์จริง, Mark incomplete + "Changed after saving", การบันทึก set point/ปิดหน้าต่าง, ป้าย "Set points needed"/"Fix set point", Finish ของหน้า PM) และแก้ข้อความ FG-13, BMW-4, BMW-30, BMW-33, BMW-56 ที่อ้างปุ่ม Mark complete เดิม
+> 306 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) · **อัปเดต 2026-09-30 (Build Model Workbench, Phase C — จุดสถานะในแท็บ Failure Groups)** — เพิ่มข้อใหม่ FG-13 (จุดสถานะที่มุมป้าย I/R/C ในแท็บ Failure Groups ของ Dashboard — ไม่มีสี/ฟ้า/เขียว ตรงกับหน้า Build Model เป๊ะ รวมถึงกรณี gate บล็อกด้วย) — ปิด Feature 4 (Build Model Workbench) ทั้ง Phase A/B/C ครบตาม SPEC FINAL · **อัปเดต 2026-09-30 (แก้บั๊กจากทดสอบแอปจริงรอบแรก, 4 ข้อ)** — เพิ่ม **PER-12** (ค่าที่แก้ใน Training periods หายเมื่อปิดแค่ popup "Edit…" โดยไม่ blur ก่อน — บั๊กเดิมที่ PER-11 ไม่ครอบ, รายงานซ้ำเป็นครั้งที่ 2) — BMW-28/BMW-40 (Model settings row) ปรับข้อความให้ตรงกับ CSS ที่จัดใหม่ (Model name กว้างขึ้นไม่ตัดคำ, Training data กว้างคงที่ทุกชนิด, ฟิลด์เฉพาะชนิดรวมกลุ่มแยกบรรทัด) ไม่เพิ่ม id ใหม่ · **อัปเดต 2026-09-30 (พอร์ตฟีเจอร์จากหน้า PM เต็มเข้า Workbench รอบสอง)** — เพิ่มข้อใหม่ **BMW-47** (Custom running-condition editor แก้ได้ในหน้า Workbench เอง ผ่านสวิตช์ Training data — เดิมทำไม่ได้ต้องไปหน้า PM เต็ม), **BMW-48** (Cluster ranges เป็นแถบเลื่อนลากได้ตามช่วงค่าจริง แสดงตลอดเวลาแทนที่จะซ่อนจนกว่าจะเลือก criteria sensor), **BMW-49** (แกน X ของกราฟผลลัพธ์ Relationship เลือกได้ทันทีไม่ต้อง Save) — แก้ข้อความ BMW-40 ที่เคยบอกว่า Custom "ยังไม่มีที่แก้ที่นี่" (ไม่จริงแล้ว ดู BMW-47) · **อัปเดต 2026-10-03 (ปุ่ม Apply ใน popup Running Condition Filter)** — popup แก้เป็น "แบบร่าง + กด Apply": แก้อะไรก็ตามในนั้นยังไม่มีผลจนกว่าจะกด **Apply** (ปิดโดยไม่ Apply = ทิ้งแบบร่าง) · เพิ่ม **BMW-50** (Apply / Cancel / ข้อความ "Changes not applied yet" / ถามก่อนทิ้งแบบร่างเมื่อกด X) · PER-11 → **PER-13** และ PER-12 → **PER-14** (ความหมายเปลี่ยน: ต้อง Apply ก่อนค่าจึงถูกบันทึก — id เก่าถูกลบเพื่อไม่ให้ผล pass/fail ที่เคยบันทึกไว้ทำให้เข้าใจผิด) · BMW-25/BMW-34 ปรับขั้นตอนให้ใส่การกด Apply (ไม่เพิ่ม id) · **อัปเดต 2026-10-03 (แผง Failure Group Assignment)** — ตัวเลือก Failure Group ที่เปิดจากปุ่ม 📁 ในแท็บ Sensor เปลี่ยนจาก popup เล็กเป็นแผงสูงเต็มความสูงติดขอบซ้ายของแผง Sensor (ตาราง กลุ่ม × ชนิดโมเดล) และเอาโมเดลออกจากกลุ่มสุดท้ายแล้วมี Undo 7 วินาที: **ตัด SEN-5 ถึง SEN-10** (อธิบาย popup เดิมที่ไม่มีแล้ว) แล้วเพิ่ม **SEN-12 ถึง SEN-21** (เปิดแผง, ตาราง, ติ๊กหลายชนิด, แถวไม่กระโดด/All|Assigned/ค้นหา, สลับ sensor + ‹ ›, สิ่งที่ปิดแผงได้, ลบโมเดลแล้ว Undo — SEN-8 เดิมมาเป็น SEN-18, Undo ข้ามหน้าต่าง Build Model, สร้างกลุ่ม, เปลี่ยนชื่อ/ลบกลุ่ม) — id เดิมที่ความหมายเปลี่ยนจึงไม่ถูกนำกลับมาใช้ · **อัปเดต 2026-10-03 (Running condition ใหม่)** — แถบ "Running condition" บรรทัดเดียวใน Build Model เปลี่ยนเป็นการ์ด "Step 1" 3 สถานะ + แถบขั้นตอนที่หัวหน้าต่าง และ popup Edit… ถูกออกแบบใหม่เป็น 2 คอลัมน์ (ช่วงเวลาเป็นการ์ด P1..Pn, การ์ดเลือก "Only when running" / "Use all rows", ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว, จำนวนแถวที่ใช้ train แบบสด, ปิดด้วย Esc): **ตัด BMW-34 และ BMW-25** (อธิบายแถบ/หน้าตาเดิมที่ไม่มีแล้ว) แล้วเพิ่ม **BMW-51 ถึง BMW-55** — BMW-50 (ต้องกด Apply), BMW-33, BMW-24, BMW-26 และ PER-9/10/13/14 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรงหน้าตาใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-03 (แก้บั๊ก Add Special Sensor — ค่าไม่ตรง / กราฟปักเกิน)** — คอลัมน์ของ special sensor ที่ลบหรือถูกเปลี่ยนชื่อ ถูกทิ้งจากหน่วยความจำจริงแล้ว (สร้างชื่อเดิมใหม่ไม่ได้ค่าเก่าอีกต่อไป), สร้างแล้ว**ปักเฉพาะตัวใหม่** และไม่ทับสิ่งที่เลือกใน Dashboard, ตรวจชื่อซ้ำที่ช่อง Name, กันกดซ้ำ, ชื่อมีอักขระพิเศษ/ภาษาไทยใช้ในสูตรได้, Sum ว่างเมื่อ source หาย, กู้ workspace ที่มี recipe พังได้อย่างปลอดภัย: **ตัด SPC-8 และ SPC-12** (ความหมายเปลี่ยน — SPC-12 เดิมคือ "ชื่อซ้ำให้จดพฤติกรรม" ตอนนี้ถูกบล็อกแล้ว, SPC-8 เดิมบอกว่ากราฟอัปเดตโดยไม่ระบุว่าปักอะไร) แล้วเพิ่ม **SPC-15 ถึง SPC-21, MNG-16 ถึง MNG-18, EDT-27 ถึง EDT-29, PER-15** (SPC-4 เพิ่มแค่ลิงก์ไป SPC-15) · **อัปเดต 2026-10-03 (Special sensor รอบสอง — แก้ 14 ข้อที่ QA เจอ)** — ฟอร์ม Create ว่างทั้งหมดหลัง Add (SPC-22), ป้าย on chart ตามที่ Dashboard ปักจริง (SPC-23), sensor ที่กำลัง Undo ไม่ถูกเสนอเป็น source (SPC-24), สร้าง/แก้/ลบเป็นคิวทีละงาน (SPC-25, MNG-24), ลบถูกตรวจซ้ำตอนยืนยันจริงรวม Running condition (MNG-19/20/21/22), ลบแล้วเงื่อนไขในแท็บ Filter ของ Dashboard หายตาม (MNG-23), rename ตามไปถึงแท็บ Filter + Running condition (EDT-30), แก้ไม่สำเร็จย้อนกลับ (EDT-31), ลำดับคำนวณตามการพึ่งพา (EDT-32), ตรวจวงกลมสดใหม่ (EDT-33) — **ตัด MNG-10** (ช่อง "PM filter" ถูกยกเลิกไปแล้ว) แทนด้วย **MNG-25** · **อัปเดต 2026-10-03 (ล็อก special sensor ที่โมเดลใช้อยู่)** — sensor ที่โมเดล (ทุกช่อง รวม Custom running condition) หรือ Running condition ของ workspace ใช้อยู่ — รวมถึงโดยอ้อมผ่าน sensor ที่สร้างต่อ — **เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ และลบไม่ได้** (แก้ได้แค่ Description / Unit / Component): **ตัด EDT-16, EDT-18, EDT-24, EDT-30** (ความหมายเปลี่ยน — เดิมบอกว่า sensor ที่ถูกใช้ยังแก้ได้ และ rename ตามไปถึงโมเดล / Running condition) แล้วเพิ่ม **EDT-35 ถึง EDT-41** (EDT-2/25 แก้แค่ข้อความอ้างอิง) · **อัปเดต 2026-10-03 (ผูกหน้าต่าง Add Special Sensor กับ dataset + latest-click-wins)** — special sensor ของ A ไม่โผล่/ไม่โดนแตะตอนทำงานใน B แม้หน้าต่างลูกของ A ค้าง (ทุกคำสั่งที่เขียนคอลัมน์ผูกกับ generation ของ dataset, ถูกปฏิเสธเมื่อ dataset เปลี่ยน), หน้าต่างที่ถูกดึงไปโปรเจกต์ใหม่ล้างฟอร์ม/ตัวแก้ไข/งานค้างทั้งหมด, คลิกเปิดโปรเจกต์ซ้อนกัน "คลิกหลังสุดชนะ", ออกจาก Dashboard แล้วบันทึกอัตโนมัติที่ค้างอยู่ทันที — เพิ่ม **MULTI-8 ถึง MULTI-13** (ไม่ตัด id ใดเลย) · **อัปเดต 2026-10-03 (Visual refresh)** — เพิ่ม **VIS-4 ถึง VIS-14** (popover ไม่ปิดเอง/ไม่ล้นจอ/ไม่ลอยค้าง, แถบ Time range แถวเดียว, แท็บ Filter/Highlights/Sensor/Failure Groups หน้าตาใหม่, สีกราฟ Build Model/PM โทนเดียวกับ Dashboard, หน้าต่าง Add Special Sensor หน้าตาใหม่) — ไม่ตัด id ใดเลย · **อัปเดต 2026-10-04 (Health score 3b-1 — Workbench 2 หน้า ต่อ model: Model fit + Health score)** — หัวหน้าต่างเป็นแถบขั้นตอน 5 ขั้นที่กดได้ (Running condition → Model settings → Train → Health set points → Complete), มีสวิตช์ "1 Model fit / 2 Health score" ที่หัว detail pane (หน้า Health score ยังเป็นกรอบว่างไว้ก่อน — มาในเฟสถัดไป), แถบเตือน stale + ฟิล์ม "Out of date" บนกราฟ, จุดสถานะ 3 สี (เหลือง/แดง/เขียว) + legend, กราฟของหน้า Model fit เป็นกราฟใหม่ทั้งหมดที่ดึงจากข้อมูลย่อของ Rust (Individual: ค่าตามเวลา + Distribution ใหม่ + การ์ดสถิติ; Relationship: แถบสถิติ + Fit + Target vs predicted + Residual เต็มกว้าง ไม่มี distribution ของ residual; Clustering: scatter + วง SD ทุก cluster + การ์ดสรุป), ทุกกราฟมีปุ่มขยาย, "Compare predictors" เปิด Sub-models เป็น modal, โมเดล Complete เห็นกราฟเมื่อเปิดซ้ำ, และแก้บั๊ก detail pane หดหายเมื่อซ่อนลิสต์ซ้าย: **ตัด BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-56 ถึง BMW-68** — BMW-56 คือการ์ด Step 1 เดิม (BMW-51) ที่ตัดส่วนแถบขั้นตอนออก · **อัปเดต 2026-10-04 (Health score 3b-2)** — หน้า "2 Health score" เป็นหน้าจริงแล้ว: **ตัด BMW-58 และ BMW-44** (หน้า placeholder / Mark complete ที่ footer หน้า Model fit — ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-69 ถึง BMW-79** (สวิตช์ 2 หน้า, set point ของ Individual/Relationship/Clustering, Checks, กราฟคะแนน + ซิงก์เมาส์, Mark complete เขียนไฟล์จริง, Mark incomplete + "Changed after saving", การบันทึก set point/ปิดหน้าต่าง, ป้าย "Set points needed"/"Fix set point", Finish ของหน้า PM) และแก้ข้อความ FG-13, BMW-4, BMW-30, BMW-33, BMW-56 ที่อ้างปุ่ม Mark complete เดิม · **อัปเดต 2026-10-04 (Health score เฟส 4 — ตัดหน้าเต็ม)** — ถอดหน้า Predictive Model (ปุ่ม "Open full view ↗", ปุ่ม Finish, Back, Sub-models บนหน้านั้น) ออกจากแอปทั้งหมด: **ตัดทั้งหมวด PM (22 ข้อ), BMW-8, BMW-10, BMW-79, VIS-12** แล้วเพิ่ม **BMW-83** (ไม่มีทางเปิดหน้า full view แล้ว) กับ **BMW-84** (ทุกโมเดลเข้าถึงและ Complete ได้จากสองหน้าของ Workbench เท่านั้น) และแก้ข้อความของ BMW-27, BMW-30, BMW-33, BMW-40, BMW-47, BMW-50, BMW-53, BMW-54, BMW-56, BMW-57, BMW-66, BMW-69, PER-9, PER-10, PER-13, VIS-1 ที่อ้างปุ่ม/หน้านั้น — Sub-models เหลือเป็น modal ใน Workbench เท่านั้น (BMW-66)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
-> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23, BMW-41, BMW-42, BMW-25, BMW-34, BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51, BMW-58, BMW-44, SEN-5, SEN-6, SEN-7, SEN-8, SEN-9, SEN-10) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
+> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (ตัดทั้งหมวด PM: PM-1, PM-3, PM-4, PM-5, PM-6, PM-7, PM-26, PM-18, PM-11b, PM-12, PM-13, PM-22, PM-23, PM-15, PM-16, PM-17, PM-19, PM-20, PM-27, PM-28, PM-29, PM-30, BMW-8, BMW-10, BMW-79, VIS-12 — เฟส 4 ถอดหน้า Predictive Model + Open full view + Finish ออก · PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23, BMW-41, BMW-42, BMW-25, BMW-34, BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51, BMW-58, BMW-44, SEN-5, SEN-6, SEN-7, SEN-8, SEN-9, SEN-10) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
 >
 > เครื่องหมาย: 🆕 = ของที่เพิ่งทำ ยังไม่เคยมีคนกดจริง · 👀 = บั๊กที่เพิ่งแก้ หรือรายงานที่ยังไม่เคยตามไปดู · 🐍 = path เดียวที่เรียก Python sidecar
 
@@ -26,13 +26,12 @@
 - [MNG — Manage — ลบ special sensor](#mng) (24 ข้อ)
 - [EDT — Manage — แก้ไข special sensor](#edt) (37 ข้อ)
 - [FG — แท็บ Failure Groups](#fg) (8 ข้อ)
-- [BMW — หน้าต่าง Build Model](#bmw) (52 ข้อ)
-- [PM — Predictive Model Build](#pm) (14 ข้อ)
+- [BMW — หน้าต่าง Build Model](#bmw) (53 ข้อ)
 - [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (13 ข้อ)
 - [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (9 ข้อ)
 - [ERR — ความผิดพลาด & ขอบ](#err) (6 ข้อ)
 - [PERF — ประสิทธิภาพ](#perf) (6 ข้อ)
-- [VIS — กวาดหน้าตา (หลังล้าง CSS ที่ไม่ได้ใช้ และลบโค้ดตาย)](#vis) (14 ข้อ)
+- [VIS — กวาดหน้าตา (หลังล้าง CSS ที่ไม่ได้ใช้ และลบโค้ดตาย)](#vis) (13 ข้อ)
 
 ---
 
@@ -1272,16 +1271,16 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - กาง Model settings ของโมเดล Clustering — ดูปุ่ม −/+ ปรับจำนวน cluster ข้าง Y sensor / Criteria sensor
   - กาง Model settings ของโมเดล Individual — ดูป้ายนิ่ง "1σ + 3σ · automatic" (ไม่มีปุ่มปรับ)
   - ทุกชนิด: ดูสวิตช์ "Training data: Workspace | Custom" ท้ายฟอร์ม แล้วสลับแล้วกด Save changes
-  - **คาดหวัง:** เลือก Stiffness/จำนวน cluster ได้ ค่าอยู่หลัง Save — สวิตช์ Workspace/Custom เปลี่ยนโหมดได้ (ดู **BMW-47** สำหรับสิ่งที่โผล่มาเมื่อเลือก Custom — 2026-09-30: ตอนนี้แก้เงื่อนไข/ช่วงเวลาของ Custom ได้ตรงนี้เลย ไม่ต้องไปหน้า PM เต็มแล้ว) — **(2026-09-30)** ช่อง "Model name" กว้างพอ/ยืดหยุ่นพอที่จะไม่ตัดคำชื่อ sensor ยาวๆ ออกจอ (hover ดู tooltip ชื่อเต็มได้ด้วย), "Training data" อยู่ท้ายแถวเสมอและกว้างเท่ากันทั้ง 3 ชนิด, ฟิลด์เฉพาะชนิด (เช่น Clustering ที่มีถึง 5 ฟิลด์) ขึ้นบรรทัดแยกเป็นกลุ่มของตัวเองแทนที่จะอัดรวมแถวเดียวกับ Model name — ดู **BMW-48** สำหรับช่อง "Cluster ranges" ของ Clustering โดยเฉพาะ (เปลี่ยนจากช่องกรอกตัวเลขเป็นแถบเลื่อน) และ **BMW-65** สำหรับตัวเลือกแกน X ของกราฟ Fit ของ Relationship
+  - **คาดหวัง:** เลือก Stiffness/จำนวน cluster ได้ ค่าอยู่หลัง Save — สวิตช์ Workspace/Custom เปลี่ยนโหมดได้ (ดู **BMW-47** สำหรับสิ่งที่โผล่มาเมื่อเลือก Custom — 2026-09-30: ตอนนี้แก้เงื่อนไข/ช่วงเวลาของ Custom ได้ตรงนี้เลย ไม่ต้องไปหน้าอื่นแล้ว) — **(2026-09-30)** ช่อง "Model name" กว้างพอ/ยืดหยุ่นพอที่จะไม่ตัดคำชื่อ sensor ยาวๆ ออกจอ (hover ดู tooltip ชื่อเต็มได้ด้วย), "Training data" อยู่ท้ายแถวเสมอและกว้างเท่ากันทั้ง 3 ชนิด, ฟิลด์เฉพาะชนิด (เช่น Clustering ที่มีถึง 5 ฟิลด์) ขึ้นบรรทัดแยกเป็นกลุ่มของตัวเองแทนที่จะอัดรวมแถวเดียวกับ Model name — ดู **BMW-48** สำหรับช่อง "Cluster ranges" ของ Clustering โดยเฉพาะ (เปลี่ยนจากช่องกรอกตัวเลขเป็นแถบเลื่อน) และ **BMW-65** สำหรับตัวเลือกแกน X ของกราฟ Fit ของ Relationship
 
 - [ ] **BMW-56 — การ์ด "Step 1 · Running condition" 3 สถานะ + ล็อกการ Train จนกว่าจะตั้ง (แทน BMW-51 — เอาส่วนแถบขั้นตอนออกไปอยู่ BMW-57)** 🆕
   - เปิด workspace ที่ยังไม่เคยตั้ง Running condition เลย (มีโมเดลอย่างน้อย 1 ตัว) แล้วเปิด Build Model — popup จะเปิดเอง ให้ปิดด้วยปุ่ม X ก่อน
   - ดูใต้หัวหน้าต่าง: ต้องเห็นการ์ดใหญ่สีเหลือง
-  - ดูพื้นที่ผลลัพธ์ด้านขวา และลองกด "▶ Train model", "Open full view ↗" และสวิตช์ "2 Health score"
+  - ดูพื้นที่ผลลัพธ์ด้านขวา และลองกด "▶ Train model" และสวิตช์ "2 Health score"
   - กดปุ่มฟ้า "Set running condition →" บนการ์ด (หรือปุ่มในพื้นที่ผลลัพธ์) — popup เปิด ตั้งเงื่อนไขหรือเลือก "Use all rows" แล้วกด **Apply**
   - ดูการ์ดหลัง Apply แล้วกดปุ่ม "Edit" บนการ์ดเพื่อเปิด popup อีกครั้ง
   - (ถ้าทำได้) เตรียม workspace ที่ไฟล์เก็บช่วงเวลาที่วันสิ้นสุดอยู่ก่อนวันเริ่มไว้แล้ว (จาก UI ทำไม่ได้เพราะ Apply ถูกบล็อก — ใช้ไฟล์ที่แก้เองหรือไฟล์เก่า) แล้วเปิด Build Model
-  - **คาดหวัง:** **ยังไม่ตั้ง** — การ์ดเหลือง เลข 1, "Step 1 · Required before training", "Set the running condition" + ประโยคเหตุผลหนึ่งประโยค + ปุ่มหลักสีฟ้า · พื้นที่ผลลัพธ์ขึ้น "Set the running condition first — Training is locked until Step 1 is done." พร้อมปุ่ม "Set running condition" · "▶ Train model" / "Open full view ↗" และสวิตช์ "2 Health score" กดไม่ได้พร้อม tooltip เหตุผล (Save changes ยังกดได้) · ถ้ายังมีรายการอื่นที่ต้องแก้ (เช่น ยังไม่เลือก predictor) จะเห็นรายการ "N items to fix" ใต้ข้อความล็อกด้วย — **ตั้งแล้ว** — การ์ดกะทัดรัด แถบเขียวด้านซ้าย + ✓ + "Step 1 · Running condition · Set · applies to every model" · แถว "Which time" เป็นชิปช่วงวันที่อ่านง่าย เช่น "1 Jan 2026 → 31 Mar 2026" (ปลายเปิดเป็น Start / End, ไม่มีช่วงเลยเป็น "Whole dataset") · แถว "When running" เป็นชิปเงื่อนไข (ชื่อ sensor ตัวหนา + เครื่องหมาย + ค่า + หน่วย) คั่นด้วย AND/OR หรือ "All rows — no condition" · ด้านขวา "N rows · P%" + แถบเล็ก (ขึ้น "Counting rows…" ชั่วครู่ หรือ "— rows" ถ้านับไม่ได้ — ไม่ขวางการทำงานอื่น) · ปุ่ม "Edit" เปิด popup · Train กดได้ตามปกติ — **ช่วงเวลาผิด** — การ์ดสีแดง "Period N needs fixing" + เหตุผลจากระบบ + ชิปช่วงเวลา (อันที่ผิดเป็นสีแดง) + ปุ่มแดง "Fix period" เปิด popup · พื้นที่ผลลัพธ์ขึ้น "Fix the running condition first" + ปุ่ม "Fix period" — แบนเนอร์ legacy (BMW-24) / บรรทัด "⚠ N of M models can't be built yet" อยู่ใต้การ์ด ไม่ใช่เหนือ — ค่าที่ตั้งในนี้**ไม่กระทบกราฟ/ตารางของ Dashboard**เลยเหมือนเดิม · **แถบช่วงเวลาบนการ์ด:** การ์ดสถานะ Set มีแถบเส้นเวลาเล็ก ๆ (พื้นลายเฉียง + บล็อกสีฟ้าตามช่วงเวลาที่ Apply ไว้แล้ว) ใต้แถบจำนวนแถว พร้อมเดือนปีต้น–ปลายของข้อมูลและ "N / M d" — แถบนี้อ่านเฉพาะช่วงที่ **Apply แล้ว** (แก้ค่าใน popup ที่ยังไม่ Apply แล้วดูการ์ดด้านหลัง แถบต้องไม่ขยับ จนกด Apply) · ไม่ตั้งช่วงเวลา = แถบเต็ม "all M days" · ถ้ายังโหลดขอบเขตข้อมูลไม่เสร็จ ไม่มีแถบ (ไม่มีข้อความ error)
+  - **คาดหวัง:** **ยังไม่ตั้ง** — การ์ดเหลือง เลข 1, "Step 1 · Required before training", "Set the running condition" + ประโยคเหตุผลหนึ่งประโยค + ปุ่มหลักสีฟ้า · พื้นที่ผลลัพธ์ขึ้น "Set the running condition first — Training is locked until Step 1 is done." พร้อมปุ่ม "Set running condition" · "▶ Train model" และสวิตช์ "2 Health score" กดไม่ได้พร้อม tooltip เหตุผล (Save changes ยังกดได้) · ถ้ายังมีรายการอื่นที่ต้องแก้ (เช่น ยังไม่เลือก predictor) จะเห็นรายการ "N items to fix" ใต้ข้อความล็อกด้วย — **ตั้งแล้ว** — การ์ดกะทัดรัด แถบเขียวด้านซ้าย + ✓ + "Step 1 · Running condition · Set · applies to every model" · แถว "Which time" เป็นชิปช่วงวันที่อ่านง่าย เช่น "1 Jan 2026 → 31 Mar 2026" (ปลายเปิดเป็น Start / End, ไม่มีช่วงเลยเป็น "Whole dataset") · แถว "When running" เป็นชิปเงื่อนไข (ชื่อ sensor ตัวหนา + เครื่องหมาย + ค่า + หน่วย) คั่นด้วย AND/OR หรือ "All rows — no condition" · ด้านขวา "N rows · P%" + แถบเล็ก (ขึ้น "Counting rows…" ชั่วครู่ หรือ "— rows" ถ้านับไม่ได้ — ไม่ขวางการทำงานอื่น) · ปุ่ม "Edit" เปิด popup · Train กดได้ตามปกติ — **ช่วงเวลาผิด** — การ์ดสีแดง "Period N needs fixing" + เหตุผลจากระบบ + ชิปช่วงเวลา (อันที่ผิดเป็นสีแดง) + ปุ่มแดง "Fix period" เปิด popup · พื้นที่ผลลัพธ์ขึ้น "Fix the running condition first" + ปุ่ม "Fix period" — แบนเนอร์ legacy (BMW-24) / บรรทัด "⚠ N of M models can't be built yet" อยู่ใต้การ์ด ไม่ใช่เหนือ — ค่าที่ตั้งในนี้**ไม่กระทบกราฟ/ตารางของ Dashboard**เลยเหมือนเดิม · **แถบช่วงเวลาบนการ์ด:** การ์ดสถานะ Set มีแถบเส้นเวลาเล็ก ๆ (พื้นลายเฉียง + บล็อกสีฟ้าตามช่วงเวลาที่ Apply ไว้แล้ว) ใต้แถบจำนวนแถว พร้อมเดือนปีต้น–ปลายของข้อมูลและ "N / M d" — แถบนี้อ่านเฉพาะช่วงที่ **Apply แล้ว** (แก้ค่าใน popup ที่ยังไม่ Apply แล้วดูการ์ดด้านหลัง แถบต้องไม่ขยับ จนกด Apply) · ไม่ตั้งช่วงเวลา = แถบเต็ม "all M days" · ถ้ายังโหลดขอบเขตข้อมูลไม่เสร็จ ไม่มีแถบ (ไม่มีข้อความ error)
 
 - [ ] **BMW-57 — แถบขั้นตอนที่หัวหน้าต่าง 5 ขั้น กดได้ทุกขั้น: Running condition → Model settings → Train → Health set points → Complete** 🆕
   - เปิด Build Model กับโมเดลที่ยังไม่เคย Train — ดูแถบกลางหัวหน้าต่าง
@@ -1289,7 +1288,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - Train โมเดลจนเสร็จ แล้วกด "Health set points" และ "Complete"
   - แก้ค่าที่ทำให้โมเดลต้อง Train ใหม่ (เช่น เปลี่ยน Stiffness) แล้วดูแถบ — ลองเอาเมาส์ชี้ "Health set points"
   - เลือกโมเดลที่ Mark complete แล้ว
-  - **คาดหวัง:** ขั้นที่ทำเสร็จแล้วเป็นวงเขียวมีเครื่องหมายถูก · ขั้นที่ต้องทำต่อเป็นวงฟ้าเลขขาว · ขั้นที่ยังไม่ถึงเป็นวงเทา · ขั้นที่ผิดเป็นวงแดง "!" (Running condition ช่วงเวลาผิด) · หน้าที่เปิดอยู่ถูกเน้นพื้นฟ้าจาง (Model fit = Model settings + Train, Health score = Health set points) · "Health set points" ไปหน้า Health score (ตอนนี้เป็นหน้าว่าง "Health score — coming next") และ "Complete" ก็ไปหน้าเดียวกัน · **ระหว่างโมเดลต้อง Train ใหม่ ("Health set points" และ "Complete") กดไม่ได้ พร้อม tooltip "Re-train first"** (ไม่ได้ Train = "Train the model first") · โมเดลที่ Complete แล้วทั้ง 5 ขั้นเป็นเขียว · แถบนี้ไม่แสดงตอนเปิดหน้า PM เต็ม ("Open full view ↗") · ค่า set point ที่เคยกรอกไว้ไม่หายเมื่อโมเดลต้อง Train ใหม่
+  - **คาดหวัง:** ขั้นที่ทำเสร็จแล้วเป็นวงเขียวมีเครื่องหมายถูก · ขั้นที่ต้องทำต่อเป็นวงฟ้าเลขขาว · ขั้นที่ยังไม่ถึงเป็นวงเทา · ขั้นที่ผิดเป็นวงแดง "!" (Running condition ช่วงเวลาผิด) · หน้าที่เปิดอยู่ถูกเน้นพื้นฟ้าจาง (Model fit = Model settings + Train, Health score = Health set points) · "Health set points" ไปหน้า Health score (ตอนนี้เป็นหน้าว่าง "Health score — coming next") และ "Complete" ก็ไปหน้าเดียวกัน · **ระหว่างโมเดลต้อง Train ใหม่ ("Health set points" และ "Complete") กดไม่ได้ พร้อม tooltip "Re-train first"** (ไม่ได้ Train = "Train the model first") · โมเดลที่ Complete แล้วทั้ง 5 ขั้นเป็นเขียว · ค่า set point ที่เคยกรอกไว้ไม่หายเมื่อโมเดลต้อง Train ใหม่
 
 - [ ] **BMW-59 — แก้ค่าที่กระทบการ Train: แถบเตือน "Settings changed", กราฟ "Out of date", ปุ่ม Re-train, ข้อความ "changing it sets the model to Incomplete"** 🆕
   - เปิดโมเดล Relationship ที่ Train แล้ว (หรือ Complete แล้ว) กาง Model settings — ดูข้างหัวข้อ Training data / Predictor sensors / Stiffness
@@ -1316,7 +1315,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - (Relationship) Train แล้วกลับไปหน้า Import → เปิดโปรเจกต์เดิมใหม่ (โหลดข้อมูลใหม่) แล้วเปิดโมเดล Relationship เดิม
   - ตั้งค่าโมเดลให้ไม่ครบ (เช่น ลบ predictor จนเหลือ 0) — ดูพื้นที่ผลลัพธ์
   - **(แก้บั๊ก 2026-09-30)** สลับ "Training data" เป็น Custom โดยไม่ใส่เงื่อนไข ดูลิสต์ "N items to fix" แล้วกดลิงก์เหตุผลนั้น — ต้องพาไปเปิด Model settings ของโมเดลนี้เอง (ไม่ใช่แผง Running Condition ของ workspace)
-  - **คาดหวัง:** กราฟ/ตัวเลขแสดงเฉพาะผลที่ตรงกับค่าปัจจุบัน — ตั้งค่าไม่ครบ (รวมเหตุผล Running condition gate) ต้องไม่โชว์กราฟเก่า ต้องโชว์ลิสต์ "N items to fix before training" ที่กดแต่ละบรรทัดแล้วพาไปแก้ได้ · Train **ไม่เขียนไฟล์ใด ๆ** (พรีวิวอย่างเดียว) · **เปิดซ้ายังเห็นกราฟทันที** (คำนวณใหม่เงียบ ๆ เบื้องหลังไม่ต้องกดอะไร) ตราบใดที่ไม่ได้แก้ค่าหลัง Train ล่าสุด — **รวมโมเดลที่ Mark complete แล้วด้วย** (เดิมโชว์แค่ข้อความ "Marked complete — open full view…") ส่วนโมเดล Complete เก่าที่ไม่เคยมีบันทึกการ Train ขึ้น "Marked complete — train the model to see its charts." · **Relationship ที่เปิดหลังโหลดข้อมูลใหม่:** ระบบ fit ใหม่เบื้องหลังให้เองและกราฟกลับมา — ถ้าไม่ทัน/fit หายจากหน่วยความจำจะขึ้น "Re-train to recompute" พร้อมปุ่ม Re-train (กดแล้วกราฟกลับมา) · โมเดลที่ต้อง Train ใหม่ (ค่าเปลี่ยน) ที่ยังไม่เคยเปิดกราฟในรอบนี้ขึ้น "Settings changed — re-train to see the result." · ถ้าดึงกราฟไม่สำเร็จขึ้นข้อความบอกเหตุผลแทนกราฟ
+  - **คาดหวัง:** กราฟ/ตัวเลขแสดงเฉพาะผลที่ตรงกับค่าปัจจุบัน — ตั้งค่าไม่ครบ (รวมเหตุผล Running condition gate) ต้องไม่โชว์กราฟเก่า ต้องโชว์ลิสต์ "N items to fix before training" ที่กดแต่ละบรรทัดแล้วพาไปแก้ได้ · Train **ไม่เขียนไฟล์ใด ๆ** (พรีวิวอย่างเดียว) · **เปิดซ้ายังเห็นกราฟทันที** (คำนวณใหม่เงียบ ๆ เบื้องหลังไม่ต้องกดอะไร) ตราบใดที่ไม่ได้แก้ค่าหลัง Train ล่าสุด — **รวมโมเดลที่ Mark complete แล้วด้วย** ส่วนโมเดล Complete เก่าที่ไม่เคยมีบันทึกการ Train ขึ้น "Marked complete — train the model to see its charts." · **Relationship ที่เปิดหลังโหลดข้อมูลใหม่:** ระบบ fit ใหม่เบื้องหลังให้เองและกราฟกลับมา — ถ้าไม่ทัน/fit หายจากหน่วยความจำจะขึ้น "Re-train to recompute" พร้อมปุ่ม Re-train (กดแล้วกราฟกลับมา) · โมเดลที่ต้อง Train ใหม่ (ค่าเปลี่ยน) ที่ยังไม่เคยเปิดกราฟในรอบนี้ขึ้น "Settings changed — re-train to see the result." · ถ้าดึงกราฟไม่สำเร็จขึ้นข้อความบอกเหตุผลแทนกราฟ
 
 - [ ] **BMW-63 — หน้า Model fit ของ Individual: กราฟค่าตามเวลา (±1SD/±3SD) เต็มกว้าง + Distribution + การ์ดสถิติ** 🆕
   - Train โมเดล Individual (Dashboard-created) ที่ sensor มีข้อมูลหลายพันแถว แล้วดูหน้า Model fit
@@ -1339,7 +1338,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ปิดเปิดโมเดล/โปรแกรมแล้วดูค่า X ที่เลือกไว้
   - **คาดหวัง:** แถบสถิติมีครบ 7 ค่า ตัวเลข R²/2RMSE ตรงกับที่ Train (ไม่ใช้คำว่า LinearGAM ที่ใดเลย — ใช้ "Relation model") · **ไม่มีกราฟ distribution ของ residual และไม่มี histogram ติดข้างกราฟ** · เปลี่ยน X แล้วกราฟ Fit เปลี่ยนแกนทันที **โดยไม่ต้องกด Save** และไม่ทำให้โมเดลกลายเป็น stale/Incomplete (เป็นมุมมองกราฟ ไม่ใช่พารามิเตอร์โมเดล) · ตัวเลือก X มีแค่ predictor ที่ใช้ fit จริงตอน Train ล่าสุด · ปิดเปิดแล้วค่า X ที่เลือกยังจำอยู่ · ถ้า predictor ที่เคยเลือกถูกเอาออกแล้ว Train ใหม่ ช่อง X เด้งกลับเป็น predictor ตัวแรก · Residual over time มีเส้น ±2RMSE และเส้นศูนย์ ไม่มีเส้น set point (อยู่หน้า Health score)
 
-- [ ] **BMW-66 — "Compare predictors" เปิดมุมมอง Sub-models เป็น modal (ย้ายจากหน้า PM มา — หน้า PM ยังมีของเดิมใช้ได้ ดู PM-7)** 🆕
+- [ ] **BMW-66 — "Compare predictors" เปิดมุมมอง Sub-models เป็น modal (ย้ายมาจากหน้า Predictive Model เดิมที่ถูกถอดออกแล้ว — ตอนนี้ที่นี่ที่เดียว)** 🆕
   - ที่โมเดล Relationship ที่ Train แล้ว กดปุ่ม "Compare predictors" ที่หัวการ์ด Fit
   - รอจนเห็นการ์ดครบ แล้วดูตัวเลขของแต่ละการ์ด
   - กด Esc / กดพื้นหลังมืด / กดปุ่ม X เพื่อปิด แล้วเปิดใหม่อีกครั้ง
@@ -1363,7 +1362,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - Train โมเดลจนสำเร็จ — ดูสวิตช์และ footer อีกครั้ง แล้วกด "2 Health score" (หรือ "Next: Health score →") และกด "1 Model fit" (หรือ "← Model fit" ที่ footer)
   - สลับไปแท็บโมเดลอื่นของ sensor เดียวกันแล้วกลับมา
   - ทำให้โมเดลนั้น Complete (ดู BMW-75) แล้วดูสวิตช์
-  - **คาดหวัง:** ยังไม่ Train = "2 Health score" และ "Next: Health score →" กดไม่ได้ (tooltip "Train the model first") · Train แล้ว Model fit มีเครื่องหมายถูกแทนเลข 1 และ 2 กดได้ · หน้า Health score มี 4 ส่วน: กราฟตั้งจุดบนซ้าย, การ์ด "Health set points" และการ์ด "Checks" บนขวา, กราฟ "Health score" เต็มกว้างด้านล่าง (ดู BMW-70 ถึง 74) · Model settings **ไม่ปรากฏ**ในหน้านี้ (อยู่หน้า Model fit เท่านั้น) · footer หน้านี้มี "← Model fit" + สถานะ/เหตุผล + "✓ Mark complete" · **ไม่มี "✓ Mark complete" ที่ footer ของหน้า Model fit อีกแล้ว** (footer นั้นมีแค่ป้ายสถานะ, Open full view, Save changes, Train/Re-train, Next) · แต่ละโมเดลจำหน้าของตัวเอง · Complete แล้วทั้งสองปุ่มมีเครื่องหมายถูก · "Open full view ↗" และหน้า PM เต็มยังอยู่ใช้ได้
+  - **คาดหวัง:** ยังไม่ Train = "2 Health score" และ "Next: Health score →" กดไม่ได้ (tooltip "Train the model first") · Train แล้ว Model fit มีเครื่องหมายถูกแทนเลข 1 และ 2 กดได้ · หน้า Health score มี 4 ส่วน: กราฟตั้งจุดบนซ้าย, การ์ด "Health set points" และการ์ด "Checks" บนขวา, กราฟ "Health score" เต็มกว้างด้านล่าง (ดู BMW-70 ถึง 74) · Model settings **ไม่ปรากฏ**ในหน้านี้ (อยู่หน้า Model fit เท่านั้น) · footer หน้านี้มี "← Model fit" + สถานะ/เหตุผล + "✓ Mark complete" · **ไม่มี "✓ Mark complete" ที่ footer ของหน้า Model fit อีกแล้ว** (footer นั้นมีแค่ป้ายสถานะ, Save changes, Train/Re-train, Next) · แต่ละโมเดลจำหน้าของตัวเอง · Complete แล้วทั้งสองปุ่มมีเครื่องหมายถูก
 
 - [ ] **BMW-70 — Individual: ตั้งค่า L / H (set point) — ค่าตั้งต้นจาก master data, ป้ายที่มา, ลิงก์ "use …", sensor ที่ไม่มี master** 🆕
   - Train โมเดล Individual ของ sensor ที่มี alarm L/H ใน mapping (master data) แล้วเปิด "2 Health score" **ครั้งแรก**
@@ -1428,10 +1427,20 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - สลับไปดูโมเดลอื่นของ sensor เดียวกันที่ยังไม่เคยเปิดดูในรอบนี้ และดูแท็บ Failure Groups ที่ Dashboard (ดู FG-13)
   - **คาดหวัง:** ว่าง = ป้ายเหลือง "Set points needed", จุดเหลือง, ขั้น "Health set points" สีฟ้า (ขั้นที่ต้องทำ) · ค่าที่ไม่ผ่าน = ป้ายแดง "Fix set point", จุดแดง (tooltip "Fix set point"), ขั้น "Health set points" เป็นสีแดง "!" · ผ่านแล้วป้ายกลับเป็น "Trained" ขั้นเป็นเครื่องหมายถูก · ระหว่างพิมพ์ ป้ายของโมเดลที่เปิดอยู่เปลี่ยนตามทันทีที่ Rust ตอบ ส่วนค่าที่บันทึกกับโมเดล (และจุดที่ Dashboard) ตามมาเมื่อค่าถูกบันทึก (blur/Enter) · โมเดลที่ไม่เคยถูกเปิดดูในรอบนี้ใช้ผลที่บันทึกไว้ครั้งล่าสุด (ถ้ามี) · Warning จาก Rust (เช่น ชื่อโมเดลมีอักขระที่ใช้เป็นชื่อไฟล์ไม่ได้) ไม่ทำให้ป้ายเป็นแดง/เหลืองและไม่บล็อก Mark complete — แสดงเป็นหมายเหตุสีเหลืองใน Checks
 
-- [ ] **BMW-79 — ไม่มีทางทำให้โมเดล Complete ได้โดยไม่ผ่านหน้า Health score (footer หน้า Model fit ไม่มีปุ่ม Mark complete; ปุ่ม Finish ของหน้า PM เต็มผ่านขั้นตอนเดียวกัน)** 🆕
-  - ดู footer ของหน้า "1 Model fit" ของโมเดลที่ Train แล้ว
-  - กด "Open full view ↗" แล้วกด "Finish" กับโมเดลที่ set point ยังว่าง และกับโมเดลที่ set point valid
-  - **คาดหวัง:** footer หน้า Model fit ไม่มี "✓ Mark complete" / "Mark incomplete" · "Finish" กับโมเดลที่ set point ว่าง/ไม่ผ่าน/ยังไม่ Train = **ไม่เป็น Complete และไม่เขียนไฟล์** กลับมาที่ภาพรวมพร้อมข้อความ "The model was not marked Complete. …" และเปิดหน้า Health score ของโมเดลนั้นให้กรอก · "Finish" กับโมเดลที่พร้อมเขียนไฟล์และเป็น Complete เหมือนกด Mark complete (มีไฟล์ในโฟลเดอร์) · (หน้า PM เต็มและปุ่ม Finish จะถูกถอดออกในเฟสถัดไป)
+- [ ] **BMW-83 — ไม่มีทางเปิดหน้า "full view" อีกแล้ว (แทน BMW-8, BMW-10 และครึ่งหลังของ BMW-79 — หน้า Predictive Model เดิม + ปุ่ม Open full view + Finish ถูกถอดออกในเฟส 4)** 🆕
+  - เปิดหน้าต่าง Build Model ของ workspace ที่มีโมเดลครบทั้ง 3 ชนิด (Individual / Relationship / Clustering)
+  - ดู footer ของหน้า "1 Model fit" ของแต่ละชนิด ทั้งก่อน Train และหลัง Train
+  - ดู footer ของหน้า "2 Health score"
+  - กดไล่ทุกขั้นในแถบขั้นตอนด้านบนหน้าต่าง และกดชื่อโมเดล/แท็บ I-R-C ในลิสต์
+  - ที่ Dashboard แท็บ Failure Groups กดปุ่ม "Build Model →" ท้ายแผง
+  - **คาดหวัง:** ไม่มีปุ่มหรือลิงก์ "Open full view", "Finish" หรือ "Back to Build Model overview" ที่ใดเลย — footer หน้า Model fit มีแค่ป้ายสถานะ, Save changes, Train/Re-train, Next: Health score → · footer หน้า Health score มีแค่ "← Model fit", ป้ายสถานะ/เหตุผล และ Mark complete / Mark incomplete · ไม่มีหน้าเต็มของ Predictive Model และหัวหน้าต่างเป็น "Build Model — Overview" เสมอ · ทุกอย่างของโมเดลจบในสองหน้าของ Workbench · ปุ่ม "Build Model →" ที่ Dashboard ยังเปิดหน้าต่าง Build Model ได้ตามปกติ
+
+- [ ] **BMW-84 — ทุกโมเดลเข้าถึงและทำให้ Complete ได้จากสองหน้าของ Workbench เท่านั้น (Individual / Relationship / Clustering)** 🐍
+  - **Individual:** เลือก sensor → กาง Model settings แก้ชื่อโมเดล **โดยไม่กด Save changes** → กด "▶ Train model" → "Next: Health score →" → กรอก L / H ที่ผ่าน Checks → "✓ Mark complete"
+  - **Relationship:** เลือก predictor อย่างน้อย 1 ตัวใน Model settings (ยังไม่ Save) → Train → ตั้ง Stiffness เป็น Strict แล้วดูว่ากลายเป็น stale ต้อง Re-train → "Compare predictors" เปิด Sub-models ได้ → Health score กรอกช่อง 80 / 0 ทั้ง 4 ช่อง → Mark complete
+  - **Clustering:** เลือก X / Y sensor และจำนวน cluster → Train → Health score กรอกวงนอก N× SD → Mark complete
+  - ปิดเปิดหน้าต่าง Build Model แล้วดูสถานะของทั้ง 3 โมเดล
+  - **คาดหวัง:** ค่าที่แก้ใน Model settings โดยไม่กด Save ถูกบันทึกให้เองตอนกด Train (ผล Train ตรงกับค่าที่แก้ ไม่ใช่ค่าเก่า) · ทั้ง 3 ชนิดไปถึง Complete ได้ด้วยลำดับนี้เท่านั้น — ไม่มีเส้นทางอื่น (ไม่มี Finish) · Mark complete เขียนไฟล์ของโมเดลลงโฟลเดอร์ output ของ workspace (Relationship ใช้ ~15 วินาที และ**ต้องสำเร็จบนแอปที่ติดตั้งแล้ว** — เป็นเส้นทางเดียวที่เรียก Python sidecar) · ไม่มีคำว่า "LinearGAM" ที่ใดเลย ใช้ "Relation model" · หลังปิดเปิดหน้าต่าง ทั้ง 3 โมเดลยังเป็น Complete พร้อมกราฟ
 
 - [ ] **BMW-81 — "Mark complete" ทนต่อการแก้ค่า / ปิดหน้าต่าง / ตั้งค่าเปลี่ยนระหว่างที่กำลังเขียนไฟล์ (Relationship ใช้ ~15 วินาที) 🆕**
   - (Relationship) กด "✓ Mark complete" แล้ว **ระหว่างที่ยัง Saving…** แก้ set point ช่องหนึ่งแล้วกด Tab (blur)
@@ -1447,12 +1456,12 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - (Relationship) ใช้ screen reader หรือ Tab ไล่ช่อง 80/0 ทั้ง Lower และ Upper
   - **คาดหวัง:** ล้มชั่วคราว = หน้ายังอยู่ (ช่อง กราฟล่าสุด) มีแถบแดง "Couldn't load the health score" พร้อมปุ่ม **Retry** ที่โหลดใหม่ได้ — ระหว่างนั้น Checks บอกว่ายังไม่ได้ตรวจ ปุ่ม Mark complete กดไม่ได้ · ถ้าข้อมูลถูกโหลดใหม่ (dataset changed) ขึ้นข้อความให้เปิด Build Model ใหม่ (ไม่มี Retry) · ถ้า Relationship fit หายจากหน่วยความจำ ยังขึ้นหน้า "Re-train to recompute" เหมือนเดิม · ค่าเล็กๆ แสดงครบตามที่เก็บ (ไม่กลายเป็น 0 หรือถูกตัดทศนิยม) · ป้ายที่เห็นยังเป็น "Lower/Upper" แต่ชื่อสำหรับ screen reader เป็น "Lower residual at score 80" ฯลฯ ไม่ซ้ำกัน
 
-- [ ] **BMW-47 — Training data: Custom ตอนนี้แก้เงื่อนไข/ช่วงเวลาของตัวเองได้ในหน้า Workbench เอง (2026-09-30 — เดิม BMW-40 บอกว่าทำไม่ได้ ต้องไปหน้า PM เต็ม)** 🆕
+- [ ] **BMW-47 — Training data: Custom ตอนนี้แก้เงื่อนไข/ช่วงเวลาของตัวเองได้ในหน้า Workbench เอง (2026-09-30 — เดิม BMW-40 บอกว่าทำไม่ได้)** 🆕
   - เลือกโมเดลที่ยังเป็น Workspace mode, กาง "Model settings" แล้วกดปุ่ม "Custom" ที่สวิตช์ "Training data"
   - ถ้า workspace ตั้ง Training periods หรือ Running Condition Filter ไว้แล้วอย่างน้อย 1 อย่าง — ดูข้อความ "Copied N period(s) and M condition(s) from Workspace" โผล่ครั้งเดียว
   - ปิดข้อความนั้น (กด X) แล้วสลับกลับ "Workspace" แล้วสลับมา "Custom" อีกครั้ง
   - ลอง "+ Add period" / แก้วันที่ / "+ Add condition" / เปลี่ยน sensor-operator-ค่า / กด "No condition — use all rows" แล้วสลับ AND/OR (ถ้ามีเงื่อนไข ≥ 2 ข้อ) แล้วพับ "Model settings" ดูสรุปบรรทัดเดียว
-  - **คาดหวัง:** แผงที่โผล่มาตอนเลือก Custom มีหน้าตา/ฟิลด์เดียวกับหน้า PM เต็ม (periods + เงื่อนไข + AND/OR + "No condition") — ข้อความ "Copied…" ขึ้น**ครั้งเดียว**ต่อการสลับไป Custom ครั้งแรกที่ยังไม่มีของตัวเอง (สลับไปมาหลังจากนั้นไม่ขึ้นซ้ำ ค่าที่แก้ไว้ไม่หาย) — **ค่าที่แก้ในแผงนี้ยังไม่ถูกบันทึกจนกว่าจะกด "Save changes"** (ต่างจากหน้า PM เต็มที่ autosave ทันที) — รายการยาวเลื่อนอยู่ในกรอบตัวเอง ไม่ดันความสูงของฟอร์มทั้งหมด — สรุปบรรทัดเดียวตอนพับเปลี่ยนจาก "Custom data" เป็น "Custom · N cond · M periods"
+  - **คาดหวัง:** แผงที่โผล่มาตอนเลือก Custom มี periods + เงื่อนไข + AND/OR + "No condition" — ข้อความ "Copied…" ขึ้น**ครั้งเดียว**ต่อการสลับไป Custom ครั้งแรกที่ยังไม่มีของตัวเอง (สลับไปมาหลังจากนั้นไม่ขึ้นซ้ำ ค่าที่แก้ไว้ไม่หาย) — **ค่าที่แก้ในแผงนี้ยังไม่ถูกบันทึกจนกว่าจะกด "Save changes"** — รายการยาวเลื่อนอยู่ในกรอบตัวเอง ไม่ดันความสูงของฟอร์มทั้งหมด — สรุปบรรทัดเดียวตอนพับเปลี่ยนจาก "Custom data" เป็น "Custom · N cond · M periods"
 
 - [ ] **BMW-48 — Clustering: "Cluster ranges" เป็นแถบเลื่อนลากได้ตามช่วงค่าจริงของ criteria sensor และแสดงตลอดเวลา (2026-09-30 — เดิมเป็นช่องกรอกตัวเลข min/max และซ่อนจนกว่าจะเลือก criteria sensor)** 🆕
   - เลือกโมเดล Clustering ที่ยังไม่ได้เลือก criteria sensor — ดูข้อความ "Pick a criteria sensor above to define cluster ranges."
@@ -1465,19 +1474,12 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - สลับไปดูโมเดล Clustering อีกตัวระหว่างที่อีกตัวยังโหลด stats ไม่เสร็จ (เช่น สลับสลับไปมาเร็วๆ) — **คาดหวัง:** เห็น "Loading…" ของโมเดลที่เพิ่งเลือกเสมอ ไม่ใช่เห็นแถบของโมเดลก่อนหน้าค้างอยู่
   - **คาดหวัง:** ช่องนี้แสดงเสมอ (ไม่ซ่อนอีกต่อไป) — ลากหัวจับได้จริง ห้ามลากข้ามหัวจับข้างเคียง — ขอบเขต [ต่ำสุด, สูงสุด] คำนวณจาก training scope ของโมเดลนั้นจริง (Workspace หรือ Custom ของโมเดล — ช่วงเดียวกับตอนกด Train ไม่ใช่ทั้งชุดข้อมูลดิบ) — เลือก criteria sensor ใหม่หรือเปลี่ยนจำนวน cluster ต้องแบ่งช่วงใหม่ให้เท่ากันอัตโนมัติเสมอ (ไม่ค้างที่ค่าเดิม/ค่า 0-100) — สลับโมเดลระหว่างที่ stats ยังโหลดไม่เสร็จต้องไม่เห็นแถบของโมเดลอื่นค้างอยู่
 
-- [ ] **BMW-8 — กด "Open full view ↗" แล้วค่าที่เพิ่งแก้ (ยังไม่ได้กด Save) ต้องถูกบันทึกด้วย**
-  - เปิดโมเดลตัวหนึ่งที่ข้อมูลครบอยู่แล้ว (กาง Model settings ถ้าพับอยู่)
-  - แก้ field บางอย่าง (เช่น Model name) โดย**ไม่กด Save changes**
-  - กด "Open full view ↗" ทันที
-  - กด Back กลับมาหน้า Overview แล้วเปิดโมเดลเดิมอีกครั้ง
-  - **คาดหวัง:** ค่าที่เพิ่งแก้ไว้ต้องถูกบันทึกแล้ว (ปุ่มนี้ commit ฟอร์มให้อัตโนมัติก่อน navigate ไปหน้า train เสมอ) — ไม่ใช่ค่าเก่าที่ยังไม่ได้ Save
-
 - [ ] **BMW-9 — ปุ่ม "Add predictors…" เปิด popup ค้นหาได้และจัดกลุ่มตาม Component**
   - เลือก sensor ที่มีโมเดล Relationship จากลิสต์ซ้าย กาง Model settings ถ้าพับอยู่
   - คลิกปุ่ม "Add predictors…" ที่ช่อง Predictor sensors
   - พิมพ์ค้นหาด้วย tag และด้วยคำใน description ใน popup
   - เลือก predictor 2-3 ตัว กด OK แล้วดูชิปที่ขึ้นนอก popup กด x บนชิปเพื่อเอาออกทีละตัว
-  - **คาดหวัง:** popup แบ่งรายการเป็นกลุ่มตามชื่อ Component (เรียงตามตัวอักษร ตัวที่ไม่มี component ไปอยู่ "Uncategorized"), พิมพ์ค้นหาแล้วกรองทั้งรายการได้, target ของโมเดลไม่โผล่ในตัวเลือก, ปุ่ม Save/Open full view ยังกดไม่ได้จนกว่าจะมี predictor อย่างน้อย 1 ตัว
+  - **คาดหวัง:** popup แบ่งรายการเป็นกลุ่มตามชื่อ Component (เรียงตามตัวอักษร ตัวที่ไม่มี component ไปอยู่ "Uncategorized"), พิมพ์ค้นหาแล้วกรองทั้งรายการได้, target ของโมเดลไม่โผล่ในตัวเลือก, ปุ่ม Save/Train ยังกดไม่ได้จนกว่าจะมี predictor อย่างน้อย 1 ตัว
 
 - [ ] **BMW-13 — Predictor popup: เลือกได้หลายตัวก่อนกด OK, พับ/กางกลุ่มได้, Cancel/Esc ไม่บันทึกอะไรเลย**
   - เปิด popup "Add predictors…" ดูว่ากลุ่ม Component แต่ละกลุ่มเริ่มต้น**พับอยู่**
@@ -1491,12 +1493,6 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - คลิกช่อง Y sensor เลือก sensor 1 ตัว
   - คลิกช่อง Criteria sensor ดูว่ามีตัวเลือก "None" ให้ด้วยไหม แล้วเลือก sensor 1 ตัว
   - **คาดหวัง:** ทั้งสองช่องเปิด popup ค้นหา+จัดกลุ่มตาม Component — คลิกเลือกแล้ว popup ปิดทันที ไม่มีปุ่ม OK/Cancel และไม่ติ๊กได้มากกว่า 1 ตัว (X sensor ข้างๆ ยังล็อกไว้เหมือนเดิม) — ช่อง Criteria sensor มีแถว "None" ให้เลือกล้างค่าได้ ช่อง Y sensor ไม่มี
-
-- [ ] **BMW-10 — Predictor ที่เลือกไว้ต้องตามไปที่หน้า Build Model ครบ**
-  - เลือก predictor 2-3 ตัวในโมเดล Relationship (ยังไม่กด Save)
-  - กด "Open full view ↗" ทันที
-  - ดูส่วน Predictor sensors ที่หน้า PM
-  - **คาดหวัง:** predictor ที่เพิ่งเลือกอยู่ครบและตัวเลขนับถูก — ต้องไม่ขึ้น "No predictors selected"
 
 - [ ] **BMW-52 — popup Running condition: โครง 2 คอลัมน์ + ขั้น "2 When the plant is running" (การ์ดเลือก 2 ใบ, ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว)** 🆕
   - เปิด popup ด้วยปุ่ม "Edit" (หรือ "Set running condition →") ดูหัวข้อและแต่ละคอลัมน์
@@ -1513,7 +1509,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - แก้ให้สองช่วงเหลื่อมกัน แล้วกด **"Merge into one"**
   - แก้ช่วงหนึ่งให้วันสิ้นสุดอยู่**ก่อน**วันเริ่ม
   - กดถังขยะลบช่วงจนหมด แล้วกด **Apply** จากนั้นปิดเปิดโปรแกรมกลับมาเปิด popup ดูอีกครั้ง
-  - **คาดหวัง:** ช่วงที่ 1 เริ่มที่วันแรกของข้อมูลและจบสิ้นเดือนนั้น เวลา 23:59 · ช่วงถัดไปเริ่มวันถัดจากวันสิ้นสุดของช่วงก่อนหน้า · แต่ละการ์ดบอกจำนวนวัน · ระหว่างพิมพ์แถวไม่กระโดด — เรียงตามเวลาเมื่อคลิกออกจากช่อง/กด Enter เท่านั้น · ช่วงเหลื่อมกันมีกรอบสีเหลือง + ข้อความ "Overlaps P1 by N d" + ปุ่ม "Merge into one" (ไม่บล็อก) · ช่วงที่วันสิ้นสุดก่อนวันเริ่มมีกรอบแดง + ข้อความสีแดงในการ์ด และกด "Open full view"/"✓ Mark complete" ไม่ได้จนกว่าจะแก้ (ดู BMW-33) และปุ่ม Apply กดไม่ได้ · วันว่าง ("Start of data"/"End of data") ใช้ได้เฉพาะวันเริ่มของช่วงแรก/วันสิ้นสุดของช่วงสุดท้าย · ลบหมด = ไม่จำกัดเวลา · ค่าอยู่ครบหลังกด Apply แล้วปิดเปิดโปรแกรม · **แถบความครอบคลุมของช่วงเวลา (คืนมา 2026-10-03 — เคยถูกลบโดยไม่ได้ตั้งใจ):** ใต้หัวข้อ "1 Which time" เหนือการ์ด P1..Pn มีแถบเส้นเวลาของทั้งชุดข้อมูล (ลายเฉียง + บล็อกสีฟ้าต่อช่วง) มีป้ายเดือนปีต้น/ปลายข้อมูล และตรงกลางเขียน "N of M days used" · แก้วันที่ในช่องแล้วบล็อกขยับตามทันที (ไม่ต้องกด Apply) · ช่วงที่ปลายเปิดลากไปถึงขอบแถบ · ช่วงเหลื่อมกันเป็นบล็อกลายเหลือง-ฟ้า, ช่วงผิด (จบก่อนเริ่ม) เป็นบล็อกแดงและไม่นับวัน · ไม่มีช่วงเวลา หรือยังไม่รู้ขอบเขตข้อมูล = ไม่แสดงแถบ
+  - **คาดหวัง:** ช่วงที่ 1 เริ่มที่วันแรกของข้อมูลและจบสิ้นเดือนนั้น เวลา 23:59 · ช่วงถัดไปเริ่มวันถัดจากวันสิ้นสุดของช่วงก่อนหน้า · แต่ละการ์ดบอกจำนวนวัน · ระหว่างพิมพ์แถวไม่กระโดด — เรียงตามเวลาเมื่อคลิกออกจากช่อง/กด Enter เท่านั้น · ช่วงเหลื่อมกันมีกรอบสีเหลือง + ข้อความ "Overlaps P1 by N d" + ปุ่ม "Merge into one" (ไม่บล็อก) · ช่วงที่วันสิ้นสุดก่อนวันเริ่มมีกรอบแดง + ข้อความสีแดงในการ์ด และกด "▶ Train model" / เปิดหน้า Health score ไม่ได้จนกว่าจะแก้ (ดู BMW-33) และปุ่ม Apply กดไม่ได้ · วันว่าง ("Start of data"/"End of data") ใช้ได้เฉพาะวันเริ่มของช่วงแรก/วันสิ้นสุดของช่วงสุดท้าย · ลบหมด = ไม่จำกัดเวลา · ค่าอยู่ครบหลังกด Apply แล้วปิดเปิดโปรแกรม · **แถบความครอบคลุมของช่วงเวลา (คืนมา 2026-10-03 — เคยถูกลบโดยไม่ได้ตั้งใจ):** ใต้หัวข้อ "1 Which time" เหนือการ์ด P1..Pn มีแถบเส้นเวลาของทั้งชุดข้อมูล (ลายเฉียง + บล็อกสีฟ้าต่อช่วง) มีป้ายเดือนปีต้น/ปลายข้อมูล และตรงกลางเขียน "N of M days used" · แก้วันที่ในช่องแล้วบล็อกขยับตามทันที (ไม่ต้องกด Apply) · ช่วงที่ปลายเปิดลากไปถึงขอบแถบ · ช่วงเหลื่อมกันเป็นบล็อกลายเหลือง-ฟ้า, ช่วงผิด (จบก่อนเริ่ม) เป็นบล็อกแดงและไม่นับวัน · ไม่มีช่วงเวลา หรือยังไม่รู้ขอบเขตข้อมูล = ไม่แสดงแถบ
 
 - [ ] **BMW-54 — คอลัมน์ขวา "Data used for training": จำนวนแถวสด + % + แถบ + ประโยคสรุป + คำเตือน (อิงค่าที่ยังไม่ Apply)** 🆕
   - เปิด popup ใน workspace ที่ตั้งเงื่อนไขไว้แล้ว ดูคอลัมน์ขวา: ตัวเลขใหญ่ "N of M rows · P%" + แถบ + กล่อง "Train on rows inside … AND …"
@@ -1523,7 +1519,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - เลือก "Use all rows"
   - (workspace ใหม่ที่ยังไม่ตั้งอะไร) ดูกล่องเหลืองในคอลัมน์ขวา
   - กด Apply ในกรณีที่แก้เงื่อนไขไว้ แล้วดูการ์ด Step 1
-  - **คาดหวัง:** ตัวเลข/แถบ/ประโยคสรุปในคอลัมน์ขวาสะท้อน**ค่าที่แก้อยู่ (ที่ Apply จะบันทึก)** ส่วนการ์ด Step 1 ด้านหลังและปุ่ม Train/Open full view ยังใช้ค่าที่บันทึกไว้เท่านั้นจนกว่าจะกด Apply · ระหว่างรอขึ้น "Counting rows…" (ตัวเลขเก่าจางลง) · ไม่มีแถวผ่านเลย = "0 of M rows · 0%" (ไม่ใช่ข้อความ error) · ช่วงเวลาผิด = ไม่นับ ขึ้น "Fix the period to see the row count." + กล่องแดงบอกเหตุผล · "Use all rows" = 100% · ยังไม่ตั้ง = กล่องเหลือง "Choose “Only when running” with a condition, or “Use all rows”, before building a model." และประโยคเขียนว่า "— not set yet" · ถ้านับไม่ได้ขึ้น "Couldn't count the rows right now." แต่ยังแก้และกด Apply ได้ · จำนวนแถวนับจากแถวที่ sensor แรกของข้อมูลมีค่า (ใช้ sensor เดียวกันเป็นตัวหาร) จึงอาจน้อยกว่าจำนวนแถวใน CSV ถ้า sensor นั้นมีช่องว่าง · หลัง Apply การ์ด Step 1 ขึ้นตัวเลขของค่าใหม่
+  - **คาดหวัง:** ตัวเลข/แถบ/ประโยคสรุปในคอลัมน์ขวาสะท้อน**ค่าที่แก้อยู่ (ที่ Apply จะบันทึก)** ส่วนการ์ด Step 1 ด้านหลังและปุ่ม Train ยังใช้ค่าที่บันทึกไว้เท่านั้นจนกว่าจะกด Apply · ระหว่างรอขึ้น "Counting rows…" (ตัวเลขเก่าจางลง) · ไม่มีแถวผ่านเลย = "0 of M rows · 0%" (ไม่ใช่ข้อความ error) · ช่วงเวลาผิด = ไม่นับ ขึ้น "Fix the period to see the row count." + กล่องแดงบอกเหตุผล · "Use all rows" = 100% · ยังไม่ตั้ง = กล่องเหลือง "Choose “Only when running” with a condition, or “Use all rows”, before building a model." และประโยคเขียนว่า "— not set yet" · ถ้านับไม่ได้ขึ้น "Couldn't count the rows right now." แต่ยังแก้และกด Apply ได้ · จำนวนแถวนับจากแถวที่ sensor แรกของข้อมูลมีค่า (ใช้ sensor เดียวกันเป็นตัวหาร) จึงอาจน้อยกว่าจำนวนแถวใน CSV ถ้า sensor นั้นมีช่องว่าง · หลัง Apply การ์ด Step 1 ขึ้นตัวเลขของค่าใหม่
 
 - [ ] **BMW-55 — Esc ปิด popup Running condition ผ่านการถามก่อนทิ้งเหมือนปุ่ม X (และไม่ปิดซ้อนกับ popup เลือก sensor)** 🆕
   - เปิด popup โดยยังไม่แก้อะไร กด **Esc**
@@ -1539,7 +1535,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - แก้เป็น 9 อีกครั้ง แล้วกด **Cancel** → popup ปิด → กด "Edit" ใหม่ ต้องเห็น 5 (ไม่ใช่ 9) → ทำซ้ำแต่ครั้งนี้กดปุ่ม X มุมขวาบนแทน: ต้องขึ้นแถวถาม "Discard your unapplied changes?" พร้อมปุ่ม **Discard** / **Keep editing** (popup ยังไม่ปิด) — กด Keep editing ต้องกลับมาเห็น 9 ที่พิมพ์ค้างไว้ — กด X อีกที แล้วกด Discard ต้องปิด และเปิดใหม่เห็น 5 · คลิกพื้นหลังนอกกรอบตอนมีการแก้ค้างอยู่ ต้องถามแบบเดียวกัน (ไม่ปิดเงียบ ๆ)
   - แก้เป็น 9 แล้วกด **Apply** → popup ปิดเอง, การ์ด Step 1 ด้านหลังเปลี่ยนเป็นค่า 9 ทันที → ปิดโปรแกรมเปิดใหม่ เปิด popup ต้องเห็น 9
   - ตั้งให้ Training period มีวันสิ้นสุด**ก่อน**วันเริ่ม — ปุ่ม Apply ต้องกดไม่ได้ (เมาส์ชี้ขึ้นข้อความบอกให้แก้ช่วงเวลาก่อน) และมีข้อความสีแดงใต้แถว
-  - **คาดหวัง:** ในระหว่างแก้ ไม่มีอะไรถูกบันทึก/ไม่กระทบการ์ด Step 1/แถบขั้นตอน/ปุ่ม Open full view/โมเดลใด ๆ จนกว่าจะกด Apply — Apply บันทึกครั้งเดียวทั้งสี่ส่วน (เงื่อนไข, AND/OR, ช่วงเวลา, No condition) แล้วปิด popup — ปิดโดยไม่ Apply = ทิ้งแบบร่าง (ถ้ามีการแก้ค้างจะถามก่อนเสมอยกเว้นปุ่ม Cancel ซึ่งทิ้งทันที) — แผง "Custom" ของโมเดลแต่ละตัว**ไม่เปลี่ยน**ในรอบนี้ (ยังบันทึกด้วยปุ่ม Save changes ตามเดิม)
+  - **คาดหวัง:** ในระหว่างแก้ ไม่มีอะไรถูกบันทึก/ไม่กระทบการ์ด Step 1/แถบขั้นตอน/ปุ่ม Train/โมเดลใด ๆ จนกว่าจะกด Apply — Apply บันทึกครั้งเดียวทั้งสี่ส่วน (เงื่อนไข, AND/OR, ช่วงเวลา, No condition) แล้วปิด popup — ปิดโดยไม่ Apply = ทิ้งแบบร่าง (ถ้ามีการแก้ค้างจะถามก่อนเสมอยกเว้นปุ่ม Cancel ซึ่งทิ้งทันที) — แผง "Custom" ของโมเดลแต่ละตัว**ไม่เปลี่ยน**ในรอบนี้ (ยังบันทึกด้วยปุ่ม Save changes ตามเดิม)
 
 - [ ] **BMW-36 — ลิสต์ซ้าย: ช่องค้นหา + filter chip (All / Needs setup / Complete)** 🆕
   - พิมพ์ในช่องค้นหา ด้วยคำใน description และด้วย tag
@@ -1553,7 +1549,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
 - [ ] **BMW-30 — status pill เป็นข้อความอ่านอย่างเดียว การสลับ Complete/Incomplete ย้ายไปปุ่มใน footer** 🆕
   - ดูป้ายสถานะที่ footer ของแต่ละแท็บ (I/R/C)
   - ทำให้โมเดลหนึ่ง Complete ผ่านหน้า "2 Health score" (ดู BMW-75) แล้วสลับแท็บไปโมเดลอื่นของ sensor เดียวกัน
-  - **คาดหวัง:** ป้ายสถานะไม่ใช่ปุ่มกดสลับได้เองแล้ว (ดู BMW-42) — สลับ Complete ⇄ Incomplete เฉพาะโมเดลของแท็บนั้น (ชนิดอื่นของ sensor เดียวกันไม่เปลี่ยน) และค่าอยู่ต่อหลังปิดเปิดโปรแกรม (ปุ่ม Finish ในหน้า PM ยังคงตั้งเป็น Complete ทางเดียว — ดู PM-22)
+  - **คาดหวัง:** ป้ายสถานะไม่ใช่ปุ่มกดสลับได้เองแล้ว (ดู BMW-42) — สลับ Complete ⇄ Incomplete เฉพาะโมเดลของแท็บนั้น (ชนิดอื่นของ sensor เดียวกันไม่เปลี่ยน) และค่าอยู่ต่อหลังปิดเปิดโปรแกรม (การตั้งเป็น Complete ทำได้ทางเดียวคือ "✓ Mark complete" ที่หน้า Health score — ดู BMW-75 และ BMW-84)
 
 - [ ] **BMW-31 — หนึ่งแถวต่อ sensor ต่อ Failure Group ในลิสต์ซ้าย (แทนการ์ด accordion เดิม)** 🆕
   - ให้ sensor ตัวเดียวมี Individual + Relationship + Clustering ในกลุ่มเดียวกัน
@@ -1580,13 +1576,13 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - เปิด Build Model ดูแถวนั้น
   - **คาดหวัง:** โมเดลใหม่ใช้ Category เดียวกับ sensor ทันที (ไม่ต้องตั้งใหม่) — sensor ที่ยังไม่เคยตั้ง Category โมเดลใหม่ยังไม่มี Category
 
-- [ ] **BMW-33 — ด่านบังคับ Running Condition: "Open full view" / หน้า Health score (Mark complete) ถูกล็อกจนกว่าจะตั้ง (soft gate A, เนื้อหาเดิม — ตำแหน่ง/ชื่อปุ่มเปลี่ยน)** 🆕
+- [ ] **BMW-33 — ด่านบังคับ Running Condition: "▶ Train model" / หน้า Health score (Mark complete) ถูกล็อกจนกว่าจะตั้ง (soft gate A, เนื้อหาเดิม — ตำแหน่ง/ชื่อปุ่มเปลี่ยน)** 🆕
   - ใช้ workspace ที่ **ยังไม่ตั้ง** Running Condition และมีโมเดลอย่างน้อย 2 ตัวของ sensor เดียวกัน (Incomplete ทั้งคู่)
   - เลือก sensor นั้นจากลิสต์ซ้าย ดูแท็บของแต่ละโมเดล
-  - กด "Open full view ↗" และลองเปิดหน้า "2 Health score" (สวิตช์มุมขวาบนของ detail pane)
+  - กด "▶ Train model" และลองเปิดหน้า "2 Health score" (สวิตช์มุมขวาบนของ detail pane)
   - สลับ Group by เป็น Component ดูป้ายเดิมยังอยู่
   - กดปุ่มบนการ์ด Step 1 เพื่อเปิด popup ตั้งเงื่อนไขที่กรอกครบ 1 แถว (หรือเลือกการ์ด "Use all rows") แล้วกด Apply แล้วกลับมาดูซ้ำ
-  - **คาดหวัง:** เหนือลิสต์ซ้ายมีบรรทัดเตือน "⚠ N of M models can't be built yet …" (หายเมื่อ workspace ตั้งแล้ว) — แต่ละแท็บมีป้าย **"Needs condition"** (เหลือง) หรือ **"Legacy · all data"** (เทา, โมเดลที่ Complete อยู่แล้ว) หรือ **"Needs category"** / **"Fix periods"** แล้วแต่สาเหตุ — ปุ่ม "Open full view ↗" กดไม่ได้พร้อมเหตุผล (Save changes ยังกดได้) — สวิตช์ "2 Health score" กดไม่ได้ (จึงเข้า Mark complete ไม่ได้) พร้อม tooltip เหตุผล — พอตั้งเงื่อนไขแล้วป้ายทั้งหมดหาย ปุ่มกดได้หมด — โมเดลที่ตั้ง Custom ต้องมีเงื่อนไขของตัวเอง (หรือกด No condition ในหน้า PM) ถึงจะผ่าน แม้ workspace จะตั้งแล้ว
+  - **คาดหวัง:** เหนือลิสต์ซ้ายมีบรรทัดเตือน "⚠ N of M models can't be built yet …" (หายเมื่อ workspace ตั้งแล้ว) — แต่ละแท็บมีป้าย **"Needs condition"** (เหลือง) หรือ **"Legacy · all data"** (เทา, โมเดลที่ Complete อยู่แล้ว) หรือ **"Needs category"** / **"Fix periods"** แล้วแต่สาเหตุ — ปุ่ม "▶ Train model" กดไม่ได้พร้อมเหตุผล (Save changes ยังกดได้) — สวิตช์ "2 Health score" กดไม่ได้ (จึงเข้า Mark complete ไม่ได้) พร้อม tooltip เหตุผล — พอตั้งเงื่อนไขแล้วป้ายทั้งหมดหาย ปุ่มกดได้หมด — โมเดลที่ตั้ง Custom ต้องมีเงื่อนไขของตัวเอง (หรือกด No condition ในส่วน Training data: Custom ของโมเดล) ถึงจะผ่าน แม้ workspace จะตั้งแล้ว
 
 - [ ] **BMW-24 — Workspace เก่าที่มีโมเดลอยู่แล้วแต่ไม่เคยตั้ง Running Condition: แบนเนอร์ 3 ปุ่ม**
   - เปิด workspace เก่า (สร้างก่อนฟีเจอร์นี้) ที่มีโมเดลแล้วและไม่เคยตั้ง Running Condition
@@ -1603,139 +1599,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
 - [ ] **BMW-27 — ชื่อ model ห้ามซ้ำกับ model อื่นของ sensor เดียวกัน (ชื่อ default ยังเป็นชื่อ sensor)**
   - เลือก sensor ที่มีหลายชนิด (เช่น Individual + Relationship) กาง Model settings ของแท็บ Relationship ให้ช่อง Model name เป็นชื่อเดียวกับโมเดล Individual ของ sensor นั้น (พิมพ์เอง)
   - กดปุ่ม "Use '…'" แล้วลองพิมพ์ชื่อนั้นใน sensor อื่นด้วย
-  - **คาดหวัง:** ชื่อ default ตอนสร้างโมเดลยังเป็นชื่อ sensor เหมือนเดิม · เมื่อชื่อซ้ำขึ้นข้อความสีเหลืองใต้ช่อง + ปุ่ม "Use 'ชื่อ (Relationship)'" · Save changes และ Open full view กดไม่ได้พร้อมเหตุผล · กดปุ่มแล้วชื่อเปลี่ยนตามที่เสนอ ข้อความหาย ปุ่มกลับมากดได้ · ชื่อเดียวกันใน sensor อื่นไม่ถูกเตือน · โมเดลเก่าที่ชื่อซ้ำอยู่แล้วและไม่ได้แก้ชื่อ ไม่ถูกบล็อกหรือเปลี่ยนชื่อ
-
----
-
-## PM
-
-### Predictive Model Build
-
-_อยู่ในหน้าต่าง Build Model — เข้าจากปุ่ม "Build Model →" ในฟอร์มแก้โมเดล (กดแล้วบันทึกฟอร์มให้ก่อนเสมอ) · **หน้านี้ไม่มีปุ่มเทรน/เซฟโมเดลแล้ว** — เหลือแค่ตัวอย่างกราฟ/ผล fit และปุ่ม Finish (โค้ดเทรนฝั่ง Rust เก็บไว้สำหรับฟีเจอร์ health score ในอนาคต) · ชนิดโมเดลถูกล็อกตามที่เลือกไว้ที่ Overview_
-
-- [ ] **PM-1 — Individual — กราฟ time series ของ target**
-  - เปิดโมเดลชนิด Individual
-  - ดูกราฟและแถบสถิติด้านล่าง
-  - **คาดหวัง:** กราฟ "Standard Time Series" ขึ้นพร้อมเส้น Mean และเส้น ±1σ / ±3σ, แถบ Target Stats แสดง N / Mean / SD / Min / Max / ±1σ / ±3σ, ป้ายตัวเลขบนแกนไม่มีทศนิยมยาวเกินไป — ต้องไม่มีส่วน "Predictor sensors" และไม่มีคอลัมน์ขวา (Individual ไม่มีอะไรให้ตั้ง)
-
-- [ ] **PM-3 — Clustering — preview**
-  - เปิดโมเดลชนิด Clustering
-  - ตั้ง X / Y sensor
-  - ตั้ง Number of Clusters
-  - กด Apply
-  - **คาดหวัง:** ได้กลุ่มจุดพร้อมวงรี (ellipse) / center / angle ตามจำนวนที่ตั้ง — ข้อความในหน้าต้องไม่เรียกว่า k-means (อัลกอริทึมจริงคือ GMM)
-
-- [ ] **PM-4 — Clustering — cluster ranges + criteria sensor**
-  - ตั้ง Number of Clusters ≥ 2 โดยยังไม่เลือก criteria sensor แล้วกด Apply
-  - เลือก criteria sensor แล้วดูช่วงของแต่ละ cluster
-  - ปรับช่วงของ cluster ด้วยแถบเลื่อนแบบหลายหัว
-  - **คาดหวัง:** ขึ้นข้อความ "Pick a criteria sensor to split rows into clusters." ตอนยังไม่เลือก, พอเลือกแล้วช่วงถูกแบ่งเท่า ๆ กันอัตโนมัติตามค่า min–max ของ sensor นั้น และปรับต่อด้วยแถบเลื่อนได้ (ค่าเหล่านี้ถูกบันทึกกลับเข้าโมเดลอัตโนมัติ)
-
-- [ ] **PM-5 — ⭐ Relationship — Apply (fit จริง เรียก Python sidecar)** 🐍
-  - เปิดโมเดลชนิด Relationship (ที่มี predictor แล้วจาก Overview)
-  - ตั้ง Stiffness
-  - กด Apply
-  - **คาดหวัง:** **fit สำเร็จบนแอปที่ติดตั้งแล้ว** ได้กราฟ scatter + เส้นโมเดลและค่า R² — นี่คือ path เดียวที่เรียก `backend.exe` ที่ถูก bundle เข้า installer (ตอนนี้ไม่มีปุ่มเทรน/เซฟแล้ว Apply เป็นทางเดียวที่แตะ sidecar) ใน dev มันหาไฟล์จาก `src-tauri/bin/` แต่ในตัวติดตั้งมันอยู่ข้าง ๆ exe — คนละกลไก ทดแทนกันไม่ได้ · UI ต้องเขียนว่า "Relation model" เสมอ (ดู PM-17)
-
-- [ ] **PM-6 — Relationship — ตัวเลขผลลัพธ์**
-  - ดูหลัง Apply เสร็จ
-  - **คาดหวัง:** มี R² / RMSE / Resid Mean / Resid SD และตัวเลขสมเหตุสมผล และเปลี่ยนตาม Stiffness ที่เลือก
-
-- [ ] **PM-7 — Relationship — Sub-models**
-  - เปิดมุมมอง Sub-models
-  - **คาดหวัง:** เปิดได้และแสดงผลของ subset นั้น
-
-- [ ] **PM-26 — หน้า PM: Training periods ต้องมีผลกับกราฟ สถิติ และการ fit จริง (แทน PM-8)** 🆕
-  - ที่ Overview ตั้ง Training periods ให้ 2 ช่วงที่ไม่ติดกัน (เช่น มกราคม กับ มีนาคม) แล้วเปิดโมเดลเข้าหน้า PM (โหมด Workspace) — ดูส่วน "Training conditions"
-  - ดูกราฟ Individual time-series และแถบ Target Stats ว่ามีเฉพาะข้อมูลในสองช่วงนั้น (ช่วงกลางขาดหาย) และตัวเลข N/Mean/SD สอดคล้องกัน
-  - (โมเดล Relationship/Clustering) กด Apply ดูว่าผล fit ใช้ข้อมูลเฉพาะสองช่วงนั้น
-  - สลับสวิตช์เป็น **Custom** — ต้องเห็นรายการ Training periods ที่**ก็อปมาจาก Overview** แก้ไขได้ (ดู PM-27 — แต่ละช่วงเป็นแถวพับได้ แสดงช่วงเวลา+จำนวนวัน กดเพื่อกางช่อง From/To ทีละแถว) แก้วันที่ให้แคบลงแล้วคลิกออกจากช่อง ดูกราฟ สถิติ และการ fit เปลี่ยนตาม
-  - ตั้งช่วงที่วันสิ้นสุดก่อนวันเริ่ม (โหมด Custom)
-  - สลับกลับเป็น **Workspace** แล้วดูรายการช่วงเวลา (อ่านอย่างเดียว) แล้วกด "Edit on Overview →"
-  - **คาดหวัง:** **กราฟ, Target Stats และผล fit ใช้ข้อมูลชุดเดียวกัน (เฉพาะแถวที่อยู่ในช่วงใดช่วงหนึ่ง)** ไม่มีกรณีกราฟกรองแต่ตัวเลขไม่กรอง · รายการช่วงเวลาแสดงเป็น "1 Jan – 31 Jan 2026" (ช่วงเต็มวันแสดงแค่วันที่ ปีแสดงครั้งเดียวถ้าอยู่ปีเดียวกัน ถ้ามีเวลาแสดงวันที่+เวลา) พร้อมจำนวนวัน (เช่น "31 d") และแถบไทม์ไลน์ "N of M days used" — แสดง 3 ช่วงแรก ที่เหลือกด "+N more" ปลายเปิดแสดง "Start of data" / "End of data" · ไม่มี period = ข้อความ "no limit set — full dataset" · ช่วงที่วันสิ้นสุดก่อนวันเริ่ม: กราฟ สถิติ และ Apply **ไม่ทำงาน** (ไม่ตกไปใช้ทั้งชุดข้อมูลเงียบ ๆ) มีข้อความให้แก้วันที่ และปุ่ม Finish กดไม่ได้พร้อมเหตุผล · โหมด Workspace เป็นอ่านอย่างเดียว · filter ที่ตั้งจากแท็บ Filter ของ Dashboard **ไม่ถูกนำมาใช้ในหน้านี้**
-- [ ] **PM-18 — "Training scope" อธิบายตัวเองว่าคุมทั้งกราฟและ training (ไม่ใช่ 2 filter แยกกัน) — เพิ่ม 2026-09-22** 🆕
-  - เปิดโมเดลชนิด Individual เข้าหน้า PM
-  - ดูหัวข้อแผงซ้ายเหนือรายการ Training periods และดูมุมขวาบนของกราฟ ข้าง legend (Target/±1σ/±3σ)
-  - เอาเมาส์ชี้ป้าย "Zoom = view only" ที่กราฟค้างไว้
-  - ลอง 🔍 Zoom → Horizontal zoom บนกราฟ แล้วดูว่า Target Stats/ผล fit เปลี่ยนไหม
-  - **คาดหวัง:** หัวข้อแผงซ้ายเขียนว่า **"Training scope"** (ไม่ใช่ "Data filter") มีบรรทัดอธิบายว่าใช้ทั้งกับกราฟและโมเดล · ข้างกราฟมีป้าย **"Zoom = view only"** พร้อม tooltip อธิบายว่าไม่กระทบ training · หลังซูมกราฟด้วย 🔍 **ตัวเลขใน Target Stats และผล fit ต้องไม่เปลี่ยน** (ซูมเป็นแค่มุมมอง client-side)
-
-- [ ] **PM-11b — Expand chart — ขยายกราฟเต็มจอ**
-  - กดไอคอนขยาย (⤢) ที่มุมกราฟการ์ดใดก็ได้ (Individual time-series, Relationship/Clustering chart)
-  - **คาดหวัง:** เปิด modal เต็มจอแสดงกราฟเดียวกันขนาดใหญ่ กด Esc หรือคลิกพื้นหลังปิดได้
-
-- [ ] **PM-12 — ปุ่ม Back**
-  - กด Back
-  - **คาดหวัง:** กลับหน้าก่อนหน้าโดยไม่ทำค่าที่ตั้งไว้หาย
-
-- [ ] **PM-13 — โมเดลเดียวอยู่หลายกลุ่ม ใช้ค่าตั้งเดียวกัน** 🆕
-  - ติ๊กให้โมเดลหนึ่งอยู่ 2 กลุ่ม
-  - ตั้งค่าในหน้า PM ของโมเดลนั้น (เช่น Stiffness / Training periods) แล้วออกมา
-  - เปิดโมเดลนั้นจากอีกกลุ่มหนึ่ง
-  - **คาดหวัง:** เป็นโมเดลตัวเดียวกัน (ไม่มีสำเนาแยก) ค่าที่ตั้งไว้เหมือนกันทั้งสองทาง และตั้งค่าของโมเดลหนึ่งไม่ไปทับโมเดลอื่น (รายงานเดิม "ต้องเทรนหลายครั้ง" แก้แล้วด้วยการเก็บ config แยกต่อโมเดล)
-
-- [ ] **PM-22 — ปุ่ม Finish (ล็อกด้วย Running Condition, แทน PM-14)** 🆕
-  - เปิดหน้า PM ของโมเดลที่ป้ายยังเป็น Incomplete ตอนที่ workspace **ยังไม่ตั้ง** Running Condition (เข้าผ่านช่องทางอื่น เช่นเปลี่ยนเงื่อนไขจากอีกหน้าต่างหลังเปิด PM ค้างไว้ หรือโมเดลที่เป็น Custom)
-  - ดูปุ่ม "Finish" มุมขวาบนและข้อความข้าง ๆ
-  - ตั้งเงื่อนไข / กด "No condition" แล้วกด "Finish"
-  - เปิดโมเดลเดิมอีกรอบแล้วกด Finish ซ้ำ
-  - (เพิ่ม 2026-09-24) แก้ค่าในหน้า PM (เช่น วันที่ของ period หรือติ๊ก No condition) แล้ว**กด Finish หรือ Back ทันที**
-  - **คาดหวัง:** ระหว่างยังไม่ตั้ง ปุ่ม Finish **จางกดไม่ได้** พร้อมเหตุผลเดียวกับปุ่ม Build Model ของหน้า Overview (tooltip + ข้อความสีเหลืองข้างปุ่ม) — พอตั้งแล้วกด Finish จะ**กลับหน้า Overview อัตโนมัติ**และป้ายเป็น Complete (สีเขียว) — การแก้ค่าแล้วกด Finish/Back ทันที**ต้องไม่หาย** (ค่าถูกบันทึกก่อนออกจากหน้า เปิดโมเดลกลับมาต้องเห็นค่าล่าสุด และ Finish ต้องตั้ง Complete ได้จริงแม้เพิ่งแก้เงื่อนไขให้ผ่านเมื่อครู่) ถ้า Finish ไม่ผ่านด่านจริง ๆ จะกลับหน้า Overview พร้อมแถบเหลือง "The model was not marked Complete." บอกเหตุผล ไม่เงียบ — กดซ้ำกับโมเดลที่ Complete อยู่แล้ว**ต้องไม่สลับกลับเป็น Incomplete** (ยกเลิกต้องกดที่ป้ายเอง ดู BMW-16) และสถานะอยู่ต่อหลังปิดเปิดโปรแกรม — โมเดล Custom ที่ตั้งเงื่อนไขของตัวเองไว้ Finish ได้แม้ workspace จะยังไม่ตั้ง
-
-- [ ] **PM-23 — หน้า PM: แบนเนอร์ "Running condition required" + ตัวเลือก "No condition — use all rows" ของโหมด Custom** 🆕
-  - เปิดหน้า PM ของโมเดลที่ใช้ Workspace mode ตอนที่ workspace ยังไม่ตั้ง Running Condition (ดูวิธีเข้าใน PM-22)
-  - ในส่วน Training conditions ดูกล่องเหลือง "Required. The workspace has no running condition yet, so this model can't be built." แล้วกด "Set on Overview →" (ถ้ากดแล้วกลับ Overview) และลองอีกรอบกด "Use Custom instead"
-  - ในโหมด Custom กดปุ่ม "No condition — use all rows" แล้วกด "Switch to conditions" จากนั้นกด "+ Add condition"
-  - ปิดเปิดโปรแกรม
-  - **คาดหวัง:** แบนเนอร์มีปุ่ม "Set on Overview →" (กลับหน้า Overview) และ "Use Custom instead" (สลับเป็น Custom ทันที) และหายไปเมื่อ workspace ตั้งแล้ว — Custom ที่ยังไม่มีเงื่อนไขมีกล่องเหลือง "Required. Add at least one condition, or confirm that this machine always runs." และปุ่ม "No condition — use all rows" — กดแล้วขึ้นกรอบเส้นประ "✓ No condition — all rows" พร้อมข้อความ "Idle periods stay in training." (ถ้ามีเงื่อนไขเดิมเพิ่ม "Saved conditions are kept but not applied.") และปุ่ม "Switch to conditions" — ปุ่ม Finish ปลดล็อก รายการเงื่อนไข/สวิตช์ AND-OR ถูกซ่อน (เงื่อนไขที่บันทึกไว้ยังอยู่แต่ไม่ถูกใช้ กราฟไม่ถูกกรอง) — กด "Switch to conditions" หรือเพิ่มเงื่อนไขใหม่แล้วโหมด No condition ถูกยกเลิก — ค่าที่ยืนยันอยู่ครบหลังปิดเปิดโปรแกรม
-
-- [ ] **PM-15 — ชนิดโมเดลล็อกตามที่เลือกไว้ที่ Overview + ข้อความ "Target sensor"** 🆕
-  - เปิดโมเดลแต่ละชนิด (Individual / Relationship / Clustering) ทีละตัว
-  - ดูแท็บชนิดโมเดลด้านบนกราฟ และหัวข้อการ์ดซ้ายบน
-  - **คาดหวัง:** เฉพาะแท็บของชนิดที่โมเดลนั้นเป็นเท่านั้นที่ใช้งานได้ อีกสองแท็บจาง/กดไม่ได้, หัวข้อซ้ายบนเขียนว่า **"Target sensor"** (เดิมเขียน "Predict this sensor") พร้อมการ์ด sensor และข้อความ "From previous page", Relationship/Clustering มีส่วน Predictor sensors (ค้นหาได้) ส่วน Individual ไม่มี
-
-- [ ] **PM-16 — Toolbar หน้า PM เหลือแค่ Back และ Finish** 🆕
-  - ดูแถบบนของหน้า PM
-  - **คาดหวัง:** มีแค่ปุ่ม **Back** (ซ้าย), breadcrumb (ชื่อ workspace › Target › sensor), และ **Finish** (ขวา) — **ต้องไม่มีปุ่ม Report, Preview, Save Model** (ถูกเอาออกทั้งหมดตามที่สั่ง ไม่มีทางเซฟไฟล์โมเดลจากหน้าจอนี้ตอนนี้ — ตั้งใจ ไม่ใช่บั๊ก)
-
-- [ ] **PM-17 — ไม่มีคำว่า "LinearGAM" ปรากฏใน UI เลย** 🆕
-  - เปิดหน้า PM ของโมเดล Relationship, กด Apply, เปิดมุมมอง Sub-models และเปิด modal ขยายกราฟ
-  - ดูทุกป้าย หัวข้อ ปุ่ม tooltip ข้อความ error
-  - **คาดหวัง:** ทุกที่เขียนว่า **"Relation model"** ไม่มีชื่ออัลกอริทึมจริง (เป็นความลับ — เคยหลุดที่ป้ายหนึ่งแล้วแก้)
-
-- [ ] **PM-19 — ส่วน "Predictor sensors" ในหน้า PM เองก็เป็น popup แบบเดียวกับ Overview แล้ว (เพิ่ม 2026-09-22 — ดู BMW-9/BMW-13)** 🆕
-  - เปิดโมเดล Relationship หรือ Clustering เข้าหน้า PM ดูส่วน Predictor sensors ฝั่งซ้าย
-  - คลิกปุ่ม "Add predictors…" เลือกหลายตัว (ข้ามหลายกลุ่ม Component) แล้วกด OK
-  - ลบ predictor ออกทีละตัวด้วยปุ่ม x บนชิป
-  - **คาดหวัง:** popup หน้านี้ทำงานเหมือนที่ Overview เป๊ะ (ค้นหา/จัดกลุ่ม/พับ-กาง/เลือกหลายตัว/OK-Cancel) — target sensor ของโมเดลไม่โผล่ในตัวเลือกให้เลือกซ้ำ, ชิปที่เลือกไว้อยู่นอก popup ลบออกทีละตัวได้ทันทีโดยไม่ต้องเปิด popup ใหม่
-
-- [ ] **PM-20 — Clustering ที่หน้า PM: X sensor และ Criteria Sensor ก็เป็น popup เลือกตัวเดียวเหมือนกัน (เพิ่ม 2026-09-22 — ดู BMW-14)** 🆕
-  - เปิดโมเดล Clustering เข้าหน้า PM ก่อนเลือก predictor ใดๆ ดูช่อง "X sensor (vs target on Y)"
-  - เพิ่ม predictor 2 ตัวขึ้นไป (ผ่านช่อง Predictor sensors ด้านบน) แล้วกลับมาดูช่อง X sensor อีกครั้ง
-  - คลิกช่อง X sensor เลือก sensor อื่นแทน
-  - คลิกช่อง Criteria Sensor เลือก sensor 1 ตัว (ไม่จำเป็นต้องเป็น predictor)
-  - **คาดหวัง:** ช่อง X sensor เขียนว่า "No predictors selected" และกดไม่ได้ตอนยังไม่มี predictor, พอมี predictor แล้วเลือกได้ทันที (ตัวเลือกจำกัดแค่ predictor ที่เลือกไว้เท่านั้น) — เลือกแล้ว popup ปิดทันทีไม่มีปุ่ม OK — ช่อง Criteria Sensor เลือกได้จาก**ทุก sensor** ไม่ใช่แค่ predictor และมีตัวเลือก "None"
-
-- [ ] **PM-27 — Training conditions: สลับ Workspace/Custom ได้ต่อโมเดล ครอบทั้ง Training periods และ Running condition (แทน PM-21)** 🆕
-  - ที่ Overview ตั้ง Training periods อย่างน้อย 2 ช่วง + Running Condition Filter ไว้อย่างน้อย 1 เงื่อนไข (ดู BMW-18, BMW-53)
-  - เปิดโมเดลใดก็ได้เข้าหน้า PM ดูส่วน "Training conditions" — ต้องเห็นสวิตช์ "Workspace / Custom" อยู่บนสุด เริ่มที่ Workspace, ใต้สวิตช์ต้องเห็น**รายการช่วงเวลาอ่านอย่างเดียว** (จุด + ช่วงวันที่ + จำนวนวัน พร้อมแถบไทม์ไลน์) กับปุ่ม "Edit on Overview →", ส่วน "Running condition" แสดงเงื่อนไขเป็นบรรทัด (ชื่อ sensor + เครื่องหมาย/ค่า) และกล่องสรุป "Row is used when …" — หัวข้อ "Training conditions" มีป้ายขวา "Condition set" (เขียว) / "Needs condition" (เหลือง) / "Fix period" (แดง) — ไม่มีช่องวันที่ให้พิมพ์
-  - คลิก "Custom" — ต้องเห็นรายการ Training periods แบบแก้ไขได้ (พร้อมปุ่ม Add period) โผล่ขึ้นมา พร้อม**ช่วงเวลาที่ก็อปมาจาก Overview อัตโนมัติ**, เงื่อนไขจาก Overview ก็ถูกก็อปมาเป็นแถวที่แก้ไขได้เช่นกัน — ขึ้นกล่องน้ำเงิน "Copied N periods and M conditions from Workspace. Edits here affect only this model." (กด × ปิดได้ และขึ้นเฉพาะตอนที่ก็อปจริง)
-  - แก้วันที่ของช่วงที่ก็อปมา / เพิ่ม-ลบช่วง / แก้ sensor-operation-ค่า ของแถวเงื่อนไข / "+ Add condition" / สลับ AND/OR ของโมเดลนี้เอง
-  - สลับกลับไป "Workspace" แล้วกลับมา "Custom" อีกครั้ง
-  - ปิดเปิดโปรแกรม
-  - **คาดหวัง:** ค่าที่แก้ใน Custom (ทั้งช่วงเวลาและเงื่อนไข) ไม่กระทบค่าที่ Overview เลย — กราฟ preview ของโมเดลนี้กรองตามช่วงเวลา+เงื่อนไข Custom ไม่ใช่ของ Workspace แล้ว — สลับ Workspace→Custom→Workspace→Custom ครั้งที่ 2 **ไม่ก็อปทับ**ช่วงเวลา/เงื่อนไขที่แก้ไปแล้ว (ก็อปครั้งเดียวเมื่อยังไม่มีของตัวเอง) — ปิดเปิดโปรแกรมแล้วโหมด/ช่วงเวลา/เงื่อนไข Custom ยังอยู่ครบ — โมเดลอื่นที่ยังไม่ได้สลับเป็น Custom ต้องยังตาม Workspace ปกติ ไม่ได้รับผลกระทบ
-- [ ] **PM-28 — กด Finish ทันทีหลังแก้ช่วงเวลา ต้องบันทึกค่าที่แก้ + Complete (แก้บั๊ก QA 2026-09-24)** 🆕
-  - เปิดหน้า PM ของโมเดลที่ตั้ง Running Condition ครบแล้ว (โหมด Custom) แก้วันที่ของ Training period แล้วกด Finish **ทันที** (ไม่รอ)
-  - **คาดหวัง:** กลับหน้า Overview โมเดลเป็น Complete และเมื่อเปิดหน้า PM อีกครั้งช่วงเวลาเป็นค่าที่เพิ่งแก้ (ไม่ใช่ค่าเก่า) — กด Back ทันทีหลังแก้ก็ต้องเก็บค่าเช่นกัน
-
-- [ ] **PM-29 — เลือก "No condition" ใน Custom แล้วกด Finish ทันที ต้องผ่าน ไม่เงียบหาย (แก้บั๊ก QA 2026-09-24)** 🆕
-  - โมเดลแบบ Custom ที่ยังไม่มีเงื่อนไข กดปุ่ม "No condition — use all rows" (ลองกด "Switch to conditions" แล้วกดยืนยันใหม่ด้วย) แล้วกด Finish ทันที
-  - **คาดหวัง:** โมเดลเป็น Complete ถ้ายังถูกบล็อกด้วยเหตุอื่นต้องเห็นข้อความเหตุผลที่ Overview ห้ามกลับหน้า Overview เงียบๆ โดยโมเดลยังเป็น Incomplete
-
-- [ ] **PM-30 — Match = OR + เงื่อนไข between ที่ยังกรอกไม่ครบ ต้องไม่ทำให้ผ่านทุกแถว (แก้บั๊ก QA 2026-09-24)** 🆕
-  - ตั้ง Running Condition แบบ Match = OR ใส่เงื่อนไขปกติ 1 ข้อ และเงื่อนไข "between" อีก 1 ข้อที่กรอกค่าต่ำสุดแต่**ไม่กรอกค่าสูงสุด**
-  - เปิดหน้า PM ดูจำนวนจุดของกราฟ (ป้าย N Points)
-  - **คาดหวัง:** จำนวนจุดเท่ากับที่กรองด้วยเงื่อนไขปกติข้อเดียว (เงื่อนไขที่ยังไม่ครบถูกข้าม) ไม่ใช่ทุกแถวของข้อมูล
+  - **คาดหวัง:** ชื่อ default ตอนสร้างโมเดลยังเป็นชื่อ sensor เหมือนเดิม · เมื่อชื่อซ้ำขึ้นข้อความสีเหลืองใต้ช่อง + ปุ่ม "Use 'ชื่อ (Relationship)'" · Save changes และ Train กดไม่ได้พร้อมเหตุผล · กดปุ่มแล้วชื่อเปลี่ยนตามที่เสนอ ข้อความหาย ปุ่มกลับมากดได้ · ชื่อเดียวกันใน sensor อื่นไม่ถูกเตือน · โมเดลเก่าที่ชื่อซ้ำอยู่แล้วและไม่ได้แก้ชื่อ ไม่ถูกบล็อกหรือเปลี่ยนชื่อ
 
 ---
 
@@ -1803,7 +1667,7 @@ _เพิ่มใน 0.5.0 หลังเจอบั๊กว่า special 
   - สลับไปโปรเจกต์ B แล้วกด **Add Special Sensor** (หน้าต่างเดิมถูกดึงมา)
   - **คาดหวัง:** ฟอร์ม Create ว่างทั้งหมด (source, ชื่อ, description, unit, component), ตัวแก้ไขปิดอยู่, อยู่แท็บ Create, ไม่มีข้อความ error เก่า · ถ้าหน้าต่างขึ้นแถบแดง "This project was closed or reloaded — reopen Add Special Sensor from the Dashboard." ให้กด Add Special Sensor ที่ Dashboard อีกครั้ง แถบต้องหายและใช้งานได้ปกติ
 
-- [ ] **MULTI-12 — สร้าง special sensor แล้วกด Back เร็วมาก ต้องไม่หาย** 🆕 👀
+- [ ] **MULTI-12 — สร้าง special sensor แล้วกด Back เร็วมาก ต้องไม่หาย** 🆕
   - ใน A สร้าง special sensor ใหม่ แล้วกด **Back to Import ภายในไม่ถึง 1 วินาที** (กดทันทีที่กราฟขึ้น)
   - เปิด A ใหม่
   - **คาดหวัง:** special sensor ตัวนั้นยังอยู่ (recipe + Description/Component) — เดิมหายเพราะระบบบันทึกอัตโนมัติรอ 250 มิลลิวินาทีแล้วถูกยกเลิกตอนออกจากหน้า · เช็คแบบเดียวกันกับการเปลี่ยนอย่างอื่นก่อนกด Back (เลือก sensor เพิ่ม, ย้ายแผง) ก็ต้องค้างอยู่ตอนเปิดใหม่
@@ -1869,12 +1733,12 @@ _หมวดที่สำคัญที่สุด — ทุกอย่�
   - ที่ Build Model → Overview กด "Edit" ที่การ์ด Step 1 เพิ่ม Training periods ของ workspace (2 ช่วง) แล้วกด Apply
   - กลับไปหน้า Dashboard ทำอะไรก็ได้ที่เป็นการแก้ค่า (เลื่อนกราฟ, ติ๊กเลือก sensor, สลับ sensor เข้า/ออก Failure Group)
   - รอ 1 วินาที แล้วปิดโปรแกรม เปิดใหม่ ไปเปิด popup Running condition เดิม
-  - **คาดหวัง:** Training periods ที่ตั้งไว้ยังอยู่ครบ (เดิมหายไปหลังแก้อะไรที่ Dashboard ทั้งที่หน้าจอยังโชว์ค่าเดิมอยู่จนกว่าจะปิดเปิด) — หน้า PM ของโมเดลที่ยังเป็นโหมด Workspace ก็เห็นช่วงเวลานั้นเช่นกัน
+  - **คาดหวัง:** Training periods ที่ตั้งไว้ยังอยู่ครบ (เดิมหายไปหลังแก้อะไรที่ Dashboard ทั้งที่หน้าจอยังโชว์ค่าเดิมอยู่จนกว่าจะปิดเปิด) — โมเดลที่ยังเป็นโหมด Workspace ก็ Train ด้วยช่วงเวลานั้นเช่นกัน
 
 - [ ] **PER-10 — Workspace จากเวอร์ชันก่อนหน้าที่ตั้ง Time start/end ช่วงเดียวไว้ ต้องเปิดได้เป็น 1 period และคีย์เก่าถูกลบ** 🆕
   - เตรียม workspace ที่สร้างด้วยเวอร์ชัน 0.6.x โดยตั้ง Time start/end ที่แผง Running Condition Filter (ของเวอร์ชันนั้น) และตั้ง Custom time ของโมเดลหนึ่งตัวไว้ (หรือใช้ไฟล์สำรองของ workspace นั้น)
   - เปิดโปรแกรมเวอร์ชันนี้ เปิด workspace นั้น เข้า Build Model → Overview กด "Edit" ที่การ์ด Step 1 เปิด popup Running condition
-  - เปิดหน้า PM ของโมเดลที่ตั้ง Custom time ไว้ (โหมด Custom)
+  - กาง Model settings ของโมเดลที่ตั้ง Custom time ไว้ (Training data: Custom)
   - ปิดเปิดโปรแกรม เปิด workspace เดิมอีกครั้ง
   - **คาดหวัง:** แผงแสดง Training periods **1 ช่วง** ตรงกับ Time start/end เดิม (ปลายที่เคยว่างเป็น "Start of data"/"End of data") · โมเดล Custom ก็แสดงเป็น 1 period ตรงกับช่วงเดิมของมัน · กราฟ/สถิติใช้ช่วงเดิมเหมือนก่อนอัปเกรด · ปิดเปิดแล้วค่ายังเหมือนเดิม ไม่ซ้ำ ไม่หาย (ระบบบันทึกกลับครั้งเดียว) · ข้อจำกัด: เปิดไฟล์ที่ผ่านการอัปเกรดแล้วด้วยเวอร์ชันเก่ากว่าจะไม่เห็นช่วงเวลา
 
@@ -1882,7 +1746,7 @@ _หมวดที่สำคัญที่สุด — ทุกอย่�
   - เปิด Build Model → Overview กด "Edit" ที่การ์ด Step 1 แก้วันที่ของ Training period หนึ่งช่วง (หรือเพิ่ม/แก้เงื่อนไข value) แล้วกด **Apply** แล้ว**กดปิดหน้าต่าง Build Model ทันที** (ปุ่ม Close มุมขวาบน หรือปุ่ม X ของหน้าต่าง) โดยไม่รอ
   - เปิด Build Model ใหม่ ไปเปิด popup Running condition ด้วยปุ่ม "Edit"
   - **คาดหวัง:** ค่าที่เพิ่งแก้และ Apply ไว้ยังอยู่ครบ ไม่ย้อนกลับเป็นค่าก่อนแก้ (การเขียนดิสก์ที่ Apply เริ่มไว้ถูกรอให้เสร็จก่อนหน้าต่างปิดจริง)
-  - ทำซ้ำแบบเดียวกันในหน้า Build ของโมเดล (PM page, โหมด Custom): แก้เงื่อนไข/ช่วงเวลาของโมเดลนั้น แล้วปิดหน้าต่างทันทีโดยไม่กด Back/Finish — ค่าต้องไม่หายเช่นกัน (หน้า PM อยู่ในหน้าต่าง OS เดียวกับ Build Model ไม่ใช่หน้าต่างแยก — ส่วนนี้ไม่มีปุ่ม Apply)
+  - ทำซ้ำกับโมเดลโหมด Custom (Model settings → Training data: Custom): แก้เงื่อนไข/ช่วงเวลาของโมเดลนั้น กด **Save changes** แล้วปิดหน้าต่างทันที — ค่าต้องไม่หายเช่นกัน
   - แก้ใน popup แล้ว**ไม่กด Apply** แล้วปิดหน้าต่าง Build Model ทั้งหน้าต่าง — ค่านั้นต้องไม่ถูกบันทึก (เปิดใหม่เห็นค่าเดิม) นี่คือพฤติกรรมที่ตั้งใจ
 
 - [ ] **PER-14 — พิมพ์วันที่ค้างไว้ (ยังไม่ blur) แล้วกดปุ่ม Apply ตรง ๆ วันที่ต้องไม่หาย (แทน PER-12)** 🆕
@@ -1981,7 +1845,7 @@ _ทำกับไฟล์ใหญ่จริงเท่านั้น_
 _ใน 0.5.0 ลบ CSS ที่ไม่มีใครอ้างถึงออกราว 3,200 บรรทัด (~7,000 → ~3,800) และลบไฟล์ frontend ที่ไม่มีใครเรียก 20 ไฟล์ (ตารางข้อมูลเก่า, หน้าต่าง Save As, คอมโพเนนต์อัปโหลดเก่า) — ตรวจแล้วว่าไม่มีคำสั่งเรียกใช้ แต่ **jsdom ไม่โหลด stylesheet เทสต์อัตโนมัติจึงจับ style ที่หายไม่ได้** ต้องดูด้วยตา_
 
 - [ ] **VIS-1 — กวาดทุกหน้า/แท็บ/หน้าต่าง หา style ที่หาย** 🆕
-  - เปิดไล่ทีละหน้า: Import (ทั้ง 3 ขั้น + รายการ Recent), Dashboard (ทั้ง 3 แผง, แท็บ Sensor / Selected Sensor / Filter / Highlights / Failure Groups), กราฟทั้ง 3 แบบ, Add Special Sensor (Create + Manage + ฟอร์มแก้ไข), Build Model (Overview + ฟอร์มแก้ + หน้า PM + Sub-models + modal ขยายกราฟ)
+  - เปิดไล่ทีละหน้า: Import (ทั้ง 3 ขั้น + รายการ Recent), Dashboard (ทั้ง 3 แผง, แท็บ Sensor / Selected Sensor / Filter / Highlights / Failure Groups), กราฟทั้ง 3 แบบ, Add Special Sensor (Create + Manage + ฟอร์มแก้ไข), Build Model (Workbench หน้า Model fit + หน้า Health score + Sub-models + modal ขยายกราฟ)
   - **คาดหวัง:** ไม่มีปุ่มที่กลายเป็นตัวหนังสือเปล่า ๆ ไม่มีช่องกรอกที่ไม่มีขอบ ไม่มีการ์ด/แผงที่พื้นหลังโปร่งจนอ่านทับกันไม่ออก ไม่มี layout ซ้อน/เว้นว่างผิดปกติ ตัวอักษรและระยะห่างสม่ำเสมอ — ถ้าเจอให้จดหน้าที่เห็น + ภาพหน้าจอ
 
 - [ ] **VIS-2 — สถานะ hover / focus / disabled / dropdown / tooltip** 🆕
@@ -2047,11 +1911,6 @@ _รอบนี้ปรับหน้าตาทั้งแอปตาม 
   - เปิด Build Model, เลือก model Relationship และ Clustering แล้ว Train ให้เห็นกราฟผลลัพธ์
   - เทียบสีกราฟกับกราฟเส้นบน Dashboard
   - **คาดหวัง:** พื้นหลังกราฟ เส้นกริด ตัวหนังสือแกน และ tooltip โทนเดียวกับ Dashboard (ไม่มีโทนน้ำเงินกรมท่าเก่าปนอยู่); แถบเลือก sensor ซ้าย/รายละเอียดขวา/ตัวกรองชิป/แถบความคืบหน้าดูเป็นชุดเดียวกัน; ปุ่มปิดข้างในหน้าต่างและพื้นหลัง modal มืด+เบลอเล็กน้อยสม่ำเสมอ
-
-- [ ] **VIS-12 — หน้า PM เต็ม (Open full view): หน้าตาและสีกราฟ** 🆕
-  - เปิด "Open full view ↗" ของ model Relationship หนึ่งตัว
-  - เปิด modal ขยายกราฟและ Sub-models
-  - **คาดหวัง:** สีกราฟ 3 ตัวบนหน้านี้ (พื้นหลัง กริด ตัวหนังสือ tooltip เส้นค่าเฉลี่ย) โทนเดียวกับ Dashboard/Workbench; modal ต่างๆ มีฉากหลังมืดเบลอเหมือนกัน; ฟังก์ชัน (Back / Re-train / Finish / Sub-models) ทำงานเหมือนเดิม
 
 - [ ] **VIS-13 — หน้าต่าง Add Special Sensor: หน้าตาใหม่ + ขนาดขั้นต่ำ** 🆕
   - เปิดหน้าต่าง Add Special Sensor แล้วดูแท็บ Create และ Manage

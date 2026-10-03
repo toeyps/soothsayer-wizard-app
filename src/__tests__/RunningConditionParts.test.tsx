@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { PeriodCoverageBar, RuleFormula, RuleSentence } from '../components/windows/RunningConditionParts';
+import { PeriodCoverageBar, RuleSentence } from '../components/windows/RunningConditionParts';
 import type { WorkspaceSensorFilter } from '../types';
 
 afterEach(cleanup);
@@ -52,37 +52,6 @@ describe('PeriodCoverageBar', () => {
         />);
         expect(container.querySelectorAll('.f4-strip i.ovl')).toHaveLength(1);
         expect(container.querySelectorAll('.f4-strip i.bad')).toHaveLength(1);
-    });
-});
-
-describe('RuleFormula', () => {
-    it('renders the mockup sentence with OR / AND as chips (periods OR, conditions AND)', () => {
-        const { container } = render(<RuleFormula periods={P3} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', '2.4')]} combine="and" none={false} />);
-        const box = screen.getByTestId('rule-formula');
-        expect(box.textContent).toBe('Row is used when ( P1ORP2ORP3 ) AND ( I_MOT_A > 12ANDPT_2041 > 2.4 )'); // chips carry their own margin, no spaces
-        const chips = Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent);
-        expect(chips).toEqual(['OR', 'OR', 'AND', 'AND']); // 2 between 3 periods, the outer AND, 1 between 2 conditions
-        expect(container.querySelectorAll('.f4-op--or')).toHaveLength(2); // only the period ORs are blue
-        expect(Array.from(container.querySelectorAll('b')).map(b => b.textContent)).toEqual(['P1', 'P2', 'P3', 'I_MOT_A > 12', 'PT_2041 > 2.4']);
-    });
-
-    it('Match OR: the condition joiner reads OR (not blue)', () => {
-        const { container } = render(<RuleFormula periods={[]} filters={[f('A', 'greater_than', '1'), f('B', 'less_than', '2')]} combine="or" none={false} />);
-        expect(Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent)).toEqual(['AND', 'OR']);
-        expect(container.querySelectorAll('.f4-op--or')).toHaveLength(0);
-    });
-
-    it('no periods reads "any time"; none reads "no condition (every row)"; empty reads "no condition yet"', () => {
-        const { rerender } = render(<RuleFormula periods={[]} filters={[]} combine="and" none />);
-        expect(screen.getByTestId('rule-formula').textContent).toContain('any time');
-        expect(screen.getByTestId('rule-formula').textContent).toContain('no condition (every row)');
-        rerender(<RuleFormula periods={[]} filters={[]} combine="and" none={false} />);
-        expect(screen.getByTestId('rule-formula').textContent).toContain('no condition yet');
-    });
-
-    it('compact variant is the smaller sidebar size', () => {
-        render(<RuleFormula compact periods={[]} filters={[]} combine="and" none />);
-        expect(screen.getByTestId('rule-formula').className).toContain('f4-formula--compact');
     });
 });
 

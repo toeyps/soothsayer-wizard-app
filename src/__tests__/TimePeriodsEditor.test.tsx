@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import TimePeriodsEditor, { PeriodReadOnlyList } from '../components/windows/TimePeriodsEditor';
+import TimePeriodsEditor from '../components/windows/TimePeriodsEditor';
 
 afterEach(cleanup);
 
@@ -245,36 +245,5 @@ describe('TimePeriodsEditor - compact (300 px sidebar) rows', () => {
         render(<TimePeriodsEditor compact periods={[A, { id: 'c', start: '2026-01-20T00:00', end: '2026-02-10T00:00' }]} onChange={vi.fn()} bounds={bounds} />);
         expect(screen.getByTestId('period-row-2').className).toContain('f4-crow--ovl');
         expect(screen.getByTestId('period-merge-2')).toBeTruthy();
-    });
-});
-
-describe('PeriodReadOnlyList (Build page, Workspace mode)', () => {
-    const mk = (n: number) => Array.from({ length: n }, (_, i) => ({
-        id: `p${i}`, start: `2026-01-${String(i * 2 + 1).padStart(2, '0')}T00:00`, end: `2026-01-${String(i * 2 + 2).padStart(2, '0')}T23:59`,
-    }));
-
-    it('renders a dot + label + day count per period, and a coverage bar', () => {
-        render(<PeriodReadOnlyList periods={mk(2)} bounds={bounds} />);
-        const lines = screen.getAllByTestId('period-chip');
-        expect(lines).toHaveLength(2);
-        expect(lines[0].textContent).toContain('1 Jan – 2 Jan 2026');
-        expect(lines[0].querySelector('.f4-roline-d')!.textContent).toBe('2 d');
-        expect(screen.getByTestId('period-coverage')).toBeTruthy();
-    });
-
-    it('shows the first 3 and a "+N more" link that expands to all and back', () => {
-        render(<PeriodReadOnlyList periods={mk(5)} bounds={bounds} />);
-        expect(screen.getAllByTestId('period-chip')).toHaveLength(3);
-        fireEvent.click(screen.getByText('+2 more'));
-        expect(screen.getAllByTestId('period-chip')).toHaveLength(5);
-        fireEvent.click(screen.getByText('Show fewer'));
-        expect(screen.getAllByTestId('period-chip')).toHaveLength(3);
-    });
-
-    it('invalid periods are not listed; an empty list reads as no limit', () => {
-        const { rerender } = render(<PeriodReadOnlyList periods={[{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }]} bounds={bounds} />);
-        expect(screen.getByTestId('period-chips-empty').textContent).toMatch(/No limit set — full dataset/);
-        rerender(<PeriodReadOnlyList periods={[]} bounds={bounds} />);
-        expect(screen.getByTestId('period-chips-empty')).toBeTruthy();
     });
 });

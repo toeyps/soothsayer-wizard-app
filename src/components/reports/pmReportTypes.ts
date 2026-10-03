@@ -1,7 +1,7 @@
 // ── Relationship-model stiffness (LinearGAM λ) presets ───────────────
-// Stiffness is exposed to users as four discrete levels on the PM page's
-// dropdown; the underlying λ is hidden everywhere user-facing. Order is
-// loose → strict, matching the dropdown render order.
+// Stiffness is exposed to users as four discrete levels in the Build Model
+// Workbench's Model settings; the underlying λ is hidden everywhere user-facing. Order is
+// loose → strict, matching the picker's render order.
 export const STIFFNESS_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
     { value: 1_000,     label: 'Very loose' },
     { value: 10_000,    label: 'Loose' },

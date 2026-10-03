@@ -20,7 +20,7 @@ import { computeTrainFingerprint, isModelTrainedFresh } from './trainFingerprint
  * broadcast is skipped by receivers that sent it (`origin`).
  */
 
-export type FailureGroupOrigin = 'dashboard' | 'build-model' | 'predictive-model';
+export type FailureGroupOrigin = 'dashboard' | 'build-model';
 
 async function broadcast(state: WorkspaceState | null, workspaceId: string, origin: FailureGroupOrigin): Promise<void> {
     if (!state?.failureGroupState) return;

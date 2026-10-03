@@ -222,11 +222,11 @@ describe('CSS contract: the same semantic element renders the same on every refr
         expect(declsFor('.kind-badge').position).toBe('relative');
     });
 
-    it('every modal backdrop on Dashboard, Build Model and the PM page uses the one glass scrim (rgba(0,0,0,.55) + blur(2px)) after Phases 3/4', () => {
+    it('every modal backdrop on Dashboard and Build Model uses the one glass scrim (rgba(0,0,0,.55) + blur(2px)) after Phases 3/4', () => {
         const backdrops = [
             '.bmw-modal-backdrop',          // Build Model: Running Condition modal (Phase 3)
-            '.pm-chart-modal-backdrop',     // PM page + Build Model: expand-chart modal (Phase 4)
-            '.pm-preview-modal-backdrop',   // PM page: Sub-models modal (Phase 4)
+            '.pm-chart-modal-backdrop',     // Build Model: expand-chart modal (Phase 4)
+            '.pm-preview-modal-backdrop',   // Build Model: Sub-models modal (Phase 4)
             '.predictor-picker-backdrop',   // SensorPickerModal, both windows (Phase 4)
             '.pair-regl-modal-backdrop',    // Dashboard: Pair Plot table modal (pre-existing)
             '.pair-regl-expand-backdrop',   // Dashboard: Pair Plot expanded cell (pre-existing)
@@ -282,14 +282,14 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
     // tooltipBg 'rgba(23, 23, 28, 0.92)', tooltipBorder
     // 'rgba(255, 255, 255, 0.12)') into every offending constant in both
     // files — a pure color-literal swap, no option-building logic touched.
-    it('no chart option builder on Build Model / PM page still uses the pre-refresh slate palette Phase 1 removed from LineChart', () => {
+    it('no chart option builder on Build Model still uses the pre-refresh slate palette Phase 1 removed from LineChart', () => {
         const offenders: string[] = [];
-        for (const f of ['src/components/windows/BuildModelWindow.tsx', 'src/components/windows/PredictiveModelBuild.tsx', 'src/components/charts/LineChart.tsx']) {
+        for (const f of ['src/components/windows/BuildModelWindow.tsx', 'src/components/windows/SubModelsModal.tsx', 'src/components/windows/workbench/healthCharts.ts', 'src/components/windows/workbench/healthPageCharts.ts', 'src/components/windows/workbench/chartTheme.ts', 'src/components/charts/LineChart.tsx']) {
             const code = src(f).split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n');
             const hits = code.match(/'#(94a3b8|334155|f1f5f9)'|rgba\(30,\s*41,\s*59/g) ?? [];
             if (hits.length) offenders.push(`${f}: ${hits.length}`);
         }
-        expect(offenders).toEqual([]); // actual: BuildModelWindow.tsx: 9, PredictiveModelBuild.tsx: 16
+        expect(offenders).toEqual([]); // (before the fix: BuildModelWindow.tsx had 9 hits, the now-deleted PredictiveModelBuild.tsx 16)
     });
 });
 

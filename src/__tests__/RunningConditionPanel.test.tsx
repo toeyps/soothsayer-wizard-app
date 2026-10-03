@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 
-// The real picker lives in the heavy PredictiveModelBuild module; this panel
+// The real picker lives in SensorPickers.tsx (tested in SensorPickers.test.tsx); this panel
 // only needs "a sensor field with a label" (its own behaviour is tested there).
 // The stand-in records the props it is given so the test can assert the panel
 // still uses the REAL single-select picker (not a native <select>) and what it
 // does on selection.
 const pickerProps: any[] = [];
-vi.mock('../components/windows/PredictiveModelBuild', () => ({
+vi.mock('../components/windows/SensorPickers', () => ({
     SensorPickerModal: (props: any) => {
         pickerProps.push(props);
         return (

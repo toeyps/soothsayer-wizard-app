@@ -14,8 +14,8 @@ import { PeriodCoverageBar } from './RunningConditionParts';
 
 /*
  * Training time periods (Feature 4-C). One list, shared by the Overview's
- * Running Condition panel (workspace default) and the PM page's Custom
- * section; `PeriodReadOnlyList` is the read-only view for the PM Workspace mode.
+ * Running Condition panel (workspace default) and the Workbench's Custom
+ * running-condition editor.
  *
  * Semantics: empty list = no time limit; a row is kept if it falls in ANY
  * period. A blank start is only allowed on the first period ("Start of data"),
@@ -59,43 +59,6 @@ function firstDefaultPeriod(bounds: PeriodBounds | null | undefined): TimePeriod
     const max = toInputValue(bounds?.max);
     if (max && end > max) end = max;
     return { id: newPeriodId(), start: min, end };
-}
-
-/** Read-only list (PM page, Workspace mode): first 3 periods, "+N more" toggle. */
-export function PeriodReadOnlyList({ periods, bounds }: { periods: TimePeriod[]; bounds?: PeriodBounds | null }) {
-    const [all, setAll] = useState(false);
-    const status = validatePeriods(periods);
-    const ok = periods.filter((_, i) => !status[i].invalid);
-    if (ok.length === 0) {
-        return (
-            <div data-testid="period-chips-empty" className="f4-note" style={{ fontStyle: 'italic', opacity: 0.75, fontSize: '11px' }}>
-                No limit set — full dataset
-            </div>
-        );
-    }
-    const shown = all ? ok : ok.slice(0, 3);
-    return (
-        <>
-            <PeriodCoverageBar periods={periods} bounds={bounds} />
-            <div data-testid="period-chips" className="f4-rolist">
-                {shown.map(p => {
-                    const d = periodDays(p, bounds);
-                    return (
-                        <div key={p.id} data-testid="period-chip" className="f4-roline">
-                            <span className="f4-dot" />
-                            <span title={formatPeriod(p)}>{formatPeriod(p)}</span>
-                            {d !== null && <span className="f4-roline-d">{d} d</span>}
-                        </div>
-                    );
-                })}
-                {ok.length > 3 && (
-                    <button type="button" className="f4-link" style={{ justifySelf: 'start', paddingLeft: 0 }} data-testid="period-chips-toggle" onClick={() => setAll(v => !v)}>
-                        {all ? 'Show fewer' : `+${ok.length - 3} more`}
-                    </button>
-                )}
-            </div>
-        </>
-    );
 }
 
 interface DateFieldProps {

@@ -364,12 +364,12 @@ describe('Mark complete: races and failures', () => {
         const g = env.backend!.gate('export_model_files');
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        // Another window (e.g. the PM page) changes the workspace condition meanwhile.
+        // Another window changes the workspace condition meanwhile.
         await act(async () => {
             const next = await updateWorkspaceData(WS, prev => withFailureGroupState(prev, {
                 runningConditionFilters: [{ id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '30', value2: '' }],
             }));
-            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'predictive-model' });
+            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'other-window' });
         });
         await act(async () => { g.release(); });
         await settle(150);
@@ -395,7 +395,7 @@ describe('Mark complete: races and failures', () => {
             const next = await updateWorkspaceData(WS, prev => withFailureGroupState(prev, {
                 runningConditionFilters: [{ id: 'rc1', sensor: 'TAG2', operation: 'greater_than', value1: '30', value2: '' }],
             }));
-            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'predictive-model' });
+            await emit('failure-group-state-changed', { ...next!.failureGroupState, workspaceId: WS, origin: 'other-window' });
         });
         await act(async () => { g.release(); });
         await settle(150);

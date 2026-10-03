@@ -8,16 +8,16 @@ import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testi
  *
  * Same harness as Feature4BuildFlow.integration.test.tsx: everything is REAL
  * except the Tauri boundary —
- *   - BuildModelWindow renders the real PredictiveModelBuild page ("Open full
- *     view ↗"), which Phase B did NOT touch and which has its own debounced
- *     persist of the model record;
+ *   (health score phase 4, 2026-10-04: the full-view Predictive Model page and
+ *   its "Open full view" round trips were removed from the flow - the Workbench
+ *   is the only place a model is trained, so their section (1) is gone;)
  *   - the real workspaceManager runs against an in-memory plugin-fs, so every
  *     read/write is an actual JSON round trip through the real write queue;
  *   - events go through one shared in-process bus (Tauri's global broadcast).
  * Only charts are stubbed; invoke() returns canned preview results (optionally
  * held open with `h.holdStats` to simulate a slow preview).
  *
- * Unit tests in BuildModelWindow.test.tsx mock the PM page and use a model
+ * Unit tests in BuildModelWindow.test.tsx use a model
  * fixture with `clusterRanges: []`; this file uses the model shape the
  * Dashboard ACTUALLY creates (`makeDefaultModelForKind`: three default
  * cluster ranges, `targetSensor: ''` for clustering), which is what exposed
@@ -202,22 +202,9 @@ const footerStatus = () => screen.getByTestId('footer-status').textContent;
  *  that is trained, fresh and passes the gate - exactly when the old footer button could be enabled. This is
  *  that page's entry button: `.disabled` keeps its old meaning ("Mark complete is not available"). */
 const markCompleteBtn = () => healthPageButton();
-const openFullViewBtn = () => screen.getByText('Open full view ↗') as HTMLButtonElement;
 
 async function clickTrain() {
     await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
-    await settle(30);
-}
-
-/** Open full view, stay long enough for the PM page's 250 ms debounced
- *  persist to run (it writes its whole config slice once after hydration),
- *  optionally edit something there, then press Back. */
-async function roundTripThroughFullView(edit?: () => void) {
-    await act(async () => { fireEvent.click(openFullViewBtn()); });
-    await waitFor(() => expect(screen.getByText('Finish')).toBeTruthy());
-    await settle(400);
-    if (edit) { edit(); await settle(400); }
-    await act(async () => { fireEvent.click(screen.getByTitle('Back to Build Model overview')); });
     await settle(30);
 }
 
@@ -238,99 +225,55 @@ afterEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// (1) Workbench Train -> "Open full view ↗" (PM page) -> Back
+// (1) Train -> reopen for the shapes the old full-view page used to rewrite
+//     (the page is gone, but the records it used to touch still exist on disk)
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('(1) a model trained in the Workbench survives a round trip through the PM page', () => {
-    it('Individual (Dashboard-created shape): the PM page\'s own persist keeps lastTrainedAt/trainedFingerprint and the model is still Trained after Back', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
+describe('(1) models whose record carries an empty clusterRanges list stay Trained across a window reopen', () => {
+    it('Clustering with no criteria sensor and `clusterRanges: []`', async () => {
+        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', clusterRanges: [], rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();
-        const trained = diskModel('i1');
-        expect(trained.lastTrainedAt).toBeTruthy();
-        expect(diskFresh('i1')).toBe(true);
         expect(pill()).toBe('Trained');
 
-        const writesBefore = wsWrites();
-        await roundTripThroughFullView();
-        // The PM page really did write its slice (so this proves its spread
-        // carries the two Phase B fields, not that nothing was written).
-        expect(wsWrites()).toBeGreaterThan(writesBefore);
-        const after = diskModel('i1');
-        expect(after.lastTrainedAt).toBe(trained.lastTrainedAt);
-        expect(after.trainedFingerprint).toBe(trained.trainedFingerprint);
-        expect(diskFresh('i1')).toBe(true);
+        cleanup();
+        await mountBuildModel();
+        expect(screen.queryByTestId('results-stale')).toBeNull();
+        expect(diskFresh('c1')).toBe(true);
         expect(pill()).toBe('Trained');
-        expect(footerStatus()).toBe('Check the chart, then mark it complete');
-        expect(markCompleteBtn().disabled).toBe(false);
-        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy()); // the charts come from the debounced health preview
     });
 
-    it('Relationship: an UNRELATED PM-page edit (model name) keeps it Trained; a fingerprinted one (stiffness) makes it stale', async () => {
+    it('Individual with `clusterRanges: []`', async () => {
+        writeDisk(wsState(currentFg([dashModel({ id: 'i1', clusterRanges: [] })])));
+        await mountBuildModel();
+        await clickTrain();
+        expect(pill()).toBe('Trained');
+
+        cleanup();
+        await mountBuildModel();
+        expect(diskFresh('i1')).toBe(true);
+        expect(pill()).toBe('Trained');
+        expect(markCompleteBtn().disabled).toBe(false);
+    });
+
+    it('Relationship: a fingerprinted edit (stiffness) made in the Workbench makes it stale; the trained charts stay on screen under the banner', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'], rcMode: 'relationship', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();
         expect(pill()).toBe('Trained');
         const fp = diskModel('r1').trainedFingerprint;
 
-        await roundTripThroughFullView(() => {
-            fireEvent.change(screen.getByPlaceholderText('Optional'), { target: { value: 'Renamed in full view' } });
-        });
-        expect(diskModel('r1').relModelName).toBe('Renamed in full view');
-        expect(diskModel('r1').trainedFingerprint).toBe(fp);
-        expect(pill()).toBe('Trained');
-
-        await roundTripThroughFullView(() => {
-            const stiffness = screen.getByText('Stiffness', { selector: 'label' }).parentElement!.querySelector('select')!;
-            fireEvent.change(stiffness, { target: { value: '1000000' } });
-        });
+        fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
+        await settle(30);
         expect(diskModel('r1').relStiffness).toBe(1_000_000);
-        expect(diskModel('r1').trainedFingerprint).toBe(fp); // not rewritten — it is the evidence of staleness
-        // The trained charts of this session stay on screen, "Out of date", under the stale banner.
+        expect(diskModel('r1').trainedFingerprint).toBe(fp); // not rewritten - it is the evidence of staleness
         expect(screen.getByTestId('stale-banner')).toBeTruthy();
         expect(pill()).toBe('Incomplete');
         expect(footerStatus()).toBe('Settings changed — re-train');
         expect(screen.getByText('↻ Re-train')).toBeTruthy();
         expect(markCompleteBtn().disabled).toBe(true);
-    });
-
-    // FIXED (qa 2026-09-29). The PM page's hydration reads `targetSensor ||
-    // ySensor` for a clustering model and, when `clusterRanges` is empty
-    // (what the Workbench's own Save/Train commit writes when no criteria
-    // sensor is set), keeps its auto-divided [0, 33.3, 66.7, 100] ranges. Its
-    // 250 ms baseline persist then writes BOTH back to the model record —
-    // `computeTrainFingerprint` (src/utils/trainFingerprint.ts) now drops
-    // `targetSensor` for clustering entirely (derived from ySensor/xSensor,
-    // not its own input) and drops `clusterRanges` whenever there's no
-    // criteria sensor (a range list is meaningless without one), so neither
-    // rewrite affects the fingerprint any more.
-    it('Clustering: opening the full view and pressing Back with no edit keeps it Trained', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', clusterRanges: [], rcMode: 'clustering', individualChecked: false })])));
-        await mountBuildModel();
-        await clickTrain();
-        expect(pill()).toBe('Trained');
-
-        await roundTripThroughFullView();
-        expect(screen.queryByTestId('results-stale')).toBeNull();
-        expect(pill()).toBe('Trained');
-    });
-
-    // FIXED (qa 2026-09-29). Same root cause for Individual/Relationship:
-    // their fingerprint used to include the clustering-only `clusterRanges`.
-    // A model whose record has `clusterRanges: []` (the shape a v0.6.0
-    // workspace stored — see Feature4BuildFlow's `v1Model`) gets the PM
-    // page's auto-divided ranges written back on open — `clusterRanges` is
-    // now dropped from the fingerprint whenever there's no criteria sensor
-    // (true for every Individual/Relationship model), so that rewrite no
-    // longer makes it go stale.
-    it('Individual with an empty clusterRanges record: opening the full view and pressing Back keeps it Trained', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'i1', clusterRanges: [] })])));
-        await mountBuildModel();
-        await clickTrain();
-        expect(pill()).toBe('Trained');
-
-        await roundTripThroughFullView();
-        expect(pill()).toBe('Trained');
     });
 });
 
@@ -348,7 +291,7 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
     // only merges draft fields when a draft is actually pending for that
     // model id (`effectiveModelFor`) — with no draft, it trains against the
     // persisted `m` directly, unmodified.
-    it('Clustering created on the Dashboard with Y picked in the full view (3 default cluster ranges, no criteria)', async () => {
+    it('Clustering created on the Dashboard with Y picked (3 default cluster ranges, no criteria)', async () => {
         writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();

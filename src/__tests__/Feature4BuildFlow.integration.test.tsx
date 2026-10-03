@@ -5,10 +5,10 @@ import contract from '../../src-tauri/tests/fixtures/filter_contract.json';
 /*
  * Feature 4 QA (2026-09-24) — cross-zone integration for the Build Model flow.
  *
- * Unlike BuildModelWindow.test.tsx / PredictiveModelBuild.test.tsx (each mocks
- * the other side and `workspaceManager`), everything here is REAL except the
- * Tauri boundary:
- *   - BuildModelWindow renders the real PredictiveModelBuild page;
+ * Unlike BuildModelWindow.test.tsx (which mocks `workspaceManager`), everything
+ * here is REAL except the Tauri boundary (health score phase 4, 2026-10-04: the
+ * full-view Predictive Model page was removed - the Workbench's Train button is
+ * now the path whose payloads are checked):
  *   - the real workspaceManager runs against an in-memory plugin-fs, so every
  *     read/write is an actual JSON round trip through the real write queue and
  *     `migrateFailureGroupState`;
@@ -25,7 +25,6 @@ const h = vi.hoisted(() => ({
     writes: [] as string[],
     store: new Map<string, unknown>(),
     invokes: [] as { cmd: string; args: any }[],
-    chartQueries: [] as any[],
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -85,18 +84,11 @@ vi.mock('@tauri-apps/api/window', () => ({
     getCurrentWindow: () => ({ close: vi.fn().mockResolvedValue(undefined), onCloseRequested: vi.fn().mockResolvedValue(() => {}) }),
 }));
 
-vi.mock('../hooks/useChartData', () => ({
-    useChartData: (q: unknown) => {
-        h.chartQueries.push(q ? JSON.parse(JSON.stringify(q)) : null);
-        return { view: null, loading: false, error: null };
-    },
-}));
-vi.mock('../components/charts/LineChart', () => ({ default: () => <div data-testid="line-chart-mock" /> }));
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div data-testid="echarts-mock" /> }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
-import { EXPORT_RESULT_OK } from './helpers/healthPage';
+import { EXPORT_RESULT_OK, markCompleteFromHealthPage } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -134,7 +126,7 @@ function v1Model(o: Record<string, unknown>) {
 }
 
 /** A model in the current (Feature 4) shape. */
-/** Set points the `makeSetPointAwarePreview` fixture accepts (Individual 3SD band 2..8): Finish needs them since 3b-2. */
+/** Set points the `makeSetPointAwarePreview` fixture accepts (Individual 3SD band 2..8): Mark complete needs them. */
 const VALID_SP = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
 
 function model(o: Record<string, unknown>) {
@@ -188,7 +180,7 @@ function closeRcModal() {
     expect(rcModal()).toBeNull();
 }
 
-/** Another window (Dashboard / PM) writes the slice and broadcasts it. */
+/** Another window (Dashboard) writes the slice and broadcasts it. */
 async function otherWindowWrites(patch: Record<string, unknown>, origin = 'dashboard') {
     await act(async () => {
         const next = await updateWorkspaceData('ws1', prev => withFailureGroupState(prev, patch as any));
@@ -201,21 +193,18 @@ async function otherWindowWrites(patch: Record<string, unknown>, origin = 'dashb
  *  its first model tab — Individual when it has one). */
 const selectSensorRow = (rowIndex = 0) => fireEvent.click(screen.getAllByTestId('sensor-row-label')[rowIndex]);
 const openFirstRow = () => { closeRcModal(); selectSensorRow(0); };
-const finishBtn = () => screen.getByText('Finish').closest('button') as HTMLButtonElement;
-/** Detail footer's "Open full view ↗" (was the accordion row's "Build Model →"). */
-const openFullViewBtn = () => screen.getByText('Open full view ↗') as HTMLButtonElement;
+const trainBtn = () => screen.getByText('▶ Train model') as HTMLButtonElement;
 
-async function openPmFor(rowIndex = 0) {
+/** Select a row and press Train (the Workbench's only path that sends the training scope to Rust). */
+async function trainRow(rowIndex = 0) {
     closeRcModal();
     selectSensorRow(rowIndex);
-    await act(async () => { fireEvent.click(openFullViewBtn()); });
-    await waitFor(() => expect(screen.getByText('Finish')).toBeTruthy());
+    await act(async () => { fireEvent.click(trainBtn()); });
     await settle(30);
 }
 
 const lastInvoke = (cmd: string, pred: (a: any) => boolean = () => true) =>
     [...h.invokes].reverse().find(c => c.cmd === cmd && pred(c.args));
-const lastChartFilter = () => [...h.chartQueries].reverse().find(q => q)?.filter;
 
 beforeEach(() => {
     for (const k of Object.keys(h.listeners)) delete h.listeners[k];
@@ -224,7 +213,6 @@ beforeEach(() => {
     h.writes.length = 0;
     h.store.clear();
     h.invokes.length = 0;
-    h.chartQueries.length = 0;
     // Dashboard's role in the handshake: answer the data request.
     h.listeners['request-build-model-data'] = new Set([() => { void emit('build-model-data', BUILD_DATA); }]);
 });
@@ -308,7 +296,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         expect(screen.getByTestId('rc-legacy-banner')).toBeTruthy(); // still pending: the stored flag, not recomputed
     });
 
-    it('the migrated legacy period is exactly what the PM page sends to Rust once the gate is satisfied', async () => {
+    it('the migrated legacy period is exactly what Train sends to Rust once the gate is satisfied', async () => {
         writeDisk(V1);
         await mountBuildModel();
         closeRcModal(); // auto-opened (unset workspace); the banner sits behind it
@@ -317,19 +305,21 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         expect(readDisk().failureGroupState.rcLegacyNotice).toBeNull();
         expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
 
-        await openPmFor(0); // TAG1 row, Individual tab
-        expect(finishBtn().disabled).toBe(false);
+        closeRcModal();
+        selectSensorRow(0); // TAG1 row, Individual tab
+        expect(trainBtn().disabled).toBe(false);
+        await act(async () => { fireEvent.click(trainBtn()); });
+        await settle(30);
         const ranges = [{ start: '2026-01-01T00:00', end: '2026-06-30T23:59' }];
-        expect(lastChartFilter().timestamp_ranges).toEqual(ranges);
         expect(lastInvoke('compute_sensor_stats')!.args.filter).toEqual({ timestamp_ranges: ranges, value_filters: [], combine: 'and' });
     });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// (2) one gate: Overview Build reason === PM Finish reason
+// (2) one gate: the footer reason === Train's reason === the shared helper's
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', () => {
+describe('(2) the Workbench footer reason and the Train button agree with the shared gate helper', () => {
     const configured = () => wsState(currentFg([model({ id: 'i1' })], { runningConditionNoneConfirmed: true }));
 
     const cases: [string, Record<string, unknown>][] = [
@@ -340,72 +330,54 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
     ];
 
     for (const [label, patch] of cases) {
-        it(`${label}: a broadcast re-blocks Finish, and Overview shows the SAME reason`, async () => {
+        it(`${label}: a broadcast re-blocks Train, and the footer shows the SAME reason`, async () => {
             writeDisk(configured());
             await mountBuildModel();
-            await openPmFor();
-            expect(finishBtn().disabled).toBe(false);
+            closeRcModal();
+            selectSensorRow(0);
+            expect(trainBtn().disabled).toBe(false);
 
             await otherWindowWrites(patch);
-            const pmReason = screen.getByTestId('finish-block-reason').textContent;
-            expect(pmReason).toBeTruthy();
-            expect(finishBtn().disabled).toBe(true);
-            expect(finishBtn().title).toBe(pmReason);
+            closeRcModal(); // an unset workspace re-opens the settings modal
+            const reason = screen.getByTestId('build-block-reason').textContent;
+            expect(reason).toBeTruthy();
+            expect(trainBtn().disabled).toBe(true);
+            expect(trainBtn().title).toBe(reason);
             // ... and it is the shared helper's answer for what is on disk.
             const disk = readDisk().failureGroupState;
-            expect(pmReason).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
-            fireEvent.click(finishBtn());
+            expect(reason).toBe(getBuildBlockReason(disk.models[0], disk, HEADERS));
+            // Mark complete is not on this page at all (it lives on the Health score page, locked here).
+            expect(screen.queryByText('✓ Mark complete')).toBeNull();
+            expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
+            fireEvent.click(trainBtn());
             await settle(30);
             expect(readDisk().failureGroupState.models[0].status).toBe(false);
-
-            fireEvent.click(screen.getByTitle('Back to Build Model overview'));
-            await settle(10);
-            expect(screen.getByTestId('build-block-reason').textContent).toBe(pmReason);
-            expect(openFullViewBtn().title).toBe(pmReason);
-            expect(openFullViewBtn().disabled).toBe(true);
-            // Phase B footer: Train carries the SAME gate reason; Mark complete is not on this
-            // page at all any more (health score 3b-2: it lives on the Health score page).
-            expect(screen.queryByText('✓ Mark complete')).toBeNull();
-            expect((screen.getByText('▶ Train model') as HTMLButtonElement).title).toBe(pmReason);
+            expect(readDisk().failureGroupState.models[0].lastTrainedAt).toBeFalsy(); // a blocked Train never stamps the model
         });
     }
 
-    it('a Custom model with its own configured list can Build and Finish while the workspace is unset, and Finish marks it Complete on disk', async () => {
+    it('a Custom model with its own configured list can Train and be marked Complete (through the Health score page) while the workspace is unset', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], healthSetPoints: VALID_SP })])));
         await mountBuildModel();
         // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
-        // 🆕 Phase B (2026-09-29): Finish now ALSO requires a fresh Trained
-        // result (SPEC FINAL scope-gap fix — "Mark complete replaces Finish
-        // everywhere") — train it from the Workbench before opening the full
-        // view, same as any other model would need to be.
-        closeRcModal();
-        selectSensorRow(0);
-        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
-        await settle(30);
-        await openPmFor();
-        expect(finishBtn().disabled).toBe(false);
-        expect(screen.queryByTestId('pm-rc-required-banner')).toBeNull(); // banner is Workspace-mode only
+        await trainRow(0);
+        expect(readDisk().failureGroupState.models[0].lastTrainedAt).toBeTruthy();
 
-        fireEvent.click(finishBtn());
-        await settle(40);
+        await markCompleteFromHealthPage('individual');
         expect(readDisk().failureGroupState.models[0].status).toBe(true);
-        expect(screen.getByText('Build Model — Overview')).toBeTruthy();
     });
 
-    it('a broadcast that empties a Custom model\'s own list re-blocks Finish (workspace None does not rescue Custom)', async () => {
+    it('a broadcast that empties a Custom model\'s own list re-blocks Train (workspace None does not rescue Custom)', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND] })], { runningConditionNoneConfirmed: true })));
         await mountBuildModel();
-        await openPmFor();
-        expect(finishBtn().disabled).toBe(false);
-        // NB: the PM page hydrates its Custom list ONCE from disk; a later
-        // broadcast updates only the parent's copy. Overview must be blocked
-        // after the change, and the PM page keeps the list it is editing.
+        closeRcModal();
+        selectSensorRow(0);
+        expect(trainBtn().disabled).toBe(false);
         await otherWindowWrites({ models: [model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [] })] });
-        fireEvent.click(screen.getByTitle('Back to Build Model overview'));
-        await settle(10);
         expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
+        expect(trainBtn().disabled).toBe(true);
     });
 });
 
@@ -413,7 +385,7 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
 // (3) what actually reaches Rust: identical ranges/combine on every path
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('(3) the PM page sends one filter to chart, stats and every fit path — and it matches the Rust contract fixture', () => {
+describe('(3) Train sends one filter to stats and every fit path - and it matches the Rust contract fixture', () => {
     const customOr = contract.pm_payloads[0].json!;
     const customModel = (o: Record<string, unknown>) => model({
         runningConditionMode: 'custom',
@@ -431,54 +403,46 @@ describe('(3) the PM page sends one filter to chart, stats and every fit path �
     const keysOk = (obj: Record<string, unknown>, allowed: string[]) =>
         expect(Object.keys(obj).filter(k => !allowed.includes(k))).toEqual([]);
 
-    it('Relationship: chart, target stats and the relationship fit all carry the fixture payload exactly', async () => {
+    it('Relationship: the relationship fit (and the health preview that follows it) carry the fixture payload exactly', async () => {
         writeDisk(wsState(currentFg([customModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'], rcMode: 'relationship', individualChecked: false })])));
         await mountBuildModel();
-        await openPmFor();
+        await trainRow(0);
 
+        const fit = lastInvoke('preview_relationship_model')!.args.filter;
+        expect(fit).toEqual(customOr);
+        keysOk(fit, contract.preview_filter_fields);
+        for (const r of fit.timestamp_ranges) keysOk(r, contract.time_range_fields);
+        for (const v of fit.value_filters) keysOk(v, contract.value_filter_fields);
+
+        await waitFor(() => expect(lastInvoke('compute_health_preview')).toBeTruthy());
+        expect(lastInvoke('compute_health_preview')!.args.request.filter).toEqual(customOr);
+    });
+
+    it('Individual: the stats call gets the fixture payload; Clustering: the clustering preview and the criteria-sensor stats get the same one', async () => {
+        writeDisk(wsState(currentFg([customModel({ id: 'i1' })])));
+        await mountBuildModel();
+        await trainRow(0);
         const stats = lastInvoke('compute_sensor_stats', a => a.sensor === 'TAG1')!.args.filter;
         expect(stats).toEqual(customOr);
         keysOk(stats, contract.preview_filter_fields);
-        for (const r of stats.timestamp_ranges) keysOk(r, contract.time_range_fields);
-        for (const v of stats.value_filters) keysOk(v, contract.value_filter_fields);
+        cleanup();
 
-        const chart = lastChartFilter();
-        keysOk(chart, contract.data_filter_fields);
-        expect(chart).toEqual({ sensors: ['TAG1'], timestamp_start: null, timestamp_end: null, ...customOr });
-
-        await act(async () => {
-            const btn = screen.getByText('Relationship Model').closest('.pm-config-block')!.querySelector('button.pm-btn-primary') as HTMLButtonElement;
-            fireEvent.click(btn);
-        });
-        await settle(20);
-        expect(lastInvoke('preview_relationship_model')!.args.filter).toEqual(customOr);
-    });
-
-    it('Clustering: the clustering preview and the criteria-sensor stats get the same payload as the chart', async () => {
+        h.invokes.length = 0;
         writeDisk(wsState(currentFg([customModel({
             id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG3', predictorSensors: ['TAG1'],
             scatterXSensor: 'TAG1', criteriaSensor: 'TAG2', rcMode: 'clustering', individualChecked: false,
         })])));
         await mountBuildModel();
-        await openPmFor();
-
+        await trainRow(0);
         expect(lastInvoke('compute_sensor_stats', a => a.sensor === 'TAG2')!.args.filter).toEqual(customOr);
-        await act(async () => {
-            const btn = screen.getByText('Clustering Model').closest('.pm-config-block')!.querySelector('button.pm-btn-primary') as HTMLButtonElement;
-            fireEvent.click(btn);
-        });
-        await settle(20);
         expect(lastInvoke('compute_clustering_preview')!.args.filter).toEqual(customOr);
-        const chart = lastChartFilter();
-        expect({ timestamp_ranges: chart.timestamp_ranges, value_filters: chart.value_filters, combine: chart.combine }).toEqual(customOr);
     });
 
-    it('Workspace mode with "No condition" and no periods sends filter: null (fixture) and an empty-range chart filter (fixture)', async () => {
+    it('Workspace mode with "No condition" and no periods sends filter: null (fixture)', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1' })], { runningConditionNoneConfirmed: true, runningConditionFilters: [COND] })));
         await mountBuildModel();
-        await openPmFor();
+        await trainRow(0);
         expect(lastInvoke('compute_sensor_stats')!.args.filter).toBe(contract.pm_payloads[1].json);
-        expect(lastChartFilter()).toEqual(contract.pm_payloads[2].json);
     });
 
     it('"No condition" drops value conditions but NOT periods, and combine still rides along (periods are AND-ed on the Rust side)', async () => {
@@ -487,16 +451,15 @@ describe('(3) the PM page sends one filter to chart, stats and every fit path �
             runningConditionTimePeriods: [{ id: 'w1', start: '2026-05-01T00:00', end: '2026-05-31T23:59' }],
         })));
         await mountBuildModel();
-        await openPmFor();
+        await trainRow(0);
         const f = lastInvoke('compute_sensor_stats')!.args.filter;
         expect(f).toEqual({ timestamp_ranges: [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59' }], value_filters: [], combine: 'or' });
-        expect(lastChartFilter().timestamp_ranges).toEqual(f.timestamp_ranges);
     });
 
     // FIXED 2026-09-24 (was a known bug). The gate
     // (`isCompleteCondition`) ignores a `between` row whose max is empty, but
     // `dashboardFilterPayload` only drops rows with an empty value1, so the row
-    // still goes to Rust as `between(v1, null)` — and Rust's `keeps()` treats
+    // still goes to Rust as `between(v1, null)` - and Rust's `keeps()` treats
     // `between` with a missing bound as TRUE. Under AND that is harmless; under
     // OR it matches every row, silently disabling every other OR condition.
     it('only the conditions the gate counts as complete are sent to Rust (an incomplete "between" under OR would match every row)', async () => {
@@ -505,8 +468,11 @@ describe('(3) the PM page sends one filter to chart, stats and every fit path �
             runningConditionFilters: [COND, { id: 'rc2', sensor: 'TAG3', operation: 'between', value1: '1', value2: '' }],
         })));
         await mountBuildModel();
-        await openPmFor();
-        expect(finishBtn().disabled).toBe(false); // gate: COND alone configures it
+        closeRcModal();
+        selectSensorRow(0);
+        expect(trainBtn().disabled).toBe(false); // gate: COND alone configures it
+        await act(async () => { fireEvent.click(trainBtn()); });
+        await settle(30);
         const sent = lastInvoke('compute_sensor_stats')!.args.filter.value_filters;
         expect(sent).toEqual([{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }]);
     });
@@ -538,23 +504,22 @@ describe('(4) old time keys re-added by a stale writer', () => {
         expect(fg.runningConditionTimePeriods).toEqual([P]);
         expect(fg.models.find((m: any) => m.id === 'i2').filterTimePeriods).toEqual([Q]);
 
-        await openPmFor(0); // i1 — Workspace mode
-        expect(lastChartFilter().timestamp_ranges).toEqual([{ start: P.start, end: P.end }]);
+        await trainRow(0); // i1 - Workspace mode
+        expect(lastInvoke('compute_sensor_stats')!.args.filter.timestamp_ranges).toEqual([{ start: P.start, end: P.end }]);
         expect(JSON.stringify(h.invokes)).not.toContain('2020-');
 
-        // A stale copy landing on disk AFTER this window hydrated (and the PM page
-        // reading it directly) still resolves to the periods, not the old pair.
-        fireEvent.click(screen.getByTitle('Back to Build Model overview'));
-        await settle(10);
+        // A stale copy landing on disk (old keys back on every model), then the window
+        // reopened: the next hydration drops them again and the periods still win.
+        cleanup();
         const stale = readDisk();
         stale.failureGroupState.models = stale.failureGroupState.models.map((m: any) => ({ ...m, filterTimeStart: '2019-01-01T00:00', filterTimeEnd: '2019-12-31T23:59' }));
         writeDisk(stale);
         h.invokes.length = 0;
+        await mountBuildModel();
         const rows = screen.getAllByTestId('sensor-row-label');
-        fireEvent.click(rows[rows.length - 1]); // TAG2 row
+        selectSensorRow(rows.length - 1); // TAG2 row
         expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Pump Temp'); // detail pane is TAG2's
-        await act(async () => { fireEvent.click(openFullViewBtn()); });
-        await waitFor(() => expect(screen.getByText('Finish')).toBeTruthy());
+        await act(async () => { fireEvent.click(trainBtn()); });
         await settle(30);
         expect(lastInvoke('compute_sensor_stats')!.args.filter.timestamp_ranges).toEqual([{ start: Q.start, end: Q.end }]);
         expect(JSON.stringify(h.invokes)).not.toContain('2019-');
@@ -564,78 +529,6 @@ describe('(4) old time keys re-added by a stale writer', () => {
 // ─────────────────────────────────────────────────────────────────────────
 // Regressions found in the sweep (documented as expected failures)
 // ─────────────────────────────────────────────────────────────────────────
-
-describe('PM page edits made right before leaving the page', () => {
-    // FIXED (qa 2026-09-24) — the PM page's 250 ms debounced persist is
-    // already flushed before `onFinish`/`onBack` navigate away (`handleFinish`
-    // awaits `flushPersist()` first), so a period committed by the very blur
-    // clicking Finish itself causes is never lost.
-    // 🆕 Phase B (2026-09-29): this same edit ALSO makes the model stale
-    // relative to what it was actually Trained with (a training period is a
-    // fingerprinted field) — Finish/Mark complete correctly stays blocked in
-    // that case rather than silently marking Complete with settings it was
-    // never trained against. The two behaviors are independent: the edit's
-    // own persistence (this test's original point) and Mark-complete's
-    // separate trained-and-fresh requirement (added this pass) are checked
-    // separately below.
-    it('a period edited and committed by clicking Finish is saved even though the edit itself now blocks Mark complete', async () => {
-        const P = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' };
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [P] })])));
-        await mountBuildModel();
-        closeRcModal();
-        selectSensorRow(0);
-        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
-        await settle(30);
-        await openPmFor();
-        fireEvent.click(screen.getByTestId('period-toggle-1')); // sidebar period rows start collapsed
-
-        const end = screen.getByLabelText('Period 1 end');
-        fireEvent.change(end, { target: { value: '2026-02-15T12:00' } });
-        fireEvent.blur(end); // what mousedown on Finish does
-        fireEvent.click(finishBtn());
-        await settle(400);
-
-        const m = readDisk().failureGroupState.models[0];
-        // The edit itself is never lost — BuildModelWindow's own flushPersist
-        // write (the period) is a separate write from markModelComplete's
-        // (status), so one blocking does not undo the other.
-        expect(m.filterTimePeriods).toEqual([{ ...P, end: '2026-02-15T12:00' }]);
-        expect(m.status).toBe(false);
-        // The edit made the model stale (a training period is fingerprinted): nothing was written, no files.
-        expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/re-train/i);
-        expect(h.invokes.filter(c => c.cmd === 'export_model_files')).toHaveLength(0);
-    });
-
-    // FIXED (qa 2026-09-24) — `markModelComplete` re-checks the gate against
-    // whatever is on DISK inside its own write (never the parent's possibly-
-    // lagging in-memory copy), and the PM page's Finish button flushes its own
-    // pending debounced write before calling it — so an edit that satisfied
-    // the gate < 250 ms earlier is never dropped.
-    it('Finish right after re-confirming Custom "No condition" marks the model Complete', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, healthSetPoints: VALID_SP })])));
-        await mountBuildModel();
-        // 🆕 Phase B (2026-09-29): train it first (still noneConfirmed:true —
-        // the same effective running condition the toggle dance below ends
-        // up back at) so Finish's new trained-and-fresh requirement is met
-        // once re-confirmed, same as any other model would need.
-        closeRcModal();
-        selectSensorRow(0);
-        await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); });
-        await settle(30);
-        await openPmFor();
-        fireEvent.click(screen.getByText('Switch to conditions')); // un-confirm -> blocked
-        await settle(400); // persisted + broadcast: the parent now stores "unset"
-        expect(finishBtn().disabled).toBe(true);
-        fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' })); // confirm again
-        expect(finishBtn().disabled).toBe(false);
-        fireEvent.click(finishBtn());
-        await settle(400);
-
-        const m = readDisk().failureGroupState.models[0];
-        expect(m.status).toBe(true);
-        expect(m.customRunningConditionNoneConfirmed).toBe(true);
-    });
-});
 
 describe('a brand-new workspace (never opened before Feature 4)', () => {
     // FIXED 2026-09-24. Models are only ever created on the Dashboard, so the
@@ -659,9 +552,9 @@ describe('a brand-new workspace (never opened before Feature 4)', () => {
 describe('reason text consistency', () => {
     // FIXED (was a cosmetic known bug, qa 2026-09-24). For a missing category the
     // Overview footer used to show `modelBlockReason`'s text ("...sensor
-    // header", no period) while the status control, `trainModel`,
-    // `markModelComplete` and the PM Finish button used `getBuildBlockReason`
-    // ("...sensor header."), so the two surfaces disagreed on the same model.
+    // header", no period) while the status control and Mark complete used
+    // `getBuildBlockReason` ("...sensor header."), so the two surfaces
+    // disagreed on the same model.
     // Workbench (Phase A, 2026-09-29): the clickable status pill that carried
     // the gate reason as its tooltip was replaced by the separate
     // "✓ Mark complete" button, which carries the same `gateReasonOf` title.

@@ -10,8 +10,8 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
         />
     ),
 }));
-// The real search dropdown lives in the (huge) PM page and has its own tests there.
-vi.mock('../components/windows/PredictiveModelBuild', () => ({
+// The real search dropdown lives in SensorPickers.tsx and has its own tests in SensorPickers.test.tsx.
+vi.mock('../components/windows/SensorPickers', () => ({
     SensorAutocomplete: (props: any) => (
         <select aria-label={props.placeholder} value={props.value} onChange={e => props.onSelect(e.target.value)}>
             {props.sensors.map((s: string) => <option key={s} value={s}>{s}</option>)}

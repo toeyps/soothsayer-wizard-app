@@ -3,7 +3,7 @@ import { Plus, X } from 'lucide-react';
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
-import { SensorPickerModal } from './PredictiveModelBuild';
+import { SensorPickerModal } from './SensorPickers';
 import { RuleSentence } from './RunningConditionParts';
 import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
 import { formatPercent, type RowCountPreview } from './useRowCountPreview';

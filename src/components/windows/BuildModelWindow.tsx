@@ -29,7 +29,7 @@ import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } f
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { useRowCountPreview } from "./useRowCountPreview";
-import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
+import { SensorPickerModal } from "./SensorPickers";
 import TimePeriodsEditor from "./TimePeriodsEditor";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
@@ -293,7 +293,8 @@ function formatTrainedAt(iso: string): string {
  *     grouping — Model Type grouping is REMOVED entirely) selects a sensor;
  *     a right detail panel shows that sensor's I/R/C tabs, a collapsible
  *     "Model settings" section, a Phase-A placeholder results area, and a
- *     per-model footer (status pill, Open full view, Save, Mark complete).
+ *     per-model footer (status pill, Save, Train; Mark complete lives on
+ *     the Health score page).
  *   - The workspace-wide Running Condition Filter moved from an always-
  *     visible inline panel to a one-line summary bar + "Edit…" modal
  *     wrapping `RunningConditionPanel`. (2026-10-03: the bar is now the
@@ -312,7 +313,7 @@ function formatTrainedAt(iso: string): string {
  *
  * All of this is local state — no window spawn for any of it.
  *
- * Owns `failureGroupState` jointly with Dashboard and PredictiveModelBuild —
+ * Owns `failureGroupState` jointly with Dashboard —
  * every write here is a read-modify-write against the full workspace file
  * and broadcasts `failure-group-state-changed` afterward so those other
  * windows never see stale data.
@@ -364,8 +365,6 @@ export default function BuildModelWindow() {
     // written at hydration) plus a session-only "Remind me later" (never persisted).
     const [rcLegacyNotice, setRcLegacyNotice] = useState<'pending' | null>(null);
     const [legacyRemindLater, setLegacyRemindLater] = useState(false);
-    /** Why the last Finish did not mark the model Complete (shown on the overview). */
-    const [completeBlock, setCompleteBlock] = useState<string | null>(null);
     // Workspace id the panel was last auto-opened for, so "auto-open when the
     // running condition is unconfigured" happens once per hydration, not on
     // every broadcast.
@@ -456,13 +455,6 @@ export default function BuildModelWindow() {
     /** Models whose first-open set-point snapshot was already written (once per model). */
     const setPointsSeededRef = useRef<Set<string>>(new Set());
 
-    // ---- Predictive Model page — an in-window "next page" (not a spawned
-    //      OS window) reached from the detail footer's "Open full view ↗"
-    //      button. Only Dashboard + this singleton window are ever open at
-    //      once. ----
-    const [activePage, setActivePage] = useState<'overview' | 'model'>('overview');
-    const [pmPageModelId, setPmPageModelId] = useState<string | null>(null);
-
     /** Unsaved edits, keyed by model id. */
     const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
     /** One-time "categories were made consistent" notice — STORED in the
@@ -528,7 +520,7 @@ export default function BuildModelWindow() {
 
     // 🆕 2026-09-29 [data-loss fix]: the most recent in-flight
     // `updateWorkspaceData` write from ANY persist path in this window
-    // (running-condition edits, a model draft Save, Finish/markModelComplete,
+    // (running-condition edits, a model draft Save, Mark complete,
     // the hydration-time migration write, …). Mirrors Dashboard.tsx's own
     // `pendingSaveRef` pattern. Always overwritten to the LATEST write; a
     // superseded one is simply abandoned, never left dangling. `handleClose`
@@ -541,15 +533,6 @@ export default function BuildModelWindow() {
         });
         pendingSaveRef.current = tracked;
         return tracked;
-    }, []);
-    // The Predictive Model page (rendered inline below, not a separate OS
-    // window) owns its own debounced persist and already flushes it on its
-    // Back/Finish buttons. A native window close bypasses those buttons
-    // entirely, so this window also needs a way to flush THAT page's pending
-    // write before it is allowed to close.
-    const pmFlushRef = useRef<(() => Promise<void>) | null>(null);
-    const registerPmFlush = useCallback((flush: (() => Promise<void>) | null) => {
-        pmFlushRef.current = flush;
     }, []);
     // Mirrors the whole slice into local state — used by every path that
     // receives a fresh copy (hydration, broadcasts, our own writes).
@@ -605,9 +588,8 @@ export default function BuildModelWindow() {
         return promise;
     }, [trackPending, applyFg, writeSpDrafts]);
 
-    /** Awaits both this window's own pending write and the PM page's pending
-     *  debounced write (if that page is open), so no path off this window can
-     *  drop an edit made just before closing. A set-point draft that was typed
+    /** Awaits this window's own pending write (and any running Mark complete),
+     *  so no path off this window can drop an edit made just before closing. A set-point draft that was typed
      *  but never blurred is committed first, so it is part of what is awaited. */
     const flushAllPending = useCallback(async (): Promise<boolean> => {
         void commitSetPointDrafts();
@@ -626,7 +608,6 @@ export default function BuildModelWindow() {
                 return false;
             }
         }
-        if (pmFlushRef.current) await pmFlushRef.current();
         if (pendingSaveRef.current) await pendingSaveRef.current;
         return true;
     }, [commitSetPointDrafts]);
@@ -697,7 +678,7 @@ export default function BuildModelWindow() {
             // Re-pointed at a DIFFERENT workspace than the one on screen (the
             // main window moved on to another project while this window
             // stayed open): drop everything belonging to the old one —
-            // including a PM page or half-edited form for a model that does
+            // including a half-edited form for a model that does
             // not exist in the new workspace.
             const switched = workspaceIdRef.current !== null && workspaceIdRef.current !== d.workspaceId;
             // A set point typed (not yet blurred) in the OLD workspace is written THERE
@@ -707,8 +688,6 @@ export default function BuildModelWindow() {
             workspaceIdRef.current = d.workspaceId;
             setWorkspaceId(d.workspaceId);
             if (switched) {
-                setActivePage('overview');
-                setPmPageModelId(null);
                 setSelectedSensorKey(null);
                 setActiveTab({});
                 setSettingsOpenOverride({});
@@ -792,7 +771,7 @@ export default function BuildModelWindow() {
             setLoading(false);
         });
 
-        // Any other window (Dashboard, PredictiveModelBuild) that
+        // Any other window (Dashboard) that
         // persists failureGroupState broadcasts this so our copy never
         // goes stale. Ignores another workspace's broadcast (events are
         // global) and this window's own echo.
@@ -988,7 +967,7 @@ export default function BuildModelWindow() {
     const categoryOf = (m: FailureModel): ModelCategory | null => sensorCategory(allModels, modelSensorKey(m));
 
     // ---- Running-condition gate (Feature 4-B, soft gate A). ONE source of
-    //      truth: `getBuildBlockReason`. Every Build / Finish / "mark Complete"
+    //      truth: `getBuildBlockReason`. Every Train / "mark Complete"
     //      path below asks it; Save is deliberately NOT gated by it. ----
     const gateFg: RunningConditionFg = {
         models: allModels, runningConditionFilters, runningConditionCombine,
@@ -1002,7 +981,7 @@ export default function BuildModelWindow() {
     // `runningConditionMode`/`customRunningConditionFilters`/
     // `filterTimePeriods` straight off whatever model it's given; passing
     // the persisted model meant the gate was blind to a pending Custom-mode
-    // switch/edit — Train (and "Open full view") could commit a draft that
+    // switch/edit — Train could commit a draft that
     // switched to Custom with no condition set (or an invalid period) and
     // train with `filter: null` (every row), exactly what this gate exists
     // to prevent. Staleness (`isModelTrainedFresh`/`isModelStale`) already
@@ -1046,7 +1025,7 @@ export default function BuildModelWindow() {
         return nameConflictOf(m) ? DUPLICATE_NAME_BLOCK_REASON : null;
     };
 
-    /** Why Open full view is disabled: everything Save needs, then the gate. */
+    /** Why Train / Mark complete are disabled: everything Save needs, then the gate. */
     const buildBlockReason = (m: FailureModel): string | null => modelBlockReason(m) ?? gateReasonOf(m);
 
     /** Short list of what's missing from THIS model's own settings (not the
@@ -1089,9 +1068,8 @@ export default function BuildModelWindow() {
         return parts.join(' · ');
     };
 
-    // Returns the `persist()` promise (rather than firing it and forgetting)
-    // so `buildModel` below can await the write actually landing on disk
-    // before navigating to the PM page.
+    // `commitModel` returns the `persist()` promise (rather than firing it and
+    // forgetting) so `runTrainClick` can await the write landing on disk first.
     /** The persistable fields a model's draft would write on Save — factored
      *  out of `commitModel` so `runTrainClick` (Phase B) can compute the exact
      *  same merged-with-draft model to train against, without waiting for a
@@ -1408,8 +1386,7 @@ export default function BuildModelWindow() {
     };
 
     /** The footer's Train/Re-train button. Commits any pending draft edits
-     *  FIRST (same as "Open full view" already does via `buildModel` ->
-     *  `commitModel`) so a predictor/stiffness/etc. change made just before
+     *  FIRST (`commitModel`) so a predictor/stiffness/etc. change made just before
      *  clicking Train is what actually gets trained and fingerprinted —
      *  never a stale, unsaved combination. Only actually MERGES the draft
      *  into the trained/fingerprinted model when a draft is genuinely
@@ -1440,10 +1417,9 @@ export default function BuildModelWindow() {
     };
 
     // (`NOT_TRAINED_BLOCK_REASON` — the text shown, and the reason
-    // `markModelComplete` blocks on, when the gate passes but the model is not
-    // Trained-and-fresh — lives in `utils/modelStatus.ts` so the PM page's
-    // Finish path, the Workbench's "✓ Mark complete" title and the health-score
-    // Mark complete share one wording.)
+    // `runMarkComplete` blocks on, when the gate passes but the model is not
+    // Trained-and-fresh — lives in `utils/modelStatus.ts` so the Workbench's
+    // "✓ Mark complete" title and the health-score Mark complete share one wording.)
 
     // ---- Set points + Mark complete (health score 3b-2) ----
     /** The model's PERSISTED set points, brought up to date: the right empty shape
@@ -1474,12 +1450,9 @@ export default function BuildModelWindow() {
      *  disk). Returns `null` on success, otherwise the reason it was not marked
      *  (also shown on the Health score page). Never throws; guarded against a
      *  double click (a Relationship export re-runs the sidecar for ~15 s). */
-    const runMarkComplete = async (m: FailureModel, disk?: { fg: RunningConditionFg }): Promise<string | null> => {
-        // `disk`: the model and workspace slice were just read from DISK (the PM page's
-        // Finish: its own edits may not have reached this window's copy yet) - judge those,
-        // not this window's possibly lagging state, and use the SAVED set points.
-        const fg: RunningConditionFg = disk?.fg ?? gateFg;
-        const model = disk ? m : effectiveModelFor(m);
+    const runMarkComplete = async (m: FailureModel): Promise<string | null> => {
+        const fg: RunningConditionFg = gateFg;
+        const model = effectiveModelFor(m);
         const ws = workspaceIdRef.current;
         if (!ws) return 'No workspace is open.';
         if (completeRunningRef.current.has(m.id)) return 'Saving is already in progress.';
@@ -1504,7 +1477,7 @@ export default function BuildModelWindow() {
         const race = { fingerprint: computeTrainFingerprint(model, fg), setPointsBefore: m.healthSetPoints };
         const exec = async (): Promise<string | null> => {
             try {
-                const sp = disk ? (spDraftsRef.current[id] ?? persistedSetPointsOf(m)) : setPointsOf(m);
+                const sp = setPointsOf(m);
                 const res = await completeModel({
                     model,
                     fg,
@@ -1552,38 +1525,6 @@ export default function BuildModelWindow() {
         }
     };
 
-    /** The PM page's "Finish" button. It can no longer mark a model Complete by
-     *  itself: it runs the same flow as the Health score page's "Mark complete"
-     *  (so the model's files are written) using the model's SAVED set points. When
-     *  that is not possible (set points still empty, not trained ...), the model stays
-     *  Incomplete, the reason is shown on the overview and the model is opened on
-     *  its Health score page. (Phase 4 removes this page and button.) */
-    const markModelComplete = async (modelId: string): Promise<void> => {
-        const m = allModels.find(x => x.id === modelId);
-        if (!m || !workspaceId) return;
-        setCompleteBlock(null);
-        // The PM page flushed its own edits to disk just before calling this: read what is
-        // really there (this window's copy may still be one broadcast behind).
-        let onDisk: FailureGroupStateSlice | undefined;
-        try { onDisk = (await loadWorkspaceData(workspaceId))?.failureGroupState; } catch { onDisk = undefined; }
-        const fresh = onDisk?.models?.find(x => x.id === modelId);
-        const reason = onDisk && fresh ? await runMarkComplete(fresh, { fg: onDisk }) : await runMarkComplete(m);
-        if (reason === null) return;
-        setCompleteBlock(reason);
-        const key = modelSensorKey(m);
-        setSelectedSensorKey(key);
-        setActiveTab(prev => ({ ...prev, [key]: m.id }));
-        if (healthPageBlock(m) === null) setPage(m, 'health');
-    };
-
-    const trainModel = (modelId: string) => {
-        // Guard at the source too, so a future caller can't bypass the gate.
-        const target = allModels.find(m => m.id === modelId);
-        if (target && gateReasonOf(target) !== null) return;
-        setPmPageModelId(modelId);
-        setActivePage('model');
-    };
-
     // 🆕 2026-09-29 [data-loss fix]: awaits every in-flight write before
     // actually closing the window. See `flushAllPending` above and the
     // `onCloseRequested` effect below for the native-close equivalent.
@@ -1601,7 +1542,7 @@ export default function BuildModelWindow() {
     // 🆕 2026-09-29 [data-loss fix]: a native close (the window's own X
     // button, Alt+F4, or the OS closing the app) bypasses `handleClose`
     // entirely. Only intercepts the close when this window has an in-flight
-    // write of its own or the PM page is currently mounted.
+    // write of its own.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
@@ -1610,31 +1551,20 @@ export default function BuildModelWindow() {
             // 🆕 2026-09-30: same reasoning as `handleClose` above — a native
             // close (titlebar X, Alt+F4, OS shutdown) must not be able to
             // bypass a period edit that never naturally blurred. Read
-            // `pmPending`/`pending` AFTER this, not before, so a write this
+            // `pending` AFTER this, not before, so a write this
             // call itself just kicked off is included below.
             flushFocusedInput();
             // A set-point draft typed but never blurred is a pending write too.
             void commitSetPointDrafts();
-            const pmPending = pmFlushRef.current;
             const pending = pendingSaveRef.current;
             // A running "Mark complete" (export + save) counts as pending too.
-            if (!pmPending && !pending && markRunsRef.current.size === 0) return;
+            if (!pending && markRunsRef.current.size === 0) return;
             event.preventDefault();
             if (!(await flushAllPending())) return;
             await win.close();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
     }, [flushAllPending, commitSetPointDrafts]);
-
-    // 🆕 2026-09-18 [bug fix]: must await commitModel's write landing on disk
-    // before navigating to the PM page — else the PM page's own hydration
-    // effect (which reads the workspace file directly) can win the race and
-    // load the model record from BEFORE this commit.
-    const buildModel = async (m: FailureModel) => {
-        if (buildBlockReason(m) !== null) return;
-        await commitModel(m);
-        trainModel(m.id);
-    };
 
     // Hoisted above the `if (loading)` guard (and therefore above every hook
     // below it) so `individualChartQuery`/the auto-recompute effect can read
@@ -1914,7 +1844,7 @@ export default function BuildModelWindow() {
     const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
     const draftPeriodsInvalid = validatePeriods((rcDraft ?? { periods: runningConditionTimePeriods }).periods).some(st => st.invalid);
     const persistedRows = useRowCountPreview({
-        enabled: !loading && activePage === 'overview' && rcConfigured && !persistedPeriodsInvalid,
+        enabled: !loading && rcConfigured && !persistedPeriodsInvalid,
         workspaceId, sensor: rcCountSensor, filter: persistedCountFilter, cache: rowCountCache,
     });
     const draftRows = useRowCountPreview({
@@ -2868,15 +2798,6 @@ export default function BuildModelWindow() {
                 )}
                 {page === 'model' && (
                     <>
-                        <button
-                            type="button"
-                            className="f4-btn f4-btn--plain f4-btn--small"
-                            title={reason ?? 'Sub-models and full settings'}
-                            disabled={reason !== null}
-                            onClick={() => buildModel(m)}
-                        >
-                            Open full view ↗
-                        </button>
                         <button className="f4-btn-save" disabled={saveReason !== null} onClick={() => commitModel(m)}>
                             Save changes
                         </button>
@@ -3163,28 +3084,24 @@ export default function BuildModelWindow() {
         gateHeaders,
     );
 
-    const pmPageModel = activePage === 'model' ? allModels.find(m => m.id === pmPageModelId) : undefined;
-
     return (
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--card-bg)', borderBottom: '1px solid var(--border)' }}>
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {pmPageModel ? `Build Model — ${modelDisplayLabel(pmPageModel)}` : 'Build Model — Overview'}
+                    Build Model — Overview
                 </h2>
                 {/* Step bar (2026-10-04): Running condition -> Model settings -> Train ->
                     Health set points -> Complete. Overview only. Every step is a button
                     (the `data-tauri-drag-region` above applies to this bar's own element
                     only, never to its children, so the buttons stay clickable). */}
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
-                    {!pmPageModel && (
-                        <WorkbenchStepBar
-                            looks={stepLooks}
-                            current={stepCurrent}
-                            disabled={stepDisabled}
-                            disabledTitle={stepDisabledTitle}
-                            onStep={goToStep}
-                        />
-                    )}
+                    <WorkbenchStepBar
+                        looks={stepLooks}
+                        current={stepCurrent}
+                        disabled={stepDisabled}
+                        disabledTitle={stepDisabledTitle}
+                        onStep={goToStep}
+                    />
                 </div>
                 <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
                     <X size={14} />
@@ -3199,184 +3116,151 @@ export default function BuildModelWindow() {
                 </div>
             )}
 
-            {pmPageModel && workspaceId ? (
-                <PredictiveModelBuild
-                    workspaceId={workspaceId}
-                    modelId={pmPageModel.id}
-                    kind={pmPageModel.kind}
-                    sensorHeaders={allSensors}
-                    sensorMetadata={sensorMetadata}
-                    runningConditionFilters={runningConditionFilters}
-                    runningConditionCombine={runningConditionCombine}
-                    runningConditionTimePeriods={runningConditionTimePeriods}
-                    runningConditionNoneConfirmed={runningConditionNoneConfirmed}
-                    category={categoryOf(pmPageModel)}
-                    onBack={() => setActivePage('overview')}
-                    onFinish={async () => {
-                        await markModelComplete(pmPageModel.id);
-                        setActivePage('overview');
-                    }}
-                    registerFlush={registerPmFlush}
+            <div className="flex flex-col" style={{ flex: 1, minHeight: 0 }}>
+                <RunningConditionCard
+                    state={rcStepState}
+                    periods={runningConditionTimePeriods}
+                    filters={runningConditionFilters}
+                    combine={runningConditionCombine}
+                    noneConfirmed={runningConditionNoneConfirmed}
+                    headers={gateHeaders}
+                    getDesc={getDesc}
+                    getUnit={getUnit}
+                    rows={persistedRows}
+                    bounds={datasetBounds}
+                    onOpen={() => setRcFilterOpen(true)}
                 />
-            ) : (
-                <div className="flex flex-col" style={{ flex: 1, minHeight: 0 }}>
-                    <RunningConditionCard
-                        state={rcStepState}
-                        periods={runningConditionTimePeriods}
-                        filters={runningConditionFilters}
-                        combine={runningConditionCombine}
-                        noneConfirmed={runningConditionNoneConfirmed}
-                        headers={gateHeaders}
-                        getDesc={getDesc}
-                        getUnit={getUnit}
-                        rows={persistedRows}
-                        bounds={datasetBounds}
-                        onOpen={() => setRcFilterOpen(true)}
-                    />
 
-                    {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
-                        <div
-                            role="status"
-                            data-testid="rc-legacy-banner"
-                            className="f4-callout f4-callout--info"
-                            style={{ margin: '12px 20px 0' }}
-                        >
-                            <div>
-                                <b>New: running condition is now required for every model.</b>{' '}
-                                {legacyCompleteCount > 0
-                                    ? `${legacyCompleteCount} model${legacyCompleteCount === 1 ? '' : 's'} in this workspace ${legacyCompleteCount === 1 ? 'was' : 'were'} trained on the full dataset. They stay `
-                                    : 'Models in this workspace were set up without one. They stay '}
-                                <b>Complete</b> and nothing is changed. Set a condition before you build or re-train a model.
-                            </div>
-                            <div className="f4-acts">
-                                <button type="button" className="f4-btn f4-btn--small" onClick={() => setRcFilterOpen(true)}>Set a condition</button>
-                                <button
-                                    type="button"
-                                    className="f4-btn f4-btn--plain f4-btn--small"
-                                    onClick={() => {
-                                        setRunningConditionNoneConfirmed(true);
-                                        persistRunningCondition({ noneConfirmed: true });
-                                    }}
-                                >
-                                    Keep using all data
-                                </button>
-                                <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setLegacyRemindLater(true)}>Remind me later</button>
-                            </div>
+                {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
+                    <div
+                        role="status"
+                        data-testid="rc-legacy-banner"
+                        className="f4-callout f4-callout--info"
+                        style={{ margin: '12px 20px 0' }}
+                    >
+                        <div>
+                            <b>New: running condition is now required for every model.</b>{' '}
+                            {legacyCompleteCount > 0
+                                ? `${legacyCompleteCount} model${legacyCompleteCount === 1 ? '' : 's'} in this workspace ${legacyCompleteCount === 1 ? 'was' : 'were'} trained on the full dataset. They stay `
+                                : 'Models in this workspace were set up without one. They stay '}
+                            <b>Complete</b> and nothing is changed. Set a condition before you build or re-train a model.
                         </div>
-                    )}
-
-                    {!rcConfigured && blockedByCondition > 0 && (
-                        <div data-testid="rc-blocked-summary" className="f4-reason" style={{ margin: '8px 20px 0' }}>
-                            ⚠ {blockedByCondition} of {totalModelsCount} model{totalModelsCount === 1 ? '' : 's'} can't be built yet — they follow the workspace or have no condition of their own.
+                        <div className="f4-acts">
+                            <button type="button" className="f4-btn f4-btn--small" onClick={() => setRcFilterOpen(true)}>Set a condition</button>
+                            <button
+                                type="button"
+                                className="f4-btn f4-btn--plain f4-btn--small"
+                                onClick={() => {
+                                    setRunningConditionNoneConfirmed(true);
+                                    persistRunningCondition({ noneConfirmed: true });
+                                }}
+                            >
+                                Keep using all data
+                            </button>
+                            <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setLegacyRemindLater(true)}>Remind me later</button>
                         </div>
-                    )}
-
-                    {completeBlock && (
-                        <div
-                            role="alert"
-                            data-testid="complete-block-reason"
-                            className="f4-callout"
-                            style={{ margin: '12px 20px 0', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center' }}
-                        >
-                            <div>The model was not marked Complete. {completeBlock}</div>
-                            <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => setCompleteBlock(null)}>Dismiss</button>
-                        </div>
-                    )}
-
-                    {categoryNotice && categoryNotice.length > 0 && (() => {
-                        // One entry per sensor (the change list is per model). The
-                        // "taken from" model is the first one, in Individual ->
-                        // Relationship -> Clustering order, that was NOT changed.
-                        const bySensor = new Map<string, CategoryChange[]>();
-                        for (const c of categoryNotice) bySensor.set(c.sensorKey, [...(bySensor.get(c.sensorKey) ?? []), c]);
-                        const changedIds = new Set(categoryNotice.map(c => c.modelId));
-                        return (
-                            <div role="status" data-testid="category-normalisation-notice" className="f4-notice" style={{ margin: '12px 20px 0' }}>
-                                <span className="f4-notice-ico"><TriangleAlert size={16} aria-hidden="true" /></span>
-                                <div style={{ minWidth: 0 }}>
-                                    <div className="f4-notice-title">
-                                        Category made consistent for {bySensor.size} sensor{bySensor.size === 1 ? '' : 's'}
-                                    </div>
-                                    All models of one sensor now share one category. These models were changed when this workspace loaded:
-                                    <ul>
-                                        {[...bySensor.entries()].map(([key, changes]) => {
-                                            const to = changes[0].to;
-                                            const source = KIND_ORDER
-                                                .flatMap(k => allModels.filter(m => modelSensorKey(m) === key && m.kind === k))
-                                                .find(m => !changedIds.has(m.id) && m.category != null);
-                                            const any = allModels.find(m => modelSensorKey(m) === key);
-                                            const tag = (any && (any.kind === 'clustering' ? any.xSensor : any.targetSensor)) || key;
-                                            return (
-                                                <li key={key} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    <b>{sensorLabel(tag)}</b> → {to ? CATEGORY_LABELS[to] : 'not set'}
-                                                    {source ? `, taken from its ${KIND_LABEL[source.kind]} model` : ''}. Changed:{' '}
-                                                    {changes.map((c, i) => (
-                                                        <span key={c.modelId}>
-                                                            {i > 0 && ' · '}
-                                                            {KIND_LABEL[c.kind]}{' '}
-                                                            {c.from ? <span className="f4-strike">{CATEGORY_LABELS[c.from]}</span> : '(not set)'} → {c.to ? CATEGORY_LABELS[c.to] : 'not set'}
-                                                        </span>
-                                                    ))}
-                                                </li>
-                                            );
-                                        })}
-                                    </ul>
-                                    <div style={{ marginTop: '4px' }}>If that's wrong, change it on the sensor's header.</div>
-                                </div>
-                                <button type="button" className="f4-notice-x" onClick={dismissCategoryNotice}>Dismiss</button>
-                            </div>
-                        );
-                    })()}
-
-                    {/* Hidden list: the <aside> is not rendered at all, so the detail pane must be the
-                        ONLY column (a leftover "0 1fr" template would put it in the 0px track). */}
-                    <div className={`bmw-wb${sidebarCollapsed ? ' bmw-wb--nolist' : ''}`} style={{ gridTemplateColumns: sidebarCollapsed ? 'minmax(0,1fr)' : '300px minmax(0,1fr)' }}>
-                        {!sidebarCollapsed && (
-                            <aside className="bmw-side">
-                                <div className="bmw-side-top">
-                                    <div className="bmw-prog">
-                                        <div className="bmw-prog-row">
-                                            <span><b style={{ color: 'var(--text-primary)' }}>{completeModelsCount}</b> of {totalModelsCount} complete</span>
-                                        </div>
-                                        <div className="bmw-prog-bar">
-                                            <span style={{ width: `${totalModelsCount ? (completeModelsCount / totalModelsCount * 100) : 0}%`, background: 'var(--ok)' }} />
-                                        </div>
-                                    </div>
-                                    <div className="sensor-autocomplete-input-wrap">
-                                        <Search size={12} className="sensor-autocomplete-icon" aria-hidden="true" />
-                                        <input
-                                            className="sensor-autocomplete-input"
-                                            placeholder="Search sensor or tag…"
-                                            aria-label="Search sensors"
-                                            value={searchQuery}
-                                            onChange={e => setSearchQuery(e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="bmw-chips">
-                                        <button type="button" className={`bmw-chip${sidebarFilter === 'all' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('all')}>All <b>{sensorGroupsAll.length}</b></button>
-                                        <button type="button" className={`bmw-chip${sidebarFilter === 'attn' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('attn')}>Needs setup <b>{attnCount}</b></button>
-                                        <button type="button" className={`bmw-chip${sidebarFilter === 'done' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('done')}>Complete <b>{doneCount}</b></button>
-                                    </div>
-                                    <div className="bmw-groupby">
-                                        <span>Group by</span>
-                                        <div className="f4-seg">
-                                            <button type="button" className={leftGroupBy === 'fg' ? 'on' : undefined} onClick={() => setLeftGroupBy('fg')}>Failure group</button>
-                                            <button type="button" className={leftGroupBy === 'component' ? 'on' : undefined} onClick={() => setLeftGroupBy('component')}>Component</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="bmw-list">{renderLeftList()}</div>
-                                <div className="bmw-leg" data-testid="status-legend">
-                                    <span><i style={{ background: 'var(--warn)' }} />Needs input / re-train</span>
-                                    <span><i style={{ background: 'var(--danger)' }} />Fix</span>
-                                    <span><i style={{ background: 'var(--ok)' }} />Complete</span>
-                                </div>
-                            </aside>
-                        )}
-                        <section className="bmw-detail">{renderDetailPane()}</section>
                     </div>
+                )}
+
+                {!rcConfigured && blockedByCondition > 0 && (
+                    <div data-testid="rc-blocked-summary" className="f4-reason" style={{ margin: '8px 20px 0' }}>
+                        ⚠ {blockedByCondition} of {totalModelsCount} model{totalModelsCount === 1 ? '' : 's'} can't be built yet — they follow the workspace or have no condition of their own.
+                    </div>
+                )}
+
+                {categoryNotice && categoryNotice.length > 0 && (() => {
+                    // One entry per sensor (the change list is per model). The
+                    // "taken from" model is the first one, in Individual ->
+                    // Relationship -> Clustering order, that was NOT changed.
+                    const bySensor = new Map<string, CategoryChange[]>();
+                    for (const c of categoryNotice) bySensor.set(c.sensorKey, [...(bySensor.get(c.sensorKey) ?? []), c]);
+                    const changedIds = new Set(categoryNotice.map(c => c.modelId));
+                    return (
+                        <div role="status" data-testid="category-normalisation-notice" className="f4-notice" style={{ margin: '12px 20px 0' }}>
+                            <span className="f4-notice-ico"><TriangleAlert size={16} aria-hidden="true" /></span>
+                            <div style={{ minWidth: 0 }}>
+                                <div className="f4-notice-title">
+                                    Category made consistent for {bySensor.size} sensor{bySensor.size === 1 ? '' : 's'}
+                                </div>
+                                All models of one sensor now share one category. These models were changed when this workspace loaded:
+                                <ul>
+                                    {[...bySensor.entries()].map(([key, changes]) => {
+                                        const to = changes[0].to;
+                                        const source = KIND_ORDER
+                                            .flatMap(k => allModels.filter(m => modelSensorKey(m) === key && m.kind === k))
+                                            .find(m => !changedIds.has(m.id) && m.category != null);
+                                        const any = allModels.find(m => modelSensorKey(m) === key);
+                                        const tag = (any && (any.kind === 'clustering' ? any.xSensor : any.targetSensor)) || key;
+                                        return (
+                                            <li key={key} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                <b>{sensorLabel(tag)}</b> → {to ? CATEGORY_LABELS[to] : 'not set'}
+                                                {source ? `, taken from its ${KIND_LABEL[source.kind]} model` : ''}. Changed:{' '}
+                                                {changes.map((c, i) => (
+                                                    <span key={c.modelId}>
+                                                        {i > 0 && ' · '}
+                                                        {KIND_LABEL[c.kind]}{' '}
+                                                        {c.from ? <span className="f4-strike">{CATEGORY_LABELS[c.from]}</span> : '(not set)'} → {c.to ? CATEGORY_LABELS[c.to] : 'not set'}
+                                                    </span>
+                                                ))}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                                <div style={{ marginTop: '4px' }}>If that's wrong, change it on the sensor's header.</div>
+                            </div>
+                            <button type="button" className="f4-notice-x" onClick={dismissCategoryNotice}>Dismiss</button>
+                        </div>
+                    );
+                })()}
+
+                {/* Hidden list: the <aside> is not rendered at all, so the detail pane must be the
+                    ONLY column (a leftover "0 1fr" template would put it in the 0px track). */}
+                <div className={`bmw-wb${sidebarCollapsed ? ' bmw-wb--nolist' : ''}`} style={{ gridTemplateColumns: sidebarCollapsed ? 'minmax(0,1fr)' : '300px minmax(0,1fr)' }}>
+                    {!sidebarCollapsed && (
+                        <aside className="bmw-side">
+                            <div className="bmw-side-top">
+                                <div className="bmw-prog">
+                                    <div className="bmw-prog-row">
+                                        <span><b style={{ color: 'var(--text-primary)' }}>{completeModelsCount}</b> of {totalModelsCount} complete</span>
+                                    </div>
+                                    <div className="bmw-prog-bar">
+                                        <span style={{ width: `${totalModelsCount ? (completeModelsCount / totalModelsCount * 100) : 0}%`, background: 'var(--ok)' }} />
+                                    </div>
+                                </div>
+                                <div className="sensor-autocomplete-input-wrap">
+                                    <Search size={12} className="sensor-autocomplete-icon" aria-hidden="true" />
+                                    <input
+                                        className="sensor-autocomplete-input"
+                                        placeholder="Search sensor or tag…"
+                                        aria-label="Search sensors"
+                                        value={searchQuery}
+                                        onChange={e => setSearchQuery(e.target.value)}
+                                    />
+                                </div>
+                                <div className="bmw-chips">
+                                    <button type="button" className={`bmw-chip${sidebarFilter === 'all' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('all')}>All <b>{sensorGroupsAll.length}</b></button>
+                                    <button type="button" className={`bmw-chip${sidebarFilter === 'attn' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('attn')}>Needs setup <b>{attnCount}</b></button>
+                                    <button type="button" className={`bmw-chip${sidebarFilter === 'done' ? ' bmw-chip--on' : ''}`} onClick={() => setSidebarFilter('done')}>Complete <b>{doneCount}</b></button>
+                                </div>
+                                <div className="bmw-groupby">
+                                    <span>Group by</span>
+                                    <div className="f4-seg">
+                                        <button type="button" className={leftGroupBy === 'fg' ? 'on' : undefined} onClick={() => setLeftGroupBy('fg')}>Failure group</button>
+                                        <button type="button" className={leftGroupBy === 'component' ? 'on' : undefined} onClick={() => setLeftGroupBy('component')}>Component</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bmw-list">{renderLeftList()}</div>
+                            <div className="bmw-leg" data-testid="status-legend">
+                                <span><i style={{ background: 'var(--warn)' }} />Needs input / re-train</span>
+                                <span><i style={{ background: 'var(--danger)' }} />Fix</span>
+                                <span><i style={{ background: 'var(--ok)' }} />Complete</span>
+                            </div>
+                        </aside>
+                    )}
+                    <section className="bmw-detail">{renderDetailPane()}</section>
                 </div>
-            )}
+            </div>
 
             {rcFilterOpen && (
                 // 🆕 2026-10-03: edits go to a local draft; only Apply writes

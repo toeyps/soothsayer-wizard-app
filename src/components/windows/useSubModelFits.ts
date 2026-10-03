@@ -6,10 +6,9 @@ import { debugLog } from '../../utils/debugLog';
 /*
  * Sub-model fits for a Relationship model ("Compare predictors" / "Sub-models").
  *
- * Extracted from PredictiveModelBuild.tsx (health score phase 3b-1, 2026-10-04)
- * so the Build Model Workbench's Model fit page and the PM page share ONE
- * implementation — the PM page is deleted in phase 4, after which this file's
- * only caller is the Workbench. Behaviour is the PM page's own, unchanged:
+ * Extracted from the (since deleted) PredictiveModelBuild.tsx page in health
+ * score phase 3b-1, 2026-10-04; the Build Model Workbench's Model fit page is
+ * now its only caller. Behaviour is the old page's own, unchanged:
  *
  *   predictors = [p1, p2, p3] -> three SEQUENTIAL `preview_relationship_model`
  *   calls for the cumulative subsets [p1], [p1,p2], [p1,p2,p3]. Each full
@@ -71,8 +70,8 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
     const [progress, setProgress] = useState({ current: 0, total: 0 });
     // Generation counter: each `run` claims one and only commits while it is
     // still current, so a late-finishing older call can never overwrite a
-    // newer one (two overlapping runs are possible when the PM page's Apply
-    // fires this in the background and the user re-clicks during it).
+    // newer one (two overlapping runs are possible when a background run is
+    // still going and the user re-clicks during it).
     const genRef = useRef(0);
 
     const stale = useMemo(() => {

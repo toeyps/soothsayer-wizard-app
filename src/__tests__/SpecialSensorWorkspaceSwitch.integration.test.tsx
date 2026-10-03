@@ -673,7 +673,7 @@ describe('2a. late events from A\'s still-alive windows are ignored by B\'s Dash
             ['special-sensor-data-changed', { workspaceId: A_ID }],
             ['add-sensor-plot-result', { workspaceId: A_ID, selectedSensors: ['TAG1', 'S1'] }],
             ['failure-group-state-changed', { ...wsA().failureGroupState, workspaceId: A_ID, origin: 'build-model' }],
-            ['failure-group-state-changed', { ...wsA().failureGroupState, workspaceId: A_ID, origin: 'predictive-model' }],
+            ['failure-group-state-changed', { ...wsA().failureGroupState, workspaceId: A_ID, origin: 'other-window' }],
             ['sensors-data', { workspaceId: A_ID, sensors: ['TAG1', 'S1', 'S2'], selectedSensors: ['S1'], sensorMetadata: A_META, specialSensorRecipes: A_RECIPES, models: [A_MODEL] }],
         ];
         for (const [event, payload] of late) {

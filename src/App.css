@@ -71,7 +71,7 @@
    all. The lucide `<Calendar>` icon rendered next to each input (an
    ordinary SVG this app already renders reliably everywhere) is the sole
    calendar affordance now, wired to call the input's own `showPicker()` on
-   click — see PredictiveModelBuild.tsx's and Dashboard.tsx's Time
+   click — see Dashboard.tsx's Time
    start/end and TIME RANGE inputs. `pointer-events: none` here means this
    spot no longer intercepts hover/click at all — a click there now reaches
    the input underneath instead (just focuses it, same as clicking anywhere
@@ -80,7 +80,6 @@
     opacity: 0;
     pointer-events: none;
 }
-
 
 .separator {
     color: var(--text-secondary);
@@ -358,8 +357,6 @@ tr:hover {
     color: var(--text-secondary);
     font-size: 0.9rem;
 }
-
-
 
 /* Spinner */
 .spinner {
@@ -640,62 +637,10 @@ tr:hover {
 }
 
 /* =============================================
-   Predictive Model Build Page
+   Shared form rows (Build Model Workbench)
+   (The standalone Predictive Model page and its page-level classes were
+   removed in health score phase 4, 2026-10-04.)
    ============================================= */
-
-/* This page now renders as a child of BuildModelWindow's own layout (not
-   its own OS window/webview anymore), so it fills its flex-column parent
-   rather than the viewport — `flex: 1; min-height: 0` instead of
-   `height: 100vh`. Window-chrome classes (titlebar, minimize/maximize/close
-   buttons, shake animation) that only made sense for a standalone window
-   were removed along with the JSX that used them. */
-.predictive-container {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-    overflow: hidden;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-}
-
-.predictive-body {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-}
-
-/* Config Sections */
-
-.config-input {
-    width: 100%;
-    padding: 0.35rem 0.5rem;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    color: var(--text-primary);
-    font-size: 0.8rem;
-    outline: none;
-    box-sizing: border-box;
-    transition: border-color 0.2s;
-}
-
-.config-input:focus {
-    border-color: var(--accent-color);
-}
-
-.config-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.config-input::-webkit-calendar-picker-indicator {
-    filter: invert(1);
-    opacity: 0.5;
-    cursor: pointer;
-}
 
 .filter-row {
     display: flex;
@@ -723,11 +668,6 @@ tr:hover {
 .plot-placeholder p {
     margin: 0;
     font-size: 0.9rem;
-}
-
-.plot-placeholder-sub {
-    font-size: 0.75rem !important;
-    opacity: 0.6;
 }
 
 /* Model Stats Bar */
@@ -895,7 +835,7 @@ tr:hover {
         transform: translateX(0);
     }
 }
-/* ── Sensor Autocomplete (PredictiveModelBuild) ── */
+/* ── Sensor Autocomplete (SensorPickers.tsx) ── */
 .sensor-autocomplete {
     position: relative;
     width: 100%;
@@ -1038,8 +978,7 @@ tr:hover {
 
 /* ── Predictor Picker popup (added 2026-09-22) ─────────────────────
    Multi-select replacement for SensorAutocomplete on the two predictor
-   fields (PredictiveModelBuild.tsx's own "Predictor sensors" section,
-   BuildModelWindow.tsx's Relationship form) — search + collapsible
+   fields (SensorPickers.tsx; used by BuildModelWindow.tsx's Relationship form) — search + collapsible
    per-component groups + checkboxes, staged until OK. Mirrors
    .pm-chart-modal-* backdrop/card conventions but sized as a compact
    dialog instead of a full-viewport chart expand. */
@@ -1862,36 +1801,8 @@ body {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   Predictive Model — Linear/Vercel Redesign
+   Shared button / chip / chart-modal styles (pm-* — Workbench + SensorPickers)
    ────────────────────────────────────────────────────────────── */
-
-.pm-commandbar {
-    height: 52px;
-    display: flex;
-    align-items: center;
-    padding: 0 18px;
-    gap: 12px;
-    flex-shrink: 0;
-    background: var(--bg-surface, var(--bg-secondary));
-    border-bottom: 1px solid var(--border);
-}
-
-.pm-breadcrumb {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-.pm-crumb-sep { color: var(--text-faint, var(--text-secondary)); opacity: 0.5; }
-.pm-crumb-muted { color: var(--text-secondary); font-size: 12px; }
-.pm-crumb-current {
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 600;
-    font-family: Inter, -apple-system, sans-serif;
-}
-
-.pm-flex-spacer { flex: 1; }
 
 .pm-btn {
     display: inline-flex;
@@ -1921,69 +1832,6 @@ body {
 
 .pm-btn-sm { padding: 4px 10px; font-size: 11.5px; }
 
-/* Grid */
-.pm-grid {
-    display: grid;
-    grid-template-columns: 300px 1fr 340px;
-    background: var(--bg-primary);
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-}
-/* Individual models have no right-column config (see PredictiveModelBuild.tsx) */
-.pm-grid.pm-grid--no-right {
-    grid-template-columns: 300px 1fr;
-}
-
-.pm-col-left,
-.pm-col-right {
-    background: var(--bg-surface, var(--bg-secondary));
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-}
-.pm-col-left { border-right: 1px solid var(--border); }
-.pm-col-right { border-left: 1px solid var(--border); }
-
-.pm-col-center {
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-width: 0;
-    overflow: hidden;
-}
-
-/* Sections */
-.pm-section {
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-}
-.pm-section:last-child { border-bottom: none; }
-
-.pm-section-header {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 10px;
-}
-.pm-eyebrow {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-faint, var(--text-secondary));
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    opacity: 0.75;
-}
-.pm-section-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: -0.01em;
-    flex: 1;
-}
-
 .pm-count-pill {
     padding: 1px 7px;
     background: var(--chip-bg, rgba(255,255,255,0.05));
@@ -1995,124 +1843,16 @@ body {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
-.pm-section-hint {
-    font-size: 11.5px;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.75;
-    margin-bottom: 10px;
-    line-height: 1.4;
-}
-
 /* Target card */
-.pm-target-card {
-    padding: 12px;
-    background: var(--accent-muted, rgba(59, 130, 246, 0.08));
-    border: 1px solid var(--accent-color);
-    border-radius: 8px;
-}
-.pm-target-card-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-}
-.pm-target-icon { color: var(--accent-color); flex-shrink: 0; }
-.pm-target-tag {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    word-break: break-all;
-}
-.pm-target-desc {
-    font-size: 11.5px;
-    color: var(--text-secondary);
-    letter-spacing: 0.02em;
-    line-height: 1.4;
-}
-.pm-target-meta {
-    font-size: 10.5px;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.65;
-    margin-top: 6px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
 
 /* Segmented */
-.pm-mode-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-}
-.pm-segmented {
-    display: inline-flex;
-    padding: 2px;
-    background: var(--bg-surface-hi, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: 8px;
-}
-.pm-segmented-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-}
-.pm-segmented-btn:hover { color: var(--text-primary); }
-.pm-segmented-btn.active {
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.25), inset 0 0 0 1px var(--border);
-}
+
 /* The model's kind is fixed (chosen on the Build Model overview page), so
    the two non-matching buttons are locked rather than clickable — dimmed
    instead of hidden so the kind stays visible at a glance. */
-.pm-segmented-btn:disabled {
-    cursor: not-allowed;
-}
-.pm-segmented-btn:disabled:not(.active) {
-    opacity: 0.35;
-}
-.pm-segmented-btn:disabled:hover {
-    color: inherit;
-}
-
-.pm-axis-info {
-    font-size: 11px;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.8;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-.pm-axis-faint { opacity: 0.55; }
 
 /* Chart card */
-.pm-chart-card {
-    background: var(--bg-surface, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-.pm-chart-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
-}
+
 .pm-chart-title-block { flex: 1; min-width: 0; }
 .pm-chart-title {
     font-size: 14px;
@@ -2127,90 +1867,13 @@ body {
     margin-top: 2px;
 }
 
-.pm-chart-legend {
-    display: flex;
-    gap: 12px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10.5px;
-    color: var(--text-secondary);
-    flex-wrap: wrap;
-}
-.pm-legend-dot {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-.pm-legend-line {
-    width: 14px;
-    height: 2px;
-    display: inline-block;
-}
-.pm-legend-accent { background: var(--accent-color); }
-.pm-legend-warn { background: var(--warn, #f59e0b); }
-.pm-legend-danger { background: var(--danger, #ef4444); }
-.pm-legend-dashed {
-    background: transparent !important;
-    border-top: 1.5px dashed var(--danger, #ef4444);
-    height: 0;
-}
-
 /* Called out next to the chart's own 🔍 zoom control (added 2026-09-22) —
    clarifies that zoom only changes what's visible here, unlike the
    Training scope panel's Time start/end, which changes what's queried and
    trained on. Accent-tinted (not plain --chip-bg like .pm-count-pill) so
    it reads as "worth reading", not just another stat pill. */
-.pm-chart-zoom-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 7px;
-    background: var(--accent-muted);
-    border: 1px solid oklch(0.68 0.17 245 / 0.35);
-    border-radius: 999px;
-    color: var(--accent-hi);
-    /* Explicit rather than inherited — this renders both inside
-       .pm-chart-legend (which would supply these) and inside
-       .pm-chart-title-block in the expanded-chart modal (which wouldn't),
-       so it must not depend on which parent it's in. */
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10.5px;
-    font-weight: 600;
-    cursor: help;
-}
-
-.pm-chart-body {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-height: 0;
-}
 
 /* ── Expand button on each chart header ───────────────────────────── */
-.pm-chart-expand-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
-}
-.pm-chart-expand-btn:hover {
-    background: var(--hover-bg);
-    color: var(--text-primary);
-    border-color: var(--accent-color, var(--text-secondary));
-}
-.pm-chart-expand-btn:focus-visible {
-    outline: 2px solid var(--accent-color, #3b82f6);
-    outline-offset: 1px;
-}
 
 /* ── Expanded-chart fullscreen modal ─────────────────────────────── */
 /* Also reused by BuildModelWindow.tsx's own expand-chart modal (shared
@@ -2513,21 +2176,7 @@ body {
     min-height: 180px;
 }
 /* ── Configure Clustering Model layout ────────────────────────────── */
-.pm-fields-clustering {
-    /* Slightly tighter row spacing than the default pm-fields */
-    gap: 12px;
-}
-.pm-field-grid-2 {
-    display: grid;
-    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-    gap: 14px;
-    align-items: start;
-}
-@media (max-width: 480px) {
-    .pm-field-grid-2 {
-        grid-template-columns: 1fr;
-    }
-}
+
 .pm-field-hint-inline {
     font-size: 0.65rem;
     font-weight: 400;
@@ -2677,318 +2326,9 @@ body {
     padding: 2px 9px;
 }
 
-/* Inline error under config */
-.pm-config-error {
-    font-size: 12px;
-    color: #f43f5e;
-    background: rgba(244, 63, 94, 0.08);
-    border: 1px solid rgba(244, 63, 94, 0.25);
-    border-radius: 6px;
-    padding: 6px 10px;
-    line-height: 1.4;
-}
-
-/* Stat pills (preview info) */
-.pm-stat-pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding-top: 4px;
-}
-.pm-stat-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 9px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-secondary, rgba(15, 23, 42, 0.35));
-    font-size: 11px;
-    line-height: 1.2;
-}
-.pm-stat-pill-label {
-    color: var(--text-secondary, #94a3b8);
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 9px;
-}
-.pm-stat-pill-value {
-    color: var(--text-primary, #f1f5f9);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-}
-
-/* ── Stepper (Number of Clusters) ─────────────────────────────────── */
-.pm-stepper {
-    display: inline-flex;
-    align-items: center;
-    gap: 0;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--bg-secondary, rgba(15, 23, 42, 0.4));
-    height: 32px;
-}
-.pm-stepper-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 100%;
-    background: transparent;
-    border: 0;
-    color: var(--text-primary, #f1f5f9);
-    cursor: pointer;
-    transition: background 120ms ease, color 120ms ease;
-    padding: 0;
-}
-.pm-stepper-btn:hover:not(:disabled) {
-    background: rgba(99, 102, 241, 0.18);
-    color: #818cf8;
-}
-.pm-stepper-btn:active:not(:disabled) {
-    background: rgba(99, 102, 241, 0.28);
-}
-.pm-stepper-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-}
-.pm-stepper-value {
-    min-width: 38px;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--text-primary, #f1f5f9);
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-    padding: 0 6px;
-    line-height: 32px;
-    user-select: none;
-}
-
-.pm-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 6px 12px 0;
-}
-.pm-progress-track {
-    position: relative;
-    height: 4px;
-    width: 100%;
-    background: var(--hover-bg);
-    border-radius: 999px;
-    overflow: hidden;
-}
-.pm-progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #3b82f6, #6366f1);
-    border-radius: 999px;
-    transition: width 0.25s ease;
-}
-.pm-progress-bar--indeterminate {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 30%;
-    animation: pm-progress-indeterminate 1.2s ease-in-out infinite;
-}
-.pm-progress-label {
-    font-size: 11px;
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-@keyframes pm-progress-indeterminate {
-    0%   { transform: translateX(-100%); }
-    100% { transform: translateX(450%); }
-}
 .pm-chart-placeholder {
     flex: 1;
     min-height: 280px;
-}
-.pm-scatter-x-selector {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-.pm-scatter-x-selector label { font-weight: 600; }
-
-/* Stats strip */
-.pm-stats-strip {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    padding: 12px 18px;
-    background: var(--bg-surface, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    flex-wrap: wrap;
-    flex-shrink: 0;
-}
-.pm-stats-eyebrow {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.7;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-.pm-stats-item {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-.pm-stats-label {
-    font-size: 9.5px;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.7;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 600;
-}
-.pm-stats-value {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    letter-spacing: -0.01em;
-}
-.pm-stats-warn { color: var(--warn, #f59e0b); }
-
-/* Right col: Selected + Config */
-.pm-selected-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-.pm-selected-chip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 8px 7px 10px;
-    background: var(--bg-surface-hi, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: 7px;
-}
-.pm-selected-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
-    flex-shrink: 0;
-}
-.pm-selected-dot-1 { background: oklch(0.74 0.15 155); }
-.pm-selected-dot-2 { background: oklch(0.78 0.14 70); }
-.pm-selected-dot-3 { background: oklch(0.70 0.15 310); }
-.pm-selected-dot-4 { background: oklch(0.72 0.16 245); }
-
-.pm-selected-text {
-    flex: 1;
-    min-width: 0;
-}
-.pm-selected-tag {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.pm-selected-desc {
-    font-size: 10px;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.7;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.pm-selected-remove {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--text-faint, var(--text-secondary));
-    padding: 4px;
-    display: flex;
-    border-radius: 4px;
-}
-.pm-selected-remove:hover {
-    color: var(--danger, #ef4444);
-    background: var(--hover-bg);
-}
-
-.pm-empty-dashed {
-    padding: 16px;
-    text-align: center;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.7;
-    font-size: 12px;
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-}
-
-.pm-chart-stack {
-    flex: 1 1 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-    overflow: hidden;
-}
-.pm-chart-stack .pm-chart-card {
-    flex: 1 1 0;
-    min-height: 0;
-    overflow: hidden;
-}
-.pm-chart-stack .pm-chart-card .pm-chart-body {
-    min-height: 0;
-}
-.pm-chart-stack .pm-chart-card .pm-chart-placeholder {
-    min-height: 0;
-    flex: 1 1 0;
-    justify-content: center;
-}
-.pm-chart-empty .pm-chart-placeholder { min-height: 0; }
-
-.pm-config-block { transition: opacity 0.15s; }
-.pm-config-dim { opacity: 0.5; }
-.pm-config-dim .pm-fields input,
-.pm-config-dim .pm-fields .sensor-autocomplete { pointer-events: none; }
-.pm-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-/* Responsive */
-@media (max-width: 1280px) {
-    .pm-grid { grid-template-columns: 280px 1fr 320px; }
-    .pm-grid.pm-grid--no-right { grid-template-columns: 280px 1fr; }
-}
-@media (max-width: 1024px) {
-    .pm-grid { grid-template-columns: 260px 1fr 300px; }
-    .pm-grid.pm-grid--no-right { grid-template-columns: 260px 1fr; }
-    .pm-chart-legend { display: none; }
-    .pm-breadcrumb .pm-crumb-muted { display: none; }
-}
-@media (max-width: 860px) {
-    .pm-grid {
-        grid-template-columns: 1fr;
-        grid-auto-rows: min-content;
-    }
-    .pm-col-left,
-    .pm-col-right {
-        border: none;
-        border-bottom: 1px solid var(--border);
-    }
-    .pm-stats-strip { gap: 14px; }
 }
 
 /* =============================================
@@ -4067,8 +3407,6 @@ body {
     font-family: var(--mono);
 }
 
-
-
 /* =====================================================================
  * Feature 4 - Running Condition panel, Training periods, sensor rows.
  * Visual spec: the approved mockups time-ranges.html, rc-gate.html and
@@ -4104,20 +3442,15 @@ body {
 .f4-seg button { border: 1px solid transparent; background: none; border-radius: 5px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); cursor: pointer; }
 .f4-seg button:hover:not(.on) { color: var(--text-primary); }
 .f4-seg button.on { background: var(--blue-bg); border-color: var(--blue-line); color: var(--accent-color); }
-.f4-seg--two { display: flex; }
-.f4-seg--two button { flex: 1; padding: 4px 8px; }
-.f4-seg--two button.on .f4-wsw-t { color: var(--accent-color); }
+
 .f4-seg--andor button { padding: 3px 11px; font-size: 10.5px; letter-spacing: 0.03em; }
 .f4-seg--andor button.on { background: var(--accent-color); color: #06111f; border-color: transparent; }
-.f4-wsw { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; }
-.f4-wsw-t { font-size: 11px; font-weight: 700; }
-.f4-wsw-s { font-size: 9.5px; color: var(--text-faint); font-weight: 400; }
 
 /* notes / reasons */
 .f4-note { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin: 0; }
 .f4-note--faint { color: var(--text-faint); font-size: 10.5px; }
 .f4-reason { font-size: 11px; color: var(--warn); display: flex; gap: 6px; align-items: center; }
-.f4-reason--bad { color: var(--danger); }
+
 .f4-foot-note { font-size: 10.5px; color: var(--text-faint); }
 
 /* coverage bar */
@@ -4163,9 +3496,6 @@ body {
 .f4-nofilter .f4-pill { width: fit-content; }
 
 /* rule line */
-.f4-formula { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); padding: 8px 10px; font-size: 11px; color: var(--text-secondary); line-height: 1.7; }
-.f4-formula--compact { font-size: 10.5px; }
-.f4-formula b { color: var(--text-primary); font-weight: 600; }
 .f4-op { font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: var(--chip-bg); color: var(--text-primary); margin: 0 2px; }
 .f4-op--or { color: var(--accent-color); background: var(--blue-bg); }
 
@@ -4178,16 +3508,12 @@ body {
 .f4-seed { border: 1px solid var(--blue-line); background: var(--blue-bg); border-radius: 7px; padding: 7px 9px; font-size: 11px; line-height: 1.45; display: flex; gap: 8px; align-items: flex-start; color: var(--text-secondary); }
 .f4-seed b { color: var(--accent-color); }
 
-/* PM sidebar (300 px) */
+/* Sidebar-width form pieces */
 .f4-slabel { font-size: 11.5px; font-weight: 600; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; color: var(--text-primary); }
 .f4-side-blk { display: grid; gap: 6px; }
-.f4-rolist { display: grid; gap: 3px; }
-.f4-roline { display: flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 10.5px; color: var(--text-primary); min-width: 0; }
-.f4-roline--sans { font-family: inherit; font-size: 11px; }
-.f4-roline > span:nth-child(2) { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.f4-roline-d { color: var(--text-faint); flex-shrink: 0; }
+
 .f4-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--accent-color); }
-.f4-dot--faint { background: var(--text-faint); }
+
 .f4-crow { border: 1px solid var(--border); background: var(--chip-bg); border-radius: 6px; min-width: 0; }
 .f4-crow--bad { border-color: var(--danger-line); background: var(--danger-muted); }
 .f4-crow--ovl { border-color: var(--warn-line); }
@@ -4420,11 +3746,6 @@ body {
 .bmw-btn-retrain--stale { background: var(--warn); color: #241a02; }
 .bmw-fix-link { background: none; border: 0; padding: 0; margin: 0; color: var(--warn); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.76rem; text-align: left; }
 .bmw-fix-link:hover { color: var(--text-primary); }
-/* Results area's Trained-and-fresh toolbar: reuses `.pm-stats-strip`'s
-   label/value styling but drops its own box chrome -- it sits inline next to
-   the legend inside `.pm-chart-header`, not as a separate boxed strip below
-   the chart the way PredictiveModelBuild.tsx's own stats strip does. */
-.bmw-result-stats { background: none; border: 0; padding: 0; gap: 16px; }
 
 /* 🆕 2026-10-02 [visual refresh Phase 3, look only]: added blur + bumped
    opacity to match the prototype's own `.scrim` (rgba(0,0,0,.55) +
@@ -6437,3 +5758,8 @@ body {
 .hs-files { font-size: 11px; }
 .hs-files summary { cursor: pointer; color: var(--accent-hi); }
 .hs-files ul { margin: 6px 0 0; padding-left: 18px; font: 500 11px var(--mono); color: var(--text-secondary); }
+
+/* Spinner icon used by the Build Model window (Loader2); reuses the global spin keyframes. */
+.pm-spin {
+    animation: spin 1s linear infinite;
+}
