@@ -182,11 +182,44 @@ describe('FailureGroupsPanel', () => {
             expect(dot!.className).toContain('f4-kb-dot--trained');
         });
 
-        it('shows a green "complete" dot when status is true, regardless of fingerprint freshness', () => {
+        it('shows a green "complete" dot when status is true and there is no train record to be out of date against (a legacy Complete model)', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ status: true })] })} />);
             const dot = dotOn(badgeFor('I'));
             expect(dot).not.toBeNull();
             expect(dot!.className).toContain('f4-kb-dot--complete');
+        });
+
+        // 🆕 2026-10-03 (health score phase 3a): the same single definition
+        // (`utils/modelStatus.ts`) the Build Model window reads — a Complete
+        // model whose inputs no longer match its train record is NOT complete.
+        describe('Complete but out of date (inputs changed since it was trained)', () => {
+            const rc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true };
+            const complete = (over: Partial<FailureModel> = {}) => {
+                const model = makeModel({ status: true, category: 'performance', ...over });
+                return { ...model, lastTrainedAt: '2026-09-30T00:00:00.000Z', trainedFingerprint: computeTrainFingerprint(model, { ...rc, models: [model] }) };
+            };
+
+            it('a Complete model with a fresh train record keeps its green dot and counts as complete', () => {
+                const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [complete()], runningConditionFg: rc })} />);
+                expect(dotOn(badgeFor('I'))!.className).toContain('f4-kb-dot--complete');
+                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 of 1 models complete');
+            });
+
+            it('status:true but the target sensor changed since training -> no green dot, not counted complete (summary chip and group count)', () => {
+                const stale = { ...complete(), targetSensor: 'TAG2' };
+                const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [stale], runningConditionFg: rc })} />);
+                expect(dotOn(badgeFor('I'))).toBeNull();
+                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('0 of 1 models complete');
+                expect(screen.getByText('FG-1').closest('.fg-row')!.querySelector('.fg-row-count')!.textContent).toBe('0 / 1');
+            });
+
+            it('the WORKSPACE running condition changing makes a Workspace-mode Complete model stale, but not a Custom-mode one', () => {
+                const wsMode = complete({ id: 'a', targetSensor: 'TAG1' });
+                const customMode = complete({ id: 'b', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
+                const changedRc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionCombine: 'or' };
+                const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [wsMode, customMode], runningConditionFg: changedRc })} />);
+                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 of 2 models complete');
+            });
         });
 
         it('does NOT show the blue dot for a fingerprint-fresh model that is blocked by an unrelated gate reason (running-condition sensor missing from the dataset) — mirrors BuildModelWindow.tsx\'s Phase B gate-consistency fix', () => {

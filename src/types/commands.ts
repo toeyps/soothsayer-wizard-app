@@ -1,3 +1,5 @@
+import type { HealthPreview } from './health';
+
 /**
  * Response shape from the Python sidecar's `preview_relationship` action.
  *
@@ -30,6 +32,19 @@ export interface RelationshipPreviewResult {
   /** Present only on failure. */
   error?: string;
   trace?: string;
+  /**
+   * Health score (2026-10-03): present only when the caller passed `cache_key`.
+   * `cache_key` echoes it; `cached` says the full-resolution fit was kept in
+   * Rust's session (false = it did not fit the byte budget or the dataset was
+   * reloaded meanwhile, so `compute_health_preview` will answer `NOT_FITTED`);
+   * `health_preview` is the bounded Relationship preview with NO set points
+   * applied (`valid:false`, no score yet), ready to draw right after Train.
+   * The full `predicted` / `residual` / `target_raw` / `predictor_raw` arrays
+   * above are still sent for the existing charts until a later phase drops them.
+   */
+  cache_key?: string;
+  cached?: boolean;
+  health_preview?: HealthPreview;
 }
 
 /** New: result of `train_individual_model` (writes JSON to disk). */

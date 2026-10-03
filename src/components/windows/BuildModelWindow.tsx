@@ -13,6 +13,10 @@ import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils
 import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
 import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from "../../utils/runningCondition";
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
+import { buildPreviewFilterPayload } from "../../utils/trainingScope";
+import { applyIncompleteRule } from "../../utils/incompleteRule";
+import { isModelStale as isModelStaleFor, NOT_TRAINED_BLOCK_REASON } from "../../utils/modelStatus";
+import { HEALTH_DEFAULT_MAX_POINTS } from "../../utils/healthRequest";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useChartData } from "../../hooks/useChartData";
@@ -178,7 +182,10 @@ interface SensorStats {
  *  is never persisted (only `lastTrainedAt`/`trainedFingerprint` are). */
 type TrainResult =
     | { kind: 'individual'; stats: SensorStats }
-    | { kind: 'relationship'; result: RelationshipPreviewResult; predictorsAtApply: string[] }
+    // `result.health_preview` is the bounded Relationship preview Rust returns
+    // when asked to cache the fit (no set points applied — draw it right away);
+    // `cacheKey` is the key that fit is cached under, for `compute_health_preview`.
+    | { kind: 'relationship'; result: RelationshipPreviewResult; predictorsAtApply: string[]; cacheKey: string }
     | { kind: 'clustering'; preview: ClusteringPreview };
 
 interface TrainCacheEntry {
@@ -242,31 +249,6 @@ function formatTrainedAt(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
     return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-/** Wire shape the three preview commands (`compute_sensor_stats`,
- *  `preview_relationship_model`, `compute_clustering_preview`) expect for
- *  `filter` — same `{timestamp_ranges, value_filters, combine}` (or `null`
- *  for "no filter at all") that PredictiveModelBuild.tsx's own
- *  `dashboardFilterPayload` memo builds, reimplemented here as a pure
- *  function since that memo is local to that component. */
-function buildPreviewFilterPayload(
-    eff: { filters: WorkspaceSensorFilter[]; combine: 'and' | 'or'; noneConfirmed: boolean; periods: TimePeriod[] },
-    headers: string[] | null,
-) {
-    const rawFilters = eff.noneConfirmed ? [] : eff.filters;
-    const valueFilters = rawFilters
-        .filter(sf => isCompleteCondition(sf, headers))
-        .map(sf => ({
-            sensor: sf.sensor,
-            operation: sf.operation,
-            value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
-            value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
-        }));
-    const ranges = toFilterRanges(eff.periods);
-    const filterRanges = ranges.some(rg => rg.start === null && rg.end === null) ? [] : ranges;
-    if (valueFilters.length === 0 && filterRanges.length === 0) return null;
-    return { timestamp_ranges: filterRanges, value_filters: valueFilters, combine: eff.combine };
 }
 
 /** Relationship scatter option: Raw (blue) vs. Relation model output (red)
@@ -849,7 +831,9 @@ export default function BuildModelWindow() {
                 const result = updater(models, groups);
                 // Spread-merge: this path only changes groups/models; every other slice
                 // field (running condition incl. time range, future fields) must survive.
-                return withFailureGroupState(prev, { groups: result.groups, models: result.models });
+                // "Incomplete immediately": a Complete model whose training inputs this
+                // write changed goes back to Incomplete in the SAME write.
+                return applyIncompleteRule(prev, withFailureGroupState(prev, { groups: result.groups, models: result.models }));
             });
             if (next?.failureGroupState) {
                 applyFg(next.failureGroupState);
@@ -881,7 +865,10 @@ export default function BuildModelWindow() {
                 // Any edit made through this panel settles the legacy notice.
                 const fg = applied.failureGroupState;
                 const stillPending = fg?.rcLegacyNotice === 'pending' && !isWorkspaceRunningConditionConfigured(fg);
-                return withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null });
+                // Applying a different workspace running condition changes what every
+                // Workspace-mode model trains on: those that were Complete go back to
+                // Incomplete in this same write (Custom-mode models are unaffected).
+                return applyIncompleteRule(prev, withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null }));
             });
             if (next?.failureGroupState) {
                 applyFg(next.failureGroupState);
@@ -1241,8 +1228,14 @@ export default function BuildModelWindow() {
         !m.status && trainedFreshFor(effectiveModelFor(m), gateFg);
     /** Was trained at some point, but the model's inputs (or the effective
      *  running condition) changed since — "Settings changed — re-train". */
-    const isModelStale = (m: FailureModel): boolean =>
-        !m.status && !!m.lastTrainedAt && !trainedFreshFor(effectiveModelFor(m), gateFg);
+    // 🆕 2026-10-03 (health score): NOT gated on `status` any more — a Complete
+    // model whose inputs changed since it was trained is out of date too (the
+    // write side already set it Incomplete; this is the read side, for old data
+    // and for a pending draft). See `utils/modelStatus.ts`.
+    const isModelStale = (m: FailureModel): boolean => isModelStaleFor(effectiveModelFor(m), gateFg);
+    /** Complete AND still up to date — what every "Complete" display reads
+     *  (never `m.status` alone). */
+    const isModelDone = (m: FailureModel): boolean => m.status && !isModelStale(m);
 
     const toggleModelStatus = (modelId: string) => {
         // Toward Complete only: an unconfigured model can't be marked Complete;
@@ -1339,14 +1332,22 @@ export default function BuildModelWindow() {
                 const stats = await invoke<SensorStats>('compute_sensor_stats', { sensor: merged.targetSensor, filter });
                 result = { kind: 'individual', stats };
             } else if (merged.kind === 'relationship') {
+                // Health score: ask Rust to keep the full-resolution fit under a key that
+                // contains the train fingerprint — Rust ignores `filter` for the cached
+                // fit, so a key that did not change with the scope/predictors/target/
+                // stiffness would serve stale data. (`fingerprint` is the same value that
+                // is persisted as `trainedFingerprint`.)
+                const cacheKey = `${merged.id}::${fingerprint}`;
                 const r = await invoke<RelationshipPreviewResult>('preview_relationship_model', {
                     predictors: merged.predictorSensors,
                     target: merged.targetSensor,
                     lambda: merged.relStiffness,
                     filter,
+                    cache_key: cacheKey,
+                    max_points: HEALTH_DEFAULT_MAX_POINTS,
                 });
                 if (r.error) throw new Error(r.error);
-                result = { kind: 'relationship', result: r, predictorsAtApply: [...merged.predictorSensors] };
+                result = { kind: 'relationship', result: r, predictorsAtApply: [...merged.predictorSensors], cacheKey };
             } else {
                 const effClusters = merged.numClusters ?? 3;
                 const r = await invoke<ClusteringPreview>('compute_clustering_preview', {
@@ -1369,7 +1370,11 @@ export default function BuildModelWindow() {
             if (opts.persistMeta) {
                 await persist((models, groups) => ({
                     groups,
-                    models: models.map(x => x.id === id ? { ...x, lastTrainedAt: new Date().toISOString(), trainedFingerprint: fingerprint } : x),
+                    // `status: false` too: a (re-)train always lands the model in
+                    // Incomplete/Trained — an old-data Complete model that was out of date
+                    // must not silently turn Complete again just because its fingerprint
+                    // now matches; it is marked complete again explicitly.
+                    models: models.map(x => x.id === id ? { ...x, status: false, lastTrainedAt: new Date().toISOString(), trainedFingerprint: fingerprint } : x),
                 }));
             }
         } catch (e) {
@@ -1406,12 +1411,11 @@ export default function BuildModelWindow() {
         await executeTrain(merged, fingerprint, { persistMeta: true });
     };
 
-    /** Text shown (and the reason `markModelComplete` blocks on) when the
-     *  gate itself passes but the model hasn't been Trained-and-fresh —
-     *  shared so the PM page's Finish path and the Workbench's own "✓ Mark
-     *  complete" button title never drift into two different wordings for
-     *  the same requirement. */
-    const NOT_TRAINED_BLOCK_REASON = 'Train the model, then check the result before marking it complete.';
+    // (`NOT_TRAINED_BLOCK_REASON` — the text shown, and the reason
+    // `markModelComplete` blocks on, when the gate passes but the model is not
+    // Trained-and-fresh — lives in `utils/modelStatus.ts` so the PM page's
+    // Finish path, the Workbench's "✓ Mark complete" title and the health-score
+    // Mark complete share one wording.)
 
     /** Sets `status: true` unconditionally (unlike `toggleModelStatus`) —
      *  used by the PM page's "Finish" button, where clicking it again should
@@ -1747,10 +1751,10 @@ export default function BuildModelWindow() {
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModelsCount = allModels.length;
-    const completeModelsCount = allModels.filter(m => m.status).length;
+    const completeModelsCount = allModels.filter(isModelDone).length;
 
     const sensorBuildBlocked = (sg: SensorModelGroup) => sg.models.some(m => buildBlockReason(m) !== null);
-    const sensorAllComplete = (sg: SensorModelGroup) => sg.models.length > 0 && sg.models.every(m => m.status);
+    const sensorAllComplete = (sg: SensorModelGroup) => sg.models.length > 0 && sg.models.every(isModelDone);
     const matchesSidebarFilter = (sg: SensorModelGroup) =>
         sidebarFilter === 'all' || (sidebarFilter === 'attn' ? sensorBuildBlocked(sg) : sensorAllComplete(sg));
     const matchesSearch = (sg: SensorModelGroup) => {
@@ -1805,7 +1809,7 @@ export default function BuildModelWindow() {
                         // "Trained" here just because its persisted
                         // fingerprint happens to still match — same rule the
                         // footer pill below now applies.
-                        const dot = m.status ? 'complete'
+                        const dot = isModelDone(m) ? 'complete'
                             : (isModelTrainedFresh(m) && !trainError[m.id] && buildBlockReason(m) === null) ? 'trained'
                             : null;
                         return (
@@ -1813,7 +1817,7 @@ export default function BuildModelWindow() {
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : dot === 'trained' ? 'Trained' : 'Incomplete'}`}
+                                title={`${KIND_LABEL[m.kind]} · ${isModelDone(m) ? 'Complete' : dot === 'trained' ? 'Trained' : 'Incomplete'}`}
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
@@ -2500,7 +2504,7 @@ export default function BuildModelWindow() {
      *  wording) · running -> progress · Trained-and-fresh -> chart+toolbar ·
      *  stale -> "Settings changed" · never trained -> "Not trained yet". */
     const renderResultsStage = (m: FailureModel) => {
-        if (m.status) {
+        if (isModelDone(m)) {
             return (
                 <div className="bmw-stage">
                     <div className="bmw-stage-empty" data-testid="results-placeholder">
@@ -2631,7 +2635,7 @@ export default function BuildModelWindow() {
         // Mark complete, which previously only looked at `trainedFresh`.
         const hasSessionError = !!trainError[m.id];
         const pillState: 'complete' | 'trained' | 'incomplete' =
-            m.status ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
+            isModelDone(m) ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
         return (
             <div className="f4-foot">
@@ -2645,7 +2649,7 @@ export default function BuildModelWindow() {
                     </span>
                 ) : m.id in drafts ? (
                     <span data-testid="footer-status" className="f4-foot-reason">Unsaved changes to the {KIND_LABEL[m.kind]} model</span>
-                ) : m.status ? (
+                ) : isModelDone(m) ? (
                     <span data-testid="footer-status" className="f4-foot-reason">
                         {m.lastTrainedAt ? `Last trained ${formatTrainedAt(m.lastTrainedAt)}` : `${KIND_LABEL[m.kind]}${cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}`}
                     </span>
@@ -2677,7 +2681,7 @@ export default function BuildModelWindow() {
                     failed preview run (this session) still shows the button even
                     though the persisted fields still say "fresh", so there's always a
                     way to retry. */}
-                {!m.status && !(reason === null && trainedFresh && !training && !trainError[m.id]) && (
+                {!isModelDone(m) && !(reason === null && trainedFresh && !training && !trainError[m.id]) && (
                     <button
                         type="button"
                         className={reason !== null ? 'f4-btn f4-btn--plain f4-btn--small' : (stale || trainError[m.id]) ? 'bmw-btn-retrain bmw-btn-retrain--stale' : 'bmw-btn-retrain'}
@@ -2688,7 +2692,7 @@ export default function BuildModelWindow() {
                         {training ? 'Training…' : (stale || trainError[m.id]) ? '↻ Re-train' : '▶ Train model'}
                     </button>
                 )}
-                {m.status ? (
+                {isModelDone(m) ? (
                     <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => toggleModelStatus(m.id)}>
                         Mark incomplete
                     </button>
@@ -2793,12 +2797,12 @@ export default function BuildModelWindow() {
                                 aria-selected={selected}
                                 className={`f4-tab${selected ? ' f4-tab--on' : ''}`}
                                 style={{ '--kc': KIND_COLOR[m.kind] } as CSSProperties}
-                                title={`${KIND_LABEL[m.kind]} · ${m.status ? 'Complete' : 'Incomplete'}`}
+                                title={`${KIND_LABEL[m.kind]} · ${isModelDone(m) ? 'Complete' : 'Incomplete'}`}
                                 onClick={() => setActiveTab(prev => ({ ...prev, [selectedSensorKey!]: m.id }))}
                             >
                                 <span className={`f4-kmini model-kind-icon--${m.kind}`} aria-hidden="true">{KIND_ABBREV[m.kind]}</span>
                                 <span className="f4-tab-l">{KIND_LABEL[m.kind]}</span>
-                                <span className={`f4-sdot${m.status ? ' f4-sdot--done' : ''}`} />
+                                <span className={`f4-sdot${isModelDone(m) ? ' f4-sdot--done' : ''}`} />
                                 {m.id in drafts && <span className="f4-dirty" title="Unsaved changes">edited</span>}
                                 {badge && <GateBadgePill text={badge} testId={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} />}
                             </button>

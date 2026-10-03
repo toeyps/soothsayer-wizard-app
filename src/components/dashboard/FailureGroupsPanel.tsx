@@ -3,8 +3,8 @@ import { Plus, Trash2, Play, ChevronRight, Check } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
-import { getBuildBlockReason, type RunningConditionFg } from '../../utils/runningCondition';
-import { isModelTrainedFresh } from '../../utils/trainFingerprint';
+import type { RunningConditionFg } from '../../utils/runningCondition';
+import { isModelComplete, modelDotState } from '../../utils/modelStatus';
 
 // Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
 // for the model-kind badge's tooltip (see renderModelRow below).
@@ -141,11 +141,18 @@ export default function FailureGroupsPanel({
     // never 'trained', so the two views never disagree (Phase B's
     // "gate blocks a model that's still fingerprint-fresh" bug fix, mirrored
     // here per the Phase C brief).
+    //
+    // 2026-10-03 (health score): both now come from `utils/modelStatus.ts`, the
+    // single definition the Build Model window reads too. A Complete model that
+    // is out of date (its inputs changed since it was trained) is NOT complete
+    // here either — the write side sets it Incomplete immediately; this is the
+    // read side for old data / a write that raced. `stale`/`blocked` keep
+    // drawing no dot, as before.
     const dotStatusFor = (m: FailureModel): 'none' | 'trained' | 'complete' => {
-        if (m.status) return 'complete';
-        if (getBuildBlockReason(m, fg, datasetHeaders) !== null) return 'none';
-        return isModelTrainedFresh(m, fg) ? 'trained' : 'none';
+        const s = modelDotState(m, fg, datasetHeaders);
+        return s === 'complete' || s === 'trained' ? s : 'none';
     };
+    const isDone = (m: FailureModel): boolean => isModelComplete(m, fg);
     // Model name if the user set one; otherwise the target sensor's
     // description (clustering's "target" is its Y sensor, same convention
     // as component derivation elsewhere); falls back to the raw tag, then a
@@ -310,7 +317,7 @@ export default function FailureGroupsPanel({
     // "N of M models complete" summary chip (2026-10-02 reskin) — `status`
     // is the exact same boolean the group-row/footer "done / total"
     // counters and `dotStatusFor`'s 'complete' case already read.
-    const doneModels = fgModels.filter(m => m.status).length;
+    const doneModels = fgModels.filter(isDone).length;
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
     // for models built against a sensor that isn't part of any failure
     // mode. Always rendered as its own card now (2026-08-31 fix — it used
@@ -427,7 +434,7 @@ export default function FailureGroupsPanel({
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {realGroups.map(group => {
                     const groupModels = fgModels.filter(m => m.groupNos.includes(group.no));
-                    const doneInGroup = groupModels.filter(m => m.status).length;
+                    const doneInGroup = groupModels.filter(isDone).length;
                     const color = getGroupColor(group.no);
                     const isExpanded = expandedGroupNo === group.no;
                     const { visible, sensorGroups } = visibleSensorGroups(group.no, group.name);
@@ -540,7 +547,7 @@ export default function FailureGroupsPanel({
                                 Not in Group
                             </span>
                             <span className="fg-row-count">
-                                {ungroupedModels.length > 0 ? <><b>{ungroupedModels.filter(m => m.status).length}</b> / {ungroupedModels.length}</> : '0'}
+                                {ungroupedModels.length > 0 ? <><b>{ungroupedModels.filter(isDone).length}</b> / {ungroupedModels.length}</> : '0'}
                             </span>
                         </div>
                         <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>

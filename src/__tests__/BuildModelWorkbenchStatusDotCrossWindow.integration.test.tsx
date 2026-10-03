@@ -513,3 +513,100 @@ describe('gate-blocked but fingerprint-fresh: Build Model pill, Build Model dot 
         await waitFor(() => expect(dashDot(1)).toBe('trained'));
     });
 });
+
+// 🆕 2026-10-03 (health score phase 3a) — "Incomplete immediately": a Complete
+// model whose training inputs change goes back to Incomplete in the SAME write,
+// and the Dashboard's Failure Groups dot follows via the normal broadcast.
+describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen from both windows', () => {
+    const SP = { kind: 'individual', lower: 1.5, upper: 99, masterLower: 2, masterUpper: 90 };
+    const completeFg = () => ({ runningConditionFilters: [COND], runningConditionNoneConfirmed: false });
+    const completeModels = () => [
+        // Follows the WORKSPACE running condition.
+        dashModel({ id: 'i1', status: true, healthSetPoints: SP }),
+        // Has its OWN (Custom) running condition: unaffected by workspace edits.
+        dashModel({
+            id: 'i2', status: true, targetSensor: 'TAG2', groupNos: [2], healthSetPoints: SP,
+            runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        }),
+    ];
+
+    async function applyWorkspaceValue(value: string) {
+        fireEvent.click(bmw().getByTestId('rc-card-open'));
+        const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
+        await act(async () => { fireEvent.change(modal.getByPlaceholderText('value'), { target: { value } }); });
+        await settle(30);
+        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); });
+        await settle(30);
+    }
+
+    it('a workspace Running Condition Apply sets every Complete Workspace-mode model Incomplete (set points + train record kept) and the Dashboard dot drops; a Custom-mode model stays Complete', async () => {
+        writeDisk(wsWithTrained(completeFg(), completeModels()));
+        const before = readDisk().failureGroupState.models;
+        await mountBoth();
+        selectTag1();
+        expect(pill()).toBe('Complete');
+        expect(dashDot(1)).toBe('complete');
+        expect(dashDot(2, 'tag2')).toBe('complete');
+
+        await applyWorkspaceValue('20');
+
+        const after = readDisk().failureGroupState.models;
+        expect(after[0].status).toBe(false);
+        expect(after[0].healthSetPoints).toEqual(SP);
+        expect(after[0].lastTrainedAt).toBe(before[0].lastTrainedAt);
+        expect(after[0].trainedFingerprint).toBe(before[0].trainedFingerprint);
+        expect(after[1].status).toBe(true); // Custom mode: unaffected
+        // Build Model: Incomplete + "Settings changed — re-train".
+        expect(pill()).toBe('Incomplete');
+        expect(bmw().getByText('↻ Re-train')).toBeTruthy();
+        expect(bmwDot('i1')).toBe('none');
+        // Dashboard (broadcast delivered): the workspace-mode model's dot is gone, the Custom one stays green.
+        await waitFor(() => expect(dashDot(1)).toBe('none'));
+        expect(dashDot(2, 'tag2')).toBe('complete');
+    });
+
+    it('re-applying the SAME condition (no change) leaves everything Complete', async () => {
+        writeDisk(wsWithTrained(completeFg(), completeModels()));
+        await mountBoth();
+        selectTag1();
+        await applyWorkspaceValue('10'); // COND.value1 is already '10'
+        expect(readDisk().failureGroupState.models.map((m: any) => m.status)).toEqual([true, true]);
+        expect(pill()).toBe('Complete');
+    });
+
+    it('a Save of only the model NAME keeps a Complete model Complete (and the dot green in both windows)', async () => {
+        writeDisk(wsWithTrained(completeFg(), completeModels()));
+        await mountBoth();
+        selectTag1();
+        fireEvent.click(bmw().getByText('Model settings', { selector: 'b' }));
+        fireEvent.change(bmw().getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed only' } });
+        await act(async () => { fireEvent.click(bmw().getByText('Save changes')); });
+        await settle(30);
+        const m = readDisk().failureGroupState.models[0];
+        expect(m.name).toBe('Renamed only');
+        expect(m.status).toBe(true);
+        expect(pill()).toBe('Complete');
+        expect(dashDot(1)).toBe('complete');
+    });
+
+    it('OLD DATA: status:true on disk but the train record no longer matches -> Incomplete + Re-train in Build Model and NO green dot in either window; Re-train lands it Trained (not silently Complete again)', async () => {
+        const ws = wsWithTrained(completeFg(), [dashModel({ id: 'i1', status: true })]);
+        (ws.failureGroupState as any).models[0].trainedFingerprint = 'written-before-this-rule';
+        writeDisk(ws);
+        await mountBoth();
+        selectTag1();
+        await settle(30);
+        expect(readDisk().failureGroupState.models[0].status).toBe(true); // opening never rewrites it
+        expect(pill()).toBe('Incomplete');
+        expect(bmwDot('i1')).toBe('none');
+        expect(dashDot(1)).toBe('none');
+
+        await act(async () => { fireEvent.click(bmw().getByText('↻ Re-train')); });
+        await settle(30);
+        const m = readDisk().failureGroupState.models[0];
+        expect(m.status).toBe(false); // a re-train never leaves a model Complete
+        expect(diskFresh('i1')).toBe(true);
+        expect(pill()).toBe('Trained');
+        await waitFor(() => expect(dashDot(1)).toBe('trained'));
+    });
+});

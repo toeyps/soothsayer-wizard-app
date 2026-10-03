@@ -5,6 +5,7 @@ import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, Fail
 import { debugLog } from './utils/debugLog';
 import { migrateHealthSetPoints } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
+import { applyIncompleteRule } from './utils/incompleteRule';
 
 const STORE_FILE = 'settings.json';
 
@@ -173,7 +174,12 @@ export async function updateWorkspaceData(
         // which this one is waiting on — a deadlock.
         const current = await readWorkspaceFile(id);
         if (!current) return null;
-        const next = patch(current);
+        // 2026-10-03 (health score): "Incomplete immediately" — any write that
+        // changes what a Complete model is trained on (its own inputs, or the
+        // workspace running condition it follows) sets it back to Incomplete in
+        // THIS same write, whichever window or writer made it. Compared against
+        // `current` (what is on disk), never a caller's possibly stale mirror.
+        const next = applyIncompleteRule(current, patch(current));
         await writeWorkspaceFile(next);
         return next;
     });
@@ -414,6 +420,28 @@ export async function loadWorkspaceData(id: string): Promise<WorkspaceState | nu
     return enqueue(() => readWorkspaceFile(id));
 }
 
+/** Where "Mark complete" writes a workspace's model files
+ *  (`{app_data}/workspaces/{id}/output/...`, see Rust `get_model_output_dir`),
+ *  relative to `$APPDATA`. The workspace's own JSON is the SIBLING
+ *  `workspaces/{id}.json`, never inside this folder. */
+export const workspaceFolderPath = (id: string): string => `workspaces/${id}`;
+
+/** Best-effort recursive removal of a workspace's model-output folder. Never
+ *  throws and never touches anything but `workspaces/{id}` — a missing folder
+ *  (the common case: nothing was ever exported) is simply skipped. */
+async function removeWorkspaceFolder(id: string): Promise<void> {
+    // An id that could escape `workspaces/` must never reach a recursive remove.
+    if (!id || id.includes('/') || id.includes('\\') ||id.includes('..')) return;
+    try {
+        const dir = workspaceFolderPath(id);
+        if (await exists(dir, { baseDir: BaseDirectory.AppData })) {
+            await removeFile(dir, { baseDir: BaseDirectory.AppData, recursive: true });
+        }
+    } catch (e) {
+        console.warn('Could not remove the workspace output folder:', e);
+    }
+}
+
 export async function deleteWorkspace(id: string) {
     try {
         const recent = await getRecentWorkspaces();
@@ -433,6 +461,10 @@ export async function deleteWorkspace(id: string) {
     } catch (e) {
         console.error("Failed to delete workspace:", e);
     }
+    // Model files exported by "Mark complete" live in their own folder; remove
+    // it too, independently of whether the workspace was still in the recent
+    // list (that list is capped, so its absence says nothing about the folder).
+    await removeWorkspaceFolder(id);
 }
 
 export async function duplicateWorkspace(id: string) {

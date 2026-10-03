@@ -2697,3 +2697,174 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
         }
     });
 });
+
+// 🆕 2026-10-03 (health score phase 3a) — "Incomplete immediately" + the
+// Relationship train's cached-fit key. The rule itself is tested in
+// incompleteRule.test.ts / workspaceManager.test.ts; these pin that THIS
+// window's own writers apply it (the mocked `updateWorkspaceData` here never
+// runs workspaceManager's central guard) and what its UI shows afterwards.
+describe('Incomplete immediately + Relationship fit cache key (health score phase 3a)', () => {
+    const SP = { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 };
+    const relComplete = () => withTrained(makeModel({
+        id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000,
+        status: true, healthSetPoints: SP,
+    }));
+    const lastWritten = async () =>
+        (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+
+    it('"Save changes" after a training input changed (stiffness) sets a Complete model to Incomplete, keeping set points + train record', async () => {
+        const rel = relComplete();
+        statefulUpdateMock([rel]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        openSettings();
+        fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+        const saved = (await lastWritten()).models[0];
+        expect(saved.relStiffness).toBe(1_000_000);
+        expect(saved.status).toBe(false);
+        expect(saved.healthSetPoints).toEqual(SP);
+        expect(saved.lastTrainedAt).toBe(rel.lastTrainedAt);
+        expect(saved.trainedFingerprint).toBe(rel.trainedFingerprint);
+        // ...and it is broadcast with the demoted status so the Dashboard dot follows.
+        const emitted = mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed').pop()![1];
+        expect(emitted.models[0].status).toBe(false);
+        // The window now shows it as out of date, ready to re-train.
+        expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy();
+        expect(screen.getByText('↻ Re-train')).toBeTruthy();
+    });
+
+    it('"Save changes" of only the NAME keeps it Complete (stiffness/cluster defaults a draft re-derives are not a change)', async () => {
+        const rel = relComplete();
+        statefulUpdateMock([rel]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+        openSettings();
+        fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Only a new name' } });
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+        const saved = (await lastWritten()).models[0];
+        expect(saved.name).toBe('Only a new name');
+        expect(saved.status).toBe(true);
+        expect(screen.getByText('Complete', { selector: '.model-status-pill' })).toBeTruthy();
+    });
+
+    it('applying a different WORKSPACE running condition sets a Complete Workspace-mode model Incomplete and leaves a Custom-mode one Complete', async () => {
+        const COND = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
+        const fgOver = { runningConditionNoneConfirmed: false, runningConditionFilters: [COND], runningConditionCombine: 'and' as const, runningConditionTimePeriods: [], rcLegacyNotice: null };
+        const fgForStamp = { models: [], ...fgOver };
+        const wsMode = withTrained(makeModel({ id: 'ws-mode', status: true }), fgForStamp);
+        const customMode = withTrained(makeModel({
+            id: 'custom-mode', status: true, targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        }), fgForStamp);
+        const models = [wsMode, customMode];
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...fgOver } });
+        statefulUpdateMock(models, fgOver);
+        mockUpdateWorkspaceData.mockClear();
+        fireEvent.click(screen.getByTestId('rc-card-open'));
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(screen.getByTestId('rc-apply'));
+        await flush();
+        const written = (await lastWritten()).models;
+        expect(written.find((m: any) => m.id === 'ws-mode').status).toBe(false);
+        expect(written.find((m: any) => m.id === 'custom-mode').status).toBe(true);
+        const emitted = mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed').pop()![1];
+        expect(emitted.models.map((m: any) => m.status)).toEqual([false, true]);
+    });
+
+    it('READ side: a Complete model whose train record no longer matches shows as Incomplete + stale, counts as not complete, has no green dot', async () => {
+        const stale = { ...withTrained(makeModel({ id: 'old', status: true })), trainedFingerprint: 'written-before-this-rule' };
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [stale] } });
+        await flush();
+        expect(screen.getByText('Incomplete', { selector: '.model-status-pill' })).toBeTruthy();
+        expect(screen.getByTestId('results-stale').textContent).toMatch(/Settings changed/);
+        expect(screen.getByText('↻ Re-train')).toBeTruthy();
+        expect(screen.queryByText('Mark incomplete')).toBeNull();
+        expect(screen.queryByTestId('sensor-kind-badge-dot-old')).toBeNull();
+        expect(screen.getByText(/of 1 complete/).textContent).toBe('0 of 1 complete');
+        // Opening it does not rewrite the stored status.
+        expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+    });
+
+    it('READ side: a legacy Complete model with NO train record at all stays Complete (nothing to be out of date against)', async () => {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'legacy', status: true })] } });
+        expect(screen.getByText('Complete', { selector: '.model-status-pill' })).toBeTruthy();
+        expect(screen.getByTestId('sensor-kind-badge-dot-legacy').className).toMatch(/f4-kb-dot--complete/);
+    });
+
+    it('re-training a stale Complete model writes status:false with the fresh train record (it does not silently turn Complete again)', async () => {
+        const stale = { ...withTrained(makeModel({ id: 'old', status: true })), trainedFingerprint: 'written-before-this-rule' };
+        statefulUpdateMock([stale]);
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [stale] } });
+        await act(async () => { fireEvent.click(screen.getByText('↻ Re-train')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        const saved = (await lastWritten()).models[0];
+        expect(saved.status).toBe(false);
+        expect(saved.trainedFingerprint).not.toBe('written-before-this-rule');
+        expect(screen.getByText('Trained', { selector: '.model-status-pill' })).toBeTruthy();
+    });
+
+    describe('Relationship Train asks Rust to cache the fit under a fingerprint-based key', () => {
+        const relModel = () => makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000 });
+        const train = async () => {
+            await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        };
+
+        it('passes cache_key = model id + trainedFingerprint, and max_points', async () => {
+            const rel = relModel();
+            statefulUpdateMock([rel]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            await train();
+            const args = mockInvoke.mock.calls.find(c => c[0] === 'preview_relationship_model')![1] as any;
+            const saved = (await lastWritten()).models[0];
+            expect(args.cache_key).toBe('r1::' + saved.trainedFingerprint);
+            expect(args.max_points).toBe(4000);
+            // The existing arguments are unchanged.
+            expect(args).toMatchObject({ predictors: ['TAG2'], target: 'TAG1', lambda: 10_000 });
+        });
+
+        it('the key changes when the scope changes (Custom-mode period), the predictors or the stiffness change - never reused across fits', async () => {
+            const keys: string[] = [];
+            for (const over of [
+                {},
+                { predictorSensors: ['TAG2', 'TAG3'] },
+                { relStiffness: 1_000_000 },
+                { runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }] },
+            ]) {
+                cleanup();
+                mockInvoke.mockClear();
+                const rel = { ...relModel(), ...over };
+                statefulUpdateMock([rel]);
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+                await train();
+                keys.push((mockInvoke.mock.calls.find(c => c[0] === 'preview_relationship_model')![1] as any).cache_key);
+            }
+            expect(new Set(keys).size).toBe(keys.length);
+        });
+
+        it('keeps working with the full arrays for the existing chart when Rust also returns the bounded health_preview', async () => {
+            const healthPreview = { kind: 'relationship', valid: false, validation: [], stats: {}, series: {}, score_summary: null, histogram: null, fit_scatter: null, cluster_scatter: null };
+            mockInvoke.mockImplementation((cmd: string) => {
+                if (cmd === 'preview_relationship_model') {
+                    return Promise.resolve({
+                        request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4], predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                        target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1], [2], [3]],
+                        cache_key: 'r1::x', cached: true, health_preview: healthPreview,
+                    });
+                }
+                return Promise.resolve({});
+            });
+            const rel = relModel();
+            statefulUpdateMock([rel]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            await train();
+            expect(screen.getByTestId('echarts-mock')).toBeTruthy(); // existing chart still fed by the full arrays
+            expect(screen.getByText('R²')).toBeTruthy();
+        });
+    });
+});

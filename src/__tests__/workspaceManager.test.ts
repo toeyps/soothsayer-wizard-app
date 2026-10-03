@@ -732,13 +732,147 @@ describe('updateWorkspaceData', () => {
     });
 });
 
-describe('deleteWorkspace', () => {
-    it('does nothing when the id is not in the recent list', async () => {
+describe('updateWorkspaceData applies the Incomplete-immediately rule to every write (2026-10-03)', () => {
+    const model = (over: Record<string, unknown> = {}) => ({
+        id: 'm1', groupNos: [1], name: 'M', kind: 'individual', category: 'condition', notes: '', status: true,
+        targetSensor: 'T1', predictorSensors: [], xSensor: '', ySensor: '', individualChecked: true, rcMode: null,
+        scatterXSensor: '', relModelName: '', relStiffness: 100000, clusterModelName: '', numClusters: 3, criteriaSensor: '',
+        clusterRanges: [], filterTimePeriods: [], runningConditionMode: 'workspace',
+        customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+        healthSetPoints: { kind: 'individual', lower: 1, upper: 9 },
+        ...over,
+    });
+    const disk = (models: unknown[]) => JSON.stringify({
+        id: 'ws1', name: 'A',
+        failureGroupState: { groups: [], models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionNoneConfirmed: true },
+    });
+
+    it('a write that changes the workspace running condition sets a Complete Workspace-mode model back to Incomplete, and keeps a Custom-mode one', async () => {
         mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(disk([
+            model({ id: 'ws-mode' }),
+            model({ id: 'custom-mode', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true }),
+        ]));
+        const { updateWorkspaceData } = await freshModule();
+        const next = await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            failureGroupState: { ...prev.failureGroupState!, runningConditionNoneConfirmed: false, runningConditionCombine: 'or' },
+        }));
+        const byId = Object.fromEntries(next!.failureGroupState!.models.map(m => [m.id, m]));
+        expect(byId['ws-mode'].status).toBe(false);
+        expect(byId['custom-mode'].status).toBe(true);
+        // What was written to disk is the demoted state.
+        const written = JSON.parse(mockWriteTextFile.mock.calls[0][1] as string);
+        expect(written.failureGroupState.models.find((m: any) => m.id === 'ws-mode').status).toBe(false);
+    });
+
+    it('keeps set points, lastTrainedAt and trainedFingerprint when it demotes', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(disk([model({ lastTrainedAt: '2026-10-03T00:00:00Z', trainedFingerprint: 'fp' })]));
+        const { updateWorkspaceData } = await freshModule();
+        const next = await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            failureGroupState: { ...prev.failureGroupState!, models: prev.failureGroupState!.models.map(m => ({ ...m, targetSensor: 'T2' })) },
+        }));
+        expect(next!.failureGroupState!.models[0]).toMatchObject({
+            status: false, targetSensor: 'T2', lastTrainedAt: '2026-10-03T00:00:00Z', trainedFingerprint: 'fp',
+            healthSetPoints: { kind: 'individual', lower: 1, upper: 9 },
+        });
+    });
+
+    it('an unrelated write (rename, set points, name/notes/category, group membership) leaves a Complete model Complete', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(disk([model()]));
+        const { updateWorkspaceData } = await freshModule();
+        const next = await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            name: 'Renamed',
+            failureGroupState: {
+                ...prev.failureGroupState!,
+                models: prev.failureGroupState!.models.map(m => ({
+                    ...m, name: 'New name', notes: 'n', category: 'performance' as const, groupNos: [2],
+                    healthSetPoints: { kind: 'individual' as const, lower: 5, upper: 50 },
+                })),
+            },
+        }));
+        expect(next!.failureGroupState!.models[0].status).toBe(true);
+    });
+
+    it('does not throw (and leaves statuses alone) on a malformed model record', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        mockStoreGet.mockResolvedValue([]);
+        mockReadTextFile.mockResolvedValue(disk([{ id: 'weird', status: true, kind: 'relationship', groupNos: [1] }]));
+        const { updateWorkspaceData } = await freshModule();
+        const next = await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'x' }));
+        expect(next!.failureGroupState!.models[0].status).toBe(true);
+    });
+});
+
+describe('deleteWorkspace', () => {
+    it('does nothing to the JSON file or the recent list when the id is not in the recent list (a missing output folder is simply skipped)', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockExists.mockResolvedValue(false);
         const { deleteWorkspace } = await freshModule();
         await deleteWorkspace('missing');
         expect(mockRemove).not.toHaveBeenCalled();
         expect(mockStoreSet).not.toHaveBeenCalled();
+    });
+
+    // 2026-10-03 (health score): "Mark complete" writes model files into
+    // `{app_data}/workspaces/{id}/output`; deleting the workspace must remove
+    // that folder too, not only `{id}.json`.
+    describe('model output folder cleanup', () => {
+        const entry = (id: string) => ({ id, name: 'A', description: '', lastModified: 1, filePath: `workspaces/${id}.json` });
+
+        it('removes workspaces/{id} recursively (in addition to the JSON file) when it exists', async () => {
+            mockStoreGet.mockResolvedValue([entry('ws1')]);
+            mockExists.mockResolvedValue(true);
+            const { deleteWorkspace } = await freshModule();
+            await deleteWorkspace('ws1');
+            expect(mockRemove).toHaveBeenCalledWith('workspaces/ws1.json', { baseDir: 'AppData' });
+            expect(mockRemove).toHaveBeenCalledWith('workspaces/ws1', { baseDir: 'AppData', recursive: true });
+        });
+
+        it('skips the folder when it does not exist (nothing was ever exported)', async () => {
+            mockStoreGet.mockResolvedValue([entry('ws1')]);
+            mockExists.mockImplementation(async (path: string) => path !== 'workspaces/ws1');
+            const { deleteWorkspace } = await freshModule();
+            await deleteWorkspace('ws1');
+            expect(mockRemove).toHaveBeenCalledTimes(1);
+            expect(mockRemove).toHaveBeenCalledWith('workspaces/ws1.json', { baseDir: 'AppData' });
+        });
+
+        it('still removes the folder when the workspace has fallen out of the (capped) recent list', async () => {
+            mockStoreGet.mockResolvedValue([]);
+            mockExists.mockImplementation(async (path: string) => path === 'workspaces/old');
+            const { deleteWorkspace } = await freshModule();
+            await deleteWorkspace('old');
+            expect(mockRemove).toHaveBeenCalledTimes(1);
+            expect(mockRemove).toHaveBeenCalledWith('workspaces/old', { baseDir: 'AppData', recursive: true });
+        });
+
+        it('never fails the delete when removing the folder throws', async () => {
+            vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockStoreGet.mockResolvedValue([entry('ws1')]);
+            mockExists.mockResolvedValue(true);
+            mockRemove.mockImplementation(async (path: string) => {
+                if (path === 'workspaces/ws1') throw new Error('locked');
+            });
+            const { deleteWorkspace } = await freshModule();
+            await expect(deleteWorkspace('ws1')).resolves.toBeUndefined();
+            // The recent list was still updated.
+            expect(mockStoreSet).toHaveBeenCalledWith('recent_workspaces', []);
+        });
+
+        it('refuses an id that could escape workspaces/ (no recursive remove is attempted)', async () => {
+            mockStoreGet.mockResolvedValue([]);
+            mockExists.mockResolvedValue(true);
+            const { deleteWorkspace } = await freshModule();
+            await deleteWorkspace('../secrets');
+            await deleteWorkspace('a/b');
+            await deleteWorkspace('');
+            expect(mockRemove).not.toHaveBeenCalled();
+        });
     });
 
     it('removes the file and drops the entry from the recent list when found', async () => {
