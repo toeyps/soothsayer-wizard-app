@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Maximize2, Loader2, Activity, GitBranch, Layers } from "lucide-react";
+import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Maximize2, Loader2, Activity, GitBranch, Layers } from "lucide-react";
 import { CsvRecord, FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
 import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
@@ -212,6 +212,26 @@ const RESULT_CHART_MAX_POINTS = 4000;
 function flushFocusedInput(): void {
     const active = document.activeElement;
     if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
+}
+
+/** 🆕 2026-10-03: the four workspace Running Condition fields the Edit… modal
+ *  edits as ONE local draft (nothing is written until Apply — see
+ *  `applyRcDraft`). Same shape `persistRunningCondition` takes. */
+interface RcDraft {
+    filters: WorkspaceSensorFilter[];
+    combine: 'and' | 'or';
+    periods: TimePeriod[];
+    noneConfirmed: boolean;
+}
+
+/** Draft vs. persisted comparison. JSON is enough: every draft object is built
+ *  by spreading the persisted one (key order preserved) and the period editor
+ *  hands back already-sorted lists. */
+function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
+    return a.combine === b.combine
+        && a.noneConfirmed === b.noneConfirmed
+        && JSON.stringify(a.filters) === JSON.stringify(b.filters)
+        && JSON.stringify(a.periods) === JSON.stringify(b.periods);
 }
 
 /** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
@@ -453,6 +473,24 @@ export default function BuildModelWindow() {
     // collapsible panel before Phase A; same underlying state, now shown in
     // a modal overlay instead of an always-present card).
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
+    // 🆕 2026-10-03: the modal edits this LOCAL DRAFT, never the persisted
+    // values above. `null` = nothing edited yet (the modal then just shows the
+    // persisted values live — copy-on-write on the first edit), so there is no
+    // "seed on open" step to forget on any of the several paths that open the
+    // modal. Cleared on every close, so a reopen always starts from persisted.
+    // Held in a ref too: a period date only commits on blur, which fires right
+    // before the Apply click — the click handler must see that commit
+    // synchronously, not wait for a re-render.
+    const [rcDraft, setRcDraftState] = useState<RcDraft | null>(null);
+    const rcDraftRef = useRef<RcDraft | null>(null);
+    // A period date input inside the modal has been typed into but not yet
+    // committed (blur / Enter). Keeps Apply clickable in that window — a
+    // disabled button would swallow the click, and the commit-on-blur would
+    // otherwise never be reached before Apply is judged "clean".
+    const [rcPeriodTyping, setRcPeriodTyping] = useState(false);
+    // Inline "Discard changes?" row, shown instead of closing when X/backdrop
+    // is used with an unapplied draft.
+    const [rcDiscardPrompt, setRcDiscardPrompt] = useState(false);
     // "No condition - use all rows" was explicitly confirmed for the workspace
     // (Feature 4, soft gate A). Mirrors failureGroupState.runningConditionNoneConfirmed.
     const [runningConditionNoneConfirmed, setRunningConditionNoneConfirmed] = useState(false);
@@ -718,6 +756,11 @@ export default function BuildModelWindow() {
                 setRcLegacyNotice(null);
                 setLegacyRemindLater(false);
                 setRcFilterOpen(false);
+                // The unapplied draft belonged to the old workspace.
+                rcDraftRef.current = null;
+                setRcDraftState(null);
+                setRcPeriodTyping(false);
+                setRcDiscardPrompt(false);
                 setTrainResults({});
                 setTrainStatus({});
                 setTrainError({});
@@ -841,38 +884,105 @@ export default function BuildModelWindow() {
         })());
     }, [workspaceId, applyFg, trackPending]);
 
+    // ---- Running Condition modal: local draft + explicit Apply (2026-10-03) ----
+    // Every edit in the modal lands in `rcDraft` only. Nothing is written to
+    // disk or broadcast until Apply (`applyRcDraft`), which is ONE
+    // `persistRunningCondition` call carrying all four fields. The rcbar
+    // summary, the build gate and the per-model Workspace mode keep reading the
+    // PERSISTED state vars above, so a dirty draft can never leak into them.
+    //
+    // A persisted change that arrives while the modal is open (another window's
+    // broadcast) does NOT clobber a dirty draft; a clean modal just shows it
+    // live. Apply then overwrites all four fields with the draft
+    // (last-writer-wins, same as every other full-slice write here).
+    const rcPersisted: RcDraft = {
+        filters: runningConditionFilters,
+        combine: runningConditionCombine,
+        periods: runningConditionTimePeriods,
+        noneConfirmed: runningConditionNoneConfirmed,
+    };
+    const rcPersistedRef = useRef<RcDraft>(rcPersisted);
+    rcPersistedRef.current = rcPersisted;
+
+    /** Applies a patch (or a function of the current draft) to the draft,
+     *  updating the ref synchronously so a blur-commit followed immediately by
+     *  the Apply click is never missed. */
+    const patchRcDraft = useCallback((patch: Partial<RcDraft> | ((base: RcDraft) => Partial<RcDraft>)) => {
+        const base = rcDraftRef.current ?? rcPersistedRef.current;
+        const next: RcDraft = { ...base, ...(typeof patch === 'function' ? patch(base) : patch) };
+        rcDraftRef.current = next;
+        setRcDraftState(next);
+        // Editing again means "keep editing" — drop a pending discard prompt.
+        setRcDiscardPrompt(false);
+    }, []);
+
     const addRunningConditionFilter = useCallback(() => {
-        const next = [...runningConditionFilters, {
-            id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            sensor: allSensors[0] ?? '',
-            operation: 'greater_than' as const,
-            value1: '',
-            value2: '',
-        }];
-        // A condition and "No condition" are mutually exclusive.
-        setRunningConditionNoneConfirmed(false);
-        setRunningConditionFilters(next);
-        persistRunningCondition({ filters: next, noneConfirmed: false });
-    }, [runningConditionFilters, allSensors, persistRunningCondition]);
+        patchRcDraft(base => ({
+            filters: [...base.filters, {
+                id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                sensor: allSensors[0] ?? '',
+                operation: 'greater_than' as const,
+                value1: '',
+                value2: '',
+            }],
+            // A condition and "No condition" are mutually exclusive.
+            noneConfirmed: false,
+        }));
+    }, [allSensors, patchRcDraft]);
 
     const updateRunningConditionFilter = useCallback((id: string, patch: Partial<WorkspaceSensorFilter>) => {
-        const next = runningConditionFilters.map(f => f.id === id ? { ...f, ...patch } : f);
-        setRunningConditionFilters(next);
-        persistRunningCondition({ filters: next });
-    }, [runningConditionFilters, persistRunningCondition]);
+        patchRcDraft(base => ({ filters: base.filters.map(f => f.id === id ? { ...f, ...patch } : f) }));
+    }, [patchRcDraft]);
 
     const removeRunningConditionFilter = useCallback((id: string) => {
-        const next = runningConditionFilters.filter(f => f.id !== id);
-        setRunningConditionFilters(next);
-        persistRunningCondition({ filters: next });
-    }, [runningConditionFilters, persistRunningCondition]);
+        patchRcDraft(base => ({ filters: base.filters.filter(f => f.id !== id) }));
+    }, [patchRcDraft]);
 
-    // Periods are committed by the editor itself on blur / Enter (sorted), so
-    // no debounce is needed here.
+    // Periods are committed by the editor itself on blur / Enter (sorted).
     const updateRunningConditionPeriods = useCallback((periods: TimePeriod[]) => {
-        setRunningConditionTimePeriods(periods);
-        persistRunningCondition({ periods });
-    }, [persistRunningCondition]);
+        patchRcDraft({ periods });
+    }, [patchRcDraft]);
+
+    /** Discards the draft and closes the modal — the single exit every close
+     *  path (Cancel, Discard, successful Apply) goes through. */
+    const closeRc = useCallback(() => {
+        rcDraftRef.current = null;
+        setRcDraftState(null);
+        setRcPeriodTyping(false);
+        setRcDiscardPrompt(false);
+        setRcFilterOpen(false);
+    }, []);
+
+    /** X button / backdrop click. A dirty draft is never silently thrown away:
+     *  the footer swaps to an inline "Discard changes?" row instead. */
+    const requestCloseRc = useCallback(() => {
+        // Commit a half-typed period date first, so it counts as "dirty".
+        flushFocusedInput();
+        const d = rcDraftRef.current;
+        if (d && !rcDraftEqual(d, rcPersistedRef.current)) {
+            setRcDiscardPrompt(true);
+            return;
+        }
+        closeRc();
+    }, [closeRc]);
+
+    const applyRcDraft = useCallback(() => {
+        // The click may land before a half-typed period date's blur-commit
+        // has re-rendered; this forces it, and the ref picks it up at once.
+        flushFocusedInput();
+        const d = rcDraftRef.current;
+        if (!d || rcDraftEqual(d, rcPersistedRef.current)) { closeRc(); return; }
+        if (validatePeriods(d.periods).some(s => s.invalid)) return;
+        // Optimistic local mirror (the persisted state vars) so the rcbar and
+        // the gate are right the moment the modal closes; the write's own
+        // `applyFg` then confirms it from disk.
+        setRunningConditionFilters(d.filters);
+        setRunningConditionCombine(d.combine);
+        setRunningConditionTimePeriods(d.periods);
+        setRunningConditionNoneConfirmed(d.noneConfirmed);
+        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed });
+        closeRc();
+    }, [closeRc, persistRunningCondition]);
 
     // ---- Model editing (Feature 4-A, 2026-09-24) ----
     // Edits are kept as one DRAFT PER MODEL ID (not one global form), so
@@ -2637,6 +2747,18 @@ export default function BuildModelWindow() {
         : runningConditionFilters.map(f => conditionText(f, sensorLabel)).join(runningConditionCombine === 'or' ? ' OR ' : ' AND ');
     const rcOneLiner = `${rcCondText} · ${periodsText}`;
 
+    // The Edit… modal's own view: its draft once edited, else the persisted
+    // values. Only the modal reads these — everything above (rcbar, gate,
+    // models) stays on the persisted state.
+    const rcView = rcDraft ?? rcPersisted;
+    const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
+    const rcViewInvalid = validatePeriods(rcView.periods).some(s => s.invalid);
+    const rcApplyEnabled = !rcViewInvalid && (rcDirty || rcPeriodTyping);
+    const rcViewConfigured = isWorkspaceRunningConditionConfigured(
+        { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
+        gateHeaders,
+    );
+
     const pmPageModel = activePage === 'model' ? allModels.find(m => m.id === pmPageModelId) : undefined;
 
     return (
@@ -2816,46 +2938,77 @@ export default function BuildModelWindow() {
             )}
 
             {rcFilterOpen && (
-                // 🆕 2026-09-30 [data-loss fix]: both close paths call
-                // `flushFocusedInput()` first — see that function's own
-                // comment. Without it, typing a period date then closing via
-                // X/backdrop (without the input separately losing focus
-                // first) unmounted `TimePeriodsEditor` before its
-                // blur-only commit ever ran, silently dropping the edit.
-                <div className="bmw-modal-backdrop" role="presentation" onClick={() => { flushFocusedInput(); setRcFilterOpen(false); }}>
+                // 🆕 2026-10-03: edits go to a local draft; only Apply writes
+                // (see `applyRcDraft`). X / backdrop go through
+                // `requestCloseRc`, which `flushFocusedInput()`s first (a
+                // half-typed period date commits on blur only — 2026-09-30
+                // data-loss fix) and then asks before discarding a dirty draft.
+                <div className="bmw-modal-backdrop" role="presentation" onClick={requestCloseRc}>
                     <div className="bmw-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running Condition Filter">
                         <div className="bmw-modal-head">
                             <span>Running Condition Filter</span>
-                            <button type="button" className="bmw-modal-x" onClick={() => { flushFocusedInput(); setRcFilterOpen(false); }} aria-label="Close">
+                            <button type="button" className="bmw-modal-x" onClick={requestCloseRc} aria-label="Close">
                                 <X size={16} />
                             </button>
                         </div>
-                        <RunningConditionPanel
-                            embedded
-                            open={true}
-                            onToggle={() => setRcFilterOpen(false)}
-                            configured={rcConfigured}
-                            periods={runningConditionTimePeriods}
-                            onPeriodsChange={updateRunningConditionPeriods}
-                            bounds={datasetBounds}
-                            filters={runningConditionFilters}
-                            combine={runningConditionCombine}
-                            noneConfirmed={runningConditionNoneConfirmed}
-                            onNoneChange={none => {
-                                setRunningConditionNoneConfirmed(none);
-                                persistRunningCondition({ noneConfirmed: none });
-                            }}
-                            onCombineChange={mode => {
-                                setRunningConditionCombine(mode);
-                                persistRunningCondition({ combine: mode });
-                            }}
-                            onAddFilter={addRunningConditionFilter}
-                            onUpdateFilter={updateRunningConditionFilter}
-                            onRemoveFilter={removeRunningConditionFilter}
-                            sensors={allSensors}
-                            getDesc={getDesc}
-                            getComponent={getComponent}
-                        />
+                        {/* `display: contents` wrapper: only here to notice a period date
+                            being typed into (change) / committed (blur) — see rcPeriodTyping. */}
+                        <div
+                            style={{ display: 'contents' }}
+                            onChange={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"]')) setRcPeriodTyping(true); }}
+                            onBlur={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"]')) setRcPeriodTyping(false); }}
+                        >
+                            <RunningConditionPanel
+                                embedded
+                                open={true}
+                                onToggle={requestCloseRc}
+                                configured={rcViewConfigured}
+                                periods={rcView.periods}
+                                onPeriodsChange={updateRunningConditionPeriods}
+                                bounds={datasetBounds}
+                                filters={rcView.filters}
+                                combine={rcView.combine}
+                                noneConfirmed={rcView.noneConfirmed}
+                                onNoneChange={none => patchRcDraft({ noneConfirmed: none })}
+                                onCombineChange={mode => patchRcDraft({ combine: mode })}
+                                onAddFilter={addRunningConditionFilter}
+                                onUpdateFilter={updateRunningConditionFilter}
+                                onRemoveFilter={removeRunningConditionFilter}
+                                sensors={allSensors}
+                                getDesc={getDesc}
+                                getComponent={getComponent}
+                            />
+                        </div>
+                        <div className="bmw-modal-foot" data-testid="rc-modal-foot">
+                            {rcDiscardPrompt ? (
+                                <>
+                                    <span data-testid="rc-discard-prompt" role="alert" className="filter-dirty-hint" style={{ fontSize: '0.75rem' }}>
+                                        Discard your unapplied changes?
+                                    </span>
+                                    <span className="filter-panel-spacer" />
+                                    <button type="button" data-testid="rc-discard-confirm" className="f4-btn f4-btn--plain" onClick={closeRc}>Discard</button>
+                                    <button type="button" data-testid="rc-discard-keep" className="f4-btn" onClick={() => setRcDiscardPrompt(false)}>Keep editing</button>
+                                </>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        data-testid="rc-apply"
+                                        className="filter-apply-btn"
+                                        disabled={!rcApplyEnabled}
+                                        title={rcViewInvalid ? 'Fix the invalid training period first.' : undefined}
+                                        onClick={applyRcDraft}
+                                    >
+                                        <Check size={12} /> Apply
+                                    </button>
+                                    <button type="button" data-testid="rc-cancel" className="f4-btn f4-btn--plain" onClick={closeRc}>Cancel</button>
+                                    <span className="filter-panel-spacer" />
+                                    {(rcDirty || rcPeriodTyping) && (
+                                        <span data-testid="rc-dirty-hint" className="filter-dirty-hint">Changes not applied yet</span>
+                                    )}
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

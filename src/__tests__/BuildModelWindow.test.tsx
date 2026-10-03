@@ -727,8 +727,10 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
             fireEvent.click(screen.getByText('Edit…'));
             fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
+            // 2026-10-03: edits only change the modal's draft until Apply.
+            expect(screen.getByTestId('results-incomplete')).toBeTruthy();
+            fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
-            fireEvent.click(screen.getByLabelText('Close'));
 
             expect(screen.queryByTestId('results-incomplete')).toBeNull();
             expect(screen.getByTestId('results-placeholder').textContent).toBe('Not trained yet');
@@ -1051,6 +1053,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverGate([makeModel()]);
             fireEvent.click(screen.getByText('Edit…'));
             fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
+            // Still gated until Apply (2026-10-03): a draft never leaks into the gate.
+            expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(true);
+            fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
             expect((screen.getByText('Open full view ↗') as HTMLButtonElement).disabled).toBe(false);
         });
@@ -1327,7 +1332,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
             let resolveUpdate!: (v: unknown) => void;
             mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
+            // 2026-10-03: the write only starts at Apply (draft edits never write).
             fireEvent.click(screen.getByText('Add condition'));
+            fireEvent.click(screen.getByTestId('rc-apply'));
 
             const preventDefault = vi.fn();
             let closePromise!: Promise<void>;
@@ -1376,67 +1383,71 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 });
             }
 
-            it('(a) survives closing the modal itself via X — write fires, and the value is still there on reopen', async () => {
+            // 🆕 2026-10-03: with the explicit Apply step the half-typed date's
+            // fate is decided by the Apply click (or the discard prompt on X),
+            // not by a silent write on close.
+            it('(a) half-typed date + Apply click (real focus(), no manual blur) is committed, written once, and shown on reopen', async () => {
                 render(<BuildModelWindow />);
                 await deliverWithPeriod();
+                statefulUpdateMock([makeModel()], {
+                    runningConditionNoneConfirmed: false,
+                    runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
+                    runningConditionTimePeriods: [seededPeriod],
+                });
                 fireEvent.click(screen.getByText('Edit…'));
                 const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
                 // A real user's mouse click moves focus to the field first —
                 // reproduce that (fireEvent.change alone does not) — then type,
                 // WITHOUT ever separately blurring/pressing Enter before the
-                // very next thing the user does: click the X.
+                // very next thing the user does: click Apply.
                 endField.focus();
                 fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
                 expect(document.activeElement).toBe(endField); // still focused, nothing committed it yet
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
 
-                fireEvent.click(screen.getByLabelText('Close'));
+                // Apply is already clickable (an uncommitted period edit counts).
+                expect((screen.getByTestId('rc-apply') as HTMLButtonElement).disabled).toBe(false);
+                fireEvent.click(screen.getByTestId('rc-apply'));
                 await flush();
 
-                const lastWrite = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+                expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+                const lastWrite = await mockUpdateWorkspaceData.mock.results[0].value;
                 expect(lastWrite.failureGroupState.runningConditionTimePeriods[0].end).toBe('2024-02-15T12:00');
+                expect(screen.queryByRole('dialog', { name: 'Running Condition Filter' })).toBeNull();
 
                 fireEvent.click(screen.getByText('Edit…'));
                 expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
             });
 
-            it('(b) survives a native whole-window close (titlebar X / Alt+F4) requested right after typing', async () => {
+            it('(b) closing via X right after typing (no blur) commits the typed date into the draft, so the discard prompt appears instead of silently dropping it', async () => {
                 render(<BuildModelWindow />);
                 await deliverWithPeriod();
                 fireEvent.click(screen.getByText('Edit…'));
                 const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
                 endField.focus();
                 fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
-                expect(document.activeElement).toBe(endField);
 
-                let resolveUpdate!: (v: unknown) => void;
-                mockUpdateWorkspaceData.mockImplementationOnce(() => new Promise((res) => { resolveUpdate = res; }));
+                fireEvent.click(screen.getByLabelText('Close'));
+                expect(screen.getByTestId('rc-discard-prompt')).toBeTruthy();
+                expect(screen.getByRole('dialog', { name: 'Running Condition Filter' })).toBeTruthy();
+                // "Keep editing" returns to the draft with the typed value intact.
+                fireEvent.click(screen.getByTestId('rc-discard-keep'));
+                expect((screen.getByLabelText('Period 1 end') as HTMLInputElement).value).toBe('2024-02-15T12:00');
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+
+            it('(c) a native whole-window close with an UNAPPLIED draft just closes — nothing is pending, nothing is written', async () => {
+                render(<BuildModelWindow />);
+                await deliverWithPeriod();
+                fireEvent.click(screen.getByText('Edit…'));
+                const endField = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+                endField.focus();
+                fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
 
                 const preventDefault = vi.fn();
-                let closePromise!: Promise<void>;
-                await act(async () => {
-                    // Without the fix: the edit never reaches `persistRunningCondition`,
-                    // `pendingSaveRef` stays empty, `preventDefault` is never called,
-                    // and the window closes immediately — silently dropping the edit.
-                    closePromise = mockCloseRequestedHandler!({ preventDefault }) as Promise<void>;
-                    await Promise.resolve();
-                });
-                expect(preventDefault).toHaveBeenCalledTimes(1);
-                expect(mockClose).not.toHaveBeenCalled();
-
-                await act(async () => {
-                    resolveUpdate({
-                        id: 'ws1',
-                        failureGroupState: {
-                            groups: [makeGroup()], models: [makeModel()],
-                            runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }],
-                            runningConditionCombine: 'and', runningConditionNoneConfirmed: false, rcLegacyNotice: null,
-                            runningConditionTimePeriods: [{ ...seededPeriod, end: '2024-02-15T12:00' }],
-                        },
-                    });
-                    await closePromise;
-                });
-                expect(mockClose).toHaveBeenCalledTimes(1);
-                expect(mockUpdateWorkspaceData).toHaveBeenCalled();
+                await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+                expect(preventDefault).not.toHaveBeenCalled(); // no pending write to wait for
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             });
         });
 
@@ -1870,6 +1881,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         // Real user edit this time: flip combine AND -> stays, but change a
         // filter value to prove a genuine write happens and must survive.
         fireEvent.click(screen.getAllByText('AND')[0]);
+        fireEvent.click(screen.getByTestId('rc-apply')); // 2026-10-03: edits only land on Apply
         await flush();
 
         // "Dashboard" (stale mirror captured BEFORE the edit above) now runs
@@ -1921,4 +1933,179 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
     // coverage lives, since this is where the bug was actually found and
     // where `BuildModelWindow.tsx`'s own hydration code (the `applyFg` call
     // this bug clobbers) lives.
+});
+
+// 🆕 2026-10-03 [Running Condition Filter modal — explicit Apply]: user was
+// unsure whether edits in this modal "really took effect" because every
+// keystroke / blur persisted immediately and nothing said so. The modal now
+// edits a LOCAL DRAFT of all four workspace fields and only Apply writes
+// (ONE `persistRunningCondition` call) — same mental model as the Dashboard
+// Filter tab's "Apply filter". Persisted values (rcbar, the build gate, every
+// per-model Workspace mode) never see a dirty draft.
+describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)', () => {
+    const seededPeriod = { id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
+    const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
+    const fgSeed = () => ({
+        groups: [makeGroup()], models: [makeModel()],
+        runningConditionNoneConfirmed: false,
+        runningConditionFilters: [seededFilter],
+        runningConditionCombine: 'or' as const,
+        runningConditionTimePeriods: [seededPeriod],
+        rcLegacyNotice: null,
+    });
+    const apply = () => screen.getByTestId('rc-apply') as HTMLButtonElement;
+    const writes = () => mockUpdateWorkspaceData.mock.calls.length;
+    const fgChangedEmits = () => mockEmit.mock.calls.filter(c => c[0] === 'failure-group-state-changed');
+
+    async function openModal() {
+        const fg = fgSeed();
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        statefulUpdateMock(fg.models, fg);
+        mockUpdateWorkspaceData.mockClear();
+        mockEmit.mockClear();
+        fireEvent.click(screen.getByText('Edit…'));
+    }
+
+    it('editing a value / combine only changes the draft — nothing is written or broadcast, and the rcbar keeps the persisted text', async () => {
+        await openModal();
+        const barBefore = screen.getByTestId('rc-bar').textContent;
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(screen.getByRole('button', { name: 'AND' }));
+        await flush();
+        expect(writes()).toBe(0);
+        expect(fgChangedEmits()).toHaveLength(0);
+        expect((screen.getByDisplayValue('9') as HTMLInputElement).value).toBe('9'); // the modal shows the draft
+        expect(screen.getByTestId('rc-bar').textContent).toBe(barBefore); // ...the rcbar does not
+        expect(barBefore).toMatch(/> 5/);
+    });
+
+    it('Apply is disabled while clean, enabled + "Changes not applied yet" while dirty, and disabled again when the edit is reverted', async () => {
+        await openModal();
+        expect(apply().disabled).toBe(true);
+        expect(screen.queryByTestId('rc-dirty-hint')).toBeNull();
+
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        expect(apply().disabled).toBe(false);
+        expect(screen.getByTestId('rc-dirty-hint').textContent).toBe('Changes not applied yet');
+
+        fireEvent.change(screen.getByDisplayValue('9'), { target: { value: '5' } });
+        expect(apply().disabled).toBe(true);
+        expect(screen.queryByTestId('rc-dirty-hint')).toBeNull();
+    });
+
+    it('Apply writes ONCE with all four fields, broadcasts once, closes the modal, and a reopen shows the applied values', async () => {
+        await openModal();
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(screen.getByRole('button', { name: 'AND' }));
+        fireEvent.click(apply());
+        await flush();
+
+        expect(writes()).toBe(1);
+        const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
+        expect(written.runningConditionFilters).toEqual([{ ...seededFilter, value1: '9' }]);
+        expect(written.runningConditionCombine).toBe('and');
+        expect(written.runningConditionTimePeriods).toEqual([seededPeriod]);
+        expect(written.runningConditionNoneConfirmed).toBe(false);
+        expect(fgChangedEmits()).toHaveLength(1);
+        expect(screen.queryByRole('dialog', { name: 'Running Condition Filter' })).toBeNull();
+        expect(screen.getByTestId('rc-bar').textContent).toMatch(/> 9/); // persisted text updated
+
+        fireEvent.click(screen.getByText('Edit…'));
+        expect(screen.getByDisplayValue('9')).toBeTruthy();
+        expect(apply().disabled).toBe(true); // a fresh open is clean
+    });
+
+    it('Apply is disabled for an invalid training period (end before start) and the existing error text shows', async () => {
+        await openModal();
+        const end = screen.getByLabelText('Period 1 end') as HTMLInputElement;
+        fireEvent.change(end, { target: { value: '2023-01-01T00:00' } });
+        fireEvent.blur(end);
+        expect(screen.getByTestId('rc-invalid-reason')).toBeTruthy();
+        expect(apply().disabled).toBe(true);
+        fireEvent.click(apply());
+        await flush();
+        expect(writes()).toBe(0);
+    });
+
+    it('Cancel discards the draft: nothing is written, and reopening shows the persisted (not the discarded) values', async () => {
+        await openModal();
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(screen.getByTestId('rc-cancel'));
+        expect(screen.queryByRole('dialog', { name: 'Running Condition Filter' })).toBeNull();
+        expect(writes()).toBe(0);
+        fireEvent.click(screen.getByText('Edit…'));
+        expect(screen.getByDisplayValue('5')).toBeTruthy();
+        expect(screen.queryByDisplayValue('9')).toBeNull();
+    });
+
+    it('X with a CLEAN modal closes at once (no prompt)', async () => {
+        await openModal();
+        fireEvent.click(screen.getByLabelText('Close'));
+        expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
+        expect(screen.queryByRole('dialog', { name: 'Running Condition Filter' })).toBeNull();
+    });
+
+    it('X with a dirty draft asks "Discard...?" instead of closing; Keep editing keeps the draft, Discard drops it', async () => {
+        await openModal();
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(screen.getByLabelText('Close'));
+        expect(screen.getByTestId('rc-discard-prompt')).toBeTruthy();
+        expect(screen.getByRole('dialog', { name: 'Running Condition Filter' })).toBeTruthy();
+        expect(screen.queryByTestId('rc-apply')).toBeNull(); // the prompt replaces the Apply row
+
+        fireEvent.click(screen.getByTestId('rc-discard-keep'));
+        expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
+        expect(screen.getByDisplayValue('9')).toBeTruthy(); // draft intact
+
+        fireEvent.click(screen.getByLabelText('Close'));
+        fireEvent.click(screen.getByTestId('rc-discard-confirm'));
+        expect(screen.queryByRole('dialog', { name: 'Running Condition Filter' })).toBeNull();
+        expect(writes()).toBe(0);
+        fireEvent.click(screen.getByText('Edit…'));
+        expect(screen.getByDisplayValue('5')).toBeTruthy();
+    });
+
+    it('backdrop click with a dirty draft also asks before discarding', async () => {
+        await openModal();
+        fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+        fireEvent.click(screen.getByRole('dialog', { name: 'Running Condition Filter' }).parentElement as HTMLElement);
+        expect(screen.getByTestId('rc-discard-prompt')).toBeTruthy();
+        expect(writes()).toBe(0);
+    });
+
+    it('a broadcast from another window while the modal is open does not clobber a dirty draft; a clean modal shows it live', async () => {
+        await openModal();
+        const broadcast = (value1: string) => act(async () => {
+            for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
+                cb({ payload: { ...fgSeed(), runningConditionFilters: [{ ...seededFilter, value1 }], workspaceId: 'ws1', origin: 'dashboard' } });
+            }
+            await Promise.resolve();
+        });
+        await broadcast('7');
+        expect(screen.getByDisplayValue('7')).toBeTruthy(); // clean modal follows the persisted value
+
+        fireEvent.change(screen.getByDisplayValue('7'), { target: { value: '9' } });
+        await broadcast('3');
+        expect(screen.getByDisplayValue('9')).toBeTruthy(); // dirty draft survives
+        expect(screen.queryByDisplayValue('3')).toBeNull();
+    });
+
+    it('App.css keeps the Apply footer sticky at the bottom of the scrolling modal', () => {
+        expect(cssBlock('.bmw-modal-foot')).toMatch(/position:\s*sticky/);
+        expect(cssBlock('.bmw-modal-foot')).toMatch(/bottom:\s*0/);
+    });
+
+    it('the draft never leaks into the build gate or the rcbar pill until Apply', async () => {
+        const fg = { ...fgSeed(), runningConditionFilters: [], runningConditionTimePeriods: [] };
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg });
+        statefulUpdateMock(fg.models, fg);
+        fireEvent.click(screen.getByText('Edit…'));
+        fireEvent.click(screen.getByRole('button', { name: 'No condition — use all rows' }));
+        expect(screen.getByTestId('rc-bar-pill').textContent).toBe('Required');
+        fireEvent.click(apply());
+        await flush();
+        expect(screen.getByTestId('rc-bar-pill').textContent).toBe('✓ Set');
+    });
 });

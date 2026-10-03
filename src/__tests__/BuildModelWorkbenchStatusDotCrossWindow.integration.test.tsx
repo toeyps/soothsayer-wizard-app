@@ -298,7 +298,8 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
         const modal = within(bmw().getByRole('dialog', { name: 'Running Condition Filter' }));
         await act(async () => { fireEvent.change(modal.getByPlaceholderText('val'), { target: { value: '20' } }); });
         await settle(30);
-        fireEvent.click(modal.getByLabelText('Close'));
+        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
+        await settle(30);
         expect(diskFresh('i1')).toBe(false);
         expect(pill()).toBe('Incomplete');
         expect(bmwDot('i1')).toBe('none');
@@ -408,7 +409,8 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         const modal = within(bmw().getByRole('dialog', { name: 'Running Condition Filter' }));
         await act(async () => { fireEvent.change(modal.getByPlaceholderText('val'), { target: { value: '20' } }); });
         await settle(30);
-        fireEvent.click(modal.getByLabelText('Close'));
+        await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); }); // 2026-10-03: edits land only on Apply
+        await settle(30);
         expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('20');
         expect(diskFresh('i1')).toBe(false);
         expect(pill()).toBe('Incomplete');
