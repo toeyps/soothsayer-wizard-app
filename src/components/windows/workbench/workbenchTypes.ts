@@ -1,4 +1,5 @@
-import type { FailureModel } from '../../../types';
+import type { FailureModel, HealthSetPoints } from '../../../types';
+import type { HealthIssue } from '../../../types/health';
 import type { UseHealthPreviewResult } from '../../../hooks/useHealthPreview';
 
 /*
@@ -33,4 +34,35 @@ export interface WorkbenchPageProps {
     sensorLabel: (tag: string) => string;
     /** Raw description of a tag ('' when unknown). */
     getDesc: (tag: string) => string;
+}
+
+// ---------------------------------------------------------------------------
+// Health score page (3b-2)
+// ---------------------------------------------------------------------------
+
+/** What the page tells about the model's saved files ("Mark complete" writes them). */
+export type SaveInfo =
+    | { phase: 'idle' }
+    /** `slow`: Relationship re-runs the sidecar (about 15 s). */
+    | { phase: 'running'; slow: boolean }
+    /** `files` is `null` when only the persisted record is known (the model was
+     *  completed in an earlier session): the folder and time, not the file list. */
+    | { phase: 'ok'; outputDir: string; files: { file_name: string; path: string }[] | null; at: string }
+    | { phase: 'error'; message: string };
+
+export interface HealthScorePageProps extends WorkbenchPageProps {
+    /** The draft set points being edited (always this model's own kind). */
+    setPoints: HealthSetPoints;
+    /** Every edit; `commit` = persist right away (stepper, quick buttons, reset to master). */
+    onSetPointsChange: (next: HealthSetPoints, commit?: boolean) => void;
+    /** The user is done typing in an input (blur / Enter): persist the draft. */
+    onSetPointsCommit: () => void;
+    /** Issues Rust returned when the last Mark complete was refused (shown in
+     *  Checks until the set points change); `null` = show the live preview's. */
+    attemptIssues: HealthIssue[] | null;
+    save: SaveInfo;
+    /** The model is Complete but its set points differ from the exported files. */
+    filesOutOfDate: boolean;
+    /** "Re-train to recompute" (Relationship fit gone from memory). */
+    onRetrain: () => void;
 }

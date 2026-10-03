@@ -81,6 +81,27 @@ describe('persistModelComplete', () => {
         expect(mockEmit.mock.calls[0][1].models[0].status).toBe(true);
     });
 
+    it('stores the export record (when / where / with which set points) in the same write, and a later set-point save leaves it alone', async () => {
+        setDisk([trained(ind())]);
+        const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/ws/output', setPoints: sp };
+        const { next } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', record);
+        expect(next!.failureGroupState!.models[0].healthExport).toEqual(record);
+        await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
+        // the files still carry the old points: the record is what lets the page say "changed after saving"
+        expect(disk.failureGroupState!.models[0].healthExport).toEqual(record);
+        expect(disk.failureGroupState!.models[0].healthSetPoints).toMatchObject({ lower: 0, upper: 99 });
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
+    });
+
+    it('without a record (the old call shape) an earlier record is kept, none is invented', async () => {
+        const record = { at: 'x', outputDir: 'C:/ws/output', setPoints: sp };
+        setDisk([trained(ind({ healthExport: record }))]);
+        const { next } = await persistModelComplete('ws1', 'i1', sp, null);
+        expect(next!.failureGroupState!.models[0].healthExport).toEqual(record);
+        setDisk([trained(ind())]);
+        expect((await persistModelComplete('ws1', 'i1', sp, null)).next!.failureGroupState!.models[0].healthExport).toBeUndefined();
+    });
+
     it('a model whose inputs changed since it was trained is NOT marked (re-checked against disk), nothing broadcast', async () => {
         setDisk([{ ...trained(ind()), targetSensor: 'T2' }]);
         const { next, reason } = await persistModelComplete('ws1', 'i1', sp, null);

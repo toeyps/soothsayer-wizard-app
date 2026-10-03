@@ -66,7 +66,8 @@ vi.mock('@tauri-apps/api/core', () => ({
         h.invokes.push({ cmd, args: JSON.parse(JSON.stringify(args ?? null)) });
         switch (cmd) {
             case 'get_dataset_time_bounds': return Promise.resolve({ min: '2026-01-01T00:00:00', max: '2026-12-31T23:59:00' });
-            case 'compute_health_preview': return Promise.resolve(makeHealthPreview((args as any)?.request));
+            case 'compute_health_preview': return Promise.resolve(makeSetPointAwarePreview((args as any)?.request));
+            case 'export_model_files': return Promise.resolve(EXPORT_RESULT_OK);
             case 'compute_sensor_stats': return Promise.resolve(STATS);
             case 'preview_relationship_model': return Promise.resolve({
                 request: 'r', error: undefined, predicted: [1, 2, 3], residual: [0, 0, 0],
@@ -94,7 +95,8 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div data-test
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div data-testid="echarts-mock" /> }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
-import { makeHealthPreview } from './helpers/healthPreviewFixture';
+import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { EXPORT_RESULT_OK } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -132,6 +134,9 @@ function v1Model(o: Record<string, unknown>) {
 }
 
 /** A model in the current (Feature 4) shape. */
+/** Set points the `makeSetPointAwarePreview` fixture accepts (Individual 3SD band 2..8): Finish needs them since 3b-2. */
+const VALID_SP = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
+
 function model(o: Record<string, unknown>) {
     const { filterTimeStart: _s, filterTimeEnd: _e, ...rest } = v1Model({});
     void _s; void _e;
@@ -358,15 +363,15 @@ describe('(2) the Overview "Build Model" gate and the PM "Finish" gate agree', (
             expect(screen.getByTestId('build-block-reason').textContent).toBe(pmReason);
             expect(openFullViewBtn().title).toBe(pmReason);
             expect(openFullViewBtn().disabled).toBe(true);
-            // Phase B footer: Mark complete / Train carry the SAME gate reason
-            // (not the generic "Train the model first" hint).
-            expect((screen.getByText('✓ Mark complete') as HTMLButtonElement).title).toBe(pmReason);
+            // Phase B footer: Train carries the SAME gate reason; Mark complete is not on this
+            // page at all any more (health score 3b-2: it lives on the Health score page).
+            expect(screen.queryByText('✓ Mark complete')).toBeNull();
             expect((screen.getByText('▶ Train model') as HTMLButtonElement).title).toBe(pmReason);
         });
     }
 
     it('a Custom model with its own configured list can Build and Finish while the workspace is unset, and Finish marks it Complete on disk', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND] })])));
+        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], healthSetPoints: VALID_SP })])));
         await mountBuildModel();
         // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
@@ -596,7 +601,9 @@ describe('PM page edits made right before leaving the page', () => {
         // (status), so one blocking does not undo the other.
         expect(m.filterTimePeriods).toEqual([{ ...P, end: '2026-02-15T12:00' }]);
         expect(m.status).toBe(false);
-        expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/Train the model/);
+        // The edit made the model stale (a training period is fingerprinted): nothing was written, no files.
+        expect(screen.getByTestId('complete-block-reason').textContent).toMatch(/re-train/i);
+        expect(h.invokes.filter(c => c.cmd === 'export_model_files')).toHaveLength(0);
     });
 
     // FIXED (qa 2026-09-24) — `markModelComplete` re-checks the gate against
@@ -605,7 +612,7 @@ describe('PM page edits made right before leaving the page', () => {
     // pending debounced write before calling it — so an edit that satisfied
     // the gate < 250 ms earlier is never dropped.
     it('Finish right after re-confirming Custom "No condition" marks the model Complete', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true })])));
+        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, healthSetPoints: VALID_SP })])));
         await mountBuildModel();
         // 🆕 Phase B (2026-09-29): train it first (still noneConfirmed:true —
         // the same effective running condition the toggle dance below ends
@@ -663,14 +670,10 @@ describe('reason text consistency', () => {
         await mountBuildModel();
         openFirstRow();
         const footer = screen.getByTestId('build-block-reason').textContent;
-        const markComplete = screen.getByText('✓ Mark complete') as HTMLButtonElement;
-        // Since Phase B, Mark complete is ALSO disabled for any never-trained
-        // model, so `disabled` alone no longer proves the gate is what blocks
-        // it — the title (the gate reason, not the "Train the model…" hint)
-        // does, and so does the Train button carrying the same reason.
-        expect(markComplete.disabled).toBe(true);
-        expect(footer).toBe(markComplete.title);
-        expect(markComplete.title).not.toMatch(/Train the model/);
+        // Mark complete is not on this page (health score 3b-2) and the Health score page stays
+        // locked; the Train button carries the same gate reason as the footer.
+        expect(screen.queryByText('✓ Mark complete')).toBeNull();
+        expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
         const train = screen.getByText('▶ Train model') as HTMLButtonElement;
         expect(train.disabled).toBe(true);
         expect(train.title).toBe(footer);

@@ -7,7 +7,7 @@ import type {
     IndividualStats,
     RelationshipSeries,
 } from '../../../types/health';
-import { CHART, CLUSTER_COLORS, FONT } from './chartTheme';
+import { CHART, CLUSTER_COLORS, FONT, fmtNum } from './chartTheme';
 
 /*
  * Pure ECharts option builders for the Build Model Workbench's health charts
@@ -55,6 +55,9 @@ const tooltipBase = {
     backgroundColor: CHART.tooltipBg,
     borderColor: CHART.tooltipBorder,
     textStyle: { color: CHART.textPrimary },
+    // Never cut off at the card's edge, and a number reads like everywhere else on the page.
+    confine: true,
+    valueFormatter: (v: unknown) => (typeof v === 'number' ? fmtNum(v) : String(v ?? '')),
 };
 
 const axisCommon = {
@@ -92,6 +95,9 @@ export interface TimeSeriesSpec {
     hLines?: HLine[];
     bands?: HBand[];
     yName?: string;
+    /** Fixed Y range (the Health score chart is always 0-100); overrides the
+     *  data-driven one. */
+    yRange?: [number, number];
 }
 
 /** Value(s) over time with horizontal reference lines and shaded bands. The
@@ -110,7 +116,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     for (const b of bands) { take(b.from); take(b.to); }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = 1; }
     const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 1;
-    const [yMin, yMax] = niceExtent(lo - pad, hi + pad);
+    const [yMin, yMax] = spec.yRange ?? niceExtent(lo - pad, hi + pad);
 
     const series = lines.map((l, i) => {
         const data = ms

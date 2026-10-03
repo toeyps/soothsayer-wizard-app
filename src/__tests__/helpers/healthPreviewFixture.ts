@@ -147,3 +147,70 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
         ...over,
     };
 }
+
+// ---------------------------------------------------------------------------
+// Set-point-aware answers (health score phase 3b-2)
+// ---------------------------------------------------------------------------
+
+const REQUIRED_MSG: Record<string, string> = {
+    lower: 'Enter the lower set point (L): the value where health reaches 0 on the low side.',
+    upper: 'Enter the upper set point (H): the value where health reaches 0 on the high side.',
+    residual_at_80_lower: 'Enter the lower 80-point (residual where health is 80, negative).',
+    residual_at_80_upper: 'Enter the upper 80-point (residual where health is 80, positive).',
+    residual_at_0_lower: 'Enter the lower 0-point (residual where health is 0, negative).',
+    residual_at_0_upper: 'Enter the upper 0-point (residual where health is 0, positive).',
+    outer_sd: 'Enter the outer ring (N × SD): the distance where health reaches 0.',
+};
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * A `compute_health_preview` answer that FOLLOWS the request's `set_points`, the
+ * way Rust does it (a tiny stand-in for `validate_*`, not a copy of the rules):
+ * empty field -> a `required` issue naming it; Individual L/H that is not beyond
+ * the 3SD boundary (2 / 8 in this fixture) -> `lower_inside_3sd` / `upper_inside_3sd`;
+ * Clustering N <= 3 -> `outer_sd_not_above_3`; everything else valid, with a
+ * 5-point score series (100, 90, 80, 60, 30) and a summary. A test that wants
+ * something else passes `over`.
+ */
+export function makeSetPointAwarePreview(req: HealthPreviewRequest | Record<string, any> | undefined, over: Partial<HealthPreview> = {}): HealthPreview {
+    const r = (req ?? {}) as HealthPreviewRequest;
+    const base = makeHealthPreview(r);
+    const sp = (r.set_points ?? {}) as Record<string, unknown>;
+    const fields = base.kind === 'individual'
+        ? ['lower', 'upper']
+        : base.kind === 'relationship'
+            ? ['residual_at_80_lower', 'residual_at_80_upper', 'residual_at_0_lower', 'residual_at_0_upper']
+            : ['outer_sd'];
+    const validation: HealthPreview['validation'] = [];
+    for (const f of fields) {
+        if (num(sp[f]) === null) validation.push({ code: 'required', severity: 'error', message: REQUIRED_MSG[f], field: f });
+    }
+    if (base.kind === 'individual') {
+        const l = num(sp.lower);
+        const u = num(sp.upper);
+        if (l !== null && l >= 2) validation.push({ code: 'lower_inside_3sd', severity: 'error', message: `The lower set point (L = ${l}) must be below the lower 3σ boundary (2).`, field: 'lower' });
+        if (u !== null && u <= 8) validation.push({ code: 'upper_inside_3sd', severity: 'error', message: `The upper set point (H = ${u}) must be above the upper 3σ boundary (8).`, field: 'upper' });
+    }
+    if (base.kind === 'clustering') {
+        const n = num(sp.outer_sd);
+        if (n !== null && n <= 3) validation.push({ code: 'outer_sd_not_above_3', severity: 'error', message: `The outer ring (${n}× SD) must be more than 3× SD (the 80 point).`, field: 'outer_sd' });
+    }
+    const valid = validation.length === 0;
+    const score = valid ? [100, 90, 80, 60, 30] : null;
+    return {
+        ...base,
+        validation,
+        valid,
+        series: { ...base.series, score } as HealthPreview['series'],
+        score_summary: valid
+            ? {
+                scored: 5, unscored: 0, total_rows: 5,
+                min_score: { score: 30, row: 4, timestamp: TS[4] },
+                pct_below_80: 40, share_80_100: 60, share_40_80: 20, share_0_40: 20,
+                share_basis: 'row_count',
+            }
+            : null,
+        ...over,
+    };
+}

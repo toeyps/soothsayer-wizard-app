@@ -4,7 +4,8 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
 import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Loader2 } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints } from "../../types";
+import type { HealthIssue } from "../../types/health";
 import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
@@ -17,6 +18,9 @@ import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
 import { isModelStale as isModelStaleFor, modelDotState, NOT_TRAINED_BLOCK_REASON, type ModelDotState } from "../../utils/modelStatus";
 import { HEALTH_DEFAULT_MAX_POINTS, relationshipLambda } from "../../utils/healthRequest";
+import { ensureHealthSetPoints } from "../../utils/healthSetPoints";
+import { completeModel } from "../../utils/completeModel";
+import { commitSetPoints, persistModelComplete } from "../../utils/healthPersist";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useHealthPreview } from "../../hooks/useHealthPreview";
@@ -34,7 +38,8 @@ import { CLUSTER_COLORS as CLUSTER_PALETTE } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
 import WorkbenchStepBar, { workbenchStepLooks, type StepKey } from "./workbench/WorkbenchStepBar";
 import { PageSwitch, StaleBanner } from "./workbench/WorkbenchShellParts";
-import type { WorkbenchPage } from "./workbench/workbenchTypes";
+import { buildCheckLines, healthVerdict, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
+import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 
 interface BuildModelData {
     workspaceId: string;
@@ -412,6 +417,34 @@ export default function BuildModelWindow() {
     // navigated away from (switching sensor or kind tab).
     useEffect(() => { setCompareOpen(false); }, [selectedSensorKey, activeTab]);
 
+    // ---- Health score page (health score phase 3b-2, 2026-10-04) ----
+    /** DRAFT set points per model id: what the user is typing on the Health score
+     *  page. A key is present only while there is something typed that has not
+     *  been confirmed on disk yet; the page and `useHealthPreview` read
+     *  `draft ?? persisted`, so typing moves the charts/score/Checks at once and a
+     *  broadcast from another window (which only refreshes the persisted side) can
+     *  never overwrite what is being typed. Persisted by `commitSetPointDrafts` (input
+     *  blur / Enter, leaving the page or the model, window close). Mirrored in a ref
+     *  so the commit paths see the latest value synchronously. */
+    const [spDrafts, setSpDraftsState] = useState<Record<string, HealthSetPoints>>({});
+    const spDraftsRef = useRef<Record<string, HealthSetPoints>>({});
+    const writeSpDrafts = useCallback((next: Record<string, HealthSetPoints>) => {
+        spDraftsRef.current = next;
+        setSpDraftsState(next);
+    }, []);
+    /** Mark complete progress / result per model id (session only). */
+    const [saveInfo, setSaveInfo] = useState<Record<string, SaveInfo>>({});
+    /** Issues Rust returned when the last Mark complete was refused (until the set points change). */
+    const [attemptIssues, setAttemptIssues] = useState<Record<string, HealthIssue[] | null>>({});
+    /** Models whose Mark complete is running right now (double-click guard; a ref so two
+     *  clicks in the same tick cannot both pass). */
+    const completeRunningRef = useRef<Set<string>>(new Set());
+    /** The last validate verdict Rust gave per model this session (drives the
+     *  "Set points needed" / "Fix set point" tab pills and the red dot). */
+    const [healthVerdicts, setHealthVerdicts] = useState<Record<string, HealthVerdict>>({});
+    /** Models whose first-open set-point snapshot was already written (once per model). */
+    const setPointsSeededRef = useRef<Set<string>>(new Set());
+
     // ---- Predictive Model page — an in-window "next page" (not a spawned
     //      OS window) reached from the detail footer's "Open full view ↗"
     //      button. Only Dashboard + this singleton window are ever open at
@@ -507,14 +540,6 @@ export default function BuildModelWindow() {
     const registerPmFlush = useCallback((flush: (() => Promise<void>) | null) => {
         pmFlushRef.current = flush;
     }, []);
-    /** Awaits both this window's own pending write and the PM page's pending
-     *  debounced write (if that page is open), so no path off this window can
-     *  drop an edit made just before closing. */
-    const flushAllPending = useCallback(async () => {
-        if (pmFlushRef.current) await pmFlushRef.current();
-        if (pendingSaveRef.current) await pendingSaveRef.current;
-    }, []);
-
     // Mirrors the whole slice into local state — used by every path that
     // receives a fresh copy (hydration, broadcasts, our own writes).
     const applyFg = useCallback((fg: FailureGroupStateSlice | undefined | null) => {
@@ -527,6 +552,54 @@ export default function BuildModelWindow() {
         setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
+
+    /** Persists every set-point draft that is not on disk yet (health score
+     *  3b-2). Writes ONLY `healthSetPoints` (`commitSetPoints`: no status, no train
+     *  record, never stale), tracked in `pendingSaveRef` like every other write so
+     *  a window close waits for it. A draft is dropped once its write landed,
+     *  unless the user typed something newer meanwhile. No draft = no write. */
+    const spInflightRef = useRef<{ drafts: Record<string, HealthSetPoints>; promise: Promise<void> } | null>(null);
+    const commitSetPointDrafts = useCallback((): Promise<void> => {
+        const ws = workspaceIdRef.current;
+        const drafts = spDraftsRef.current;
+        const ids = Object.keys(drafts);
+        if (!ws || ids.length === 0) return Promise.resolve();
+        // Several triggers can fire for one edit (blur, leaving the page, window close): the
+        // same drafts already being written are not written a second time.
+        const inflight = spInflightRef.current;
+        if (inflight && ids.every(id => inflight.drafts[id] === drafts[id])) return inflight.promise;
+        const entry: { drafts: Record<string, HealthSetPoints>; promise: Promise<void> | null } = { drafts, promise: null };
+        const promise: Promise<void> = trackPending((async () => {
+            try {
+                for (const id of ids) {
+                    const sp = drafts[id];
+                    const next = await commitSetPoints(ws, id, sp, 'build-model');
+                    if (workspaceIdRef.current !== ws) return;
+                    if (next?.failureGroupState) applyFg(next.failureGroupState);
+                    if (spDraftsRef.current[id] === sp) {
+                        const rest = { ...spDraftsRef.current };
+                        delete rest[id];
+                        writeSpDrafts(rest);
+                    }
+                }
+            } finally {
+                if (spInflightRef.current === entry) spInflightRef.current = null;
+            }
+        })());
+        entry.promise = promise;
+        spInflightRef.current = entry as { drafts: Record<string, HealthSetPoints>; promise: Promise<void> };
+        return promise;
+    }, [trackPending, applyFg, writeSpDrafts]);
+
+    /** Awaits both this window's own pending write and the PM page's pending
+     *  debounced write (if that page is open), so no path off this window can
+     *  drop an edit made just before closing. A set-point draft that was typed
+     *  but never blurred is committed first, so it is part of what is awaited. */
+    const flushAllPending = useCallback(async () => {
+        void commitSetPointDrafts();
+        if (pmFlushRef.current) await pmFlushRef.current();
+        if (pendingSaveRef.current) await pendingSaveRef.current;
+    }, [commitSetPointDrafts]);
 
     // A draft for a model that no longer exists (deleted on the Dashboard
     // meanwhile) must not linger.
@@ -631,6 +704,13 @@ export default function BuildModelWindow() {
                 setTrainError({});
                 setPageByModel({});
                 setCompareOpen(false);
+                // Health score page state of the old workspace.
+                writeSpDrafts({});
+                setSaveInfo({});
+                setAttemptIssues({});
+                setHealthVerdicts({});
+                setPointsSeededRef.current = new Set();
+                completeRunningRef.current = new Set();
             }
             setGeneration(d.metadata?.generation);
             setAllSensors(d.sensorHeaders);
@@ -695,7 +775,7 @@ export default function BuildModelWindow() {
             offData();
             offChanged();
         };
-    }, [applyFg, trackPending]);
+    }, [applyFg, trackPending, writeSpDrafts]);
 
     // Returns the write's promise (also tracked via `trackPending`, so a
     // window close can await it) rather than being fire-and-forget itself.
@@ -1116,20 +1196,15 @@ export default function BuildModelWindow() {
      *  (never `m.status` alone). */
     const isModelDone = (m: FailureModel): boolean => m.status && !isModelStale(m);
 
-    const toggleModelStatus = (modelId: string) => {
-        // Toward Complete only: an unconfigured model can't be marked Complete;
-        // going back to Incomplete is always allowed. Build Model Workbench
-        // Phase B adds a second requirement for Incomplete -> Complete: the
-        // model must have been Trained (fresh, not stale) first — a model
-        // can't be marked complete straight from "Incomplete config" or a
-        // stale preview (SPEC FINAL, footer rule 6). This does NOT change
-        // `markModelComplete` (the PM page's own "Finish" button) — that is
-        // a separate, unchanged path.
-        const target = allModels.find(m => m.id === modelId);
-        if (target && !target.status && (gateReasonOf(target) !== null || !isModelTrainedFresh(target) || trainError[modelId])) return;
-        persist((models, groups) => ({
+    // 🆕 2026-10-04 (health score 3b-2): the old `toggleModelStatus` is GONE. A model
+    // can no longer be marked Complete by flipping a flag: the ONLY way is
+    // `runMarkComplete` below (validate the set points -> write the model's files ->
+    // persist `status: true`). Going back to Incomplete only writes `status: false`
+    // (the files already written stay on disk).
+    const markModelIncomplete = (modelId: string) => {
+        void persist((models, groups) => ({
             groups,
-            models: models.map(m => m.id === modelId ? { ...m, status: !m.status } : m),
+            models: models.map(m => m.id === modelId ? { ...m, status: false } : m),
         }));
     };
 
@@ -1299,45 +1374,121 @@ export default function BuildModelWindow() {
     // Finish path, the Workbench's "✓ Mark complete" title and the health-score
     // Mark complete share one wording.)
 
-    /** Sets `status: true` unconditionally (unlike `toggleModelStatus`) —
-     *  used by the PM page's "Finish" button, where clicking it again should
-     *  never accidentally flip an already-complete model back to incomplete.
-     *  Un-marking a model still goes through the footer's own action button
-     *  (`toggleModelStatus`). The gate is evaluated against what is on DISK
-     *  inside the write (the PM page flushes its own edits first), never
-     *  against this window's possibly lagging copy.
-     *  🆕 QA scope-gap fix (2026-09-29): "Finish" used to mark a model
-     *  Complete straight from the gate check alone, with no requirement that
-     *  it had ever been Train'd — a second, looser gate than the Workbench's
-     *  own "✓ Mark complete" button. SPEC FINAL says Mark complete replaces
-     *  Finish everywhere, so this now ALSO requires `trainedFreshFor` — the
-     *  exact same fingerprint-equality helper `isModelTrainedFresh` uses —
-     *  checked against the model/fg read fresh off disk, never a second,
-     *  independently-derived "is this trained" definition. (2026-09-30: that
-     *  helper now lives in `src/utils/trainFingerprint.ts` as the exported
-     *  `isModelTrainedFresh`, imported here under this file's existing local
-     *  name `trainedFreshFor` — one definition, not two, also reused directly
-     *  by `FailureGroupsPanel.tsx`'s status dot.) */
-    const markModelComplete = (modelId: string): Promise<void> => {
-        if (!workspaceId) return Promise.resolve();
-        setCompleteBlock(null);
-        return trackPending((async () => {
-            const res = { reason: null as string | null };
-            const next = await updateWorkspaceData(workspaceId, prev => {
-                const fg = prev.failureGroupState;
-                const target = fg?.models?.find(m => m.id === modelId);
-                if (!target) return prev;
-                res.reason = getBuildBlockReason(target, fg, gateHeaders);
-                if (res.reason === null && !trainedFreshFor(target, fg)) res.reason = NOT_TRAINED_BLOCK_REASON;
-                if (res.reason !== null) return prev;
-                return withFailureGroupState(prev, { models: (fg?.models ?? []).map(m => m.id === modelId ? { ...m, status: true } : m) });
+    // ---- Set points + Mark complete (health score 3b-2) ----
+    /** The model's PERSISTED set points, brought up to date: the right empty shape
+     *  for its kind, and (Individual) the first-open snapshot of the sensor's
+     *  master-data L/H prefilled - derived here so the very first render already shows
+     *  it; `setPointsSeed` below writes it once. Never overwrites a value the user
+     *  entered. `loading` = metadata not hydrated yet: no snapshot is taken then. */
+    const persistedSetPointsOf = (m: FailureModel): HealthSetPoints =>
+        ensureHealthSetPoints(m, loading ? undefined : (sensorMetadata ?? [])).healthSetPoints as HealthSetPoints;
+    /** What the Health score page shows and previews: the draft being typed, else the persisted ones. */
+    const setPointsOf = (m: FailureModel): HealthSetPoints => spDrafts[m.id] ?? persistedSetPointsOf(m);
+
+    /** Every edit of a set point (typing, stepper, quick button, reset to master).
+     *  Updates the draft at once; `commit` also persists right away (a discrete
+     *  action has nothing more to type). Editing never changes status and never makes
+     *  the model stale. */
+    const changeSetPoints = (m: FailureModel, next: HealthSetPoints, commit?: boolean) => {
+        writeSpDrafts({ ...spDraftsRef.current, [m.id]: next });
+        // The refusal Rust gave for the previous values no longer describes these.
+        setAttemptIssues(prev => (prev[m.id] ? { ...prev, [m.id]: null } : prev));
+        if (commit) void commitSetPointDrafts();
+    };
+
+    /** The ONE way a model becomes Complete: `completeModel` (validate the set
+     *  points -> `export_model_files`, all-or-nothing) and only then
+     *  `persistModelComplete` (`status: true` + the validated set points + the export
+     *  record, in one write, gate + "trained and fresh" re-checked against what is on
+     *  disk). Returns `null` on success, otherwise the reason it was not marked
+     *  (also shown on the Health score page). Never throws; guarded against a
+     *  double click (a Relationship export re-runs the sidecar for ~15 s). */
+    const runMarkComplete = async (m: FailureModel, disk?: { fg: RunningConditionFg }): Promise<string | null> => {
+        // `disk`: the model and workspace slice were just read from DISK (the PM page's
+        // Finish: its own edits may not have reached this window's copy yet) - judge those,
+        // not this window's possibly lagging state, and use the SAVED set points.
+        const fg: RunningConditionFg = disk?.fg ?? gateFg;
+        const model = disk ? m : effectiveModelFor(m);
+        const ws = workspaceIdRef.current;
+        if (!ws) return 'No workspace is open.';
+        if (completeRunningRef.current.has(m.id)) return 'Saving is already in progress.';
+        const id = m.id;
+        const fail = (message: string, issues: HealthIssue[] | null = null): string => {
+            setSaveInfo(prev => ({ ...prev, [id]: { phase: 'error', message } }));
+            if (issues) setAttemptIssues(prev => ({ ...prev, [id]: issues }));
+            return message;
+        };
+        // Nothing is written for a model that is not allowed to be Complete anyway:
+        // the gate, and "trained and still fresh" (the same rules `persistModelComplete`
+        // re-checks against the disk inside its write).
+        const notAllowed = getBuildBlockReason(model, fg, gateHeaders)
+            ?? (trainedFreshFor(model, fg) ? null : (isModelStaleFor(model, fg) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
+        if (notAllowed !== null) return fail(notAllowed);
+        completeRunningRef.current.add(m.id);
+        setSaveInfo(prev => ({ ...prev, [id]: { phase: 'running', slow: m.kind === 'relationship' } }));
+        setAttemptIssues(prev => ({ ...prev, [id]: null }));
+        try {
+            const sp = disk ? (spDraftsRef.current[id] ?? persistedSetPointsOf(m)) : setPointsOf(m);
+            const res = await completeModel({
+                model,
+                fg,
+                headers: gateHeaders,
+                workspaceId: ws,
+                setPoints: sp,
+                expectedGeneration: generation,
             });
-            if (res.reason !== null) setCompleteBlock(res.reason);
-            if (next?.failureGroupState) {
-                applyFg(next.failureGroupState);
-                if (res.reason === null) await emit('failure-group-state-changed', { ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            if (workspaceIdRef.current !== ws) return 'The workspace changed.';
+            if (!res.ok) {
+                if (res.reason === 'validation') return fail('Some set points are not valid — fix them in Checks first.', res.issues);
+                if (res.code === 'NOT_FITTED') return fail('Re-train first — the fitted Relation model is no longer in memory.');
+                if (res.code === 'STALE_SESSION') return fail('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
+                return fail(res.error ?? 'The model could not be saved.');
             }
-        })());
+            const record = { at: new Date().toISOString(), outputDir: res.outputDir, setPoints: res.setPoints };
+            const persisted: { reason: string | null } = { reason: null };
+            await trackPending((async () => {
+                const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', record);
+                persisted.reason = r.reason;
+                if (workspaceIdRef.current === ws && r.next?.failureGroupState) applyFg(r.next.failureGroupState);
+            })());
+            if (persisted.reason !== null) return fail(`The files were written, but the model was not marked complete: ${persisted.reason}`);
+            // What was typed is now what is on disk.
+            if (spDraftsRef.current[id] !== undefined && sameSetPoints(spDraftsRef.current[id], res.setPoints)) {
+                const rest = { ...spDraftsRef.current };
+                delete rest[id];
+                writeSpDrafts(rest);
+            }
+            setSaveInfo(prev => ({ ...prev, [id]: { phase: 'ok', outputDir: res.outputDir, files: res.files.map(f => ({ file_name: f.file_name, path: f.path })), at: record.at } }));
+            return null;
+        } catch (e) {
+            return fail(e instanceof Error ? e.message : String(e));
+        } finally {
+            completeRunningRef.current.delete(id);
+        }
+    };
+
+    /** The PM page's "Finish" button. It can no longer mark a model Complete by
+     *  itself: it runs the same flow as the Health score page's "Mark complete"
+     *  (so the model's files are written) using the model's SAVED set points. When
+     *  that is not possible (set points still empty, not trained ...), the model stays
+     *  Incomplete, the reason is shown on the overview and the model is opened on
+     *  its Health score page. (Phase 4 removes this page and button.) */
+    const markModelComplete = async (modelId: string): Promise<void> => {
+        const m = allModels.find(x => x.id === modelId);
+        if (!m || !workspaceId) return;
+        setCompleteBlock(null);
+        // The PM page flushed its own edits to disk just before calling this: read what is
+        // really there (this window's copy may still be one broadcast behind).
+        let onDisk: FailureGroupStateSlice | undefined;
+        try { onDisk = (await loadWorkspaceData(workspaceId))?.failureGroupState; } catch { onDisk = undefined; }
+        const fresh = onDisk?.models?.find(x => x.id === modelId);
+        const reason = onDisk && fresh ? await runMarkComplete(fresh, { fg: onDisk }) : await runMarkComplete(m);
+        if (reason === null) return;
+        setCompleteBlock(reason);
+        const key = modelSensorKey(m);
+        setSelectedSensorKey(key);
+        setActiveTab(prev => ({ ...prev, [key]: m.id }));
+        if (healthPageBlock(m) === null) setPage(m, 'health');
     };
 
     const trainModel = (modelId: string) => {
@@ -1376,6 +1527,8 @@ export default function BuildModelWindow() {
             // `pmPending`/`pending` AFTER this, not before, so a write this
             // call itself just kicked off is included below.
             flushFocusedInput();
+            // A set-point draft typed but never blurred is a pending write too.
+            void commitSetPointDrafts();
             const pmPending = pmFlushRef.current;
             const pending = pendingSaveRef.current;
             if (!pmPending && !pending) return;
@@ -1384,7 +1537,7 @@ export default function BuildModelWindow() {
             await win.close();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
-    }, [flushAllPending]);
+    }, [flushAllPending, commitSetPointDrafts]);
 
     // 🆕 2026-09-18 [bug fix]: must await commitModel's write landing on disk
     // before navigating to the PM page — else the PM page's own hydration
@@ -1463,14 +1616,48 @@ export default function BuildModelWindow() {
         model: activeEffective,
         fg: gateFg,
         headers: gateHeaders,
-        // 3b-2: pass the DRAFT set points being edited here (state to add to this
-        // container) instead of the persisted ones, so the score follows typing.
-        setPoints: activeModel?.healthSetPoints,
+        // The DRAFT set points being typed (else the persisted ones): the charts, the
+        // score and Rust's validation follow typing (the hook debounces ~250 ms).
+        // Set points are NOT part of the train fingerprint, so this never makes the
+        // model stale.
+        setPoints: activeModel ? setPointsOf(activeModel) : null,
         enabled: healthReady,
         xPredictor: activeFitKey,
         expectedGeneration: generation,
         revision: healthRevision,
     });
+
+    // The last validate verdict Rust gave for the active model - drives the "Set points
+    // needed" / "Fix set point" tab pills and the red dot (kept per model for the session).
+    // A stale model's old data does not count.
+    const activeVerdict: HealthVerdict | null = activeModel && !activeStale ? healthVerdict(healthPreview.data) : null;
+    useEffect(() => {
+        if (!activeModel || !activeVerdict) return;
+        setHealthVerdicts(prev => (prev[activeModel.id] === activeVerdict ? prev : { ...prev, [activeModel.id]: activeVerdict }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModel?.id, activeVerdict]);
+
+    // First time an Individual model's Health score page opens: write the master-data
+    // L/H snapshot (and its prefill) once, so it never moves again when master data
+    // changes. Only when `ensureHealthSetPoints` actually changes something, never over
+    // a value the user entered, never while a draft exists.
+    useEffect(() => {
+        if (loading || !activeModel || activeModel.kind !== 'individual') return;
+        if (pageByModel[activeModel.id] !== 'health' || !activeModel.lastTrainedAt) return;
+        if (setPointsSeededRef.current.has(activeModel.id) || spDraftsRef.current[activeModel.id]) return;
+        const ensured = ensureHealthSetPoints(activeModel, sensorMetadata ?? []);
+        if (ensured === activeModel || !ensured.healthSetPoints) return;
+        setPointsSeededRef.current.add(activeModel.id);
+        writeSpDrafts({ ...spDraftsRef.current, [activeModel.id]: ensured.healthSetPoints });
+        void commitSetPointDrafts();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loading, activeModel, pageByModel, sensorMetadata]);
+
+    // Leaving the page or the model (page switch, another sensor or kind tab): persist
+    // what was typed. No draft = nothing happens.
+    useEffect(() => {
+        void commitSetPointDrafts();
+    }, [selectedSensorKey, activeTab, pageByModel, commitSetPointDrafts]);
 
     // "Compare predictors" — the shared Sub-models fits (cumulative predictor subsets).
     const subFilter = activeEffective && activeEffective.kind === 'relationship'
@@ -1721,13 +1908,15 @@ export default function BuildModelWindow() {
                         // A run that failed in THIS session never reads as "trained": it is
                         // yellow ("needs input") like any other model that wants a re-train.
                         const st = dotStateOf(m);
-                        const dot = DOT_CLASS[st];
+                        // A trained model whose set points Rust rejected reads red ("Fix set point").
+                        const fixSetPoint = st === 'trained' && healthVerdicts[m.id] === 'bad';
+                        const dot = fixSetPoint ? 'bad' : DOT_CLASS[st];
                         return (
                             <span
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${DOT_TITLE[st]}`}
+                                title={`${KIND_LABEL[m.kind]} · ${fixSetPoint ? 'Fix set point' : DOT_TITLE[st]}`}
                             >
                                 {KIND_ABBREV[m.kind]}
                                 {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
@@ -2277,6 +2466,17 @@ export default function BuildModelWindow() {
         );
     };
 
+    /** The pill on a kind tab: the central status (`modelDotState`), refined for a
+     *  trained model by the last verdict Rust gave on its set points. */
+    const tabPillOf = (m: FailureModel, st: ModelDotState): { text: string; cls: string } | null => {
+        if (st === 'trained') {
+            const v = healthVerdicts[m.id];
+            if (v === 'bad') return { text: 'Fix set point', cls: 'f4-pill--bad' };
+            if (v === 'needs') return { text: 'Set points needed', cls: 'f4-pill--warn' };
+        }
+        return TAB_PILL[st];
+    };
+
     /** Props the two pages share (`WorkbenchPageProps`) for the ACTIVE model. */
     const pagePropsFor = (m: FailureModel) => {
         const eff = effectiveModelFor(m);
@@ -2302,7 +2502,12 @@ export default function BuildModelWindow() {
     /** Why the Health score page (and the "Health set points" / "Complete" steps)
      *  cannot be opened right now, or null. */
     const healthPageBlock = (m: FailureModel): string | null =>
-        isModelStale(m) ? 'Re-train first' : !m.lastTrainedAt ? 'Train the model first' : buildBlockReason(m) !== null ? 'Fix the settings first' : null;
+        isModelStale(m) ? 'Re-train first'
+            : !m.lastTrainedAt ? 'Train the model first'
+            : buildBlockReason(m) !== null ? 'Fix the settings first'
+            // The last run of THIS session failed: the numbers on screen are not trustworthy.
+            : trainError[m.id] ? 'Re-train first'
+            : null;
 
     /** The Model fit page body — the old "results area" state machine, now ending
      *  in the charts of `ModelFitPage`:
@@ -2447,10 +2652,43 @@ export default function BuildModelWindow() {
         );
     };
 
+    /** Why Mark complete is not possible right now (the FIRST blocking reason), or
+     *  null. Only the active model has a health preview, so this is for the active
+     *  model. Rust's validation is the source of "set points not valid". */
+    const markCompleteBlock = (m: FailureModel): string | null => {
+        if (isModelStale(m)) return 'Settings changed — re-train first.';
+        const gate = gateReasonOf(m);
+        if (gate !== null) return gate;
+        if (!trainedFreshFor(effectiveModelFor(m), gateFg)) return NOT_TRAINED_BLOCK_REASON;
+        if (trainError[m.id]) return "Couldn't refresh the result — fix the problem, then re-train.";
+        if (healthPreview.notFitted) return 'Re-train first — the fitted Relation model is no longer in memory.';
+        const data = healthPreview.data;
+        if (!data) return healthPreview.loading ? 'Checking the set points…' : (healthPreview.error ?? 'The health score could not be loaded.');
+        if (healthPreview.loading) return 'Checking the set points…';
+        if (!data.valid) {
+            const issues = attemptIssues[m.id] ?? data.validation;
+            const n = Math.max(1, buildCheckLines(data.kind, issues).length);
+            return verdictOfIssues(issues) === 'bad'
+                ? `${n} set point${n > 1 ? 's' : ''} not valid — fix before marking complete`
+                : `${n} set point${n > 1 ? 's' : ''} still empty`;
+        }
+        return null;
+    };
+
+    /** What the Health score page says about the model's saved files. */
+    const saveInfoFor = (m: FailureModel): SaveInfo =>
+        saveInfo[m.id] ?? (m.healthExport && isModelDone(m)
+            ? { phase: 'ok', outputDir: m.healthExport.outputDir, files: null, at: m.healthExport.at }
+            : { phase: 'idle' });
+    /** Complete, but the set points on screen differ from the ones the files were written with. */
+    const filesOutOfDateFor = (m: FailureModel): boolean =>
+        isModelDone(m) && !!m.healthExport && !sameSetPoints(m.healthExport.setPoints, setPointsOf(m));
+
     /** Footer of BOTH pages (mockup `.wd-foot`). Model fit: status · Open full
-     *  view · Save changes · Re-train · Mark complete · "Next: Health score →".
-     *  Health score: "← Model fit" · status · Mark complete.
-     *  Mark complete still lives here until the Health score page (3b-2) takes it. */
+     *  view · Save changes · Re-train · "Next: Health score →" (NO Mark complete:
+     *  a model is completed only from the Health score page).
+     *  Health score: "← Model fit" · status / blocking reason · Mark complete
+     *  ("Mark incomplete" once Complete). */
     const renderFooter = (m: FailureModel, page: WorkbenchPage) => {
         const saveReason = modelBlockReason(m);
         const reason = buildBlockReason(m);
@@ -2472,6 +2710,9 @@ export default function BuildModelWindow() {
             isModelDone(m) ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
         const healthBlock = healthPageBlock(m);
+        const markBlock = page === 'health' ? markCompleteBlock(m) : null;
+        const saving = saveInfo[m.id]?.phase === 'running';
+        const outOfDate = page === 'health' && filesOutOfDateFor(m);
         return (
             <div className="f4-foot">
                 {page === 'health' && (
@@ -2482,7 +2723,18 @@ export default function BuildModelWindow() {
                 <span className={`model-status-pill model-status-pill--${pillState}`} style={{ cursor: 'default' }}>
                     {pillLabel}
                 </span>
-                {reason ? (
+                {page === 'health' && saving ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">
+                        <Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving results…
+                    </span>
+                ) : page === 'health' && !isModelDone(m) && markBlock !== null ? (
+                    <span data-testid="mark-block-reason" className="f4-foot-reason f4-foot-reason--block">
+                        <CircleAlert size={11} aria-hidden="true" />
+                        {markBlock}
+                    </span>
+                ) : page === 'health' && !isModelDone(m) ? (
+                    <span data-testid="footer-status" className="f4-foot-reason">Set points valid — check the score, then mark complete</span>
+                ) : reason ? (
                     <span data-testid="build-block-reason" className="f4-foot-reason f4-foot-reason--block">
                         <CircleAlert size={11} aria-hidden="true" />
                         {reason}
@@ -2536,20 +2788,39 @@ export default function BuildModelWindow() {
                         )}
                     </>
                 )}
-                {isModelDone(m) ? (
-                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => toggleModelStatus(m.id)}>
-                        Mark incomplete
-                    </button>
-                ) : (
-                    <button
-                        type="button"
-                        className="bmw-btn-ok"
-                        disabled={gateReasonOf(m) !== null || !trainedFresh || hasSessionError}
-                        title={gateReasonOf(m) ?? (hasSessionError ? "Couldn't refresh the result — fix the problem, then re-train." : !trainedFresh ? NOT_TRAINED_BLOCK_REASON : undefined)}
-                        onClick={() => toggleModelStatus(m.id)}
-                    >
-                        ✓ Mark complete
-                    </button>
+                {page === 'health' && (
+                    <>
+                        {isModelDone(m) ? (
+                            <>
+                                {outOfDate && (
+                                    <button
+                                        type="button"
+                                        className="bmw-btn-ok"
+                                        data-testid="mark-complete-again"
+                                        disabled={markBlock !== null || saving}
+                                        title={markBlock ?? 'Write the files again with the current set points'}
+                                        onClick={() => { void runMarkComplete(m); }}
+                                    >
+                                        {saving ? 'Saving…' : '✓ Mark complete again'}
+                                    </button>
+                                )}
+                                <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="mark-incomplete" disabled={saving} onClick={() => markModelIncomplete(m.id)}>
+                                    Mark incomplete
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                type="button"
+                                className="bmw-btn-ok"
+                                data-testid="mark-complete"
+                                disabled={markBlock !== null || saving}
+                                title={markBlock ?? 'Write the model files and mark it complete'}
+                                onClick={() => { void runMarkComplete(m); }}
+                            >
+                                {saving ? 'Saving…' : '✓ Mark complete'}
+                            </button>
+                        )}
+                    </>
                 )}
                 {page === 'model' && (
                     <button
@@ -2688,8 +2959,8 @@ export default function BuildModelWindow() {
                                 <span className={`f4-sdot${isModelDone(m) ? ' f4-sdot--done' : ''}`} />
                                 {m.id in drafts && <span className="f4-dirty" title="Unsaved changes">edited</span>}
                                 {badge && <GateBadgePill text={badge} testId={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} />}
-                                {!badge && TAB_PILL[st] && (
-                                    <span data-testid={`tab-status-${m.id}`} aria-hidden="true" className={`f4-pill ${TAB_PILL[st]!.cls}`}>{TAB_PILL[st]!.text}</span>
+                                {!badge && tabPillOf(m, st) && (
+                                    <span data-testid={`tab-status-${m.id}`} aria-hidden="true" className={`f4-pill ${tabPillOf(m, st)!.cls}`}>{tabPillOf(m, st)!.text}</span>
                                 )}
                             </button>
                         );
@@ -2710,7 +2981,19 @@ export default function BuildModelWindow() {
                                 onRetrain={() => runTrainClick(activeModel)}
                             />
                         )}
-                        {page === 'model' ? renderModelFitBody(activeModel) : <HealthScorePage {...pagePropsFor(activeModel)} />}
+                        {page === 'model' ? renderModelFitBody(activeModel) : (
+                            <HealthScorePage
+                                key={activeModel.id}
+                                {...pagePropsFor(activeModel)}
+                                setPoints={setPointsOf(activeModel)}
+                                onSetPointsChange={(next, commit) => changeSetPoints(activeModel, next, commit)}
+                                onSetPointsCommit={() => { void commitSetPointDrafts(); }}
+                                attemptIssues={attemptIssues[activeModel.id] ?? null}
+                                save={saveInfoFor(activeModel)}
+                                filesOutOfDate={filesOutOfDateFor(activeModel)}
+                                onRetrain={() => runTrainClick(activeModel)}
+                            />
+                        )}
                     </div>
                     {renderFooter(activeModel, page)}
                 </div>
@@ -2732,8 +3015,9 @@ export default function BuildModelWindow() {
         trained: !!activeModel?.lastTrainedAt,
         stale: !!activeModel && isModelStale(activeModel),
         complete: !!activeModel && isModelDone(activeModel),
-        // 3b-2: pass the Health score page's verdict (valid / not valid) here.
-        healthValid: null,
+        // Rust's verdict on the set points: valid -> done, something rejected ->
+        // red, only empty fields -> still "now".
+        healthValid: activeVerdict === 'valid' ? true : activeVerdict === 'bad' ? false : null,
     });
     const stepCurrent: StepKey[] = !activeModel ? [] : activeDetailPage === 'health' ? ['health-set-points'] : ['model-settings', 'train'];
     const stepHealthBlock = activeModel ? healthPageBlock(activeModel) : 'Select a model first';

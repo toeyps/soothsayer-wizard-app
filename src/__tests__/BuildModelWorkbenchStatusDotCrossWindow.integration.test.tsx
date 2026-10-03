@@ -70,8 +70,10 @@ vi.mock('@tauri-apps/plugin-store', () => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-    invoke: (cmd: string) => {
+    invoke: (cmd: string, args?: any) => {
         if (cmd === 'get_dataset_time_bounds') return Promise.resolve({ min: null, max: null });
+        if (cmd === 'compute_health_preview') return Promise.resolve(makeSetPointAwarePreview(args?.request));
+        if (cmd === 'export_model_files') return Promise.resolve(EXPORT_RESULT_OK);
         if (cmd === 'compute_sensor_stats') return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
         return Promise.resolve(undefined);
     },
@@ -113,6 +115,8 @@ vi.mock('../hooks/useScatterSample', () => ({
 vi.mock('../components/charts/LineChart', () => ({ default: () => <div /> }));
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div /> }));
 
+import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { EXPORT_RESULT_OK, healthPageButton, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFingerprint';
@@ -288,15 +292,13 @@ describe('Train in Build Model -> Dashboard Failure Groups status dot (broadcast
         await waitFor(() => expect(dashDot(1)).toBe('trained'));
         expect(bmwDot('i1')).toBe('trained');
 
-        await act(async () => { fireEvent.click(bmw().getByText('✓ Mark complete')); });
-        await settle(30);
+        await markCompleteFromHealthPage('individual', bmw());
         expect(readDisk().failureGroupState.models[0].status).toBe(true);
         expect(pill()).toBe('Complete');
         await waitFor(() => expect(dashDot(1)).toBe('complete'));
         expect(bmwDot('i1')).toBe('complete');
 
-        await act(async () => { fireEvent.click(bmw().getByText('Mark incomplete')); });
-        await settle(30);
+        await markIncompleteFromHealthPage(bmw());
         expect(pill()).toBe('Trained');
         await waitFor(() => expect(dashDot(1)).toBe('trained'));
         expect(bmwDot('i1')).toBe('trained');
@@ -492,8 +494,8 @@ describe('gate-blocked but fingerprint-fresh: Build Model pill, Build Model dot 
             expect(pill()).toBe(c.blocked ? 'Incomplete' : 'Trained');
             expect(bmwDot('i1')).toBe(expected);
             expect(dashDot(1)).toBe(expected);
-            // Mark complete follows the same verdict.
-            expect((bmw().getByText('✓ Mark complete') as HTMLButtonElement).disabled).toBe(c.blocked);
+            // Mark complete (reached through the Health score page) follows the same verdict.
+            expect(healthPageButton(bmw()).disabled).toBe(c.blocked);
             // Opening the model must not rewrite the stamp either way.
             expect(readDisk().failureGroupState.models[0].trainedFingerprint).toBe(m.trainedFingerprint);
         });

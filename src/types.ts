@@ -255,6 +255,26 @@ export interface FailureModel extends PredictiveModelStateSlice {
      *  neither invalidates a training run nor makes the model stale. All helpers
      *  live in `src/utils/healthSetPoints.ts`. */
     healthSetPoints?: HealthSetPoints;
+    /** Record of the last successful "Mark complete" file export (health score
+     *  phase 3b-2, 2026-10-04): when it happened, which folder the files went
+     *  to, and the set points the files were written with. Lets the Health
+     *  score page say "Changed after saving -- Mark complete again to update
+     *  the files" when the set points are edited while the model is Complete.
+     *  Optional and spread-safe: every writer maps models with `{ ...m }`, an
+     *  absent value means "unknown / never exported" (no hint), and it is
+     *  deliberately NOT part of `computeTrainFingerprint` (exporting never
+     *  makes a model stale). Kept when a model is marked Incomplete -- the
+     *  files stay on disk. */
+    healthExport?: HealthExportRecord;
+}
+
+export interface HealthExportRecord {
+    /** ISO timestamp of the export. */
+    at: string;
+    /** The folder the files were written to (`{app_data}/workspaces/{id}/output`). */
+    outputDir: string;
+    /** The set points the exported files carry. */
+    setPoints: HealthSetPoints;
 }
 
 /** Individual model: health is 0 at `lower`/`upper` (the sensor's L/H alarm

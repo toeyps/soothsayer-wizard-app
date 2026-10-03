@@ -91,7 +91,8 @@ vi.mock('@tauri-apps/api/core', () => ({
                 first_sensor: 'TAG1', second_sensor: 'TAG3', criteria_sensor: null, cluster_count: 1, n_rows: 3,
                 clusters: [{ cluster_id: 1, range: null, n_rows: 3, ellipse: { x_center: 1, y_center: 1, x_sd: 1, y_sd: 1, angle_deg: 0 }, xs: [1, 2, 3], ys: [1, 2, 3] }],
             };
-            case 'compute_health_preview': return makeHealthPreview((args as any)?.request);
+            case 'compute_health_preview': return makeSetPointAwarePreview((args as any)?.request);
+            case 'export_model_files': return EXPORT_RESULT_OK;
             default: return {};
         }
     },
@@ -108,7 +109,8 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div data-test
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div data-testid="echarts-mock" /> }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
-import { makeHealthPreview } from './helpers/healthPreviewFixture';
+import { makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { EXPORT_RESULT_OK, healthPageButton, markCompleteFromHealthPage, markIncompleteFromHealthPage } from './helpers/healthPage';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -196,7 +198,10 @@ void closeRcModal;
 
 const pill = () => document.querySelector('.f4-foot .model-status-pill')!.textContent;
 const footerStatus = () => screen.getByTestId('footer-status').textContent;
-const markCompleteBtn = () => screen.getByText('✓ Mark complete') as HTMLButtonElement;
+/** Since health score 3b-2 "Mark complete" lives on the Health score page, which can only be opened for a model
+ *  that is trained, fresh and passes the gate - exactly when the old footer button could be enabled. This is
+ *  that page's entry button: `.disabled` keeps its old meaning ("Mark complete is not available"). */
+const markCompleteBtn = () => healthPageButton();
 const openFullViewBtn = () => screen.getByText('Open full view ↗') as HTMLButtonElement;
 
 async function clickTrain() {
@@ -431,8 +436,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         writeDisk(wsState(currentFg([dashModel({ id: 'i1' })])));
         await mountBuildModel();
         await clickTrain();
-        await act(async () => { fireEvent.click(markCompleteBtn()); });
-        await settle(30);
+        await markCompleteFromHealthPage('individual');
         expect(diskModel('i1').status).toBe(true);
 
         cleanup();
@@ -441,8 +445,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(pill()).toBe('Complete');
         expect(footerStatus()).toMatch(/^Last trained /);
         // Un-marking brings it straight back to Trained (the metadata was never lost).
-        await act(async () => { fireEvent.click(screen.getByText('Mark incomplete')); });
-        await settle(30);
+        await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');
     });
 
@@ -621,20 +624,21 @@ describe('(5) pill / footer / Mark complete agree with the results area', () => 
         writeDisk(wsState(currentFg([dashModel({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG2'] })])));
         await mountBuildModel();
         await clickTrain();
-        await act(async () => { fireEvent.click(markCompleteBtn()); });
-        await settle(30);
+        await markCompleteFromHealthPage('relationship');
         expect(pill()).toBe('Complete');
         expect(screen.queryByText('▶ Train model')).toBeNull();
         expect(screen.queryByText('↻ Re-train')).toBeNull();
 
-        await act(async () => { fireEvent.click(screen.getByText('Mark incomplete')); });
-        await settle(30);
+        await markIncompleteFromHealthPage();
         expect(pill()).toBe('Trained');
+        fireEvent.click(screen.getByTestId('page-model'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Strict' }));
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
         await settle(30);
-        expect(screen.getByTestId('results-stale')).toBeTruthy();
+        // The Health score page was open this session, so its last charts stay up under "Out of date"
+        // (otherwise only the "Settings changed" message shows).
+        expect(document.querySelector('[data-testid="results-stale"], [data-testid="results-chart"][data-stale="true"]')).toBeTruthy();
         expect(pill()).toBe('Incomplete');
         expect(markCompleteBtn().disabled).toBe(true);
         await act(async () => { fireEvent.click(screen.getByText('↻ Re-train')); });

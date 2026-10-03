@@ -1,5 +1,5 @@
 import { emit } from '@tauri-apps/api/event';
-import type { FailureModel, HealthSetPoints, WorkspaceState } from '../types';
+import type { FailureModel, HealthExportRecord, HealthSetPoints, WorkspaceState } from '../types';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from './failureGroupState';
 import { patchModelHealthSetPoints } from './healthSetPoints';
@@ -71,6 +71,7 @@ export async function persistModelComplete(
     setPoints: HealthSetPoints,
     headers: string[] | null,
     origin: FailureGroupOrigin = 'build-model',
+    exportRecord?: HealthExportRecord,
 ): Promise<PersistCompleteResult> {
     const res: { reason: string | null } = { reason: null };
     const next = await updateWorkspaceData(workspaceId, prev => {
@@ -84,7 +85,7 @@ export async function persistModelComplete(
         if (res.reason === null && !isModelTrainedFresh(target, fg)) res.reason = NOT_TRAINED_BLOCK_REASON;
         if (res.reason !== null) return prev;
         return withFailureGroupState(prev, {
-            models: (fg?.models ?? []).map(m => (m.id === modelId ? { ...m, status: true, healthSetPoints: setPoints } : m)),
+            models: (fg?.models ?? []).map(m => (m.id === modelId ? { ...m, status: true, healthSetPoints: setPoints, ...(exportRecord ? { healthExport: exportRecord } : {}) } : m)),
         });
     });
     if (res.reason === null) await broadcast(next, workspaceId, origin);

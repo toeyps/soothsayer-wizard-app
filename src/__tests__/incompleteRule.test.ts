@@ -91,6 +91,7 @@ describe('applyIncompleteRule - a Complete model goes back to Incomplete the mom
 describe('applyIncompleteRule - what must NOT trigger it', () => {
     const untouched: Array<[string, Partial<FailureModel>]> = [
         ['set points', { healthSetPoints: { kind: 'individual', lower: 1, upper: 9 } }],
+        ['the export record of the saved files (health score 3b-2)', { healthExport: { at: '2026-10-04T01:00:00Z', outputDir: 'C:/ws/output', setPoints: { kind: 'individual', lower: 1, upper: 9 } } }],
         ['model name', { name: 'Another name' }],
         ['notes', { notes: 'some notes' }],
         ['category', { category: 'performance' }],
@@ -224,6 +225,13 @@ describe('read side: a Complete model whose inputs no longer match its train rec
     it('set points never make a model stale', () => {
         const m = trained(individual());
         expect(isModelComplete({ ...m, healthSetPoints: { kind: 'individual', lower: 5, upper: 50 } }, fgNone)).toBe(true);
+    });
+
+    it('neither does the export record of its saved files', () => {
+        const m = trained(individual());
+        const exported = { ...m, healthExport: { at: 'x', outputDir: 'C:/o', setPoints: { kind: 'individual' as const, lower: 5, upper: 50 } } };
+        expect(computeTrainFingerprint(exported, fgNone)).toBe(computeTrainFingerprint(m, fgNone));
+        expect(isModelComplete(exported, fgNone)).toBe(true);
     });
 
     it('dot states for a model that is not complete: none / trained / stale / blocked', () => {
