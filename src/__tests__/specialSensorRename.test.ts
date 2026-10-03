@@ -132,6 +132,19 @@ describe('renameTagInModels', () => {
         ]);
     });
 
+    it('2026-10-03: a rename carries health set points through untouched, for every kind (they hold numbers only, never a tag)', () => {
+        const ind = makeModel({ id: 'i', targetSensor: 'OLD', healthSetPoints: { kind: 'individual', lower: null, upper: 7.5, masterLower: null, masterUpper: null } });
+        const rel = makeModel({
+            id: 'r', kind: 'relationship', targetSensor: 'OLD', predictorSensors: ['OLD'],
+            healthSetPoints: { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 },
+        });
+        const clu = makeModel({ id: 'c', kind: 'clustering', xSensor: 'OLD', healthSetPoints: { kind: 'clustering', outerSd: 5 } });
+        const before = JSON.stringify([ind, rel, clu].map(m => m.healthSetPoints));
+        const out = renameTagInModels([ind, rel, clu], 'OLD', 'NEW');
+        expect(out.map(m => m.targetSensor || m.xSensor)).toEqual(['NEW', 'NEW', 'NEW']);
+        expect(JSON.stringify(out.map(m => m.healthSetPoints))).toBe(before);
+    });
+
     it('never renames an empty customRunningConditionFilters sensor field', () => {
         const model = makeModel({
             customRunningConditionFilters: [{ id: 'c1', sensor: '', operation: 'greater_than', value1: '5', value2: '' }],

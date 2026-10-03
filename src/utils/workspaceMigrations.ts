@@ -1,11 +1,13 @@
 import type { FailureGroupStateSlice, FailureModel, TimePeriod, WorkspaceState } from '../types';
 import { withFailureGroupState } from './failureGroupState';
+import { ensureHealthSetPoints } from './healthSetPoints';
 import { normalizeSensorCategories } from './modelGrouping';
 import { isWorkspaceRunningConditionConfigured } from './runningCondition';
 
 /*
- * Feature 4 migrations. Each step is a PURE, independently idempotent function
- * gated on its OWN marker being `undefined` (`null` and any value both mean
+ * Feature 4 migrations (+ `migrateHealthSetPoints`, 2026-10-03, which is also
+ * run by `workspaceManager.ts` on EVERY workspace read). Each step is a PURE,
+ * independently idempotent function gated on its OWN marker being `undefined` (`null` and any value both mean
  * "already handled"). Nothing here is wired into `loadWorkspaceData` yet — each
  * UI phase switches its own step on. Every step spreads the existing slice
  * (via `withFailureGroupState`), so no field is ever dropped. A step that has
@@ -84,10 +86,29 @@ export function flagLegacyGate(state: WorkspaceState): WorkspaceState {
     return withFailureGroupState(state, { rcLegacyNotice: pending ? 'pending' : null });
 }
 
+/** (d) Health score set points (2026-10-03): a model without `healthSetPoints`
+ *  gets the EMPTY shape for its kind. No master snapshot is taken here -- this
+ *  step has no sensor metadata, so an Individual model's snapshot stays
+ *  "not taken yet" (`undefined`) for `ensureHealthSetPoints` to fill the first
+ *  time it is opened with metadata. Idempotent: models that already have the
+ *  field are untouched, and nothing to do returns the SAME state object. */
+export function migrateHealthSetPoints(state: WorkspaceState): WorkspaceState {
+    const fg = state.failureGroupState;
+    if (!fg || !Array.isArray(fg.models)) return state;
+    let changed = false;
+    const models = fg.models.map((m) => {
+        const next = ensureHealthSetPoints(m);
+        if (next !== m) changed = true;
+        return next;
+    });
+    return changed ? withFailureGroupState(state, { models }) : state;
+}
+
 export interface MigrationSteps {
     periods?: boolean;
     categories?: boolean;
     gate?: boolean;
+    healthSetPoints?: boolean;
     /** Only with `periods`: also delete the old start/end keys. */
     dropLegacyKeys?: boolean;
 }
@@ -98,5 +119,6 @@ export function migrateToLatest(state: WorkspaceState, steps: MigrationSteps = {
     if (steps.periods) s = migratePeriods(s, { dropLegacyKeys: steps.dropLegacyKeys });
     if (steps.categories) s = normalizeCategories(s);
     if (steps.gate) s = flagLegacyGate(s);
+    if (steps.healthSetPoints) s = migrateHealthSetPoints(s);
     return s;
 }

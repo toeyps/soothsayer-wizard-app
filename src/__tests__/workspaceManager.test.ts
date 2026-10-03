@@ -278,7 +278,10 @@ describe('loadWorkspaceData', () => {
             }));
             const { loadWorkspaceData } = await freshModule();
             const result = await loadWorkspaceData('ws1');
-            expect(result?.failureGroupState?.models).toEqual(models);
+            // Only the (2026-10-03) empty set points are added; nothing else changes.
+            expect(result?.failureGroupState?.models).toEqual([
+                { ...models[0], healthSetPoints: { kind: 'individual', lower: null, upper: null } },
+            ]);
         });
 
         it('normalizes a model that still has the old singular groupNo into groupNos[] (2026-08-25 redesign, model<->group is now many-to-many)', async () => {
@@ -290,7 +293,7 @@ describe('loadWorkspaceData', () => {
             const { loadWorkspaceData } = await freshModule();
             const result = await loadWorkspaceData('ws1');
             const migrated = result?.failureGroupState?.models;
-            expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [1] }]);
+            expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [1], healthSetPoints: { kind: 'individual', lower: null, upper: null } }]);
         });
 
         it('normalizes a model with neither groupNo nor groupNos into groupNos: [0] ("Not in Group")', async () => {
@@ -302,7 +305,91 @@ describe('loadWorkspaceData', () => {
             const { loadWorkspaceData } = await freshModule();
             const result = await loadWorkspaceData('ws1');
             const migrated = result?.failureGroupState?.models;
-            expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [0] }]);
+            expect(migrated).toEqual([{ id: 'm1', kind: 'individual', groupNos: [0], healthSetPoints: { kind: 'individual', lower: null, upper: null } }]);
+        });
+
+        describe('health set points (2026-10-03, phase 1)', () => {
+            // A hand-written OLD workspace file: no `healthSetPoints` anywhere.
+            const oldWorkspace = () => ({
+                id: 'ws1', name: 'Old',
+                failureGroupState: {
+                    groups: [{ no: 1, name: 'G' }],
+                    models: [
+                        { id: 'i1', groupNos: [1], kind: 'individual', targetSensor: 'T1', notes: 'keep-i', status: true, lastTrainedAt: '2026-09-30T00:00:00Z', trainedFingerprint: 'fp-i' },
+                        { id: 'r1', groupNos: [1], kind: 'relationship', targetSensor: 'T2', predictorSensors: ['T3'], relStiffness: 7 },
+                        { id: 'c1', groupNos: [1], kind: 'clustering', xSensor: 'X', ySensor: 'Y', numClusters: 4 },
+                    ],
+                    runningConditionCombine: 'or',
+                    runningConditionTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '' }],
+                },
+            });
+
+            it('an old workspace loads with every model intact and gets the EMPTY shape for its kind (no master snapshot yet)', async () => {
+                mockReadTextFile.mockResolvedValue(JSON.stringify(oldWorkspace()));
+                const { loadWorkspaceData } = await freshModule();
+                const fg = (await loadWorkspaceData('ws1'))!.failureGroupState!;
+                const [i, r, c] = fg.models;
+                expect(i.healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: null });
+                expect('masterLower' in i.healthSetPoints!).toBe(false);
+                expect('masterUpper' in i.healthSetPoints!).toBe(false);
+                expect(r.healthSetPoints).toEqual({
+                    kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null,
+                });
+                expect(c.healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
+                // everything else survives
+                expect(i).toMatchObject({ id: 'i1', notes: 'keep-i', status: true, lastTrainedAt: '2026-09-30T00:00:00Z', trainedFingerprint: 'fp-i' });
+                expect(r).toMatchObject({ predictorSensors: ['T3'], relStiffness: 7 });
+                expect(c).toMatchObject({ xSensor: 'X', ySensor: 'Y', numClusters: 4 });
+                expect(fg.runningConditionCombine).toBe('or');
+                expect(fg.runningConditionTimePeriods).toEqual([{ id: 'p1', start: '2026-01-01T00:00', end: '' }]);
+            });
+
+            it('keeps set points a model already has, byte-identical (never overwritten, snapshot untouched)', async () => {
+                const ws = oldWorkspace();
+                const sp = { kind: 'individual', lower: 1.5, upper: null, masterLower: 2, masterUpper: null };
+                (ws.failureGroupState.models[0] as Record<string, unknown>).healthSetPoints = sp;
+                const rel = { kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -2, residualAt0Upper: 2 };
+                (ws.failureGroupState.models[1] as Record<string, unknown>).healthSetPoints = rel;
+                mockReadTextFile.mockResolvedValue(JSON.stringify(ws));
+                const { loadWorkspaceData } = await freshModule();
+                const models = (await loadWorkspaceData('ws1'))!.failureGroupState!.models;
+                expect(JSON.stringify(models[0].healthSetPoints)).toBe(JSON.stringify(sp));
+                expect(JSON.stringify(models[1].healthSetPoints)).toBe(JSON.stringify(rel));
+                expect(models[2].healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
+            });
+
+            it('round trip: load -> updateWorkspaceData (writes) -> load again gives the same models, and a null master snapshot survives JSON', async () => {
+                const ws = oldWorkspace();
+                (ws.failureGroupState.models[0] as Record<string, unknown>).healthSetPoints =
+                    { kind: 'individual', lower: null, upper: 9, masterLower: null, masterUpper: 9 };
+                let disk = JSON.stringify(ws);
+                mockStoreGet.mockResolvedValue([]);
+                mockReadTextFile.mockImplementation(async () => disk);
+                mockWriteTextFile.mockImplementation(async (_p: string, content: string) => { disk = content; });
+                const { loadWorkspaceData, updateWorkspaceData } = await freshModule();
+                const first = await loadWorkspaceData('ws1');
+                await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'Renamed' }));
+                const second = await loadWorkspaceData('ws1');
+                expect(second!.failureGroupState!.models).toEqual(first!.failureGroupState!.models);
+                const i = second!.failureGroupState!.models[0].healthSetPoints as { masterLower: number | null; masterUpper: number | null };
+                expect(i.masterLower).toBeNull();
+                expect(i.masterUpper).toBe(9);
+                // idempotent: a second pass over what was written changes nothing
+                expect(JSON.parse(disk).failureGroupState.models[0].healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: 9, masterLower: null, masterUpper: 9 });
+            });
+
+            it('legacy `rows` models also get set points', async () => {
+                mockReadTextFile.mockResolvedValue(JSON.stringify({
+                    id: 'ws1', name: 'A',
+                    failureGroupState: {
+                        groups: [{ no: 1, name: 'G' }],
+                        rows: [{ id: 'row-1', groupNo: 1, conceptSensor: '', mappedSensorTag: 'TAG1', mappedSensorName: '', modelType: 'Clustering', modelNotes: '', additionalNotes: '', status: false }],
+                    },
+                }));
+                const { loadWorkspaceData } = await freshModule();
+                const models = (await loadWorkspaceData('ws1'))!.failureGroupState!.models;
+                expect(models[0].healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
+            });
         });
 
         it('keeps every other failureGroupState field when it migrates groupNos (regression 2026-09-23: the migration rebuilt the object from an explicit field list and silently dropped the workspace time range and any future field)', async () => {
@@ -602,6 +689,46 @@ describe('updateWorkspaceData', () => {
         // The re-hydration must see the EDIT, not the pre-edit snapshot it
         // would have raced to if its read had fired immediately.
         expect(rehydrated?.failureGroupState?.runningConditionCombine).toBe('or');
+    });
+
+    it('2026-10-03 cross-window: two writers that edit DIFFERENT parts of a model (one its set points, one its settings/training fields) never erase each other, because both go through updateWorkspaceData against what is on disk', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockExists.mockResolvedValue(true);
+        let disk = JSON.stringify({
+            id: 'ws1', name: 'A',
+            failureGroupState: {
+                groups: [{ no: 1, name: 'G' }],
+                models: [
+                    { id: 'm1', groupNos: [1], kind: 'clustering', xSensor: 'X', ySensor: 'Y', numClusters: 3, notes: '' },
+                    { id: 'm2', groupNos: [1], kind: 'individual', targetSensor: 'T', notes: '' },
+                ],
+                runningConditionCombine: 'or',
+            },
+        });
+        mockReadTextFile.mockImplementation(async () => disk);
+        mockWriteTextFile.mockImplementation(async (_p: string, content: string) => { disk = content; });
+        const { updateWorkspaceData } = await freshModule();
+        const { withFailureGroupState } = await import('../utils/failureGroupState');
+        const { patchModelHealthSetPoints } = await import('../utils/healthSetPoints');
+
+        // Window A: the (phase 3) set-points editor.
+        const a = updateWorkspaceData('ws1', prev => withFailureGroupState(prev, {
+            models: patchModelHealthSetPoints(prev.failureGroupState!.models, 'm1', { kind: 'clustering', outerSd: 5 }),
+        }));
+        // Window B: BuildModelWindow-style persist (spreads the model it edits) + a train-meta write.
+        const b = updateWorkspaceData('ws1', prev => withFailureGroupState(prev, {
+            models: prev.failureGroupState!.models.map(m => m.id === 'm1' ? { ...m, notes: 'edited in B', lastTrainedAt: 'T', trainedFingerprint: 'fp' } : m),
+        }));
+        // Dashboard-style toggle of ANOTHER model (spread) landing last.
+        const c = updateWorkspaceData('ws1', prev => withFailureGroupState(prev, {
+            models: prev.failureGroupState!.models.map(m => m.id === 'm2' ? { ...m, groupNos: [1, 2] } : m),
+        }));
+        await Promise.all([a, b, c]);
+
+        const out = JSON.parse(disk).failureGroupState;
+        expect(out.models[0]).toMatchObject({ id: 'm1', notes: 'edited in B', lastTrainedAt: 'T', healthSetPoints: { kind: 'clustering', outerSd: 5 } });
+        expect(out.models[1]).toMatchObject({ id: 'm2', groupNos: [1, 2], healthSetPoints: { kind: 'individual', lower: null, upper: null } });
+        expect(out.runningConditionCombine).toBe('or');
     });
 });
 

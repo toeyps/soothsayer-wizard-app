@@ -242,7 +242,65 @@ export interface FailureModel extends PredictiveModelStateSlice {
      *  Produced by `computeTrainFingerprint` in `src/utils/trainFingerprint.ts`
      *  — treat the string's shape as an implementation detail, never parse it. */
     trainedFingerprint?: string;
+    /** Health score set points the USER enters for this model (phase 1 of the
+     *  Health score work, 2026-10-03 -- data model only, no UI or score
+     *  computation yet). Stored ON THE MODEL and never written back to master
+     *  data. `undefined` only on a model that has not been through
+     *  `migrateHealthSetPoints`/`ensureHealthSetPoints` yet -- every workspace
+     *  read fills the right EMPTY shape for the model's kind, so consumers may
+     *  treat a missing value as "nothing entered". `kind` always equals the
+     *  model's own `kind` (a model's kind never changes).
+     *
+     *  Deliberately NOT part of `computeTrainFingerprint`: changing a set point
+     *  neither invalidates a training run nor makes the model stale. All helpers
+     *  live in `src/utils/healthSetPoints.ts`. */
+    healthSetPoints?: HealthSetPoints;
 }
+
+/** Individual model: health is 0 at `lower`/`upper` (the sensor's L/H alarm
+ *  set points). 100 inside +-1SD and 80 at +-3SD are computed by the program,
+ *  not stored here. `null` = not set (the user must fill it before the model
+ *  can be marked complete).
+ *
+ *  `masterLower`/`masterUpper` are a SNAPSHOT of the sensor's master-data
+ *  `alarmL`/`alarmH` taken when the model was created, so a later master-data
+ *  change never silently moves a model's health. Three states, kept apart on
+ *  purpose: `undefined` = snapshot NOT taken yet (also what a JSON round trip
+ *  of an unset key gives), `null` = taken and master has no such value, a
+ *  number = taken. "From master / this model / not in master" labels are
+ *  DERIVED (`setPointSource`), never stored. */
+export interface IndividualHealthSetPoints {
+    kind: 'individual';
+    lower: number | null;
+    upper: number | null;
+    masterLower?: number | null;
+    masterUpper?: number | null;
+}
+
+/** Relationship model: residual = actual - predicted (signed, so the lower
+ *  side is negative). Names mirror the legacy keys
+ *  `residual_at_health_80_lower/upper` and `residual_at_health_0_lower/upper`.
+ *  All start `null` -- there are no defaults, the user reads them off the
+ *  residual chart. */
+export interface RelationshipHealthSetPoints {
+    kind: 'relationship';
+    residualAt80Lower: number | null;
+    residualAt80Upper: number | null;
+    residualAt0Lower: number | null;
+    residualAt0Upper: number | null;
+}
+
+/** Clustering model: ONE number N (> 3) -- every cluster's outer ring (health
+ *  0) sits at N x that cluster's own SD. Starts `null`. */
+export interface ClusteringHealthSetPoints {
+    kind: 'clustering';
+    outerSd: number | null;
+}
+
+export type HealthSetPoints =
+    | IndividualHealthSetPoints
+    | RelationshipHealthSetPoints
+    | ClusteringHealthSetPoints;
 
 export interface FailureGroupStateSlice {
     groups: FailureGroup[];

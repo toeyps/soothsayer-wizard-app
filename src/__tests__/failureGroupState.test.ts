@@ -90,6 +90,16 @@ describe('restoreDeletedModel (Undo for "removing a model\'s last group deletes 
         expect(merged[0].id).toBe('orig');
     });
 
+    it('2026-10-03: health set points come back byte-identical, and win over the blank re-added model\'s fresh seed', () => {
+        const entered = { kind: 'individual' as const, lower: 12.5, upper: null, masterLower: 10, masterUpper: 90 };
+        const original = model({ healthSetPoints: entered });
+        const blank = model({ id: 'blank', groupNos: [2], healthSetPoints: { kind: 'individual', lower: 10, upper: 90, masterLower: 10, masterUpper: 90 } });
+        expect(JSON.stringify(restoreDeletedModel(groups, [], original)[0].healthSetPoints)).toBe(JSON.stringify(entered));
+        const out = restoreDeletedModel(groups, [blank], original);
+        expect(out).toHaveLength(1);
+        expect(JSON.stringify(out[0].healthSetPoints)).toBe(JSON.stringify(entered));
+    });
+
     it('a Clustering model is keyed by its X sensor', () => {
         const original = model({ kind: 'clustering', targetSensor: '', xSensor: 'TAG1' });
         const blank = model({ id: 'blank', kind: 'clustering', targetSensor: '', xSensor: 'tag1', groupNos: [2] });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { migratePeriods, normalizeCategories, flagLegacyGate, migrateToLatest } from '../utils/workspaceMigrations';
+import { migratePeriods, normalizeCategories, flagLegacyGate, migrateHealthSetPoints, migrateToLatest } from '../utils/workspaceMigrations';
 import { mk as baseMk } from './helpers/failureModelFixture';
 
 /** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
@@ -155,6 +155,55 @@ describe('flagLegacyGate', () => {
         expect(flagLegacyGate(s)).toBe(s);
         const once = flagLegacyGate(ws({ models: [mk({ id: 'a' })] }));
         expect(flagLegacyGate(once)).toBe(once);
+    });
+});
+
+describe('migrateHealthSetPoints', () => {
+    const three = () => [
+        mk({ id: 'i', kind: 'individual', targetSensor: 'T', notes: 'keep' }),
+        mk({ id: 'r', kind: 'relationship', targetSensor: 'T' }),
+        mk({ id: 'c', kind: 'clustering' }),
+    ];
+    it('no failureGroupState / no models -> same state', () => {
+        const s = ws();
+        expect(migrateHealthSetPoints(s)).toBe(s);
+        const e = ws({ models: [] });
+        expect(migrateHealthSetPoints(e)).toBe(e);
+    });
+    it('gives each model the empty shape of its kind and keeps everything else', () => {
+        const s = ws({ runningConditionCombine: 'or', futureField: 7, models: three() });
+        const out = migrateHealthSetPoints(s).failureGroupState!;
+        expect(out.models.map((m) => m.healthSetPoints)).toEqual([
+            { kind: 'individual', lower: null, upper: null },
+            { kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null },
+            { kind: 'clustering', outerSd: null },
+        ]);
+        expect(out.models[0]).toMatchObject({ id: 'i', notes: 'keep' });
+        expect(out.runningConditionCombine).toBe('or');
+        expect((out as unknown as Old).futureField).toBe(7);
+    });
+    it('never overwrites existing set points; a state that already has them is returned as the SAME reference', () => {
+        const entered = { kind: 'individual' as const, lower: 1, upper: 2, masterLower: 3, masterUpper: null };
+        const s = ws({ models: [mk({ id: 'i', healthSetPoints: entered }), mk({ id: 'c', kind: 'clustering', healthSetPoints: { kind: 'clustering', outerSd: 5 } })] });
+        expect(migrateHealthSetPoints(s)).toBe(s);
+    });
+    it('only the model that lacks them changes; others keep their object identity', () => {
+        const have = mk({ id: 'h', kind: 'clustering', healthSetPoints: { kind: 'clustering', outerSd: 6 } });
+        const out = migrateHealthSetPoints(ws({ models: [have, mk({ id: 'n', kind: 'clustering' })] })).failureGroupState!;
+        expect(out.models[0]).toBe(have);
+        expect(out.models[1].healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
+    });
+    it('is idempotent and does not mutate its input', () => {
+        const s = ws({ models: three() });
+        const snap = JSON.stringify(s);
+        const once = migrateHealthSetPoints(s);
+        expect(JSON.stringify(s)).toBe(snap);
+        expect(migrateHealthSetPoints(once)).toBe(once);
+    });
+    it('is a migrateToLatest step, run last and only when asked', () => {
+        const s = ws({ models: three() });
+        expect(migrateToLatest(s, { periods: true }).failureGroupState!.models[0].healthSetPoints).toBeUndefined();
+        expect(migrateToLatest(s, { periods: true, healthSetPoints: true }).failureGroupState!.models[0].healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: null });
     });
 });
 

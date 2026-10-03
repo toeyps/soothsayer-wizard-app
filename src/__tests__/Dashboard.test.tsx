@@ -1229,6 +1229,200 @@ describe('Dashboard', () => {
     // the ORIGINAL model back whole through the same disk-derived write as every
     // other Failure Group edit (so it broadcasts and never reverts another
     // window's write with a stale mirror).
+    describe('2026-10-03 — Health score set points (phase 1: data only) are seeded when a model is created and survive every Dashboard writer', () => {
+        const groupsAB = [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }];
+        const stateFor = (models: any[], extra: Partial<WorkspaceState> = {}) =>
+            makeInitialState({ failureGroupState: { groups: groupsAB, models }, ...extra });
+        function statefulDisk(initial: WorkspaceState) {
+            const box = { disk: { id: initial.id, failureGroupState: initial.failureGroupState } as any };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
+                box.disk = patch(box.disk);
+                return box.disk;
+            });
+            return box;
+        }
+        const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        const toggle = (tag: string, groupNo: number, kind: string) =>
+            act(() => { last(sensorSelectionProps).onToggleSensorGroupKind(tag, groupNo, kind); });
+        const created = (box: { disk: any }, kind: string) => box.disk.failureGroupState.models.find((m: any) => m.kind === kind);
+        const withAlarms: SensorMetadata[] = [
+            { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmL: 10, alarmH: 90, alarmLL: 1, alarmHH: 99 },
+            { tag: 'TAG2', description: 'Pump Temp', unit: 'C', component: 'Pump' },
+            { tag: 'TAG3', description: 'Only low', unit: 'C', component: 'Pump', alarmL: 5 },
+        ];
+
+        it('a new Individual model of a sensor with BOTH alarms snapshots them and prefills lower/upper (LL/HH are not used)', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+            toggle('TAG1', 1, 'individual');
+            await flush();
+            expect(created(box, 'individual').healthSetPoints).toEqual({
+                kind: 'individual', lower: 10, upper: 90, masterLower: 10, masterUpper: 90,
+            });
+        });
+
+        it('a one-sided master (only alarmH, from the default fixture) leaves the other side null for the user', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            toggle('TAG1', 1, 'individual');
+            await flush();
+            expect(created(box, 'individual').healthSetPoints).toEqual({
+                kind: 'individual', lower: null, upper: 90, masterLower: null, masterUpper: 90,
+            });
+        });
+
+        it('a sensor with no alarms at all gets null/null with the snapshot TAKEN (null, not undefined)', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            toggle('TAG2', 1, 'individual');
+            await flush();
+            const sp = created(box, 'individual').healthSetPoints;
+            expect(sp).toEqual({ kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null });
+            expect(sp.masterLower).toBeNull();
+        });
+
+        it('a special sensor (metadata only in extraSensorMetadata, no alarms) gets null/null', async () => {
+            const initial = stateFor([], {
+                extraSensorMetadata: [{ tag: 'CALC1', description: 'Calc one', unit: '', component: 'Special' }],
+            });
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            toggle('CALC1', 1, 'individual');
+            await flush();
+            expect(created(box, 'individual').healthSetPoints).toEqual({
+                kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null,
+            });
+        });
+
+        it('a sensor with no metadata entry at all also gets null/null, tag matched case-insensitively when it does have one', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+            toggle('unknown-tag', 1, 'individual');
+            toggle('tag3', 2, 'individual');
+            await flush();
+            const models = box.disk.failureGroupState.models;
+            expect(models.find((m: any) => m.targetSensor === 'unknown-tag').healthSetPoints).toMatchObject({ lower: null, upper: null, masterLower: null, masterUpper: null });
+            expect(models.find((m: any) => m.targetSensor === 'tag3').healthSetPoints).toMatchObject({ lower: 5, upper: null, masterLower: 5, masterUpper: null });
+        });
+
+        it('a new Relationship / Clustering model starts with EMPTY set points (no defaults)', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+            toggle('TAG1', 1, 'relationship');
+            toggle('TAG1', 1, 'clustering');
+            await flush();
+            expect(created(box, 'relationship').healthSetPoints).toEqual({
+                kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null,
+            });
+            expect(created(box, 'clustering').healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
+        });
+
+        it('"create group for this sensor" seeds the Individual model it creates', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+            fireEvent.click(screen.getByText('create-group-for-sensor'));
+            await flush();
+            expect(created(box, 'individual').healthSetPoints).toMatchObject({ kind: 'individual', lower: 10, upper: 90, masterLower: 10, masterUpper: 90 });
+        });
+
+        describe('writer survival (the user-entered set points must come out byte-identical)', () => {
+            const entered = () => ({ kind: 'individual', lower: 12.5, upper: null, masterLower: 10, masterUpper: 90 });
+            const model = (o: Record<string, unknown> = {}) => ({
+                id: 'keep-1', groupNos: [1], name: 'Pump Pressure', kind: 'individual', category: 'performance',
+                notes: 'tuned', status: true, targetSensor: 'TAG1', predictorSensors: [], xSensor: '', ySensor: '',
+                individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100_000,
+                clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [], filterTimePeriods: [],
+                runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+                healthSetPoints: entered(), ...o,
+            });
+            const setPointsJson = (box: { disk: any }, id = 'keep-1') =>
+                JSON.stringify(box.disk.failureGroupState.models.find((m: any) => m.id === id)?.healthSetPoints);
+
+            it('toggling the sensor into a SECOND group (reuses the model)', async () => {
+                const initial = stateFor([model()]);
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+                toggle('TAG1', 2, 'individual');
+                await flush();
+                expect(box.disk.failureGroupState.models).toHaveLength(1);
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+
+            it('removing one of two groups keeps the model and its set points', async () => {
+                const initial = stateFor([model({ groupNos: [1, 2] })]);
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial });
+                toggle('TAG1', 1, 'individual');
+                await flush();
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+
+            it('"create group for this sensor" on a sensor whose Individual model already exists', async () => {
+                const initial = stateFor([model()]);
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+                fireEvent.click(screen.getByText('create-group-for-sensor'));
+                await flush();
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+
+            it('deleting a Failure Group re-parks the model without rebuilding it', async () => {
+                const initial = stateFor([model({ groupNos: [1] })]); // the panel mock always deletes group 1 -> model parks in 0
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial });
+                fireEvent.click(screen.getByText('delete-group'));
+                await flush();
+                const m = box.disk.failureGroupState.models.find((x: any) => x.id === 'keep-1');
+                expect(m.groupNos).toEqual([0]);
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+
+            it('deleting ANOTHER model leaves this one\'s set points untouched', async () => {
+                const doomed = model({ id: 'm1', targetSensor: 'TAG2', healthSetPoints: { kind: 'individual', lower: 1, upper: 2, masterLower: null, masterUpper: null } });
+                const initial = stateFor([model(), doomed]);
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial });
+                fireEvent.click(screen.getByText('Failure Groups'));
+                fireEvent.click(screen.getByText('delete-model-fg')); // the panel mock deletes 'm1'
+                await flush();
+                expect(box.disk.failureGroupState.models.map((x: any) => x.id)).toEqual(['keep-1']);
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+
+            it('delete the last group, then Undo: the restored model has its set points byte-identical', async () => {
+                const original = model();
+                const initial = stateFor([original]);
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial });
+                toggle('TAG1', 1, 'individual');
+                await flush();
+                expect(box.disk.failureGroupState.models).toHaveLength(0);
+                fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+                await flush();
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+                expect(box.disk.failureGroupState.models).toStrictEqual([original]);
+            });
+
+            it('adopts a model another window wrote (with set points) and a following Dashboard write does not revert it', async () => {
+                // This window loaded the model WITHOUT set points; another window wrote them to disk since.
+                const stale = model(); delete (stale as any).healthSetPoints;
+                const initial = stateFor([stale]);
+                const box = statefulDisk(initial);
+                renderDashboard({ initialState: initial });
+                box.disk = { ...box.disk, failureGroupState: { ...box.disk.failureGroupState, models: [model()] } };
+                toggle('TAG1', 2, 'individual');
+                await flush();
+                expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
+            });
+        });
+    });
+
     describe('2026-10-03 — removing a model\'s last group offers a 7-second Undo', () => {
         const fullModel = (o: Record<string, unknown> = {}) => ({
             id: 'keep-1', groupNos: [1], name: 'Pump Pressure', kind: 'individual', category: 'performance',

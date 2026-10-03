@@ -3,6 +3,8 @@ import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseD
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
+import { migrateHealthSetPoints } from './utils/workspaceMigrations';
+import { emptyHealthSetPoints } from './utils/healthSetPoints';
 
 const STORE_FILE = 'settings.json';
 
@@ -242,6 +244,13 @@ function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
  * every model already has `groupNos`).
  */
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
+    // 2026-10-03: every read also gives each model the empty `healthSetPoints`
+    // shape for its kind if it has none (idempotent; same object when nothing
+    // to do). Runs AFTER the structural migration so legacy `rows` models count.
+    return migrateHealthSetPoints(migrateFailureGroupStateStructure(state));
+}
+
+function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceState {
     const fg = state.failureGroupState as unknown as { groups?: unknown[]; rows?: FailureSensorRow[]; models?: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[]; runningConditionCombine?: 'and' | 'or' } | undefined;
     if (!fg) return state;
 
@@ -289,6 +298,9 @@ function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
                 predictorSensors: matchesPm ? (pm!.predictorSensors ?? []) : [],
                 xSensor: kind === 'clustering' ? row.mappedSensorTag : '',
                 ySensor: '',
+                // Legacy rows predate set points; no sensor metadata here, so
+                // Individual's master snapshot stays "not taken yet".
+                healthSetPoints: emptyHealthSetPoints(kind),
                 ...(matchesPm
                     ? {
                         individualChecked: pm!.individualChecked,

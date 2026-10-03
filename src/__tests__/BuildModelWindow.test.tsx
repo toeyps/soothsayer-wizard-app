@@ -1041,6 +1041,69 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(state.failureGroupState.models[0].status).toBe(true);
         });
 
+        describe('2026-10-03 — Health score set points (phase 1, data only) survive every write this window makes', () => {
+            const entered = { kind: 'individual', lower: 12.5, upper: null, masterLower: 10, masterUpper: 90 };
+            const sp = (m: any) => JSON.stringify(m.healthSetPoints);
+
+            it('"Save changes" (draftFields spread) keeps them byte-identical', async () => {
+                const model = makeModel({ healthSetPoints: entered });
+                statefulUpdateMock([model]);
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+                openSettings();
+                fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
+                await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+                const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+                expect(written.name).toBe('Renamed');
+                expect(sp(written)).toBe(JSON.stringify(entered));
+            });
+
+            it('Train (writes lastTrainedAt/trainedFingerprint) and then "Mark complete" keep them', async () => {
+                const model = makeModel({ healthSetPoints: entered });
+                statefulUpdateMock([model]);
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+                await act(async () => {
+                    fireEvent.click(screen.getByText('▶ Train model'));
+                    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+                });
+                let written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+                expect(written.lastTrainedAt).toBeTruthy();
+                expect(sp(written)).toBe(JSON.stringify(entered));
+                fireEvent.click(screen.getByText('✓ Mark complete'));
+                await flush();
+                written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+                expect(written.status).toBe(true);
+                expect(sp(written)).toBe(JSON.stringify(entered));
+            });
+
+            it('a write is computed against DISK: set points another window just saved (this window\'s copy never had them) are not erased', async () => {
+                const bare = makeModel();
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [bare] } });
+                // ...meanwhile another window wrote set points to disk:
+                statefulUpdateMock([makeModel({ healthSetPoints: entered })]);
+                openSettings();
+                fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed' } });
+                await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+                const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+                expect(sp(written)).toBe(JSON.stringify(entered));
+            });
+
+            it('a Relationship / Clustering model\'s set points are carried through a Save too', async () => {
+                const relPoints = { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 };
+                const rel = makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], healthSetPoints: relPoints });
+                statefulUpdateMock([rel]);
+                render(<BuildModelWindow />);
+                await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+                openSettings();
+                fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'Renamed rel' } });
+                await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+                const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+                expect(sp(written)).toBe(JSON.stringify(relPoints));
+            });
+        });
+
         it('the PM page\'s Finish control does NOT mark a never-trained model Complete (same gate as "✓ Mark complete")', async () => {
             render(<BuildModelWindow />);
             await deliverData(); // fully configured, gate satisfied, but never trained

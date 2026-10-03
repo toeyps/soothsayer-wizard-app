@@ -1205,6 +1205,33 @@ describe('PredictiveModelBuild', () => {
             expect(other.relModelName).toBe('Untouched');
             vi.useRealTimers();
         });
+
+        it('2026-10-03: the autosave keeps this model\'s Health score set points (the page does not own them) AND a sibling\'s, byte-identical, even when the page\'s own copy never had them', async () => {
+            const entered = { kind: 'individual', lower: 12.5, upper: null, masterLower: 10, masterUpper: 90 };
+            const siblingPoints = { kind: 'relationship', residualAt80Lower: -1, residualAt80Upper: 1, residualAt0Lower: -2, residualAt0Upper: 2 };
+            const hydrated = makeStoredModel({ runningConditionMode: 'custom', filterTimePeriods: [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }] });
+            const onDisk = { ...hydrated, healthSetPoints: entered }; // another window saved set points since this page loaded
+            const sibling = makeStoredModel({ id: 'm2', healthSetPoints: siblingPoints } as any);
+            mockLoadWorkspaceData.mockResolvedValue({ name: 'WS', failureGroupState: { groups: [], models: [hydrated, sibling] } });
+            vi.useFakeTimers();
+            await renderHydrated();
+            expandAllPeriods();
+            mockUpdateWorkspaceData.mockClear();
+            mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) =>
+                patch({ id, failureGroupState: { groups: [], models: [onDisk, sibling] } }));
+
+            const startInput = screen.getByLabelText('Period 1 start');
+            fireEvent.change(startInput, { target: { value: '2026-01-05T00:00' } });
+            fireEvent.blur(startInput);
+            await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+
+            const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
+            const own = state.failureGroupState.models.find((m: any) => m.id === 'm1');
+            expect(own.filterTimePeriods[0].start).toBe('2026-01-05T00:00'); // the write really happened
+            expect(JSON.stringify(own.healthSetPoints)).toBe(JSON.stringify(entered));
+            expect(JSON.stringify(state.failureGroupState.models.find((m: any) => m.id === 'm2').healthSetPoints)).toBe(JSON.stringify(siblingPoints));
+            vi.useRealTimers();
+        });
     });
 
     it('a per-model config autosave keeps the workspace-level failureGroupState fields it does not own, e.g. the workspace time periods (regression 2026-09-23: it rebuilt the slice from an explicit field list and dropped them)', async () => {

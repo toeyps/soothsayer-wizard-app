@@ -5,6 +5,7 @@ import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
 import { withFailureGroupState, restoreDeletedModel } from '../../utils/failureGroupState';
 import { modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
+import { seedHealthSetPoints } from '../../utils/healthSetPoints';
 import { subscribe } from '../../utils/tauriEvents';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
@@ -554,6 +555,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         runningConditionMode: 'workspace',
         customRunningConditionFilters: [],
         customRunningConditionCombine: 'and',
+        // Health score set points (2026-10-03): Individual snapshots the
+        // sensor's master-data alarmL/alarmH NOW (null/null for a special sensor
+        // or one without them) and prefills lower/upper from it; Relationship
+        // and Clustering start empty. Never written back to master data.
+        healthSetPoints: seedHealthSetPoints(kind, getSensorMeta(tag) ?? null),
     }), [getSensorMeta]);
 
     const isDuplicateGroupName = useCallback((name: string, excludeNo?: number) =>
