@@ -1415,10 +1415,11 @@ mod resolved_filter_tests {
 /// `health_preview::HealthPreview`, no set points applied). `max_points` caps
 /// that bounded series (default 4000).
 ///
-/// TODO(health-score cleanup): once the old PM page and the Workbench stop
-/// reading them, drop the FULL `predicted` / `residual` / `target_raw` /
-/// `predictor_raw` arrays below — they are kept untouched for now so existing
-/// callers see exactly what they always did.
+/// **Response size (2026-10-04):** with `max_points` (every frontend call passes
+/// it) `predicted` / `predictor_raw` / `target_raw` are ONE aligned strided
+/// sample of at most `max_points` rows (extremes kept), `residual` is dropped and
+/// `n_rows` is the real row count - see [`finish_relationship_response`]. The
+/// session cache still gets the FULL arrays.
 #[tauri::command(rename_all = "snake_case")]
 async fn preview_relationship_model(
     predictors: Vec<String>,
@@ -1557,31 +1558,51 @@ async fn preview_relationship_model(
         ));
     }
 
-    let mut parsed = serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
+    let parsed = serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
         .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))?;
 
-    // Re-extract X / y from the request payload we shipped to the sidecar — these
-    // were already cleaned (NaN-dropped, projected) by Rust above.  Attaching them
-    // to the response lets the frontend draw scatter (predictor_raw vs target_raw)
-    // without re-querying the dataset.
-    if let Some(obj) = parsed.as_object_mut() {
-        if let Some(req_payload) = payload.get("payload") {
-            if let Some(x_val) = req_payload.get("X") {
-                obj.insert("predictor_raw".to_string(), x_val.clone());
-            }
-            if let Some(y_val) = req_payload.get("y") {
-                obj.insert("target_raw".to_string(), y_val.clone());
-            }
-        }
-    }
+    finish_relationship_response(
+        &state, stamp, parsed, &predictors, &target, lambda, &row_idx, &y_vector, &x_matrix, cache_key,
+        max_points,
+    )
+}
 
+/// Everything `preview_relationship_model` does once the sidecar has answered:
+/// cache the FULL-resolution fit + attach the bounded `health_preview` (when
+/// `cache_key` is given), and only THEN shape the response for the frontend
+/// (attach the cleaned raw X / y, bound the arrays). Split out of the command so
+/// it can be tested without a sidecar.
+///
+/// Response contract (2026-10-04): with `max_points` the frontend never gets
+/// every row — `predicted` / `predictor_raw` / `target_raw` are one aligned,
+/// evenly strided sample of at most `max_points` rows (min and max of the target
+/// and of the prediction always kept), `residual` is dropped (nobody reads it)
+/// and `n_rows` carries the real row count. Without `max_points` the arrays stay
+/// full (and `residual` stays) exactly as before. `r2_per_step` /
+/// `rmse2_per_step`, `error`, `cache_key`, `cached`, `health_preview` are never
+/// touched. The cache always holds the FULL arrays (built from the unshaped
+/// response), so the health preview keeps scoring every row.
+#[allow(clippy::too_many_arguments)]
+fn finish_relationship_response(
+    state: &AppState,
+    stamp: SessionStamp,
+    mut parsed: serde_json::Value,
+    predictors: &[String],
+    target: &str,
+    lambda: f64,
+    row_idx: &[u32],
+    y_vector: &[f64],
+    x_matrix: &[Vec<f64>],
+    cache_key: Option<String>,
+    max_points: Option<usize>,
+) -> Result<serde_json::Value, String> {
     // ── Health score: cache the full-resolution fit + attach bounded data. ──
     let cache_key = cache_key.filter(|k| !k.is_empty());
     if let Some(key) = cache_key {
         if parsed.get("error").is_none() {
-            if let Some(fit) = rel_fit_from_response(
-                &parsed, &predictors, &target, lambda, &row_idx, &y_vector, &x_matrix,
-            ) {
+            if let Some(fit) =
+                rel_fit_from_response(&parsed, predictors, target, lambda, row_idx, y_vector, x_matrix)
+            {
                 let bounded = {
                     let lock = state.0.read().map_err(|e| e.to_string())?;
                     lock.as_ref()
@@ -1589,15 +1610,15 @@ async fn preview_relationship_model(
                         .and_then(|s| {
                             let req = health_preview::HealthPreviewRequest {
                                 kind: "relationship".into(),
-                                target: Some(target.clone()),
-                                predictors: predictors.clone(),
+                                target: Some(target.to_string()),
+                                predictors: predictors.to_vec(),
                                 max_points,
                                 ..Default::default()
                             };
                             health_preview::relationship_preview(&s.data, &fit, &req).ok()
                         })
                 };
-                let cached = store_rel_fit(&state, stamp, key.clone(), fit);
+                let cached = store_rel_fit(state, stamp, key.clone(), fit);
                 if let Some(obj) = parsed.as_object_mut() {
                     obj.insert("cache_key".into(), serde_json::Value::String(key));
                     obj.insert("cached".into(), serde_json::Value::Bool(cached));
@@ -1609,7 +1630,103 @@ async fn preview_relationship_model(
         }
     }
 
+    // ── Shape the frontend response (after the cache took the full arrays). ──
+    shape_relationship_arrays(&mut parsed, x_matrix, y_vector, max_points);
     Ok(parsed)
+}
+
+/// Rows kept on top of the stride sample: argmin / argmax of the target and of
+/// the prediction.
+const REL_SAMPLE_EXTREMES: usize = 4;
+
+/// Row indices (ascending, unique, at most `max_points`) of the bounded
+/// Relationship sample: an even stride over `0..n` plus the rows holding the min
+/// and max of `y` and of `predicted` (finite values only), so the extremes the
+/// scatter would otherwise lose are always drawn. All rows when `n <= max_points`.
+fn relationship_sample_indices(
+    n: usize,
+    max_points: usize,
+    y: &[f64],
+    predicted: Option<&[Option<f64>]>,
+) -> Vec<usize> {
+    let max_points = max_points.max(1);
+    if n <= max_points {
+        return (0..n).collect();
+    }
+    // Too small a cap to spare room for the extremes: plain stride.
+    let reserve = if max_points >= 8 { REL_SAMPLE_EXTREMES } else { 0 };
+    let k = max_points - reserve;
+    let mut idx: Vec<usize> = (0..k).map(|i| i * n / k).collect();
+    if reserve > 0 {
+        let mut extremes = |values: &mut dyn Iterator<Item = (usize, f64)>| {
+            let mut mn: Option<(usize, f64)> = None;
+            let mut mx: Option<(usize, f64)> = None;
+            for (i, v) in values {
+                if !v.is_finite() {
+                    continue;
+                }
+                if mn.is_none_or(|(_, m)| v < m) {
+                    mn = Some((i, v));
+                }
+                if mx.is_none_or(|(_, m)| v > m) {
+                    mx = Some((i, v));
+                }
+            }
+            idx.extend(mn.map(|(i, _)| i));
+            idx.extend(mx.map(|(i, _)| i));
+        };
+        extremes(&mut y.iter().copied().enumerate().take(n));
+        if let Some(p) = predicted {
+            extremes(&mut p.iter().enumerate().take(n).filter_map(|(i, v)| v.map(|v| (i, v))));
+        }
+    }
+    idx.sort_unstable();
+    idx.dedup();
+    idx
+}
+
+/// Attach `predictor_raw` / `target_raw` / `n_rows` to the sidecar response and,
+/// when `max_points` is given, bound `predicted` + those two to one aligned
+/// sample and drop `residual` (see [`finish_relationship_response`]).
+fn shape_relationship_arrays(
+    parsed: &mut serde_json::Value,
+    x_matrix: &[Vec<f64>],
+    y: &[f64],
+    max_points: Option<usize>,
+) {
+    let n = y.len();
+    let Some(obj) = parsed.as_object_mut() else {
+        return;
+    };
+    obj.insert("n_rows".to_string(), serde_json::json!(n));
+    let Some(cap) = max_points else {
+        // Legacy shape: every row, as before.
+        obj.insert("predictor_raw".to_string(), serde_json::json!(x_matrix));
+        obj.insert("target_raw".to_string(), serde_json::json!(y));
+        return;
+    };
+    // The prediction array only takes part when it lines up with the rows.
+    let pred_full: Option<Vec<Option<f64>>> = obj
+        .get("predicted")
+        .and_then(|v| v.as_array())
+        .filter(|a| a.len() == n)
+        .map(|a| a.iter().map(|v| v.as_f64()).collect());
+    let idx = relationship_sample_indices(n, cap, y, pred_full.as_deref());
+    obj.insert(
+        "predictor_raw".to_string(),
+        serde_json::Value::Array(idx.iter().map(|&i| serde_json::json!(x_matrix[i])).collect()),
+    );
+    obj.insert(
+        "target_raw".to_string(),
+        serde_json::Value::Array(idx.iter().map(|&i| serde_json::json!(y[i])).collect()),
+    );
+    if let Some(p) = pred_full {
+        obj.insert(
+            "predicted".to_string(),
+            serde_json::Value::Array(idx.iter().map(|&i| serde_json::json!(p[i])).collect()),
+        );
+    }
+    obj.remove("residual");
 }
 
 /// Build the cacheable full-resolution fit from the sidecar's
@@ -6747,4 +6864,334 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// `preview_relationship_model`'s response contract (2026-10-04): bounded,
+/// aligned `predicted` / `predictor_raw` / `target_raw` + `n_rows` when
+/// `max_points` is given, full legacy arrays without it, and a session cache
+/// that always holds the FULL fit. Driven through `finish_relationship_response`
+/// with a fake sidecar response (the real command needs a sidecar process).
+#[cfg(test)]
+mod relationship_response_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// y[i] = 100 + 10*sin(i/50) with a unique spike (max) and dip (min);
+    /// predicted[i] = 2*y[i] + 1 so alignment is checkable from the arrays alone;
+    /// x0[i] = i, which makes every sampled row index recoverable.
+    struct Fixture {
+        n: usize,
+        x: Vec<Vec<f64>>,
+        y: Vec<f64>,
+        predicted: Vec<f64>,
+        spike: usize,
+        dip: usize,
+    }
+
+    fn fixture(n: usize) -> Fixture {
+        let mut y: Vec<f64> = (0..n).map(|i| 100.0 + 10.0 * (i as f64 / 50.0).sin()).collect();
+        let (spike, dip) = (n / 3 + 1, 2 * n / 3 + 2);
+        if n > 3 {
+            y[spike] = 1000.0;
+            y[dip] = -1000.0;
+        }
+        let x = (0..n).map(|i| vec![i as f64, (i % 17) as f64]).collect();
+        let predicted = y.iter().map(|v| 2.0 * v + 1.0).collect();
+        Fixture { n, x, y, predicted, spike, dip }
+    }
+
+    fn sidecar_response(f: &Fixture) -> serde_json::Value {
+        serde_json::json!({
+            "request": "r",
+            "r2_per_step": [0.5, 0.9],
+            "rmse2_per_step": [2.0, 1.0],
+            "predicted": f.predicted,
+            "residual": f.y.iter().zip(&f.predicted).map(|(a, p)| a - p).collect::<Vec<_>>(),
+        })
+    }
+
+    fn state_for(n: usize) -> AppState {
+        let headers = vec!["timestamp".to_string(), "X1".to_string(), "X2".to_string(), "Y".to_string()];
+        let timestamps: Vec<Option<String>> = (0..n)
+            .map(|i| Some(format!("2024-03-{:02}T{:02}:{:02}:00", 1 + (i / 1440) % 28, (i / 60) % 24, i % 60)))
+            .collect();
+        let columns = vec![vec![f64::NAN; n], vec![0.0; n], vec![0.0; n], vec![0.0; n]];
+        AppState(RwLock::new(Some(SessionData {
+            data: ColumnarData::from_parts(headers, timestamps, columns),
+            paths: vec![],
+            derived: HashSet::new(),
+            generation: 3,
+            rel_cache: Default::default(),
+        })))
+    }
+
+    fn run(
+        f: &Fixture,
+        state: &AppState,
+        parsed: serde_json::Value,
+        cache_key: Option<&str>,
+        max_points: Option<usize>,
+    ) -> serde_json::Value {
+        let rows: Vec<u32> = (0..f.n as u32).collect();
+        finish_relationship_response(
+            state,
+            session_stamp(state).unwrap().unwrap(),
+            parsed,
+            &["X1".to_string(), "X2".to_string()],
+            "Y",
+            1000.0,
+            &rows,
+            &f.y,
+            &f.x,
+            cache_key.map(String::from),
+            max_points,
+        )
+        .unwrap()
+    }
+
+    fn arr<'a>(v: &'a serde_json::Value, k: &str) -> &'a Vec<serde_json::Value> {
+        v.get(k).and_then(|x| x.as_array()).unwrap_or_else(|| panic!("{k} missing"))
+    }
+
+    // ---------- relationship_sample_indices ----------
+
+    #[test]
+    fn sample_is_every_row_when_n_is_at_or_below_the_cap() {
+        let f = fixture(50);
+        assert_eq!(relationship_sample_indices(50, 50, &f.y, None), (0..50).collect::<Vec<_>>());
+        assert_eq!(relationship_sample_indices(50, 4000, &f.y, None), (0..50).collect::<Vec<_>>());
+        assert!(relationship_sample_indices(0, 10, &[], None).is_empty());
+    }
+
+    #[test]
+    fn sample_just_above_the_cap_is_bounded_sorted_unique() {
+        let f = fixture(51);
+        let idx = relationship_sample_indices(51, 50, &f.y, None);
+        assert!(idx.len() <= 50 && idx.len() >= 40, "{}", idx.len());
+        assert!(idx.windows(2).all(|w| w[0] < w[1]));
+        assert!(idx.iter().all(|&i| i < 51));
+    }
+
+    #[test]
+    fn sample_keeps_the_target_and_prediction_extremes() {
+        let f = fixture(10_000);
+        // The prediction's extremes sit on different rows than the target's.
+        let mut pred: Vec<Option<f64>> = f.predicted.iter().map(|&v| Some(v)).collect();
+        pred[1234] = Some(9e6);
+        pred[8765] = Some(-9e6);
+        let idx = relationship_sample_indices(10_000, 200, &f.y, Some(&pred));
+        assert!(idx.len() <= 200);
+        for want in [f.spike, f.dip, 1234, 8765] {
+            assert!(idx.contains(&want), "missing extreme row {want}");
+        }
+        assert!(idx.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn sample_ignores_non_finite_values_when_picking_extremes() {
+        let mut f = fixture(5000);
+        f.y[10] = f64::NAN;
+        let mut pred: Vec<Option<f64>> = f.predicted.iter().map(|&v| Some(v)).collect();
+        pred[20] = None;
+        let idx = relationship_sample_indices(5000, 100, &f.y, Some(&pred));
+        assert!(idx.len() <= 100);
+        assert!(idx.contains(&f.spike) && idx.contains(&f.dip));
+    }
+
+    #[test]
+    fn sample_with_a_tiny_cap_is_a_plain_stride_within_the_cap() {
+        let f = fixture(1000);
+        for cap in [1usize, 2, 5, 7] {
+            let idx = relationship_sample_indices(1000, cap, &f.y, None);
+            assert_eq!(idx.len(), cap);
+        }
+        // 0 behaves like 1 (never an empty / unbounded sample).
+        assert_eq!(relationship_sample_indices(1000, 0, &f.y, None).len(), 1);
+    }
+
+    // ---------- bounded response ----------
+
+    #[test]
+    fn bounded_arrays_are_aligned_capped_and_keep_the_extremes() {
+        let f = fixture(20_000);
+        let state = state_for(f.n);
+        let resp = run(&f, &state, sidecar_response(&f), None, Some(500));
+        let (p, t, x) = (arr(&resp, "predicted"), arr(&resp, "target_raw"), arr(&resp, "predictor_raw"));
+        assert!(p.len() <= 500 && !p.is_empty());
+        assert_eq!(p.len(), t.len());
+        assert_eq!(p.len(), x.len());
+        let mut rows = Vec::new();
+        for j in 0..p.len() {
+            let row = x[j][0].as_f64().unwrap() as usize; // x0[i] = i
+            rows.push(row);
+            assert_eq!(t[j].as_f64().unwrap(), f.y[row], "target misaligned at {j}");
+            assert_eq!(p[j].as_f64().unwrap(), f.predicted[row], "prediction misaligned at {j}");
+            assert_eq!(x[j][1].as_f64().unwrap(), (row % 17) as f64);
+        }
+        assert!(rows.windows(2).all(|w| w[0] < w[1]), "rows must be ascending (time order)");
+        // min and max of the target (and so of the prediction) are in the sample.
+        assert!(rows.contains(&f.spike) && rows.contains(&f.dip));
+        assert!(t.iter().any(|v| v.as_f64() == Some(1000.0)));
+        assert!(t.iter().any(|v| v.as_f64() == Some(-1000.0)));
+        assert!(p.iter().any(|v| v.as_f64() == Some(2001.0)));
+        assert!(p.iter().any(|v| v.as_f64() == Some(-1999.0)));
+    }
+
+    #[test]
+    fn n_rows_is_the_real_row_count_below_at_and_above_the_cap() {
+        for (n, cap) in [(30usize, 100usize), (100, 100), (101, 100), (5000, 100)] {
+            let f = fixture(n);
+            let state = state_for(n);
+            let resp = run(&f, &state, sidecar_response(&f), None, Some(cap));
+            assert_eq!(resp["n_rows"], serde_json::json!(n), "n_rows for n={n}");
+            let len = arr(&resp, "predicted").len();
+            assert!(len <= cap, "n={n}: {len} > cap {cap}");
+            if n <= cap {
+                assert_eq!(len, n, "no sampling when the data fits");
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_response_drops_residual_but_keeps_the_scores_and_error() {
+        let f = fixture(2000);
+        let state = state_for(f.n);
+        let resp = run(&f, &state, sidecar_response(&f), None, Some(100));
+        assert!(resp.get("residual").is_none());
+        assert_eq!(resp["r2_per_step"], serde_json::json!([0.5, 0.9]));
+        assert_eq!(resp["rmse2_per_step"], serde_json::json!([2.0, 1.0]));
+        assert_eq!(resp["request"], serde_json::json!("r"));
+        // No cache_key => none of the cache fields appear.
+        assert!(resp.get("cache_key").is_none());
+        assert!(resp.get("cached").is_none());
+        assert!(resp.get("health_preview").is_none());
+        // An error response passes through (still gets a bounded raw sample + n_rows).
+        let err = run(&f, &state, serde_json::json!({"error": "boom", "trace": "t"}), Some("k"), Some(100));
+        assert_eq!(err["error"], serde_json::json!("boom"));
+        assert_eq!(err["trace"], serde_json::json!("t"));
+        assert_eq!(err["n_rows"], serde_json::json!(2000));
+        assert!(err.get("predicted").is_none());
+        assert!(err.get("cache_key").is_none(), "an error is never cached");
+        assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
+    }
+
+    #[test]
+    fn null_predictions_survive_the_sample_as_null() {
+        let f = fixture(1000);
+        let state = state_for(f.n);
+        let mut parsed = sidecar_response(&f);
+        parsed["predicted"][0] = serde_json::Value::Null; // row 0 is always in the stride
+        let resp = run(&f, &state, parsed, None, Some(100));
+        let p = arr(&resp, "predicted");
+        let x = arr(&resp, "predictor_raw");
+        let j = x.iter().position(|r| r[0].as_f64() == Some(0.0)).unwrap();
+        assert!(p[j].is_null());
+    }
+
+    #[test]
+    fn a_prediction_array_of_the_wrong_length_is_left_alone() {
+        let f = fixture(1000);
+        let state = state_for(f.n);
+        let mut parsed = sidecar_response(&f);
+        parsed["predicted"] = serde_json::json!([1.0, 2.0]);
+        let resp = run(&f, &state, parsed, None, Some(100));
+        assert_eq!(arr(&resp, "predicted").len(), 2);
+        assert_eq!(arr(&resp, "target_raw").len(), arr(&resp, "predictor_raw").len());
+    }
+
+    #[test]
+    fn payload_is_small_for_159k_rows() {
+        let f = fixture(159_000);
+        let state = state_for(f.n);
+        let full = serde_json::to_string(&run(&f, &state, sidecar_response(&f), None, None)).unwrap();
+        let bounded = serde_json::to_string(&run(&f, &state, sidecar_response(&f), None, Some(4000))).unwrap();
+        assert!(full.len() > 10_000_000, "sanity: the legacy payload is MBs ({})", full.len());
+        assert!(bounded.len() < 450_000, "bounded payload is {} bytes", bounded.len());
+        let r: serde_json::Value = serde_json::from_str(&bounded).unwrap();
+        assert_eq!(r["n_rows"], serde_json::json!(159_000));
+        assert!(arr(&r, "predicted").len() <= 4000);
+    }
+
+    // ---------- backwards compatibility (no max_points) ----------
+
+    #[test]
+    fn without_max_points_every_row_and_residual_are_returned_as_before() {
+        let f = fixture(3000);
+        let state = state_for(f.n);
+        let resp = run(&f, &state, sidecar_response(&f), None, None);
+        assert_eq!(arr(&resp, "predicted").len(), 3000);
+        assert_eq!(arr(&resp, "target_raw").len(), 3000);
+        assert_eq!(arr(&resp, "predictor_raw").len(), 3000);
+        assert_eq!(arr(&resp, "residual").len(), 3000);
+        assert_eq!(resp["target_raw"][7].as_f64(), Some(f.y[7]));
+        assert_eq!(resp["predictor_raw"][7], serde_json::json!(f.x[7]));
+        assert_eq!(resp["n_rows"], serde_json::json!(3000));
+    }
+
+    // ---------- the cache keeps the FULL fit ----------
+
+    #[test]
+    fn the_cache_holds_every_row_even_when_the_response_is_bounded() {
+        let f = fixture(2500);
+        let state = state_for(f.n);
+        let resp = run(&f, &state, sidecar_response(&f), Some("m1::abc"), Some(100));
+        // Response: bounded + the cache fields + a bounded health preview.
+        assert!(arr(&resp, "predicted").len() <= 100);
+        assert_eq!(resp["cache_key"], serde_json::json!("m1::abc"));
+        assert_eq!(resp["cached"], serde_json::json!(true));
+        assert_eq!(resp["n_rows"], serde_json::json!(2500));
+        let hp = resp.get("health_preview").expect("health_preview");
+        assert_eq!(hp["kind"], serde_json::json!("relationship"));
+        assert_eq!(hp["series"]["total_points"], serde_json::json!(2500), "the preview saw every row");
+        assert!(hp["series"]["rows"].as_array().unwrap().len() <= 100);
+        // Cache: the FULL arrays, untouched by the response bounding.
+        let lock = state.0.read().unwrap();
+        let fit = lock.as_ref().unwrap().rel_cache.peek("m1::abc").expect("cached fit");
+        assert_eq!(fit.rows.len(), 2500);
+        assert_eq!(fit.actual, f.y);
+        assert_eq!(fit.predicted, f.predicted);
+        assert_eq!(fit.x_cols[0].len(), 2500);
+        assert_eq!(fit.x_cols[0][2499], 2499.0);
+        assert_eq!(fit.r2_per_step, vec![0.5, 0.9]);
+    }
+
+    #[test]
+    fn cached_and_health_preview_are_the_same_with_and_without_max_points() {
+        let f = fixture(1200);
+        let state = state_for(f.n);
+        let a = run(&f, &state, sidecar_response(&f), Some("k1"), None);
+        let b = run(&f, &state, sidecar_response(&f), Some("k1"), Some(4000));
+        assert_eq!(a["cached"], b["cached"]);
+        assert_eq!(a["cache_key"], b["cache_key"]);
+        assert_eq!(a["health_preview"], b["health_preview"]);
+        // max_points 4000 > 1200 rows => the arrays are whole in both.
+        assert_eq!(arr(&b, "predicted").len(), 1200);
+        assert!(a.get("residual").is_some() && b.get("residual").is_none());
+    }
+
+    #[test]
+    fn a_stale_stamp_is_reported_as_not_cached_and_the_response_is_still_bounded() {
+        let f = fixture(800);
+        let state = state_for(f.n);
+        let rows: Vec<u32> = (0..f.n as u32).collect();
+        let stale = SessionStamp::new(99, 0); // a reload happened while the sidecar ran
+        let resp = finish_relationship_response(
+            &state,
+            stale,
+            sidecar_response(&f),
+            &["X1".to_string(), "X2".to_string()],
+            "Y",
+            1000.0,
+            &rows,
+            &f.y,
+            &f.x,
+            Some("k".into()),
+            Some(50),
+        )
+        .unwrap();
+        assert_eq!(resp["cached"], serde_json::json!(false));
+        assert!(resp.get("health_preview").is_none());
+        assert!(arr(&resp, "predicted").len() <= 50);
+        assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
+    }
 }

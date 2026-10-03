@@ -69,7 +69,7 @@ vi.mock('@tauri-apps/api/core', () => ({
             case 'export_model_files': return Promise.resolve(EXPORT_RESULT_OK);
             case 'compute_sensor_stats': return Promise.resolve(STATS);
             case 'preview_relationship_model': return Promise.resolve({
-                request: 'r', error: undefined, predicted: [1, 2, 3], residual: [0, 0, 0],
+                request: 'r', error: undefined, n_rows: 3, predicted: [1, 2, 3],
                 r2_per_step: [0.9], rmse2_per_step: [0.1], target_raw: [1, 2, 3], predictor_raw: [[1], [2], [3]],
             });
             case 'compute_clustering_preview': return Promise.resolve({

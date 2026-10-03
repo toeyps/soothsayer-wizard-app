@@ -10,10 +10,13 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 import SubModelsModal, { buildSubModelOption } from '../components/windows/SubModelsModal';
 import { useSubModelFits, type SubModelFit, type SubModelFitsState } from '../components/windows/useSubModelFits';
 import type { RelationshipPreviewResult } from '../types/commands';
+import { HEALTH_DEFAULT_MAX_POINTS } from '../utils/healthRequest';
 
-const result = (n: number, r2 = 0.8, rmse2 = 0.4): RelationshipPreviewResult => ({
-    request: 'r', r2_per_step: [r2], rmse2_per_step: [rmse2],
-    predicted: Array.from({ length: n }, (_, i) => i), residual: Array.from({ length: n }, () => 0),
+// `total` = the real row count the fit used (`n_rows`); the arrays are the BOUNDED sample
+// of `n` rows the Rust command sends when `max_points` is passed (total defaults to n).
+const result = (n: number, r2 = 0.8, rmse2 = 0.4, total = n): RelationshipPreviewResult => ({
+    request: 'r', r2_per_step: [r2], rmse2_per_step: [rmse2], n_rows: total,
+    predicted: Array.from({ length: n }, (_, i) => i),
     target_raw: Array.from({ length: n }, (_, i) => i + 0.1), predictor_raw: Array.from({ length: n }, (_, i) => [i, i * 2]),
 });
 
@@ -62,6 +65,22 @@ describe('SubModelsModal', () => {
         expect(cards[1].textContent).toMatch(/N3/);
         expect(within(cards[1]).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('A'); // every card shares the first predictor
         expect(screen.getByText(/stiffness:/).textContent).toMatch(/Medium/);
+    });
+
+    it('N is the real row count (n_rows), not the length of the bounded sample', () => {
+        show(fits({ subModels: [{ predictors: ['A'], result: result(3, 0.8, 0.4, 159000) }] }));
+        const card = screen.getByTestId('sub-model-card');
+        expect(card.textContent).toMatch(/N159[,.\s\u00a0\u202f]?000/);
+        expect(card.textContent).not.toMatch(/N3(?!\d)/);
+        // ...and the scatter still draws from the sample it was given.
+        expect(within(card).getByTestId('echarts-mock')).toBeTruthy();
+    });
+
+    it('a response without n_rows shows a dash instead of crashing', () => {
+        const r: any = { ...result(3) };
+        delete r.n_rows;
+        show(fits({ subModels: [{ predictors: ['A'], result: r }] }));
+        expect(screen.getByTestId('sub-model-card').textContent).toMatch(/N—/);
     });
 
     it('is a modal dialog; Escape, the backdrop and the X close it, a click inside does not', () => {
@@ -119,6 +138,8 @@ describe('useSubModelFits', () => {
         const calls = mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').map(c => c[1] as any);
         expect(calls.map(c => c.predictors)).toEqual([['A'], ['A', 'B'], ['A', 'B', 'C']]);
         expect(calls.every(c => c.target === 'T' && c.lambda === 1000 && c.filter.f === 1 && c.cache_key === undefined)).toBe(true);
+        // Every sub-model call asks for the bounded response (never every row).
+        expect(calls.every(c => c.max_points === HEALTH_DEFAULT_MAX_POINTS)).toBe(true);
         expect(hook.current.subModels!.map(s => s.predictors.length)).toEqual([1, 2, 3]);
         expect(hook.current.loading).toBe(false);
         expect(hook.current.progress).toEqual({ current: 3, total: 3 });
@@ -130,6 +151,14 @@ describe('useSubModelFits', () => {
         await act(async () => { await hook.current.run(); });
         expect(mockInvoke).toHaveBeenCalledTimes(2);
         expect(hook.current.subModels![2].result).toBe(full);
+    });
+
+    it('the logged row count comes from n_rows, and N of the cards from the same field', async () => {
+        mockInvoke.mockImplementation((_c: string, args: any) => Promise.resolve(result(2, 0.5, 0.4, 159000 - args.predictors.length)));
+        const { result: hook } = renderHook(() => useSubModelFits(base));
+        await act(async () => { await hook.current.run(); });
+        expect(hook.current.subModels!.map(s => s.result.n_rows)).toEqual([158999, 158998, 158997]);
+        expect(hook.current.subModels!.every(s => s.result.predicted.length === 2)).toBe(true);
     });
 
     it('does nothing without a target, without predictors, or when the scope is blocked', async () => {

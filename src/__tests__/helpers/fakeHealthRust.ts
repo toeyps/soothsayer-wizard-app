@@ -94,6 +94,29 @@ const optNum = (v: unknown): number | null => {
     if (typeof v !== 'number') throw `invalid type: expected f64, got ${typeof v}`;
     return v;
 };
+/** Mirror of Rust's `relationship_sample_indices`: every row when `n <= max`, else an even
+ *  stride over `max - 4` rows plus the rows of the min / max of `y` and of `predicted`. */
+export function relationshipSampleIndices(n: number, maxPoints: number, y: number[], predicted: number[]): number[] {
+    const max = Math.max(1, maxPoints);
+    if (n <= max) return Array.from({ length: n }, (_, i) => i);
+    const reserve = max >= 8 ? 4 : 0;
+    const k = max - reserve;
+    const idx = new Set<number>(Array.from({ length: k }, (_, i) => Math.floor((i * n) / k)));
+    if (reserve > 0) {
+        for (const v of [y, predicted]) {
+            let mn = -1, mx = -1;
+            for (let i = 0; i < n; i++) {
+                if (!Number.isFinite(v[i])) continue;
+                if (mn < 0 || v[i] < v[mn]) mn = i;
+                if (mx < 0 || v[i] > v[mx]) mx = i;
+            }
+            if (mn >= 0) idx.add(mn);
+            if (mx >= 0) idx.add(mx);
+        }
+    }
+    return [...idx].sort((p, q) => p - q);
+}
+
 export function parseSetPoints(raw: any): SetPointsArg {
     if (raw === null || raw === undefined) return {};
     const pick = (...keys: string[]) => {
@@ -835,14 +858,20 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             case 'preview_relationship_model': {
                 const startedIn = generation;
                 const fit = fitRelationship(a.predictors, a.target, a.lambda, a.filter);
+                // Mirrors Rust's `shape_relationship_arrays`: with `max_points` the arrays are ONE
+                // aligned strided sample (extremes kept) and `residual` is dropped; always `n_rows`.
+                const bounded = typeof a.max_points === 'number';
+                const sel = bounded ? relationshipSampleIndices(fit.y.length, a.max_points, fit.y, fit.predicted) : null;
+                const pick = <T,>(v: T[]): T[] => (sel ? sel.map(i => v[i]) : v);
                 const resp: Record<string, unknown> = {
                     request: 'PreviewModel/relationship',
                     r2_per_step: fit.r2_per_step,
                     rmse2_per_step: fit.rmse2_per_step,
-                    predicted: fit.predicted,
-                    residual: fit.y.map((v, i) => v - fit.predicted[i]),
-                    predictor_raw: fit.X,
-                    target_raw: fit.y,
+                    n_rows: fit.y.length,
+                    predicted: pick(fit.predicted),
+                    ...(bounded ? {} : { residual: fit.y.map((v, i) => v - fit.predicted[i]) }),
+                    predictor_raw: pick(fit.X),
+                    target_raw: pick(fit.y),
                 };
                 await sidecar(cmd, a);
                 const key = typeof a.cache_key === 'string' && a.cache_key ? a.cache_key : null;

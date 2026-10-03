@@ -220,7 +220,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                                 </div>
                                                 <div className="pm-submodel-stat">
                                                     <span className="pm-submodel-stat-label">N</span>
-                                                    <span className="pm-submodel-stat-value">{fit.result.predicted.length.toLocaleString()}</span>
+                                                    <span className="pm-submodel-stat-value">{typeof fit.result.n_rows === 'number' ? fit.result.n_rows.toLocaleString() : '—'}</span>
                                                 </div>
                                             </div>
                                         </div>

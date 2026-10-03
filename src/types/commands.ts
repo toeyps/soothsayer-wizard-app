@@ -8,23 +8,33 @@ import type { HealthPreview } from './health';
  * (last entry is the full-model score). `rmse2_per_step[i]` is `2 * RMSE`
  * — divide by 2 for plain RMSE.
  *
- * `predicted` and `residual` are aligned with the (NaN-dropped, projected)
- * input rows — same length as the `y` vector that was sent to the sidecar.
+ * **Bounded rows (2026-10-04).** Every frontend call passes `max_points`, and
+ * then `predicted` / `target_raw` / `predictor_raw` are ONE aligned, evenly
+ * strided SAMPLE (at most `max_points` rows, ascending row order, the min and
+ * max of the target and of the prediction always included) — NOT every row of
+ * the (NaN-dropped, projected) fit. Entry `j` of all three describes the same
+ * row. `n_rows` is the real number of rows the fit used: read N from it, never
+ * from `.length`. The Rust cache behind `cache_key` still holds every row (the
+ * health preview scores them all). `residual` is no longer sent in that case.
  */
 export interface RelationshipPreviewResult {
   request: string;
   r2_per_step: number[];
   rmse2_per_step: number[];
+  /** Total rows the fit used (the same value with or without `max_points`). */
+  n_rows: number;
+  /** Bounded sample (see above); every row only when `max_points` is not sent. */
   predicted: (number | null)[];
-  residual: (number | null)[];
+  /** Only sent when the call does NOT pass `max_points` (legacy). Nobody reads it. */
+  residual?: (number | null)[];
   /**
-   * Raw target values (`y` vector) — same length / order as `predicted`.
-   * Attached by the Rust command (NOT the sidecar) so the UI can build
-   * (predictor, target) scatter pairs without re-fetching the dataset.
+   * Raw target values (`y`) at the sampled rows — same length / order as
+   * `predicted`. Attached by the Rust command (NOT the sidecar) so the UI can
+   * build (predictor, target) scatter pairs without re-fetching the dataset.
    */
   target_raw?: number[];
   /**
-   * Raw predictor matrix — `predictor_raw[row][predictorIndex]`.
+   * Raw predictor matrix at the sampled rows — `predictor_raw[row][predictorIndex]`.
    * Outer length matches `predicted`. Inner length matches the
    * `predictors` array order passed to `preview_relationship_model`.
    */
@@ -39,8 +49,6 @@ export interface RelationshipPreviewResult {
    * reloaded meanwhile, so `compute_health_preview` will answer `NOT_FITTED`);
    * `health_preview` is the bounded Relationship preview with NO set points
    * applied (`valid:false`, no score yet), ready to draw right after Train.
-   * The full `predicted` / `residual` / `target_raw` / `predictor_raw` arrays
-   * above are still sent for the existing charts until a later phase drops them.
    */
   cache_key?: string;
   cached?: boolean;

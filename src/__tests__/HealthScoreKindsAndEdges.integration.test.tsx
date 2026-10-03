@@ -277,6 +277,11 @@ describe('Relationship specifics', () => {
         expect(sub).toHaveLength(1); // step 1 only; step 2 = the trained fit
         expect(sub[0].args.predictors).toEqual(['TAG3']);
         expect(sub[0].args.cache_key).toBeUndefined();
+        // Bounded response: the sub-model call (and the Train call whose response is reused as the
+        // last card) both ask for at most max_points rows, never every row.
+        expect(sub[0].args.max_points).toBe(4000);
+        expect(env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).every(c => c.args.max_points === 4000)).toBe(true);
+        expect(modal.getAllByTestId('sub-model-card')[0].textContent).toMatch(/N\d/);
         expect(env.backend!.relCacheKeys()).toEqual(cacheBefore);
         fireEvent.keyDown(window, { key: 'Escape' });
         await settle(50);

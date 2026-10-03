@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { RelationshipPreviewResult } from '../../types/commands';
 import { debugLog } from '../../utils/debugLog';
+import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
 
 /*
  * Sub-model fits for a Relationship model ("Compare predictors" / "Sub-models").
@@ -17,7 +18,10 @@ import { debugLog } from '../../utils/debugLog';
  *   so parallel calls would only queue, and serial gives cheap progress.
  *
  * These calls pass NO `cache_key`, so they never touch the Rust fit cache the
- * health score reads (only the main Train fit is cached).
+ * health score reads (only the main Train fit is cached). They DO pass
+ * `max_points`: each response carries only a bounded sample of rows for the
+ * scatter, and the true row count in `n_rows` (the "N" on each card). The reused
+ * Train response (`reusable`) is bounded the same way.
  *
  * Lives next to the components (like `useRowCountPreview.ts`), not in
  * `src/hooks/`: it is presentation plumbing for this one modal.
@@ -116,6 +120,10 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
                     target: targetSensor,
                     lambda,
                     filter,
+                    // Bounded response: an aligned strided sample (extremes kept) of
+                    // at most this many rows + the real count in `n_rows` — never
+                    // every row of a 150k-row dataset.
+                    max_points: HEALTH_DEFAULT_MAX_POINTS,
                 });
                 if (r.error) throw new Error(r.error);
                 results.push({ predictors: subset, result: r });
@@ -125,7 +133,7 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
                 setSubModels(results);
                 debugLog('Sub-model fits complete:', results.map(r => ({
                     predictors: r.predictors,
-                    rows: r.result.predicted.length,
+                    rows: r.result.n_rows,
                     r2: r.result.r2_per_step[r.result.r2_per_step.length - 1],
                 })));
             } else {

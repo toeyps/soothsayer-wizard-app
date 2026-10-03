@@ -79,7 +79,7 @@ vi.mock('@tauri-apps/api/core', () => ({
                 return h.stats[args?.sensor] ?? DEFAULT_STATS;
             }
             case 'preview_relationship_model': return {
-                request: 'r', error: undefined, predicted: [1, 2, 3], residual: [0, 0, 0],
+                request: 'r', error: undefined, n_rows: 3, predicted: [1, 2, 3],
                 r2_per_step: [0.9], rmse2_per_step: [0.1], target_raw: [1, 2, 3],
                 // One column per predictor, so the X-axis switcher has a real
                 // second column to plot.

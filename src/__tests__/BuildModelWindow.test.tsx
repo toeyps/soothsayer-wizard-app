@@ -248,7 +248,7 @@ function defaultInvoke(cmd: string, args?: any): Promise<unknown> {
     if (cmd === 'preview_relationship_model') {
         return Promise.resolve({
             request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
-            predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+            n_rows: 3, predicted: [1, 2, 3],
             target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1], [2], [3]],
         });
     }
@@ -1728,7 +1728,7 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
             if (cmd === 'preview_relationship_model') {
                 return Promise.resolve({
                     request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
-                    predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                    n_rows: 3, predicted: [1, 2, 3],
                     target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1, 10], [2, 20], [3, 30]],
                 });
             }
@@ -1765,7 +1765,7 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
             if (cmd === 'preview_relationship_model') {
                 return Promise.resolve({
                     request: 'req-1', r2_per_step: [0.8], rmse2_per_step: [0.4],
-                    predicted: [1, 2, 3], residual: [0.1, -0.1, 0.05],
+                    n_rows: 3, predicted: [1, 2, 3],
                     target_raw: [1.1, 2.1, 2.9], predictor_raw: [[1], [2], [3]],
                 });
             }
