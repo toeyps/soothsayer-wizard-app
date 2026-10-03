@@ -1542,11 +1542,41 @@ pub struct IndividualModelInfo {
     pub saved_path: String,
 }
 
+/// Round an Individual model's mean/SD and derive the 1SD / 3SD boundaries
+/// the way `wizard.py::_execute_individual` does (boundaries come from the
+/// ALREADY-rounded mean and SD), returning `(mean, sd, [lo1, hi1], [lo3, hi3])`.
+///
+/// Rounding is `metrics::round_metric` — identical to wizard.py's
+/// `round(x, 3)` whenever 3 decimals keep >= 4 significant digits, else 4
+/// significant digits — so a sensor with SD ~0.0004 no longer collapses its
+/// bands onto the mean (a zero health-score denominator downstream). The
+/// mean and the boundaries are rounded to at least as many decimals as the
+/// SD needs (`round_metric_scaled`) so a large mean with a tiny SD stays
+/// resolvable too; for any SD >= 1 this is exactly the old 3 decimals.
+///
+/// Constant sensor (SD = 0): every boundary equals the mean. Behaviour kept
+/// as-is on purpose — phase 2 (health score) must validate/guard it.
+fn individual_rounded_metrics(mean: f64, sd: f64) -> (f64, f64, [f64; 2], [f64; 2]) {
+    use metrics::{round_metric, round_metric_scaled};
+    let sd_r = round_metric(sd);
+    let mean_r = round_metric_scaled(mean, sd_r);
+    let b1 = [
+        round_metric_scaled(mean_r - sd_r, sd_r),
+        round_metric_scaled(mean_r + sd_r, sd_r),
+    ];
+    let b3 = [
+        round_metric_scaled(mean_r - 3.0 * sd_r, sd_r),
+        round_metric_scaled(mean_r + 3.0 * sd_r, sd_r),
+    ];
+    (mean_r, sd_r, b1, b3)
+}
+
 /// Build the `INDIVIDUAL_INFO` JSON payload (matching wizard.py exactly) and
 /// write it to `{save_path}/output/{target}/INDV_INFO_{target}.json`.
 ///
-/// Numeric values are rounded to 3 decimals to match wizard.py's
-/// `round(..., 3)` calls in `_execute_individual`.
+/// Numeric values are rounded like wizard.py's `round(..., 3)` calls in
+/// `_execute_individual`, except small magnitudes keep 4 significant digits
+/// (see `individual_rounded_metrics`).
 #[tauri::command(rename_all = "snake_case")]
 fn train_individual_model(
     target: String,
@@ -1608,12 +1638,9 @@ fn train_individual_model(
     let sd_raw = metrics::sample_sd(&values, mean);
     let sd = if sd_raw.is_nan() { 0.0 } else { sd_raw };
 
-    // Round to 3 decimals to match wizard.py.
-    let r3 = |x: f64| (x * 1000.0).round() / 1000.0;
-    let mean_r = r3(mean);
-    let sd_r = r3(sd);
-    let b1 = [r3(mean_r - sd_r), r3(mean_r + sd_r)];
-    let b3 = [r3(mean_r - 3.0 * sd_r), r3(mean_r + 3.0 * sd_r)];
+    // 3 decimals like wizard.py, but never fewer than 4 significant digits
+    // (see `individual_rounded_metrics` / `metrics::round_metric`).
+    let (mean_r, sd_r, b1, b3) = individual_rounded_metrics(mean, sd);
 
     // start/end_date follow the same filter — otherwise saved metadata
     // would advertise the full dataset's span.
@@ -1914,12 +1941,74 @@ pub struct ClusteringModelInfo {
     pub saved_path: String,
 }
 
+/// JSON key pair for a cluster's criteria range, correctly spelled. This is
+/// the spelling `backend.py` writes and the health-score reference code
+/// (`assign_cluster`) reads with `.get()`.
+const CLUSTER_KEY_HIGHER: &str = "criteria_sensor_value_higher_than";
+const CLUSTER_KEY_LOWER: &str = "criteria_sensor_value_lower_than";
+/// LEGACY misspelling (`critera`, missing the `i`) this writer used to emit
+/// alone, kept "for parity with upstream wizard.py" — which is not in this
+/// repo, so that could not be confirmed. Emitted TOGETHER WITH the correct
+/// pair (same values) until the consumer is confirmed not to read it; then
+/// delete these two constants and the two `insert`s that use them in
+/// `build_cluster_info`.
+const CLUSTER_KEY_HIGHER_LEGACY: &str = "critera_sensor_value_higher_than";
+const CLUSTER_KEY_LOWER_LEGACY: &str = "critera_sensor_value_lower_than";
+
+/// Build the wizard.py-shaped `cluster_info` map for `CLUS_INFO_*.json`.
+/// Each cluster entry gets the ellipse params plus the optional
+/// criteria-range fields, emitted only when the corresponding bound is
+/// finite (mirrors wizard.py's three-branch handling of -inf / +inf). Every
+/// range bound is written under BOTH the correct `criteria_…` key and the
+/// legacy `critera_…` key with the identical value. A cluster with no range
+/// — always the case for the single-cluster path (`range: None`) — gets
+/// neither pair, exactly as before.
+///
+/// Numbers go through `metrics::round_metric` (3 decimals, or 4 significant
+/// digits for small magnitudes); a centre is rounded at least as finely as
+/// its own axis SD so a tiny SD next to a large centre stays resolvable.
+fn build_cluster_info(clusters: &[ClusterDetail]) -> serde_json::Value {
+    use metrics::{round_metric, round_metric_scaled};
+
+    let mut cluster_info_map = serde_json::Map::new();
+    for cluster in clusters {
+        let mut entry = serde_json::Map::new();
+        if let Some(range) = &cluster.range {
+            if let Some(lo) = range.min {
+                let v = serde_json::json!(round_metric(lo));
+                entry.insert(CLUSTER_KEY_HIGHER.into(), v.clone());
+                entry.insert(CLUSTER_KEY_HIGHER_LEGACY.into(), v);
+            }
+            if let Some(hi) = range.max {
+                let v = serde_json::json!(round_metric(hi));
+                entry.insert(CLUSTER_KEY_LOWER.into(), v.clone());
+                entry.insert(CLUSTER_KEY_LOWER_LEGACY.into(), v);
+            }
+        }
+        let e = &cluster.ellipse;
+        entry.insert(
+            "x_cluster_center".into(),
+            serde_json::json!(round_metric_scaled(e.x_center, e.x_sd)),
+        );
+        entry.insert(
+            "y_cluster_center".into(),
+            serde_json::json!(round_metric_scaled(e.y_center, e.y_sd)),
+        );
+        entry.insert("x_sd".into(), serde_json::json!(round_metric(e.x_sd)));
+        entry.insert("y_sd".into(), serde_json::json!(round_metric(e.y_sd)));
+        entry.insert("angle_deg".into(), serde_json::json!(round_metric(e.angle_deg)));
+        entry.insert("boundary_sd_health_score".into(), serde_json::Value::Null);
+
+        cluster_info_map.insert(cluster.cluster_id.to_string(), serde_json::Value::Object(entry));
+    }
+    serde_json::Value::Object(cluster_info_map)
+}
+
 /// Persist a (single- or multi-) cluster GMM ellipse fit to
 /// `{save_path}/output/{second_sensor}/CLUS_INFO_{first_sensor}_{second_sensor}.json`
-/// matching `wizard.py`'s `CLUSTERING_INFO` template, including the
-/// per-cluster `critera_sensor_value_higher_than` /
-/// `critera_sensor_value_lower_than` keys (note the `critera` typo —
-/// preserved for parity with the upstream wizard payload).
+/// matching `wizard.py`'s `CLUSTERING_INFO` template. Per-cluster criteria
+/// ranges are written under both `criteria_sensor_value_*` (correct) and the
+/// legacy `critera_sensor_value_*` spelling — see `build_cluster_info`.
 #[tauri::command(rename_all = "snake_case")]
 fn train_clustering_model(
     first_sensor: String,
@@ -1998,8 +2087,6 @@ fn train_clustering_model(
         }
     };
 
-    let r3 = |x: f64| (x * 1000.0).round() / 1000.0;
-
     let resolved_name = model_name
         .as_deref()
         .map(|s| s.trim().to_string())
@@ -2008,37 +2095,7 @@ fn train_clustering_model(
 
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Build the wizard.py-shaped cluster_info map. Each cluster entry
-    // gets the ellipse params plus optional criteria-range fields,
-    // emitted only when the corresponding bound is finite (mirrors
-    // wizard.py's three-branch handling of -inf / +inf).
-    let mut cluster_info_map = serde_json::Map::new();
-    for cluster in &preview.clusters {
-        let mut entry = serde_json::Map::new();
-        if let Some(range) = &cluster.range {
-            if let Some(lo) = range.min {
-                entry.insert(
-                    "critera_sensor_value_higher_than".into(),
-                    serde_json::json!(r3(lo)),
-                );
-            }
-            if let Some(hi) = range.max {
-                entry.insert(
-                    "critera_sensor_value_lower_than".into(),
-                    serde_json::json!(r3(hi)),
-                );
-            }
-        }
-        entry.insert("x_cluster_center".into(), serde_json::json!(r3(cluster.ellipse.x_center)));
-        entry.insert("y_cluster_center".into(), serde_json::json!(r3(cluster.ellipse.y_center)));
-        entry.insert("x_sd".into(), serde_json::json!(r3(cluster.ellipse.x_sd)));
-        entry.insert("y_sd".into(), serde_json::json!(r3(cluster.ellipse.y_sd)));
-        entry.insert("angle_deg".into(), serde_json::json!(r3(cluster.ellipse.angle_deg)));
-        entry.insert("boundary_sd_health_score".into(), serde_json::Value::Null);
-
-        cluster_info_map.insert(cluster.cluster_id.to_string(), serde_json::Value::Object(entry));
-    }
-    let cluster_info = serde_json::Value::Object(cluster_info_map);
+    let cluster_info = build_cluster_info(&preview.clusters);
 
     let composition_criteria = preview
         .criteria_sensor
@@ -4464,6 +4521,185 @@ fn sample_dataset(
         total: seen,
         sampled,
     })
+}
+
+/// Phase 1 of the Health-score work: output-file concept fixes (criteria key
+/// spelling, small-band rounding) for the `*_INFO_*.json` model files.
+#[cfg(test)]
+mod model_info_output_tests {
+    use super::*;
+
+    fn legacy_r3(x: f64) -> f64 {
+        (x * 1000.0).round() / 1000.0
+    }
+
+    fn close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-12, "expected {b}, got {a}");
+    }
+
+    // ---------- individual_rounded_metrics ----------
+
+    #[test]
+    fn individual_typical_values_match_legacy_three_decimals() {
+        // SD >= 1: identical to the old fixed 3-decimal rounding.
+        let (mean, sd) = (1234.56789, 12.34567);
+        let (m, s, b1, b3) = individual_rounded_metrics(mean, sd);
+        let (lm, ls) = (legacy_r3(mean), legacy_r3(sd));
+        assert_eq!(m, lm);
+        assert_eq!(s, ls);
+        assert_eq!(b1, [legacy_r3(lm - ls), legacy_r3(lm + ls)]);
+        assert_eq!(b3, [legacy_r3(lm - 3.0 * ls), legacy_r3(lm + 3.0 * ls)]);
+    }
+
+    #[test]
+    fn individual_small_sd_keeps_distinct_bands_and_nonzero_denominators() {
+        // The motivating case: SD ~0.0004. Legacy r3 gave sd = 0.0 and every
+        // boundary == mean.
+        let (mean, sd) = (0.5, 0.000412);
+        let ls = legacy_r3(sd);
+        assert_eq!(ls, 0.0);
+
+        let (m, s, b1, b3) = individual_rounded_metrics(mean, sd);
+        close(m, 0.5);
+        close(s, 0.000412);
+        close(b1[0], 0.499588);
+        close(b1[1], 0.500412);
+        close(b3[0], 0.498764);
+        close(b3[1], 0.501236);
+        // Strictly ordered, so (3SD - 1SD) style denominators are never 0.
+        assert!(b3[0] < b1[0] && b1[0] < m && m < b1[1] && b1[1] < b3[1]);
+        assert!(b3[0] != b1[0] && b3[1] != b1[1]);
+    }
+
+    #[test]
+    fn individual_large_mean_tiny_sd_does_not_collapse() {
+        let (m, s, b1, b3) = individual_rounded_metrics(1000.0001234, 0.0004);
+        assert!(s > 0.0);
+        assert!(b3[0] < b1[0] && b1[0] < m && m < b1[1] && b1[1] < b3[1], "{b3:?} {b1:?} {m}");
+    }
+
+    #[test]
+    fn individual_constant_sensor_boundaries_equal_the_mean() {
+        // PINNED current behaviour (phase 2 must validate/guard it): SD = 0
+        // → every boundary equals the mean, so a band-width denominator is 0.
+        let (m, s, b1, b3) = individual_rounded_metrics(7.25, 0.0);
+        assert_eq!(m, 7.25);
+        assert_eq!(s, 0.0);
+        assert_eq!(b1, [7.25, 7.25]);
+        assert_eq!(b3, [7.25, 7.25]);
+    }
+
+    // ---------- build_cluster_info ----------
+
+    fn ellipse() -> clustering::EllipseFit {
+        clustering::EllipseFit {
+            x_center: 10.123456,
+            y_center: 20.654321,
+            x_sd: 1.23456,
+            y_sd: 0.000412345,
+            angle_deg: 33.33333,
+        }
+    }
+
+    fn detail(id: u32, min: Option<f64>, max: Option<f64>, with_range: bool) -> ClusterDetail {
+        ClusterDetail {
+            cluster_id: id,
+            range: if with_range { Some(ClusterRange { min, max }) } else { None },
+            n_rows: 5,
+            ellipse: ellipse(),
+            xs: vec![],
+            ys: vec![],
+        }
+    }
+
+    fn entry<'a>(v: &'a serde_json::Value, id: &str) -> &'a serde_json::Map<String, serde_json::Value> {
+        v.get(id).and_then(|e| e.as_object()).expect("cluster entry")
+    }
+
+    #[test]
+    fn cluster_info_writes_both_spellings_with_identical_values_for_every_cluster() {
+        let clusters = vec![
+            detail(1, None, Some(10.0), true),            // lower-bounded only
+            detail(2, Some(10.0), Some(20.0), true),      // both bounds
+            detail(3, Some(20.5), None, true),            // upper-open
+        ];
+        let info = build_cluster_info(&clusters);
+
+        let e1 = entry(&info, "1");
+        assert_eq!(e1[CLUSTER_KEY_LOWER], serde_json::json!(10.0));
+        assert_eq!(e1[CLUSTER_KEY_LOWER_LEGACY], e1[CLUSTER_KEY_LOWER]);
+        assert!(!e1.contains_key(CLUSTER_KEY_HIGHER));
+        assert!(!e1.contains_key(CLUSTER_KEY_HIGHER_LEGACY));
+
+        let e2 = entry(&info, "2");
+        assert_eq!(e2[CLUSTER_KEY_HIGHER], serde_json::json!(10.0));
+        assert_eq!(e2[CLUSTER_KEY_LOWER], serde_json::json!(20.0));
+        assert_eq!(e2[CLUSTER_KEY_HIGHER_LEGACY], e2[CLUSTER_KEY_HIGHER]);
+        assert_eq!(e2[CLUSTER_KEY_LOWER_LEGACY], e2[CLUSTER_KEY_LOWER]);
+
+        let e3 = entry(&info, "3");
+        assert_eq!(e3[CLUSTER_KEY_HIGHER], serde_json::json!(20.5));
+        assert_eq!(e3[CLUSTER_KEY_HIGHER_LEGACY], e3[CLUSTER_KEY_HIGHER]);
+        assert!(!e3.contains_key(CLUSTER_KEY_LOWER));
+        assert!(!e3.contains_key(CLUSTER_KEY_LOWER_LEGACY));
+    }
+
+    #[test]
+    fn cluster_info_key_spellings_are_exactly_what_the_consumer_reads() {
+        assert_eq!(CLUSTER_KEY_HIGHER, "criteria_sensor_value_higher_than");
+        assert_eq!(CLUSTER_KEY_LOWER, "criteria_sensor_value_lower_than");
+        assert_eq!(CLUSTER_KEY_HIGHER_LEGACY, "critera_sensor_value_higher_than");
+        assert_eq!(CLUSTER_KEY_LOWER_LEGACY, "critera_sensor_value_lower_than");
+    }
+
+    #[test]
+    fn cluster_info_single_cluster_has_no_range_keys_of_either_spelling() {
+        // Single-cluster path: `range: None` → no criteria keys at all (same
+        // as before this change); ellipse fields + null score still present.
+        let info = build_cluster_info(&[detail(1, None, None, false)]);
+        let e = entry(&info, "1");
+        for k in [
+            CLUSTER_KEY_HIGHER,
+            CLUSTER_KEY_LOWER,
+            CLUSTER_KEY_HIGHER_LEGACY,
+            CLUSTER_KEY_LOWER_LEGACY,
+        ] {
+            assert!(!e.contains_key(k), "{k} must be absent");
+        }
+        for k in ["x_cluster_center", "y_cluster_center", "x_sd", "y_sd", "angle_deg"] {
+            assert!(e[k].is_number(), "{k}");
+        }
+        assert!(e["boundary_sd_health_score"].is_null());
+    }
+
+    #[test]
+    fn cluster_info_ellipse_numbers_use_the_small_value_rounding_rule() {
+        let info = build_cluster_info(&[detail(1, None, None, false)]);
+        let e = entry(&info, "1");
+        // y_sd 0.000412345 survives (legacy r3 wrote 0.0).
+        assert_eq!(e["y_sd"], serde_json::json!(0.0004123));
+        assert_eq!(e["x_sd"], serde_json::json!(1.235));
+        assert_eq!(e["angle_deg"], serde_json::json!(33.333));
+        // Centres: x_center normal; y_center rounded at least as finely as y_sd.
+        assert_eq!(e["x_cluster_center"], serde_json::json!(10.123));
+        assert_eq!(e["y_cluster_center"], serde_json::json!(20.654321));
+    }
+
+    #[test]
+    fn python_sidecar_clustering_writer_agrees_on_the_criteria_spelling() {
+        // The compiled sidecar's `train_clustering` writes the same JSON
+        // shape; its source must carry the correct `criteria_` pair (and,
+        // like this writer, the legacy pair until it is dropped).
+        let py = include_str!("../python/backend.py");
+        for k in [
+            CLUSTER_KEY_HIGHER,
+            CLUSTER_KEY_LOWER,
+            CLUSTER_KEY_HIGHER_LEGACY,
+            CLUSTER_KEY_LOWER_LEGACY,
+        ] {
+            assert!(py.contains(k), "backend.py is missing key {k}");
+        }
+    }
 }
 
 #[cfg(test)]

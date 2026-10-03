@@ -53,6 +53,58 @@ def _rmse(y_true, y_pred):
     return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
 
+# ── output-file rounding (mirror of src-tauri/src/metrics.rs::round_metric) ─
+# Replaces the fixed `round(x, 3)` for every metric written to the model
+# files. Identical to 3 decimals whenever that keeps >= 4 significant digits
+# (|x| >= 1); otherwise keeps 4 significant digits, so a sensor with SD
+# ~0.0004 no longer collapses its bands to equal numbers. 0 stays 0; NaN/inf
+# pass through. Keep in sync with the Rust implementation.
+_METRIC_MIN_DECIMALS = 3
+
+
+def _metric_decimals(x):
+    """max(3, 3 - floor(log10|x|)); 3 for 0 / non-finite."""
+    x = float(x)
+    if x == 0.0 or not math.isfinite(x):
+        return _METRIC_MIN_DECIMALS
+    return max(_METRIC_MIN_DECIMALS, _METRIC_MIN_DECIMALS - int(math.floor(math.log10(abs(x)))))
+
+
+def _round_metric(x, scale=None):
+    """Scalar round_metric. `scale` (e.g. the matching SD) makes the rounding
+    at least as fine as `scale` needs, so mean±k·sd stays resolvable."""
+    x = float(x)
+    if not math.isfinite(x) or abs(x) >= 1e15:
+        return x
+    d = _metric_decimals(x)
+    if scale is not None:
+        d = max(d, _metric_decimals(scale))
+    try:
+        r = round(x, d)
+    except OverflowError:
+        return x
+    return r if math.isfinite(r) else x
+
+
+def _round_metric_array(values):
+    """Vectorised `_round_metric` (per-element decimals) for long arrays."""
+    a = np.asarray(values, dtype=float)
+    out = a.copy()
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        mask = np.isfinite(a) & (a != 0.0) & (np.abs(a) < 1e15)
+        if not mask.any():
+            return out
+        v = a[mask]
+        d = np.maximum(
+            float(_METRIC_MIN_DECIMALS),
+            _METRIC_MIN_DECIMALS - np.floor(np.log10(np.abs(v))),
+        )
+        scale = 10.0 ** d
+        r = np.round(v * scale) / scale
+        out[mask] = np.where(np.isfinite(r), r, v)
+    return out
+
+
 # ── action handlers ─────────────────────────────────────────────────────
 def preview_relationship(payload):
     """Cumulative LinearGAM preview.
@@ -138,10 +190,14 @@ def train_relationship(payload):
         X = X.reshape(-1, 1)
 
     model = pygam.LinearGAM(lam=lamb).fit(X, y)
-    predicted = np.round(np.asarray(model.predict(X), dtype=float), 3)
-    residual = np.round(y - predicted, 3)
+    # Written to REL_DATASET_*.csv / REL_INFO_*.json. `_round_metric*` =
+    # 3 decimals like wizard.py, but >= 4 significant digits for small
+    # magnitudes (a tiny-scale target no longer rounds to 0.0). r2 is
+    # dimensionless, so it keeps its 2 decimals.
+    predicted = _round_metric_array(model.predict(X))
+    residual = _round_metric_array(y - predicted)
     r2 = round(_r2(y, predicted), 2)
-    rmse2 = round(2.0 * _rmse(y, predicted), 4)
+    rmse2 = _round_metric(2.0 * _rmse(y, predicted))
 
     out_dir = os.path.join(saved_path, "output", target)
     os.makedirs(out_dir, exist_ok=True)
@@ -233,13 +289,23 @@ def _build_cluster_info_entry(cluster_id, details, cluster_ranges):
         a, b = cluster_ranges[cluster_id]
         a_neginf = math.isinf(a) and a < 0
         b_posinf = math.isinf(b) and b > 0
+        # Every bound is written under BOTH the correct `criteria_…` key (what
+        # the health-score consumer reads) and the legacy misspelled
+        # `critera_…` key (what the Rust writer used to emit alone), same
+        # value. Drop the `critera_…` lines here and in
+        # src-tauri/src/lib.rs::build_cluster_info once the consumer is
+        # confirmed not to read them.
         if a_neginf and not b_posinf:
             item["criteria_sensor_value_lower_than"] = b
+            item["critera_sensor_value_lower_than"] = b
         elif not a_neginf and not b_posinf:
             item["criteria_sensor_value_higher_than"] = a
             item["criteria_sensor_value_lower_than"] = b
+            item["critera_sensor_value_higher_than"] = a
+            item["critera_sensor_value_lower_than"] = b
         elif not a_neginf and b_posinf:
             item["criteria_sensor_value_higher_than"] = a
+            item["critera_sensor_value_higher_than"] = a
         else:
             raise ValueError(f"Invalid cluster range for {cluster_id}: [{a}, {b}]")
     item["x_cluster_center"] = details["x_center"]
@@ -413,11 +479,11 @@ def train_clustering(payload):
         members_xy = X[member_mask, :2]
         ellipse = _fit_gaussian_2d(members_xy)
         cluster_details[str(cid)] = {
-            "x_center": round(ellipse["x_center"], 3),
-            "y_center": round(ellipse["y_center"], 3),
-            "x_sd": round(ellipse["x_sd"], 3),
-            "y_sd": round(ellipse["y_sd"], 3),
-            "angle_deg": round(ellipse["angle_deg"], 3),
+            "x_center": _round_metric(ellipse["x_center"], ellipse["x_sd"]),
+            "y_center": _round_metric(ellipse["y_center"], ellipse["y_sd"]),
+            "x_sd": _round_metric(ellipse["x_sd"]),
+            "y_sd": _round_metric(ellipse["y_sd"]),
+            "angle_deg": _round_metric(ellipse["angle_deg"]),
             "n_rows": n_members,
         }
 

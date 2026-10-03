@@ -97,6 +97,73 @@ pub fn sample_sd(values: &[f64], mean: f64) -> f64 {
     (acc / ((n - 1) as f64)).sqrt()
 }
 
+/// Minimum number of decimals kept by [`round_metric`] — the legacy
+/// `wizard.py` `round(x, 3)` behaviour.
+const METRIC_MIN_DECIMALS: i32 = 3;
+
+/// Decimals [`round_metric`] keeps for `x`: `max(3, 3 - floor(log10|x|))`.
+///
+/// That is 3 decimals whenever those already give >= 4 significant digits
+/// (|x| >= 1), and otherwise exactly enough decimals for 4 significant
+/// digits (0.000412345 -> 7 decimals -> 0.0004123). `0` / NaN / ±inf use 3
+/// (nothing meaningful to scale by).
+fn metric_decimals(x: f64) -> i32 {
+    if x == 0.0 || !x.is_finite() {
+        return METRIC_MIN_DECIMALS;
+    }
+    let exp = x.abs().log10().floor() as i32;
+    (METRIC_MIN_DECIMALS - exp).max(METRIC_MIN_DECIMALS)
+}
+
+/// Round `x` to `decimals` places; returns `x` unchanged when the scaling
+/// would overflow/underflow (huge magnitudes are already integral anyway).
+fn round_to_decimals(x: f64, decimals: i32) -> f64 {
+    if !x.is_finite() || x.abs() >= 1e15 {
+        return x;
+    }
+    let scale = 10f64.powi(decimals);
+    if !scale.is_finite() {
+        return x;
+    }
+    let scaled = x * scale;
+    if !scaled.is_finite() {
+        return x;
+    }
+    scaled.round() / scale
+}
+
+/// Rounding for every numeric metric written to the `*_INFO_*.json` model
+/// files (replaces the old fixed `r3`, `round(x, 3)` in `wizard.py`).
+///
+/// IDENTICAL to 3-decimal rounding whenever that keeps at least 4
+/// significant digits (|x| >= 1); for smaller magnitudes it keeps 4
+/// significant digits instead. Why: a sensor with SD ~0.0004 rounded to 3
+/// decimals collapses `1sd_boundary` / `3sd_boundary` onto the same number
+/// (or onto the mean), which turns the later health-score denominator into
+/// zero. `0` stays `0`; NaN / ±inf pass through untouched.
+///
+/// Examples: `1234.5678 -> 1234.568`, `0.000412345 -> 0.0004123`,
+/// `-0.000412345 -> -0.0004123`, `0.123456 -> 0.1235`.
+pub fn round_metric(x: f64) -> f64 {
+    round_to_decimals(x, metric_decimals(x))
+}
+
+/// [`round_metric`] for a value that sits next to a (usually much smaller)
+/// spread — a mean/centre/boundary and its SD. Uses whichever of the two
+/// needs MORE decimals, so `mean ± k·sd` stays resolvable even when `|mean|`
+/// is large and `sd` tiny (mean 1000.0, sd 0.0004 would otherwise collapse
+/// every boundary onto 1000.0). A zero / non-finite `scale` is ignored.
+/// Equal to [`round_metric`] whenever `|scale| >= 1` or `scale` is absent.
+pub fn round_metric_scaled(x: f64, scale: f64) -> f64 {
+    let own = metric_decimals(x);
+    let by_scale = if scale == 0.0 || !scale.is_finite() {
+        METRIC_MIN_DECIMALS
+    } else {
+        metric_decimals(scale)
+    };
+    round_to_decimals(x, own.max(by_scale))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +358,108 @@ mod tests {
     #[test]
     fn rmse_empty_is_nan() {
         assert!(rmse(&[], &[]).is_nan());
+    }
+
+    // ---------- round_metric ----------
+
+    /// The legacy fixed 3-decimal rounding the new rule must reproduce
+    /// wherever 3 decimals already give >= 4 significant digits.
+    fn legacy_r3(x: f64) -> f64 {
+        (x * 1000.0).round() / 1000.0
+    }
+
+    #[test]
+    fn round_metric_typical_values_match_three_decimals() {
+        assert_eq!(round_metric(1234.5678), 1234.568);
+        assert_eq!(round_metric(1.23456), 1.235);
+        assert_eq!(round_metric(5.0), 5.0);
+        assert_eq!(round_metric(99.9996), 100.0);
+        // Anything with |x| >= 1 is bit-identical to the old r3.
+        for x in [1.0, 1.0005, 3.14159, 12.3456, 250.5555, 9999.9999, -1.2346, -75.4321] {
+            assert_eq!(round_metric(x), legacy_r3(x), "x = {x}");
+        }
+    }
+
+    #[test]
+    fn round_metric_small_values_keep_four_significant_digits() {
+        assert_eq!(round_metric(0.000412345), 0.0004123);
+        assert_eq!(round_metric(0.00412345), 0.004123);
+        assert_eq!(round_metric(0.0412345), 0.04123);
+        assert_eq!(round_metric(0.123456), 0.1235);
+        // The motivating case: legacy r3 collapsed this to 0.0.
+        assert_eq!(legacy_r3(0.0004), 0.0);
+        assert_eq!(round_metric(0.0004), 0.0004);
+    }
+
+    #[test]
+    fn round_metric_negative_values_are_symmetric() {
+        assert_eq!(round_metric(-1234.5678), -1234.568);
+        assert_eq!(round_metric(-0.000412345), -0.0004123);
+        assert_eq!(round_metric(-0.123456), -0.1235);
+    }
+
+    #[test]
+    fn round_metric_zero_nan_inf_pass_through() {
+        assert_eq!(round_metric(0.0), 0.0);
+        assert!(round_metric(f64::NAN).is_nan());
+        assert_eq!(round_metric(f64::INFINITY), f64::INFINITY);
+        assert_eq!(round_metric(f64::NEG_INFINITY), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn round_metric_very_large_and_very_small_magnitudes_do_not_overflow() {
+        assert_eq!(round_metric(1.0e15), 1.0e15);
+        assert_eq!(round_metric(1.7e308), 1.7e308);
+        assert_eq!(round_metric(-1.7e308), -1.7e308);
+        assert_eq!(round_metric(123456789012.3456), 123456789012.346);
+        // 10^decimals would overflow for subnormals — value comes back as is.
+        let tiny = 1.0e-320;
+        assert_eq!(round_metric(tiny), tiny);
+        // Still a sane number just above the overflow edge.
+        let small = 1.234567e-300;
+        assert!((round_metric(small) - 1.235e-300).abs() < 1e-310);
+    }
+
+    #[test]
+    fn round_metric_keeps_small_sd_bands_distinct() {
+        // SD ~0.0004: with legacy r3 the 1SD and 3SD half-widths were both 0.0.
+        let sd = round_metric(0.000412);
+        assert_eq!(sd, 0.000412);
+        assert!(round_metric(sd) > 0.0);
+        assert_ne!(round_metric(1.0 * sd), round_metric(3.0 * sd));
+    }
+
+    // ---------- round_metric_scaled ----------
+
+    #[test]
+    fn round_metric_scaled_equals_round_metric_when_scale_is_not_small() {
+        for (x, s) in [(1234.5678, 5.0), (1234.5678, 1.0), (0.000412345, 10.0), (-7.77777, 100.0)] {
+            assert_eq!(round_metric_scaled(x, s), round_metric(x), "x = {x}, s = {s}");
+        }
+        // Zero / NaN / inf scale → ignored.
+        assert_eq!(round_metric_scaled(1234.5678, 0.0), 1234.568);
+        assert_eq!(round_metric_scaled(1234.5678, f64::NAN), 1234.568);
+        assert_eq!(round_metric_scaled(1234.5678, f64::INFINITY), 1234.568);
+    }
+
+    #[test]
+    fn round_metric_scaled_keeps_boundaries_of_a_large_mean_with_tiny_sd_distinct() {
+        let sd = 0.0004;
+        let mean = 1000.0001234;
+        let m = round_metric_scaled(mean, sd);
+        let lo1 = round_metric_scaled(m - sd, sd);
+        let hi1 = round_metric_scaled(m + sd, sd);
+        let lo3 = round_metric_scaled(m - 3.0 * sd, sd);
+        let hi3 = round_metric_scaled(m + 3.0 * sd, sd);
+        assert!(lo3 < lo1 && lo1 < m && m < hi1 && hi1 < hi3, "{lo3} {lo1} {m} {hi1} {hi3}");
+        // The plain 3-decimal rule would have collapsed all five onto 1000.0.
+        assert_eq!(round_metric(m), 1000.0);
+        assert_eq!(round_metric(m - sd), 1000.0);
+    }
+
+    #[test]
+    fn round_metric_scaled_passes_through_non_finite_x() {
+        assert!(round_metric_scaled(f64::NAN, 0.001).is_nan());
+        assert_eq!(round_metric_scaled(f64::INFINITY, 0.001), f64::INFINITY);
     }
 }
