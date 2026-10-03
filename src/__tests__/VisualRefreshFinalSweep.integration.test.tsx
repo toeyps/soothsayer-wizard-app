@@ -21,6 +21,8 @@
  *        - the FG-tab legend showed a "Not trained" dot that no badge ever
  *          rendered (Phase 2 legend vs Phase C "no dot = never trained") —
  *          fixed by dropping the marker from the legend's "Not trained" entry;
+ *        - (2026-10-03: the add-to-FG popover is now the docked Failure Group
+ *          Assignment sheet — those cases were re-pointed at it, see below.)
  *        - SensorSelection's portaled popovers resurrected at a stale
  *          captured anchor after their row unmounted and remounted
  *          (collapse/expand, search filter-out/clear) — same class as fixed
@@ -39,8 +41,8 @@
  *          off the bottom of the window — fixed with a ResizeObserver on the
  *          popover element that re-runs the same clamp.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
@@ -328,14 +330,34 @@ describe('class contract: every class the refreshed components render is defined
         expect(undefinedClasses(roots)).toEqual([]);
     });
 
-    it('SensorSelection — rows, unit badge, both portaled popovers', () => {
+    it('SensorSelection — rows, unit badge, the portaled assignment sheet (matrix, row menu, delete confirm, create error) and the alarm popover', () => {
         const { container } = renderSensorSelection();
         fireEvent.click(folderButtons()[0]);
-        expect(openPopovers()).toHaveLength(1);
-        expect(undefinedClasses([container, document.getElementById('wizard-portal-root')!])).toEqual([]);
+        expect(screen.getByTestId('fg-sheet')).toBeTruthy();
+        const roots = () => [container, document.getElementById('wizard-portal-root')!];
+        expect(undefinedClasses(roots())).toEqual([]);
+        // Every state of the sheet: a row menu, an inline delete confirm, a create error.
+        fireEvent.click(screen.getByRole('button', { name: 'Group actions: Group A' }));
+        expect(undefinedClasses(roots())).toEqual([]);
+        fireEvent.click(screen.getByRole('button', { name: /Delete…/ }));
+        expect(screen.getByRole('alertdialog')).toBeTruthy();
+        expect(undefinedClasses(roots())).toEqual([]);
+        fireEvent.change(screen.getByLabelText('New failure group name'), { target: { value: 'group a' } });
+        fireEvent.click(screen.getByRole('button', { name: /Create/ }));
+        expect(screen.getByRole('alert')).toBeTruthy();
+        expect(undefinedClasses(roots())).toEqual([]);
+        // The alarm popover (opening it closes the sheet).
         fireEvent.click(screen.getByTitle('Alarm setpoints'));
         expect(screen.getByText('High (90)')).toBeTruthy();
-        expect(undefinedClasses([container, document.getElementById('wizard-portal-root')!])).toEqual([]);
+        expect(undefinedClasses(roots())).toEqual([]);
+    });
+
+    it('the Undo toast classes are defined too', () => {
+        // Rendered by UndoToastStack; Dashboard tests mock the sheet's neighbours, so check the contract here.
+        expect(DEFINED_CLASSES.has('fg-undo-stack')).toBe(true);
+        expect(DEFINED_CLASSES.has('fg-undo-toast')).toBe(true);
+        expect(DEFINED_CLASSES.has('fg-undo-toast-btn')).toBe(true);
+        expect(DEFINED_CLASSES.has('sensor-list-row--fg-target')).toBe(true);
     });
 });
 
@@ -364,87 +386,53 @@ describe('FG tab legend vs the badges it explains', () => {
     });
 });
 
-describe('SensorSelection portaled popovers — stale anchor after the row unmounts/moves (same class as fixed bug #6)', () => {
-    // A popover reopened without a click must either stay closed or sit
-    // under its CURRENT trigger button — never at coordinates captured from
-    // a button element that no longer exists.
-    const reanchoredOrClosed = () => {
-        const pops = openPopovers();
-        if (pops.length === 0) return true;
-        const fresh = folderButtons()[0].getBoundingClientRect();
-        return pops[0].style.top === `${fresh.bottom + 6}px`;
-    };
+describe('SensorSelection assignment sheet — never left open or resurrected over a row that is gone (same class as fixed bug #6)', () => {
+    // 2026-10-03: the add-to-FG AnchoredPopover (whose stale captured rect these
+    // tests used to pin) became the docked Failure Group Assignment sheet. The
+    // failure mode is the same — a panel for a sensor whose row left the list,
+    // popping back unasked — so the same three triggers are kept, now asserting
+    // the sheet is closed and stays closed. (Its arrow is re-measured from the
+    // live row on every scroll/resize, so it can no longer sit at a stale rect.)
+    const sheet = () => screen.queryByTestId('fg-sheet');
 
-    // FIXED (2026-10-02). `groupMenuFor`/`groupMenuAnchor` (and the alarm
-    // pair) live in SensorSelection's state, but the popover is rendered as
-    // a child of the sensor row. Collapsing the component unmounts the row
-    // (the popover disappears), but the state stayed set; expanding again
-    // re-mounted the popover at the anchor rect captured BEFORE the
-    // collapse. Before Phase 1 the menu was inline and simply reappeared
-    // inside its row; as a portaled popover it reappeared at a fixed screen
-    // position instead (the list may have scrolled, or the window resized,
-    // while it was collapsed — no listener is attached while unmounted).
-    // Fixed by a shared effect (below `isFilterActive` in
-    // SensorSelection.tsx) keyed on the actual visible-row set: whenever
-    // `groupMenuFor`/`alarmPanelFor`'s row leaves that set — collapsed
-    // group OR filtered out by search, see the next test — the matching
-    // "…For"/anchor state is cleared, same remedy as Dashboard's
-    // colorPickerFor prune.
-    it('collapsing then re-expanding the component does not resurrect the add-to-FG popover at its old screen position', () => {
+    it('collapsing then re-expanding the component does not resurrect the sheet', () => {
         renderSensorSelection();
-        folderButtons()[0].getBoundingClientRect = () => rectAt(100);
         fireEvent.click(folderButtons()[0]);
-        expect(openPopovers()[0].style.top).toBe('132px');
+        expect(sheet()).not.toBeNull();
         fireEvent.click(screen.getByText('Pump')); // collapse
-        expect(openPopovers()).toHaveLength(0);
+        expect(sheet()).toBeNull();
         fireEvent.click(screen.getByText('Pump')); // expand — nothing else clicked
-        expect(reanchoredOrClosed()).toBe(true); // actual: reappears at 132px, new button is at 0
+        expect(sheet()).toBeNull();
+        expect(folderButtons()[0].classList.contains('on')).toBe(false);
     });
 
-    // FIXED (2026-10-02) — same mechanism via the search box: filtering the
-    // open row out (popover unmounts) then clearing the search used to
-    // re-mount it at the stale rect. Fixed by the same visible-row-set
-    // effect as the test above (search changes recompute `filteredSensors`,
-    // which the effect's `visibleSensorSet` already depends on) — plus
-    // `handleSearchChange` closes any open popover on every keystroke
-    // regardless (see the next test, a different trigger for the same
-    // class of bug).
-    it('filtering the open row out with the search box and clearing it again does not resurrect the popover at its old position', () => {
+    it('filtering the open row out with the search box and clearing it again does not resurrect the sheet', () => {
         renderSensorSelection();
-        folderButtons()[0].getBoundingClientRect = () => rectAt(100); // TAG1
-        fireEvent.click(folderButtons()[0]);
-        expect(openPopovers()).toHaveLength(1);
+        fireEvent.click(folderButtons()[0]); // TAG1
+        expect(sheet()).not.toBeNull();
         const search = screen.getByPlaceholderText('Search sensors...');
         fireEvent.change(search, { target: { value: 'Temp' } }); // TAG1 filtered out
-        expect(openPopovers()).toHaveLength(0);
+        expect(sheet()).toBeNull();
         fireEvent.change(search, { target: { value: '' } });
-        expect(reanchoredOrClosed()).toBe(true); // actual: reappears at 132px
+        expect(sheet()).toBeNull();
     });
 
-    // FIXED (2026-10-02). Narrowing the list while a popover is open (the
-    // anchored row stays mounted but moves up) fires no scroll/resize, so
-    // AnchoredPopover's "close when the anchor may have moved" rule never
-    // triggered — the popover kept floating where the row USED to be,
-    // detached from it (the visible-row-set effect above doesn't catch this
-    // either, since the row never actually leaves the visible set — it just
-    // moves). Inline (pre-Phase 1) the menu moved with its row. Fixed by
-    // closing any open row popover on every search keystroke
-    // (`handleSearchChange` in SensorSelection.tsx) — the same conservative
-    // "close rather than reposition" rule AnchoredPopover already applies to
-    // scroll/resize.
-    it('narrowing the sensor search while a row popover is open does not leave it floating at the row\'s old position', () => {
+    it('narrowing the sensor search while the sheet is open (the edited row merely moves up) closes it rather than leaving it pointing at the wrong row', () => {
         renderSensorSelection();
-        const tag2Btn = folderButtons()[1];
-        tag2Btn.getBoundingClientRect = () => rectAt(200);
-        fireEvent.click(tag2Btn);
-        expect(openPopovers()[0].style.top).toBe('232px');
+        fireEvent.click(folderButtons()[1]); // TAG2
+        expect(sheet()).not.toBeNull();
         fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Temp' } });
-        // TAG1's row is gone, so TAG2's (same element, still mounted) moved up.
-        expect(folderButtons()).toHaveLength(1);
-        expect(folderButtons()[0]).toBe(tag2Btn);
-        tag2Btn.getBoundingClientRect = () => rectAt(100);
-        const pops = openPopovers();
-        expect(pops.length === 0 || pops[0].style.top === '132px').toBe(true); // actual: still 232px
+        expect(sheet()).toBeNull();
+    });
+
+    it('the ‹ › buttons CAN reach a collapsed component\'s sensor without tripping that "row is gone" closing (they expand it in the same update)', () => {
+        // Display order: Fan (TAG3, collapsed here), then Pump (TAG1, TAG2 — expanded by the helper).
+        renderSensorSelection({ sensors: ['TAG1', 'TAG2', 'TAG3'] });
+        fireEvent.click(folderButtons()[0]); // TAG1 — the first sensor of Pump; the previous one is in the collapsed "Fan"
+        fireEvent.click(within(screen.getByTestId('fg-sheet')).getByRole('button', { name: 'Previous sensor' }));
+        expect(sheet()).not.toBeNull();
+        expect(screen.getByTestId('fg-sheet').getAttribute('aria-label')).toBe('Failure groups for Fan Speed');
+        expect(document.querySelector('.sensor-list-row--fg-target')?.textContent).toContain('Fan Speed');
     });
 });
 
@@ -486,95 +474,13 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
     });
 });
 
-describe('AnchoredPopover viewport clamp vs content that grows while open', () => {
-    // jsdom has no native ResizeObserver (confirmed: `typeof ResizeObserver`
-    // is `undefined` under this project's jsdom version) — AnchoredPopover
-    // guards its own `new ResizeObserver(...)` call for exactly that reason,
-    // so this describe block provides the same kind of test-only stub this
-    // repo already uses for every other ResizeObserver consumer (see
-    // ResponsiveECharts.test.tsx), scoped to just these tests via
-    // beforeEach/afterEach so it doesn't leak into sibling describes that
-    // never needed it. `roCallback` captures the one callback AnchoredPopover
-    // registers so a test can fire it manually, standing in for the browser
-    // actually detecting the popover's content box changing size.
-    let roCallback: (() => void) | null = null;
-    class MockResizeObserver {
-        constructor(cb: () => void) { roCallback = cb; }
-        observe = vi.fn();
-        disconnect = vi.fn();
-        unobserve = vi.fn();
-    }
-    beforeEach(() => {
-        roCallback = null;
-        vi.stubGlobal('ResizeObserver', MockResizeObserver);
-    });
-    afterEach(() => {
-        vi.unstubAllGlobals();
-    });
-
-    /** Popover height = 40px + 30px per group row inside it (jsdom has no layout). */
-    function mockPopoverLayout() {
-        HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
-            if (this.classList.contains('sensor-popover')) {
-                const rows = this.querySelectorAll('[class*="fg-group-color-"]').length;
-                const height = 40 + 30 * rows;
-                const top = parseFloat(this.style.top) || 0;
-                const left = parseFloat(this.style.left) || 0;
-                return { top, bottom: top + height, left, right: left + 290, width: 290, height, x: left, y: top, toJSON() {} } as DOMRect;
-            }
-            return origRect.call(this);
-        };
-    }
-
-    it('control: a popover that fits below its anchor at open time is placed fully on screen', () => {
-        mockPopoverLayout();
-        renderSensorSelection();
-        const btn = folderButtons()[0];
-        btn.getBoundingClientRect = () => rectAt(614); // bottom 640 of a 768px window
-        fireEvent.click(btn);
-        const pop = openPopovers()[0];
-        const r = pop.getBoundingClientRect();
-        expect(r.height).toBe(100); // Group A + Not in Group rows
-        expect(r.bottom).toBeLessThanOrEqual(window.innerHeight);
-    });
-
-    // FIXED (2026-10-02). AnchoredPopover used to clamp only once — in its
-    // callback ref, when the node is first inserted (plus a layout effect
-    // keyed on anchorRect/width only). The add-to-FG menu stays open after
-    // "Create" (commitCreateGroup only clears the draft), and the parent
-    // adds the new group as one more row, so the menu grew downward from a
-    // `top` that was computed for the smaller size. Opened from the lower
-    // part of the window, the bottom of the menu — the "New group name"
-    // input and its error line — slid off screen, and since
-    // `.sensor-popover` only scrolls internally once it hits max-height,
-    // there was no way to reach it short of closing and reopening. Fixed by
-    // attaching a ResizeObserver to the popover element (in the same
-    // callback ref that already runs the open-time clamp) that re-runs the
-    // identical `applyClamp` logic whenever the element's content box
-    // changes size.
-    it('creating a group from the add-to-FG menu (menu grows by one row) keeps the whole menu on screen', () => {
-        mockPopoverLayout();
-        const { props, rerender } = renderSensorSelection();
-        const btn = folderButtons()[0];
-        btn.getBoundingClientRect = () => rectAt(614);
-        fireEvent.click(btn);
-        const input = screen.getByPlaceholderText('New group name');
-        fireEvent.change(input, { target: { value: 'Seal leak' } });
-        fireEvent.keyDown(input, { key: 'Enter' });
-        expect(props.onCreateGroupForSensor).toHaveBeenCalledWith('TAG1', 'Seal leak');
-        // The parent (Dashboard) adds the group -> the still-open menu grows.
-        rerender(<SensorSelection {...props} fgGroups={[...props.fgGroups, { no: 2, name: 'Seal leak' }]} />);
-        // Stand in for the browser's ResizeObserver actually detecting the
-        // popover's now-taller content box (jsdom never fires it on its
-        // own, hence the mock above) — this is what AnchoredPopover's own
-        // observer callback does in a real browser.
-        roCallback?.();
-        expect(openPopovers()).toHaveLength(1);
-        const r = openPopovers()[0].getBoundingClientRect();
-        expect(r.height).toBe(130);
-        expect(r.bottom).toBeLessThanOrEqual(window.innerHeight);
-    });
-
+describe('AnchoredPopover viewport clamp (direct consumer)', () => {
+    // 2026-10-03: this block used to also pin the clamp against the add-to-FG
+    // menu GROWING while open (creating a group added a row; a ResizeObserver
+    // re-ran the clamp). That menu is now the docked assignment sheet, which is
+    // sized by the Sensors panel instead of clamped near an anchor, so those two
+    // cases went with it. The ResizeObserver path itself is still covered by
+    // AnchoredPopover.test.tsx; the direct clamp is re-confirmed here.
     it('the clamp itself still works for a direct AnchoredPopover consumer (re-confirms fix #2 after Phases 2-4)', () => {
         HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
             if (this.classList.contains('sensor-popover')) {

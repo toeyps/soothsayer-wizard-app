@@ -2,7 +2,8 @@
  * QA cross-cutting sweep of the 2026-10-02 visual-refresh **Phase 5**
  * structural rebuild (real JSX rewrites, not CSS-value-only): the Dashboard
  * `.timebar`, the rewritten FilterPanel / HighlightsPanel, the Add-to-FG
- * popover widened to 380px, and the rewritten Add Special Sensor window
+ * popover widened to 380px (2026-10-03: since replaced by the Failure Group
+ * Assignment sheet, section 1 below), and the rewritten Add Special Sensor window
  * (AddSensorWindow + SensorExplorer + SensorTooling).
  *
  * Every worker test for those files mocks the neighbours away (Dashboard.test
@@ -221,34 +222,23 @@ function chartBtn(label: 'Line' | 'Scatter' | 'Pair Plot'): HTMLButtonElement {
 }
 
 // =============================================================================
-// 1. Add-to-FG popover (380px) vs AnchoredPopover's clamp
+// 1. Failure Group Assignment sheet vs the viewport
+//    (replaced the 380px AnchoredPopover add-to-FG menu on 2026-10-03; the old
+//    popover-clamp cases went with it)
 // =============================================================================
 
-describe('1. Add-to-failure-group popover at 380px stays inside the viewport', () => {
-    // Real group names from the user's workspace are what drove 290 -> 380.
+describe('1. the Failure Group Assignment sheet docks to the Sensors panel and stays inside the viewport', () => {
+    // Real group names from the user's workspace (what drove the old 290 -> 380 popover width).
     const longGroups: FailureGroup[] = [
         { no: 0, name: 'Not in Group' },
         { no: 1, name: 'generator mechanical condition' },
         { no: 2, name: 'generator electrical condition' },
         { no: 3, name: 'turbine lube oil system degradation' },
     ];
-    const POP_HEIGHT = 420; // `.sensor-popover` max-height: min(70vh, 420px) — the worst case
 
-    function openAddToFg(viewport: { w: number; h: number }, anchor: Rect) {
+    function openSheet(viewport: { w: number; h: number }, panel: Rect) {
         setViewport(viewport.w, viewport.h);
-        rectFor = (el) => {
-            if (el instanceof HTMLElement && el.title === 'Add to failure group') return mkRect(anchor);
-            if (el instanceof HTMLElement && el.classList.contains('sensor-popover')) {
-                // The popover's real border-box: its inline width (Tailwind
-                // preflight is border-box, so padding is inside it) and the
-                // worst-case max-height.
-                return mkRect({
-                    top: parseFloat(el.style.top) || 0, left: parseFloat(el.style.left) || 0,
-                    width: parseFloat(el.style.width) || 0, height: POP_HEIGHT,
-                });
-            }
-            return null;
-        };
+        rectFor = (el) => (el instanceof HTMLElement && el.classList.contains('sensor-selection-widget') ? mkRect(panel) : null);
         render(
             <SensorSelection
                 sensors={['TAG1', 'TAG2']} selectedSensors={[]} onSensorChange={vi.fn()}
@@ -259,58 +249,50 @@ describe('1. Add-to-failure-group popover at 380px stays inside the viewport', (
         );
         fireEvent.click(screen.getByText('Pump')); // expand the component group
         fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-        const pops = openPopovers();
-        expect(pops).toHaveLength(1);
-        const pop = pops[0];
-        return { pop, top: parseFloat(pop.style.top), left: parseFloat(pop.style.left), width: parseFloat(pop.style.width) };
+        const sheet = screen.getByTestId('fg-sheet');
+        return {
+            sheet,
+            left: parseFloat(sheet.style.left), top: parseFloat(sheet.style.top),
+            width: parseFloat(sheet.style.width), height: parseFloat(sheet.style.height),
+        };
     }
 
-    it('renders at exactly 380px and no App.css rule on the popover classes overrides that width', () => {
-        const { width } = openAddToFg({ w: 1366, h: 768 }, { top: 200, left: 270, width: 24, height: 24 });
-        expect(width).toBe(380);
-        for (const cls of ['sensor-popover', 'popover-surface']) {
-            for (const r of rulesMentioning(cls)) {
-                expect(Object.keys(r.decls).filter(k => /^(min-|max-)?width$/.test(k))).toEqual([]);
-            }
+    it('is a Portal child, not a .sensor-popover (that class caps height at 420px and would clip a full-height sheet)', () => {
+        const { sheet } = openSheet({ w: 1366, h: 768 }, { top: 40, left: 1000, width: 350, height: 700 });
+        expect(openPopovers()).toHaveLength(0);
+        expect(document.getElementById('wizard-portal-root')!.contains(sheet)).toBe(true);
+        for (const r of rulesMentioning('fg-sheet')) {
+            expect(Object.keys(r.decls).filter(k => /^max-height$/.test(k))).toEqual([]);
         }
-        // AnchoredPopover's clamp uses the `width` prop (380) as the box
-        // width; that equals the rendered width only under border-box sizing,
-        // which this app gets from Tailwind's preflight.
-        expect(CSS_SRC).toMatch(/@import\s+["']tailwindcss["']/);
     });
 
-    // Main window opens at 800x600 (tauri.conf.json) before maximizing, and
-    // the sensor list can sit on either side of the dashboard.
     const cases: Array<[string, { w: number; h: number }, Rect]> = [
-        ['800x600 window, anchor flush with the right edge', { w: 800, h: 600 }, { top: 150, left: 774, width: 24, height: 24 }],
-        ['800x600 window, anchor at the right edge of a left-docked ~300px sensor list', { w: 800, h: 600 }, { top: 150, left: 266, width: 24, height: 24 }],
-        ['1366x768, anchor near the right edge', { w: 1366, h: 768 }, { top: 300, left: 1338, width: 24, height: 24 }],
-        ['1920x1080, anchor mid-screen', { w: 1920, h: 1080 }, { top: 300, left: 900, width: 24, height: 24 }],
-        ['viewport exactly 380 + 2x8px gutter wide', { w: 396, h: 600 }, { top: 100, left: 360, width: 24, height: 24 }],
+        ['800x600 default window (panel is the right third)', { w: 800, h: 600 }, { top: 36, left: 540, width: 252, height: 556 }],
+        ['1366x768', { w: 1366, h: 768 }, { top: 40, left: 920, width: 430, height: 700 }],
+        ['1920x1080', { w: 1920, h: 1080 }, { top: 40, left: 1280, width: 620, height: 1000 }],
     ];
-    for (const [name, vp, anchor] of cases) {
-        it(`horizontal clamp keeps the whole 380px box on screen — ${name}`, () => {
-            const { left, width } = openAddToFg(vp, anchor);
+    for (const [name, vp, panel] of cases) {
+        it(`left edge on screen, right edge short of the panel, same vertical extent as the panel — ${name}`, () => {
+            const { left, top, width, height } = openSheet(vp, panel);
             expect(left).toBeGreaterThanOrEqual(8);
-            expect(left + width).toBeLessThanOrEqual(vp.w - 8);
+            expect(left + width).toBeLessThanOrEqual(panel.left);
+            expect(width).toBeLessThanOrEqual(560);
+            expect(width).toBeGreaterThanOrEqual(340);
+            expect(top).toBe(panel.top);
+            expect(height).toBe(panel.height);
         });
     }
 
-    it('right-aligns to the anchor when there is room (prototype placement preserved at the wider size)', () => {
-        const { left, width } = openAddToFg({ w: 1366, h: 768 }, { top: 300, left: 900, width: 24, height: 24 });
-        expect(left + width).toBe(924);
+    it('with room to spare it is 560px wide, right-aligned 10px short of the panel', () => {
+        const { left, width } = openSheet({ w: 1920, h: 1080 }, { top: 40, left: 1280, width: 620, height: 1000 });
+        expect(width).toBe(560);
+        expect(left + width).toBe(1270);
     });
 
-    it('a viewport narrower than 396px cannot fit 380px: the clamp pins the LEFT edge at 8px (group names stay readable) instead of going negative', () => {
-        const { left } = openAddToFg({ w: 360, h: 600 }, { top: 100, left: 330, width: 24, height: 24 });
+    it('a window too narrow for the 340px floor pins the LEFT edge at 8px (names stay readable) rather than going negative — it then overlaps the panel, the accepted narrow-window drawback', () => {
+        const { left, width } = openSheet({ w: 600, h: 500 }, { top: 36, left: 300, width: 292, height: 456 });
         expect(left).toBe(8);
-    });
-
-    it('flips above the anchor near the bottom of an 800x600 window, without covering the anchor', () => {
-        const anchor = { top: 540, left: 266, width: 24, height: 24 };
-        const { top } = openAddToFg({ w: 800, h: 600 }, anchor);
-        expect(top).toBeGreaterThanOrEqual(8);
-        expect(top + POP_HEIGHT).toBeLessThanOrEqual(anchor.top);
+        expect(width).toBe(340);
     });
 });
 

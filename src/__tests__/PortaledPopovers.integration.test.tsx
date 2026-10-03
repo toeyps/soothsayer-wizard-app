@@ -4,6 +4,9 @@
  * the two colour popovers (HighlightsPanel) moved from expanding inline in
  * a scrolling list to `AnchoredPopover` + `Portal` (position: fixed,
  * portaled into `#wizard-portal-root` on document.body).
+ * (2026-10-03: the add-to-failure-group one is now the Failure Group
+ * Assignment sheet — still portaled, but docked to the Sensors panel and not
+ * dismissed by scroll/resize; its describe blocks below were re-pointed.)
  *
  * Seam under test: each component's own open/close state <-> the shared
  * `AnchoredPopover`'s portal + scroll/resize self-close + click
@@ -87,35 +90,42 @@ function renderSensorSelection(overrides: Partial<React.ComponentProps<typeof Se
 }
 
 const folderButtons = () => screen.getAllByTitle('Add to failure group');
+const sheet = () => screen.queryByTestId('fg-sheet');
 
-describe('SensorSelection popovers through Portal — interaction seam', () => {
-    describe('clicks INSIDE the portaled popover never reach the sensor row (React bubbles through portals)', () => {
-        it('add-to-FG: a kind toggle fires its own handler, does NOT toggle the row\'s selection, and the popover stays open', () => {
+// 2026-10-03: the add-to-failure-group menu is no longer an AnchoredPopover — it
+// is the full-height assignment sheet docked to the Sensors panel (still
+// portaled into #wizard-portal-root). The alarm-setpoints list is still an
+// AnchoredPopover, so this file keeps covering both: what a portal changes
+// about INTERACTION (React events bubble through the React tree, not the DOM
+// tree) and the open/close state each one owns.
+describe('SensorSelection panels through Portal — interaction seam', () => {
+    describe('clicks INSIDE the portaled sheet/popover never reach the sensor row (React bubbles through portals)', () => {
+        it('assignment sheet: a matrix cell fires its own handler, does NOT toggle the row\'s selection, and the sheet stays open', () => {
             const { props } = renderSensorSelection();
             fireEvent.click(folderButtons()[1]); // TAG2
-            fireEvent.click(screen.getByTitle('Add Individual to Group A'));
+            fireEvent.click(screen.getByRole('button', { name: 'Individual · Group A' }));
             expect(props.onToggleSensorGroupKind).toHaveBeenCalledWith('TAG2', 1, 'individual');
             expect(props.onSensorChange).not.toHaveBeenCalled();
-            expect(openPopovers()).toHaveLength(1);
+            expect(sheet()).not.toBeNull();
         });
 
-        it('add-to-FG: clicking the heading, the new-group input and the Rename pencil never toggle the row', () => {
+        it('assignment sheet: clicking its heading, the new-group input and a group\'s ⋯ menu never toggle the row', () => {
             const { props } = renderSensorSelection();
             fireEvent.click(folderButtons()[0]); // TAG1
-            fireEvent.click(screen.getByText('Add to failure group', { selector: '.fg-menu-heading' }));
-            fireEvent.click(screen.getByPlaceholderText('New group name'));
-            fireEvent.click(screen.getByTitle('Rename Group A'));
+            fireEvent.click(screen.getByText('Failure groups', { selector: '.fg-sheet-kicker' }));
+            fireEvent.click(screen.getByPlaceholderText('New failure group name'));
+            fireEvent.click(screen.getByRole('button', { name: 'Group actions: Group A' }));
+            fireEvent.click(screen.getByRole('button', { name: /Rename/ }));
             expect(props.onSensorChange).not.toHaveBeenCalled();
-            // Rename swapped the row into its edit field, still inside the
-            // same (still open) popover.
-            expect(openPopovers()).toHaveLength(1);
-            expect(openPopovers()[0].contains(screen.getByDisplayValue('Group A'))).toBe(true);
+            // Rename swapped the row into its edit field, still inside the same (still open) sheet.
+            expect(sheet()).not.toBeNull();
+            expect(sheet()!.contains(screen.getByDisplayValue('Group A'))).toBe(true);
         });
 
-        it('add-to-FG: typing + Enter in the new-group input commits for the anchored sensor, without toggling its row', () => {
+        it('assignment sheet: typing + Enter in the new-group input commits for the edited sensor, without toggling its row', () => {
             const { props } = renderSensorSelection();
             fireEvent.click(folderButtons()[1]); // TAG2
-            const input = screen.getByPlaceholderText('New group name');
+            const input = screen.getByPlaceholderText('New failure group name');
             fireEvent.change(input, { target: { value: 'Seal leak' } });
             fireEvent.keyDown(input, { key: 'Enter' });
             expect(props.onCreateGroupForSensor).toHaveBeenCalledWith('TAG2', 'Seal leak');
@@ -132,28 +142,23 @@ describe('SensorSelection popovers through Portal — interaction seam', () => {
             expect(openPopovers()).toHaveLength(1);
         });
 
-        it('the popover content lives in #wizard-portal-root, outside the component\'s own DOM container', () => {
+        it('the sheet lives in #wizard-portal-root, outside the component\'s own DOM container', () => {
             const { container } = renderSensorSelection();
             fireEvent.click(folderButtons()[0]);
-            const pop = openPopovers()[0];
-            expect(container.contains(pop)).toBe(false);
-            expect(portalRoot()!.contains(screen.getByPlaceholderText('New group name'))).toBe(true);
+            expect(container.contains(sheet())).toBe(false);
+            expect(portalRoot()!.contains(screen.getByPlaceholderText('New failure group name'))).toBe(true);
         });
     });
 
-    describe('self-close on scroll/resize resets the component\'s own open state', () => {
-        it('scrolling the sensor list closes the add-to-FG popover, clears the trigger\'s "on" state, and ONE click reopens it', () => {
+    describe('open state resets with the component\'s own state', () => {
+        it('scrolling the sensor list does NOT close the sheet (the old popover did) and the 📁 stays "on"', () => {
             const { container } = renderSensorSelection();
             fireEvent.click(folderButtons()[0]);
-            expect(openPopovers()).toHaveLength(1);
+            expect(sheet()).not.toBeNull();
             expect(folderButtons()[0].classList.contains('on')).toBe(true);
-
             fireEvent.scroll(container.querySelector('.sensor-list-widget')!);
-            expect(openPopovers()).toHaveLength(0);
-            expect(folderButtons()[0].classList.contains('on')).toBe(false);
-
-            fireEvent.click(folderButtons()[0]); // not a toggle-closed no-op
-            expect(openPopovers()).toHaveLength(1);
+            expect(sheet()).not.toBeNull();
+            expect(folderButtons()[0].classList.contains('on')).toBe(true);
         });
 
         it('a window resize closes the alarm popover and ONE click on the bell reopens it', () => {
@@ -166,101 +171,74 @@ describe('SensorSelection popovers through Portal — interaction seam', () => {
             expect(screen.getByText('High (90)')).toBeTruthy();
         });
 
-        it('collapsing the component group unmounts the open popover (it is still a React child of the row)', () => {
+        it('a window resize keeps the sheet open (it re-measures instead) — only the anchored popovers close on resize', () => {
             renderSensorSelection();
             fireEvent.click(folderButtons()[0]);
-            expect(openPopovers()).toHaveLength(1);
-            fireEvent.click(screen.getByText('Pump')); // collapse
-            expect(openPopovers()).toHaveLength(0);
+            fireEvent(window, new Event('resize'));
+            expect(sheet()).not.toBeNull();
         });
 
-        it('switching the menu from one sensor to another re-anchors it to the newly clicked button', () => {
+        it('collapsing the component group closes the open sheet (its row — and so its arrow target — is gone)', () => {
             renderSensorSelection();
-            const [b1, b2] = folderButtons();
-            b1.getBoundingClientRect = () => ({ top: 100, bottom: 126, left: 300, right: 326, width: 26, height: 26, x: 300, y: 100, toJSON() {} }) as DOMRect;
-            b2.getBoundingClientRect = () => ({ top: 200, bottom: 226, left: 300, right: 326, width: 26, height: 26, x: 300, y: 200, toJSON() {} }) as DOMRect;
-            fireEvent.click(b1);
-            expect(openPopovers()[0].style.top).toBe('132px');
-            fireEvent.click(b2);
-            expect(openPopovers()).toHaveLength(1);
-            expect(openPopovers()[0].style.top).toBe('232px');
+            fireEvent.click(folderButtons()[0]);
+            expect(sheet()).not.toBeNull();
+            fireEvent.click(screen.getByText('Pump')); // collapse
+            expect(sheet()).toBeNull();
+        });
+
+        it('switching the sheet from one sensor to another moves the row highlight and the heading', () => {
+            const { container } = renderSensorSelection();
+            fireEvent.click(folderButtons()[0]);
+            expect(container.querySelector('.sensor-list-row--fg-target')!.textContent).toContain('Pump Pressure');
+            fireEvent.click(folderButtons()[1]);
+            expect(screen.getAllByTestId('fg-sheet')).toHaveLength(1);
+            expect(container.querySelectorAll('.sensor-list-row--fg-target')).toHaveLength(1);
+            expect(container.querySelector('.sensor-list-row--fg-target')!.textContent).toContain('Pump Temp');
+            expect(screen.getByTestId('fg-sheet').getAttribute('aria-label')).toBe('Failure groups for Pump Temp');
         });
     });
 
-    // ── Regression tests for 6 bugs QA found in Phase 1 (fixed 2026-10-02) ──
+    // ── Regression tests for bugs QA found in Phase 1 (fixed 2026-10-02) ──
 
-    describe('popover bugs fixed 2026-10-02', () => {
-        // `.sensor-popover` is `max-height: min(70vh, 420px); overflow-y:
-        // auto` (App.css), so the add-to-FG menu with ~10+ groups scrolls
-        // internally. That used to fire a `scroll` event on the popover
-        // element itself, which AnchoredPopover's window-level
-        // `capture: true` listener caught like any other scroll — so the
-        // first wheel tick inside the menu closed it, and groups below the
-        // fold (plus the "New group name" input at the very bottom) were
-        // unreachable. Fixed by checking whether the scroll's target is
-        // inside the popover (`popoverRef.current.contains(event.target)`)
-        // before closing — only a scroll elsewhere now closes it.
-        it('scrolling INSIDE the add-to-FG popover (its own overflow-y: auto) does not close it', () => {
+    describe('popover bugs fixed 2026-10-02 (re-pointed at the sheet where they still apply)', () => {
+        // `AnchoredPopover`'s window-level `capture: true` scroll listener used
+        // to close a popover on the first wheel tick INSIDE its own scrolling
+        // list. The sheet has no such listener, but it has its own scrolling
+        // list of groups and its own re-measuring scroll listener — a scroll
+        // inside the sheet must neither close it nor be mistaken for the sensor
+        // list moving.
+        it('scrolling INSIDE the sheet\'s own group list (many groups) does not close it', () => {
             const manyGroups: FailureGroup[] = [{ no: 0, name: 'Not in Group' }];
             for (let i = 1; i <= 15; i++) manyGroups.push({ no: i, name: `Group ${i}` });
             renderSensorSelection({ fgGroups: manyGroups });
             fireEvent.click(folderButtons()[0]);
-            const pop = openPopovers()[0];
-            fireEvent.scroll(pop);
-            expect(openPopovers()).toHaveLength(1);
+            fireEvent.scroll(document.querySelector('.fg-sheet-list')!);
+            expect(sheet()).not.toBeNull();
         });
 
         // Chromium dispatches a `scroll` event on an <input> whose text
-        // scrolls horizontally because it overflows the visible width —
-        // verified in Chromium for this sweep: typing 55 chars into an
-        // 80px text input, and 7 digits ("1013250") into a 64px
-        // number input, each queued a `scroll` event on the input that a
-        // window capture listener received. That used to close the popover
-        // mid-typing (input is inside the popover, so the same contains()
-        // check above now covers it too — this test is the two concrete
-        // repros for that general fix).
-        it('typing a long name into "New group name" (the input scrolls horizontally) does not close the popover', () => {
+        // scrolls horizontally once it overflows. That used to close the
+        // popover mid-typing; it must not close the sheet either.
+        it('typing a long name into "New failure group name" (the input scrolls horizontally) does not close the sheet', () => {
             renderSensorSelection();
             fireEvent.click(folderButtons()[0]);
-            const input = screen.getByPlaceholderText('New group name');
+            const input = screen.getByPlaceholderText('New failure group name');
             fireEvent.change(input, { target: { value: 'Mechanical seal leakage on discharge side' } });
             fireEvent.scroll(input); // what Chromium fires once the text overflows
-            expect(screen.queryByPlaceholderText('New group name')).not.toBeNull();
+            expect(screen.queryByPlaceholderText('New failure group name')).not.toBeNull();
         });
 
-        // Position used to be `top = anchor.bottom + 6` with no flip/clamp,
-        // and the sensor list fills the panel to the bottom of the window —
-        // opening the menu on one of the lowest visible rows put the whole
-        // popover below the viewport edge, with no way to reach it (before
-        // Phase 1 the menu expanded inline and could simply be scrolled
-        // into view with the list). Fixed by measuring the popover's real
-        // rendered size after mount and clamping/flipping it back on screen.
-        it('a popover opened from a row near the bottom of the window stays (mostly) on screen', () => {
-            renderSensorSelection();
-            const btn = folderButtons()[1];
-            const h = window.innerHeight;
-            btn.getBoundingClientRect = () => ({ top: h - 30, bottom: h - 4, left: 300, right: 326, width: 26, height: 26, x: 300, y: h - 30, toJSON() {} }) as DOMRect;
-            fireEvent.click(btn);
-            const pop = openPopovers()[0];
-            const top = parseFloat(pop.style.top);
-            // At least ~120px of the menu must be inside the viewport (or
-            // it must open upward, above the anchor).
-            expect(top <= h - 120 || top < h - 30).toBe(true);
-        });
-
-        // The alarm and add-to-FG popovers are independent pieces of state,
-        // so both could be open at once. Inline, they stacked one under the
-        // other inside the row; portaled, both are `position: fixed` at the
-        // same `top` (bell and folder buttons share one row) and
-        // right-aligned to buttons 28px apart, so the 290px FG menu sat
-        // almost exactly on top of the 220px alarm list. Fixed by having
-        // each button's "open" branch close the other popover's state first
-        // (simpler than trying to keep both open and separate them —
-        // per-row action menus conventionally show one at a time anyway).
-        it('only one sensor-list popover is open at a time (two fixed popovers from one row overlap)', () => {
+        // The alarm list and the sheet's 📁 live in the same row; the alarm
+        // list is a `position: fixed` popover under the bell. One panel at a
+        // time (both directions) keeps them from stacking.
+        it('only one sensor-list panel is open at a time: the alarm popover and the sheet exclude each other', () => {
             renderSensorSelection();
             fireEvent.click(screen.getByTitle('Alarm setpoints')); // TAG1
             fireEvent.click(folderButtons()[0]); // TAG1
+            expect(sheet()).not.toBeNull();
+            expect(openPopovers()).toHaveLength(0);
+            fireEvent.click(screen.getByTitle('Alarm setpoints'));
+            expect(sheet()).toBeNull();
             expect(openPopovers()).toHaveLength(1);
         });
     });

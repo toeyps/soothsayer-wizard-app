@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import SensorSelection from '../components/dashboard/SensorSelection';
 import type { FailureGroup, FailureModel, SensorMetadata } from '../types';
 
@@ -317,9 +317,12 @@ describe('SensorSelection', () => {
             expect(screen.getByTitle('Remove Individual from Group B')).toBeTruthy();
             expect(screen.getByTitle('Remove Relationship from Group B')).toBeTruthy();
             // …but NOT a relationship membership in Group A, which no model has.
-            // "Add …" lives on the menu's toggles, so the menu has to be open.
+            // The chips show only memberships that exist; the sheet's empty
+            // Relationship cell for Group A is the "not a member" side of it.
+            expect(screen.queryByTitle('Remove Relationship from Group A')).toBeNull();
             fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            expect(screen.getByTitle('Add Relationship to Group A')).toBeTruthy();
+            expect(screen.getByRole('button', { name: 'Relationship · Group A' }).getAttribute('aria-pressed')).toBe('false');
+            expect(screen.getByRole('button', { name: 'Relationship · Group B' }).getAttribute('aria-pressed')).toBe('true');
         });
     });
 
@@ -333,199 +336,325 @@ describe('SensorSelection', () => {
         expect(badge.className).toContain('unit-badge');
     });
 
-    describe('the group-assignment menu', () => {
-        it('opens via the FolderPlus button and via right-click', () => {
+    // 2026-10-03: the old AnchoredPopover "Add to failure group" menu was
+    // replaced by a full-height sheet docked to the Sensors panel's left edge
+    // (FailureGroupAssignSheet). Its own matrix / rename / delete / create
+    // behaviour is covered in FailureGroupAssignSheet.test.tsx; these cover the
+    // seam with the sensor list: open, switch, step, and what dismisses it.
+    describe('the Failure Group Assignment sheet (opened from a row\'s 📁)', () => {
+        const sheet = () => screen.queryByTestId('fg-sheet');
+        const folder = () => screen.getAllByTitle('Add to failure group');
+        const heading = () => within(sheet()!).getByText(/Pump (Pressure|Temp)|TAG3/, { selector: '.fg-sheet-sensor' }).textContent;
+
+        it('opens via the 📁 button and via right-click, for THAT sensor', () => {
             render(<SensorSelection {...makeProps()} />);
             expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
+            fireEvent.click(folder()[0]);
+            expect(sheet()).not.toBeNull();
+            expect(heading()).toBe('Pump Pressure');
+            fireEvent.click(folder()[0]); // toggle closed
+            expect(sheet()).toBeNull();
 
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // toggle closed
-            expect(screen.queryByPlaceholderText('New group name')).toBeNull();
-
-            // Right-click directly on TAG2's own FolderPlus button (the
-            // context-menu handler lives on the button, not the row).
-            fireEvent.contextMenu(screen.getAllByTitle('Add to failure group')[1]);
-            expect(screen.getByPlaceholderText('New group name')).toBeTruthy();
+            // Right-click directly on TAG2's own 📁 button.
+            fireEvent.contextMenu(folder()[1]);
+            expect(heading()).toBe('Pump Temp');
         });
 
-        it('renders outside the scrolling sensor list (via Portal), not nested inside it', () => {
+        it('renders outside the scrolling sensor list and outside the panel (via Portal), not nested inside it', () => {
             const { container } = render(<SensorSelection {...makeProps()} />);
             expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            const listEl = container.querySelector('.sensor-list-widget') as HTMLElement;
-            expect(listEl.querySelector('.sensor-popover')).toBeNull();
-            const portalRoot = document.getElementById('wizard-portal-root');
-            expect(portalRoot?.querySelector('.sensor-popover')).not.toBeNull();
+            fireEvent.click(folder()[0]);
+            expect(container.contains(sheet())).toBe(false);
+            expect(document.getElementById('wizard-portal-root')!.contains(sheet())).toBe(true);
         });
 
-        it('each group row offers a per-kind toggle (Individual/Relationship/Clustering) that adds a kind the sensor is not yet a member of', () => {
-            const onToggleSensorGroupKind = vi.fn();
-            render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
+        it('highlights the row being edited (and only that one) and marks its 📁 as on', () => {
+            const { container } = render(<SensorSelection {...makeProps()} />);
             expandPump();
-            // Open TAG2's menu — TAG2 is not in Group A at all.
-            const folderButtons = screen.getAllByTitle('Add to failure group');
-            fireEvent.click(folderButtons[1]);
-            fireEvent.click(screen.getByTitle('Add Individual to Group A'));
-            expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG2', 1, 'individual');
+            fireEvent.click(folder()[1]); // TAG2
+            const targets = container.querySelectorAll('.sensor-list-row--fg-target');
+            expect(targets).toHaveLength(1);
+            expect(targets[0].textContent).toContain('Pump Temp');
+            expect(folder()[1].classList.contains('on')).toBe(true);
+            expect(folder()[0].classList.contains('on')).toBe(false);
         });
 
-        it('a kind the sensor already belongs to in that group shows a Remove control instead of Add; the other kinds still show Add', () => {
-            const onToggleSensorGroupKind = vi.fn();
-            render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
+        it('chips on the highlighted row follow the matrix live (a prop change shows up without reopening)', () => {
+            const props = makeProps({ fgModels: [] });
+            const { rerender } = render(<SensorSelection {...props} />);
             expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1's own menu — already Individual in Group A
-            // Two "Remove Individual from Group A" controls exist at once
-            // here — the chip's own X (always visible) and the menu's
-            // toggle (visible because the menu happens to be open).
-            expect(screen.getAllByTitle('Remove Individual from Group A').length).toBeGreaterThan(0);
-            expect(screen.queryByTitle('Add Individual to Group A')).toBeNull();
-            expect(screen.getByTitle('Add Relationship to Group A')).toBeTruthy();
-            expect(screen.getByTitle('Add Clustering to Group A')).toBeTruthy();
-
-            fireEvent.click(screen.getByTitle('Add Relationship to Group A'));
-            expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 1, 'relationship');
+            fireEvent.click(folder()[0]);
+            expect(screen.queryByTitle('Remove Individual from Group A')).toBeNull();
+            rerender(<SensorSelection {...props} fgModels={[modelTag1InGroupA]} />);
+            expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
+            expect(sheet()).not.toBeNull();
         });
 
-        it('tints the row background for a group the sensor already belongs to (2026-09-02: helps the active group stand out once there are many groups)', () => {
+        it('clicking ANOTHER sensor\'s 📁 switches the sheet to it (one sheet, no close/reopen)', () => {
             render(<SensorSelection {...makeProps()} />);
             expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1 — already a member of Group A
-            // "Group A" renders twice while the menu is open: the chip above
-            // the menu, and the menu's own row — the row is the later one.
-            const occurrences = screen.getAllByText('Group A');
-            const menuRow = occurrences[occurrences.length - 1].closest('div') as HTMLElement;
-            expect(menuRow.style.background).toBe('var(--fg-tint)');
+            fireEvent.click(folder()[0]);
+            fireEvent.click(folder()[1]);
+            expect(screen.getAllByTestId('fg-sheet')).toHaveLength(1);
+            expect(heading()).toBe('Pump Temp');
         });
 
-        it('leaves a group the sensor does not belong to untinted', () => {
-            const groupB: FailureGroup = { no: 2, name: 'Group B' };
-            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }, groupA, groupB] })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1 — not in Group B
-            const row = screen.getByText('Group B').closest('div') as HTMLElement;
-            expect(row.style.background).toBe('');
-        });
-
-        it('tints the "Not in Group" row too, once the sensor is a member of it', () => {
-            const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
-            render(<SensorSelection {...makeProps({ fgModels: models })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1 — also a member of group 0
-            const occurrences = screen.getAllByText('Not in Group');
-            const menuRow = occurrences[occurrences.length - 1].closest('div') as HTMLElement;
-            expect(menuRow.style.background).toBe('var(--fg-tint)');
-        });
-
-        it('renaming a group commits via Enter or the check button', () => {
-            const onRenameGroup = vi.fn();
-            render(<SensorSelection {...makeProps({ onRenameGroup })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            fireEvent.click(screen.getByTitle('Rename Group A'));
-            const input = screen.getByDisplayValue('Group A') as HTMLInputElement;
-            fireEvent.change(input, { target: { value: 'Renamed' } });
-            fireEvent.keyDown(input, { key: 'Enter' });
-            expect(onRenameGroup).toHaveBeenCalledWith(1, 'Renamed');
-        });
-
-        it('deleting a group calls onDeleteGroup', () => {
-            const onDeleteGroup = vi.fn();
-            render(<SensorSelection {...makeProps({ onDeleteGroup })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            fireEvent.click(screen.getByTitle('Delete Group A'));
-            expect(onDeleteGroup).toHaveBeenCalledWith(1);
-        });
-
-        it('shows "No failure groups yet" when there are none besides the sentinel', () => {
-            render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }] })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            expect(screen.getByText('No failure groups yet')).toBeTruthy();
-        });
-
-        describe('"Not in Group" (FG-0) entry', () => {
-            it('is always offered in the menu, even with zero real groups', () => {
-                render(<SensorSelection {...makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }] })} />);
+        describe('what does NOT dismiss it', () => {
+            it('clicking inside the Sensors panel — the search box, a row, a component header, a checkbox', () => {
+                const onSensorChange = vi.fn();
+                render(<SensorSelection {...makeProps({ onSensorChange })} />);
                 expandPump();
-                fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-                expect(screen.getByText('Not in Group')).toBeTruthy();
+                fireEvent.click(folder()[0]);
+                fireEvent.mouseDown(screen.getByPlaceholderText('Search sensors...'));
+                fireEvent.mouseDown(screen.getByText('Pump Temp'));
+                fireEvent.mouseDown(screen.getByText('Uncategorized'));
+                fireEvent.mouseDown(screen.getByRole('checkbox', { name: /Pump Pressure/ }));
+                expect(sheet()).not.toBeNull();
             });
 
-            it('clicking "Add Individual to Not in Group" toggles the sensor into group 0 as Individual', () => {
-                const onToggleSensorGroupKind = vi.fn();
-                render(<SensorSelection {...makeProps({ onToggleSensorGroupKind })} />);
+            it('clicking inside the sheet itself, or inside an element marked data-fg-sheet-keep (the Undo toast)', () => {
+                render(<SensorSelection {...makeProps()} />);
                 expandPump();
-                fireEvent.click(screen.getAllByTitle('Add to failure group')[1]); // TAG2, not a member of anything
-                fireEvent.click(screen.getByTitle('Add Individual to Not in Group'));
-                expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG2', 0, 'individual');
+                fireEvent.click(folder()[0]);
+                fireEvent.mouseDown(within(sheet()!).getByText('Failure groups'));
+                const keep = document.createElement('div');
+                keep.setAttribute('data-fg-sheet-keep', 'true');
+                document.body.appendChild(keep);
+                fireEvent.mouseDown(keep);
+                keep.remove();
+                expect(sheet()).not.toBeNull();
             });
 
-            it('once a member of one kind, that kind shows Remove (other kinds still show Add); still no rename/delete', () => {
-                const onToggleSensorGroupKind = vi.fn();
-                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
-                render(<SensorSelection {...makeProps({ fgModels: models, onToggleSensorGroupKind })} />);
+            it('scrolling the sensor list (the old popover closed on every scroll; the sheet re-measures its arrow instead)', () => {
+                const { container } = render(<SensorSelection {...makeProps()} />);
                 expandPump();
-                fireEvent.click(screen.getAllByTitle('Add to failure group')[0]); // TAG1, already Individual member of group 0
-                expect(screen.queryByTitle('Rename Not in Group')).toBeNull();
-                expect(screen.queryByTitle('Delete Not in Group')).toBeNull();
-                expect(screen.getByTitle('Add Relationship to Not in Group')).toBeTruthy();
-                // Two "Remove Individual from Not in Group" controls exist at
-                // once here — the chip's own X (always visible) and the
-                // menu's toggle (visible because the menu happens to be open
-                // in this test).
-                const removeButtons = screen.getAllByTitle('Remove Individual from Not in Group');
-                expect(removeButtons.length).toBeGreaterThan(0);
-                fireEvent.click(removeButtons[removeButtons.length - 1]);
-                expect(onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 0, 'individual');
+                fireEvent.click(folder()[0]);
+                fireEvent.scroll(container.querySelector('.sensor-list-widget')!);
+                fireEvent(window, new Event('resize'));
+                expect(sheet()).not.toBeNull();
             });
 
-            it('renders a "Not in Group" chip alongside real-group chips once a sensor is a member', () => {
-                const models = [modelTag1InGroupA, { ...modelTag1InGroupA, id: 'm2', groupNos: [0] }];
-                render(<SensorSelection {...makeProps({ fgModels: models })} />);
+            it('a click on a row selects/deselects the sensor as usual and keeps the sheet open', () => {
+                const onSensorChange = vi.fn();
+                render(<SensorSelection {...makeProps({ onSensorChange })} />);
                 expandPump();
-                expect(screen.getByText('Group A')).toBeTruthy();
-                expect(screen.getByText('Not in Group')).toBeTruthy();
+                fireEvent.click(folder()[0]);
+                fireEvent.click(screen.getByText('Pump Temp'));
+                expect(onSensorChange).toHaveBeenCalledWith(['TAG2']);
+                expect(sheet()).not.toBeNull();
             });
         });
 
-        it('creating a new group: Create is disabled until typed, then calls onCreateGroupForSensor', () => {
-            const onCreateGroupForSensor = vi.fn();
-            render(<SensorSelection {...makeProps({ onCreateGroupForSensor })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            const createBtn = screen.getByText('Create') as HTMLButtonElement;
-            expect(createBtn.disabled).toBe(true);
+        describe('what dismisses it', () => {
+            it('Esc', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                fireEvent.keyDown(document, { key: 'Escape' });
+                expect(sheet()).toBeNull();
+            });
 
-            const input = screen.getByPlaceholderText('New group name');
-            fireEvent.change(input, { target: { value: 'New Group' } });
-            expect(createBtn.disabled).toBe(false);
-            fireEvent.click(createBtn);
-            expect(onCreateGroupForSensor).toHaveBeenCalledWith('TAG1', 'New Group');
+            it('a click outside the panel and the sheet — e.g. on the chart', () => {
+                const chart = document.createElement('div');
+                chart.setAttribute('data-testid', 'fake-chart');
+                document.body.appendChild(chart);
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                fireEvent.mouseDown(chart);
+                expect(sheet()).toBeNull();
+                // …and ONE click on the 📁 reopens it (the open state was reset, not left toggled).
+                fireEvent.click(folder()[0]);
+                expect(sheet()).not.toBeNull();
+                chart.remove();
+            });
+
+            it('its own ✕ and Done buttons', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                fireEvent.click(within(sheet()!).getByRole('button', { name: 'Close' }));
+                expect(sheet()).toBeNull();
+                fireEvent.click(folder()[0]);
+                fireEvent.click(within(sheet()!).getByRole('button', { name: 'Done' }));
+                expect(sheet()).toBeNull();
+            });
+
+            it('typing in the sensor search box', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Pump' } });
+                expect(sheet()).toBeNull();
+            });
+
+            it('collapsing the component of the sensor it is open for (its row is gone — nothing to point at)', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                fireEvent.click(screen.getByText('Pump')); // collapse
+                expect(sheet()).toBeNull();
+                // Re-expanding does not resurrect it.
+                fireEvent.click(screen.getByText('Pump'));
+                expect(sheet()).toBeNull();
+            });
+
+            it('its sensor leaving the list altogether (e.g. a deleted special sensor)', () => {
+                const props = makeProps();
+                const { rerender } = render(<SensorSelection {...props} />);
+                expandPump();
+                fireEvent.click(folder()[1]); // TAG2
+                rerender(<SensorSelection {...props} sensors={['TAG1', 'TAG3']} />);
+                expect(sheet()).toBeNull();
+            });
+
+            it('opening the alarm-setpoints popover (one panel at a time) — and vice versa', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                fireEvent.click(screen.getByTitle('Alarm setpoints'));
+                expect(sheet()).toBeNull();
+                expect(screen.getByText('High (90)')).toBeTruthy();
+                fireEvent.click(folder()[0]);
+                expect(sheet()).not.toBeNull();
+                expect(screen.queryByText('High (90)')).toBeNull();
+            });
         });
 
-        it('Enter in the new-group input also commits', () => {
-            const onCreateGroupForSensor = vi.fn();
-            render(<SensorSelection {...makeProps({ onCreateGroupForSensor })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            const input = screen.getByPlaceholderText('New group name');
-            fireEvent.change(input, { target: { value: 'Via Enter' } });
-            fireEvent.keyDown(input, { key: 'Enter' });
-            expect(onCreateGroupForSensor).toHaveBeenCalledWith('TAG1', 'Via Enter');
+        describe('‹ › step through EVERY sensor, expanding components on demand', () => {
+            // Display order: Pump (TAG1, TAG2), then Uncategorized (TAG3).
+            const prev = () => within(sheet()!).getByRole('button', { name: 'Previous sensor' }) as HTMLButtonElement;
+            const next = () => within(sheet()!).getByRole('button', { name: 'Next sensor' }) as HTMLButtonElement;
+
+            it('walks forward and back across components and disables the buttons at both ends', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                expect(prev().disabled).toBe(true);
+                expect(next().disabled).toBe(false);
+                fireEvent.click(next());
+                expect(heading()).toBe('Pump Temp');
+                expect(prev().disabled).toBe(false);
+            });
+
+            it('expands a collapsed component to reach the next sensor, highlights its row, and can walk back', () => {
+                const { container } = render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[1]); // TAG2 — last of Pump, next is in the collapsed "Uncategorized"
+                expect(screen.queryByLabelText('TAG3')).toBeNull();
+                fireEvent.click(next());
+                expect(screen.getByLabelText('TAG3')).toBeTruthy(); // expanded on demand
+                expect(heading()).toBe('TAG3');
+                expect(sheet()).not.toBeNull(); // the visibility effect did not close it
+                const target = container.querySelector('.sensor-list-row--fg-target');
+                expect(target?.textContent).toContain('TAG3');
+                expect(next().disabled).toBe(true); // last sensor overall
+                fireEvent.click(prev());
+                expect(heading()).toBe('Pump Temp');
+            });
+
+            it('works while the sensor search is filtering the list: clears the search so the target row exists', () => {
+                render(<SensorSelection {...makeProps()} />);
+                fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Pressure' } });
+                fireEvent.click(folder()[0]); // TAG1 — the only match
+                expect(heading()).toBe('Pump Pressure');
+                fireEvent.click(next());
+                expect((screen.getByPlaceholderText('Search sensors...') as HTMLInputElement).value).toBe('');
+                expect(heading()).toBe('Pump Temp');
+                expect(sheet()).not.toBeNull();
+            });
+
+            it('scrolls the target row into view once it has rendered', () => {
+                const scrollIntoView = vi.fn();
+                const original = Element.prototype.scrollIntoView;
+                Element.prototype.scrollIntoView = scrollIntoView;
+                try {
+                    render(<SensorSelection {...makeProps()} />);
+                    expandPump();
+                    fireEvent.click(folder()[1]);
+                    fireEvent.click(next());
+                    expect(scrollIntoView).toHaveBeenCalled();
+                } finally {
+                    Element.prototype.scrollIntoView = original;
+                }
+            });
         });
 
-        it('rejects a duplicate group name (case-insensitive), with an inline error, and does not call onCreateGroupForSensor', () => {
-            const onCreateGroupForSensor = vi.fn();
-            render(<SensorSelection {...makeProps({ onCreateGroupForSensor })} />);
-            expandPump();
-            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
-            const input = screen.getByPlaceholderText('New group name');
-            fireEvent.change(input, { target: { value: 'group a' } });
-            fireEvent.click(screen.getByText('Create'));
-            expect(onCreateGroupForSensor).not.toHaveBeenCalled();
-            expect(screen.getByText('A failure group named "group a" already exists')).toBeTruthy();
+        describe('placement is measured from the Sensors panel (jsdom has no layout, so rects are stubbed)', () => {
+            const rect = (left: number, top: number, width: number, height: number) =>
+                ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON() {} }) as DOMRect;
+            const original = Element.prototype.getBoundingClientRect;
+            let rectFor: (el: Element) => DOMRect | null = () => null;
+            beforeEach(() => {
+                Element.prototype.getBoundingClientRect = function (this: Element) { return rectFor(this) ?? original.call(this); };
+            });
+            afterEach(() => { Element.prototype.getBoundingClientRect = original; });
+
+            const isPanel = (el: Element) => el.classList.contains('sensor-selection-widget');
+            const isList = (el: Element) => el.classList.contains('sensor-list-widget');
+
+            it('docks to the panel\'s left edge, full panel height, 560px wide when there is room', () => {
+                rectFor = (el) => (isPanel(el) ? rect(900, 40, 350, 700) : null);
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                const s = sheet()!;
+                expect(s.style.width).toBe('560px');
+                expect(s.style.left).toBe('330px'); // 900 - 10px gap - 560px
+                expect(s.style.top).toBe('40px');
+                expect(s.style.height).toBe('700px');
+            });
+
+            it('shrinks on a narrow window (never below 340px) instead of running off the left edge', () => {
+                rectFor = (el) => (isPanel(el) ? rect(420, 40, 350, 700) : null);
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                expect(sheet()!.style.width).toBe('402px'); // 420 - 10 gap - 8 edge
+                expect(sheet()!.style.left).toBe('8px');
+                cleanup();
+                document.getElementById('wizard-portal-root')?.remove();
+                rectFor = (el) => (isPanel(el) ? rect(300, 40, 350, 700) : null);
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                expect(sheet()!.style.width).toBe('340px'); // floor
+                expect(sheet()!.style.left).toBe('8px');
+            });
+
+            it('re-measures when the panel is resized (window resize here; ResizeObserver covers the split.js gutter)', () => {
+                let panelLeft = 900;
+                rectFor = (el) => (isPanel(el) ? rect(panelLeft, 40, 350, 700) : null);
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                expect(sheet()!.style.left).toBe('330px');
+                panelLeft = 700;
+                fireEvent(window, new Event('resize'));
+                expect(sheet()!.style.left).toBe('130px');
+            });
+
+            it('the arrow points at the edited row, follows it when the list scrolls, and hides when the row scrolls out of view', () => {
+                let rowTop = 200;
+                rectFor = (el) => {
+                    if (isPanel(el)) return rect(900, 40, 350, 700);
+                    if (isList(el)) return rect(900, 120, 350, 600); // 120..720
+                    if (el.getAttribute('data-fg-target') === 'true') return rect(900, rowTop, 350, 40);
+                    return null;
+                };
+                const { container } = render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                fireEvent.click(folder()[0]);
+                // row centre 220 -> relative to the sheet's top (40) = 180, minus half the 12px arrow.
+                expect(screen.getByTestId('fg-sheet-notch').style.top).toBe('174px');
+                rowTop = 300;
+                fireEvent.scroll(container.querySelector('.sensor-list-widget')!);
+                expect(screen.getByTestId('fg-sheet-notch').style.top).toBe('274px');
+                rowTop = 900; // scrolled below the list's visible area
+                fireEvent.scroll(container.querySelector('.sensor-list-widget')!);
+                expect(screen.queryByTestId('fg-sheet-notch')).toBeNull();
+                expect(sheet()).not.toBeNull();
+            });
         });
     });
 });

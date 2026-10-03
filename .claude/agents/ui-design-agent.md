@@ -1,6 +1,6 @@
 ---
 name: ui-design-agent
-model: sonnet
+model: opus
 description: "UI Design Agent — designs screens and UI changes for the Wizard app BEFORE any code is written. Reads the real components, then produces an interactive HTML mockup (published as a private Artifact) using the app's own dark-theme tokens, plus a short rationale, open questions and the list of files an implementation would touch. Design only: never edits, creates or commits repo files, never writes implementation code."
 ---
 

@@ -1223,6 +1223,260 @@ describe('Dashboard', () => {
         });
     });
 
+    // 2026-10-03: removing a model's LAST group still deletes the model at once
+    // (the 2026-09-02 no-confirm policy stands), but the Dashboard now says so —
+    // a 7-second "<Kind> model of <sensor> deleted — Undo" toast — and Undo puts
+    // the ORIGINAL model back whole through the same disk-derived write as every
+    // other Failure Group edit (so it broadcasts and never reverts another
+    // window's write with a stale mirror).
+    describe('2026-10-03 — removing a model\'s last group offers a 7-second Undo', () => {
+        const fullModel = (o: Record<string, unknown> = {}) => ({
+            id: 'keep-1', groupNos: [1], name: 'Pump Pressure', kind: 'individual', category: 'performance',
+            notes: 'tuned by hand', status: true, targetSensor: 'TAG1', predictorSensors: ['TAG2'], xSensor: '', ySensor: '',
+            individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: 'my rel', relStiffness: 250_000,
+            clusterModelName: '', numClusters: 5, criteriaSensor: '', clusterRanges: [{ min: 1, max: 2 }], filterTimePeriods: [],
+            runningConditionMode: 'custom', customRunningConditionFilters: [], customRunningConditionCombine: 'or',
+            ...o,
+        });
+        const groupsAB = [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }];
+        const stateFor = (models: any[], groups: any[] = groupsAB) =>
+            makeInitialState({ failureGroupState: { groups, models } });
+
+        /** A disk that keeps what is written (as in the app), readable and editable by the test. */
+        function statefulDisk(initial: WorkspaceState) {
+            const box = { disk: { id: initial.id, failureGroupState: initial.failureGroupState } as any };
+            mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
+                box.disk = patch(box.disk);
+                return box.disk;
+            });
+            return box;
+        }
+        const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        const remove = (tag: string, groupNo: number, kind: string) =>
+            act(() => { last(sensorSelectionProps).onToggleSensorGroupKind(tag, groupNo, kind); });
+        const toast = () => screen.queryByTestId('fg-undo-toast');
+        const toasts = () => screen.queryAllByTestId('fg-undo-toast');
+        const emitted = () => mockEmit.mock.calls.filter(([event]) => event === 'failure-group-state-changed');
+
+        it('shows "<Kind> model of <sensor> deleted" with an Undo button when the LAST group is removed', async () => {
+            const initial = stateFor([fullModel()]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            expect(toast()).toBeNull();
+            remove('TAG1', 1, 'individual');
+            await flush();
+            expect(box.disk.failureGroupState.models).toHaveLength(0); // the model really is deleted at once
+            expect(toast()!.textContent).toContain('Individual model of Pump Pressure deleted');
+            expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy();
+            // The toast sits in the portal root (clear of every overflow-hidden panel) and is exempt
+            // from the assignment sheet's click-outside dismissal.
+            expect(document.getElementById('wizard-portal-root')!.contains(toast())).toBe(true);
+            expect(toast()!.closest('[data-fg-sheet-keep]')).not.toBeNull();
+        });
+
+        it('names the sensor by tag when it has no description, and the kind that was removed', async () => {
+            const initial = stateFor([fullModel({ id: 'rel', kind: 'relationship', targetSensor: 'TAG3' })]);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG3', 1, 'relationship');
+            await flush();
+            expect(toast()!.textContent).toContain('Relationship model of TAG3 deleted');
+        });
+
+        it('also fires when the last membership removed is "Not in Group" (0)', async () => {
+            const initial = stateFor([fullModel({ groupNos: [0] })]);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 0, 'individual');
+            await flush();
+            expect(toast()!.textContent).toContain('Individual model of Pump Pressure deleted');
+        });
+
+        it('shows NOTHING when the model keeps another group, or when a group is added', async () => {
+            const initial = stateFor([fullModel({ groupNos: [1, 2] })]);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual'); // still in B
+            await flush();
+            expect(toast()).toBeNull();
+            remove('TAG1', 1, 'individual'); // adds A back
+            await flush();
+            expect(toast()).toBeNull();
+        });
+
+        it('Undo restores the ORIGINAL model — same id, same settings — and removes the toast', async () => {
+            const original = fullModel();
+            const initial = stateFor([original]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            expect(box.disk.failureGroupState.models).toHaveLength(0);
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            expect(box.disk.failureGroupState.models).toStrictEqual([original]); // the identical object contents, nothing re-defaulted
+            expect(toast()).toBeNull();
+            // The mirror is back too: the sensor panel sees the model again.
+            expect(last(sensorSelectionProps).fgModels).toStrictEqual([original]);
+        });
+
+        it('Undo broadcasts failure-group-state-changed (workspaceId + origin) carrying the restored model — the same path as every other FG edit', async () => {
+            const original = fullModel();
+            const initial = stateFor([original]);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            mockEmit.mockClear();
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            expect(emitted()).toHaveLength(1);
+            const payload = emitted()[0][1] as any;
+            expect(payload.workspaceId).toBe('ws1');
+            expect(payload.origin).toBe('dashboard');
+            expect(payload.models).toStrictEqual([original]);
+        });
+
+        it('Undo is computed against what is on DISK, not the mirror: another window\'s write in the meantime survives', async () => {
+            const original = fullModel();
+            const initial = stateFor([original]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            // Another window (Build Model) adds a model this window's mirror never heard about.
+            const other = fullModel({ id: 'other', targetSensor: 'TAG2', notes: 'from build model' });
+            box.disk = { ...box.disk, failureGroupState: { ...box.disk.failureGroupState, models: [other] } };
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            expect(box.disk.failureGroupState.models.map((m: any) => m.id).sort()).toEqual(['keep-1', 'other']);
+            expect(box.disk.failureGroupState.models.find((m: any) => m.id === 'other').notes).toBe('from build model');
+        });
+
+        it('Undo twice-over is harmless: a model already back (same id) is not duplicated', async () => {
+            const original = fullModel();
+            const initial = stateFor([original]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            // Something else already restored it on disk (e.g. another Undo from a second window).
+            box.disk = { ...box.disk, failureGroupState: { ...box.disk.failureGroupState, models: [original] } };
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            expect(box.disk.failureGroupState.models).toHaveLength(1);
+        });
+
+        it('if the group was deleted before Undo, the restored model parks in "Not in Group" (0) like deleteGroup parks any orphan', async () => {
+            const initial = stateFor([fullModel()]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            box.disk = { ...box.disk, failureGroupState: { ...box.disk.failureGroupState, groups: [{ no: 2, name: 'Group B' }] } }; // Group A is gone
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            const [restored] = box.disk.failureGroupState.models;
+            expect(restored.id).toBe('keep-1');
+            expect(restored.groupNos).toEqual([0]);
+        });
+
+        it('if the same kind was re-added before Undo (a blank new model), the original takes its place and the memberships merge — never two models of one kind', async () => {
+            const original = fullModel();
+            const initial = stateFor([original]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            remove('TAG1', 2, 'individual'); // creates a fresh default Individual model in Group B
+            await flush();
+            expect(box.disk.failureGroupState.models).toHaveLength(1);
+            expect(box.disk.failureGroupState.models[0].id).not.toBe('keep-1');
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            const models = box.disk.failureGroupState.models;
+            expect(models).toHaveLength(1);
+            expect(models[0].id).toBe('keep-1');
+            expect(models[0].notes).toBe('tuned by hand');
+            expect([...models[0].groupNos].sort()).toEqual([1, 2]);
+        });
+
+        it('a stale MIRROR does not lie: if disk shows the model survives (another window gave it a second group), the toast is retracted', async () => {
+            const initial = stateFor([fullModel({ groupNos: [1] })]); // this window believes: only group A
+            const box = statefulDisk(initial);
+            box.disk = { ...box.disk, failureGroupState: { ...box.disk.failureGroupState, models: [fullModel({ groupNos: [1, 2] })] } }; // disk: A and B
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            expect(box.disk.failureGroupState.models).toHaveLength(1); // nothing was deleted
+            expect(toast()).toBeNull();
+        });
+
+        it('…and the reverse: if the mirror thinks the model survives but disk has it in only this group, the deletion is announced and Undo restores the DISK copy', async () => {
+            const initial = stateFor([fullModel({ groupNos: [1, 2] })]); // mirror: A and B
+            const box = statefulDisk(initial);
+            const diskCopy = fullModel({ groupNos: [1], notes: 'disk copy' });
+            box.disk = { ...box.disk, failureGroupState: { ...box.disk.failureGroupState, models: [diskCopy] } };
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            expect(box.disk.failureGroupState.models).toHaveLength(0);
+            expect(toast()!.textContent).toContain('Individual model of Pump Pressure deleted');
+            fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+            await flush();
+            expect(box.disk.failureGroupState.models).toStrictEqual([diskCopy]);
+        });
+
+        it('stacks one toast per removal, capped at 3 (the oldest drops off)', async () => {
+            const models = [
+                fullModel({ id: 'a', targetSensor: 'TAG1' }),
+                fullModel({ id: 'b', targetSensor: 'TAG2' }),
+                fullModel({ id: 'c', targetSensor: 'TAG3' }),
+                fullModel({ id: 'd', targetSensor: 'TAG4' }),
+            ];
+            const initial = stateFor(models);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            for (const tag of ['TAG1', 'TAG2', 'TAG3']) { remove(tag, 1, 'individual'); await flush(); }
+            expect(toasts()).toHaveLength(3);
+            remove('TAG4', 1, 'individual');
+            await flush();
+            expect(toasts()).toHaveLength(3);
+            expect(toasts().map(t => t.textContent).join('|')).not.toContain('Pump Pressure'); // TAG1's (the oldest) dropped
+        });
+
+        it('the toast expires after 7 seconds — not before — and is not an undo', async () => {
+            vi.useFakeTimers();
+            const initial = stateFor([fullModel()]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            expect(toast()).not.toBeNull();
+            await act(async () => { vi.advanceTimersByTime(6999); });
+            expect(toast()).not.toBeNull();
+            await act(async () => { vi.advanceTimersByTime(2); });
+            expect(toast()).toBeNull();
+            expect(box.disk.failureGroupState.models).toHaveLength(0); // expiring leaves the deletion in place
+        });
+
+        it('each toast has its own 7-second clock', async () => {
+            vi.useFakeTimers();
+            const initial = stateFor([fullModel({ id: 'a', targetSensor: 'TAG1' }), fullModel({ id: 'b', targetSensor: 'TAG2' })]);
+            statefulDisk(initial);
+            renderDashboard({ initialState: initial });
+            remove('TAG1', 1, 'individual');
+            await flush();
+            await act(async () => { vi.advanceTimersByTime(4000); });
+            remove('TAG2', 1, 'individual');
+            await flush();
+            expect(toasts()).toHaveLength(2);
+            await act(async () => { vi.advanceTimersByTime(3500); }); // first is now 7.5s old, second 3.5s
+            expect(toasts()).toHaveLength(1);
+            expect(toast()!.textContent).toContain('Pump Temp');
+        });
+    });
+
     describe('Failure Groups tab (group-centric preview)', () => {
         it('create-empty-group round-trips through updateWorkspaceData, with no dead "isCollapsed" field', async () => {
             renderDashboard();

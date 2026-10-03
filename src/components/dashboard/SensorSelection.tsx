@@ -1,9 +1,11 @@
-import { useState, useMemo, useEffect } from 'react';
-import { ChevronRight, ChevronDown, FolderPlus, X, Pencil, Trash2, Check, Bell } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { ChevronRight, ChevronDown, FolderPlus, X, Bell } from 'lucide-react';
 import { SensorMetadata, FailureGroup, FailureModel, ModelKind, AlarmLevel } from '../../types';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { modelSensorKey } from '../../utils/modelGrouping';
 import { ALARM_LEVELS, ALARM_LABELS, isCriticalAlarmLevel, alarmLevelColor, hasAlarmSetpoints } from '../../utils/alarmLevels';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
+import FailureGroupAssignSheet, { KIND_LETTER, KIND_LABEL, ALL_KINDS } from './FailureGroupAssignSheet';
 
 
 
@@ -39,35 +41,12 @@ interface SensorSelectionProps {
 
 const UNCATEGORIZED = 'Uncategorized';
 
-// Same per-kind colours/labels as BuildModelWindow.tsx's own KIND_ACCENT
-// (and, via that, the row badge's .model-kind-icon--* classes in App.css) —
-// duplicated rather than imported since this panel doesn't share a
-// components module with BuildModelWindow. A sensor's membership in a
-// group is now per-kind, so each kind gets its own small toggle here.
-const KIND_ACCENT: Record<ModelKind, string> = {
-    individual: 'var(--accent-color)',
-    relationship: 'var(--warn)',
-    clustering: 'var(--kind-clu)',
-};
-const KIND_LETTER: Record<ModelKind, string> = {
-    individual: 'I',
-    relationship: 'R',
-    clustering: 'C',
-};
-const KIND_LABEL: Record<ModelKind, string> = {
-    individual: 'Individual',
-    relationship: 'Relationship',
-    clustering: 'Clustering',
-};
-const ALL_KINDS: ModelKind[] = ['individual', 'relationship', 'clustering'];
-
-/** Which sensor does model `m` represent? Individual/Relationship key off
- *  targetSensor; Clustering keys off xSensor, since a Clustering model
- *  created from the single-sensor toggle flow seeds that sensor as X and
- *  leaves Y for later (see Dashboard.tsx's makeDefaultModelForKind).
- *  Lower-cased because tags are matched case-insensitively. */
-const modelSensorTag = (m: FailureModel) =>
-    (m.kind === 'clustering' ? (m.xSensor ?? '') : (m.targetSensor ?? '')).toLowerCase();
+// Which sensor a model represents is `modelSensorKey` (Individual/
+// Relationship key off targetSensor; Clustering off xSensor, which the
+// single-sensor toggle flow seeds as X — see Dashboard.tsx's
+// makeDefaultModelForKind), normalised the same way Dashboard's own toggle
+// matches it, so the chips here and the assignment sheet never disagree about
+// whether a sensor belongs to a group.
 
 /** Key for one (group, kind) membership inside the index below. */
 const membershipKey = (groupNo: number, kind: ModelKind) => `${groupNo}:${kind}`;
@@ -93,50 +72,34 @@ export default function SensorSelection({
     // collapsed — browsing means opening a component to see its sensors,
     // not scanning a flat 133-row list.
     const [expandedComponents, setExpandedComponents] = useState<Set<string>>(new Set());
-    // Which sensor's failure-group menu is open, and the draft text for its
-    // inline "new group" input. A sensor can belong to more than one group,
-    // so this is a toggleable checklist, not a single-select assignment.
-    const [groupMenuFor, setGroupMenuFor] = useState<string | null>(null);
-    // Viewport-relative rect of the 📁 button that opened the currently-open
-    // group menu — captured once, when the menu opens (see AnchoredPopover's
-    // own docstring for why this isn't tracked live). Visual-refresh-only:
-    // the menu itself now renders through a floating `AnchoredPopover`
-    // instead of expanding inline within the scrolling sensor list, per the
-    // locked SPEC FINAL decision that every popover here must escape the
-    // list's own clipping.
-    const [groupMenuAnchor, setGroupMenuAnchor] = useState<PopoverAnchorRect | null>(null);
-    const [newGroupDraft, setNewGroupDraft] = useState('');
-    const [newGroupError, setNewGroupError] = useState('');
+    // Which sensor the Failure Group Assignment sheet (FailureGroupAssignSheet)
+    // is open for — `null` = closed. 2026-10-03: this replaced an
+    // AnchoredPopover menu with a full-height sheet docked to the left edge of
+    // the Sensors panel; it is NOT dismissed by scrolling the list or clicking
+    // inside the panel, only by the triggers listed above `closeSheet` below.
+    // A sensor can belong to more than one group (and kind), so the sheet is a
+    // matrix of toggles, not a single-select assignment.
+    const [fgSheetFor, setFgSheetFor] = useState<string | null>(null);
     // Which sensor's alarm-setpoint checkbox list is open. Closed by default
     // for every sensor — the icon only appears when the sensor actually HAS
     // a setpoint (see `hasAlarmSetpoints` below), and clicking it is the only
     // way to reveal the checkboxes. Checking a sensor into the chart does
     // NOT auto-open this — the user explicitly asked for click-only.
     const [alarmPanelFor, setAlarmPanelFor] = useState<string | null>(null);
-    // Same idea as `groupMenuAnchor` above, for the 🔔 alarm-setpoints popover.
+    // Viewport-relative rect of the 🔔 button that opened the alarm-setpoints
+    // popover — captured once, when it opens (see AnchoredPopover's own
+    // docstring for why this isn't tracked live).
     const [alarmPanelAnchor, setAlarmPanelAnchor] = useState<PopoverAnchorRect | null>(null);
-    // Which group (by `no`) is being renamed inline, and its draft text.
-    // Group identity is global, so this isn't scoped to a particular sensor —
-    // only one group can be mid-rename across the whole panel at a time.
-    const [editingGroupNo, setEditingGroupNo] = useState<number | null>(null);
-    const [editGroupDraft, setEditGroupDraft] = useState('');
+    // Latest-DOM handles the sheet needs: the Sensors panel it docks to, the
+    // scrolling list, and the row it points at.
+    const rootRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
+    const rowEls = useRef(new Map<string, HTMLElement>());
+    // A sensor the list should scroll to once its row has rendered (set by the
+    // sheet's ‹ › buttons, which may have just expanded its component).
+    const [scrollToSensor, setScrollToSensor] = useState<string | null>(null);
 
     const atSelectionCap = maxSelectable !== undefined && selectedSensors.length >= maxSelectable;
-
-    const isDuplicateGroupName = (name: string) =>
-        fgGroups.some(g => g.no !== 0 && g.name.trim().toLowerCase() === name.trim().toLowerCase());
-
-    const commitCreateGroup = (sensor: string) => {
-        const trimmed = newGroupDraft.trim();
-        if (!trimmed) return;
-        if (isDuplicateGroupName(trimmed)) {
-            setNewGroupError(`A failure group named "${trimmed}" already exists`);
-            return;
-        }
-        onCreateGroupForSensor(sensor, trimmed);
-        setNewGroupDraft('');
-        setNewGroupError('');
-    };
 
     const handleSensorToggle = (sensor: string) => {
         if (selectedSensors.includes(sensor)) {
@@ -169,16 +132,28 @@ export default function SensorSelection({
     // and, within each group, by sensor label. Sensors without a mapped
     // component (or no mapping loaded at all) fall into "Uncategorized"
     // rather than disappearing.
-    const groupedSensors = useMemo(() => {
+    const groupByComponent = (list: string[]): [string, string[]][] => {
         const groups = new Map<string, string[]>();
-        for (const s of filteredSensors) {
+        for (const s of list) {
             const comp = getMetadata(s)?.component || UNCATEGORIZED;
             if (!groups.has(comp)) groups.set(comp, []);
             groups.get(comp)!.push(s);
         }
         return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+    };
+    const groupedSensors = useMemo(
+        () => groupByComponent(filteredSensors),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filteredSensors, sensorMetadata]);
+        [filteredSensors, sensorMetadata]
+    );
+    // EVERY sensor in on-screen order, ignoring the search box — the order the
+    // assignment sheet's ‹ › buttons walk (they go across all sensors, expanding
+    // collapsed components and clearing the search on the way).
+    const allSensorsInOrder = useMemo(
+        () => groupByComponent(sensors).flatMap(([, list]) => list),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [sensors, sensorMetadata]
+    );
 
     const toggleComponentExpanded = (comp: string) => {
         setExpandedComponents(prev => {
@@ -199,19 +174,22 @@ export default function SensorSelection({
     const isFilterActive = searchTerm !== '';
 
     // Which sensor tags are actually rendered right now — a component that's
-    // collapsed, or a search that doesn't match, both remove a sensor's row
-    // (and with it, any popover anchored to that row) from the DOM without
-    // the sensor itself ever being deselected. `groupMenuFor`/`alarmPanelFor`
-    // (and their captured anchor rects) are state local to THIS component,
-    // not tied to the row's lifecycle, so they used to just sit there while
-    // hidden — collapsing then re-expanding the group (or filtering the row
-    // out then clearing the search) remounted the popover at the stale rect
-    // captured before the row disappeared (QA sweep, 2026-10-02; same bug
-    // class as Dashboard.tsx's selectedSensors prune effect for
-    // colorPickerFor/axisEditorFor). One shared effect, keyed on the actual
-    // visible row set, closes whichever popover's row just left it — covers
-    // both the collapse/expand and the filter-out/clear-search path, so a
-    // third "row disappeared" trigger later doesn't need its own one-off fix.
+    // collapsed, or a search that doesn't match, both remove a sensor's row from
+    // the DOM without the sensor itself ever being deselected. `fgSheetFor` /
+    // `alarmPanelFor` (and the alarm popover's captured anchor rect) are state
+    // local to THIS component, not tied to the row's lifecycle, so they used to
+    // just sit there while hidden — collapsing then re-expanding the group (or
+    // filtering the row out then clearing the search) remounted the popover at
+    // the stale rect captured before the row disappeared (QA sweep,
+    // 2026-10-02; same bug class as Dashboard.tsx's selectedSensors prune
+    // effect for colorPickerFor/axisEditorFor). One shared effect, keyed on the
+    // actual visible row set, closes whichever panel's row just left it —
+    // covers both the collapse/expand and the filter-out/clear-search path, and
+    // also a sensor that disappears from `sensors` altogether (a deleted
+    // special sensor), so a further "row disappeared" trigger needs no one-off
+    // fix. The assignment sheet follows the same rule: with its row gone there
+    // is nothing for its arrow to point at, so it closes (its own ‹ › buttons
+    // expand the target's component in the SAME update, so they never trip it).
     const visibleSensorSet = useMemo(() => {
         const visible = new Set<string>();
         for (const [component, compSensors] of groupedSensors) {
@@ -223,15 +201,25 @@ export default function SensorSelection({
     }, [groupedSensors, expandedComponents, searchTerm]);
 
     useEffect(() => {
-        if (groupMenuFor && !visibleSensorSet.has(groupMenuFor)) {
-            setGroupMenuFor(null);
-            setGroupMenuAnchor(null);
+        if (fgSheetFor && !visibleSensorSet.has(fgSheetFor)) {
+            setFgSheetFor(null);
         }
         if (alarmPanelFor && !visibleSensorSet.has(alarmPanelFor)) {
             setAlarmPanelFor(null);
             setAlarmPanelAnchor(null);
         }
-    }, [visibleSensorSet, groupMenuFor, alarmPanelFor]);
+    }, [visibleSensorSet, fgSheetFor, alarmPanelFor]);
+
+    // After the sheet's ‹ › moves to a sensor whose component was collapsed (or
+    // that is scrolled out of the list), bring that row into view once it has
+    // rendered. The sheet re-measures its arrow on the resulting scroll event.
+    useEffect(() => {
+        if (!scrollToSensor) return;
+        const row = rowEls.current.get(scrollToSensor);
+        if (!row) return; // not rendered yet — runs again when visibleSensorSet changes
+        row.scrollIntoView?.({ block: 'nearest' });
+        setScrollToSensor(null);
+    }, [scrollToSensor, visibleSensorSet]);
 
     // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
     //
@@ -245,7 +233,7 @@ export default function SensorSelection({
     const membershipIndex = useMemo(() => {
         const index = new Map<string, Set<string>>();
         for (const m of fgModels) {
-            const tag = modelSensorTag(m);
+            const tag = modelSensorKey(m);
             if (!tag) continue;
             let keys = index.get(tag);
             if (!keys) { keys = new Set<string>(); index.set(tag, keys); }
@@ -258,37 +246,58 @@ export default function SensorSelection({
         setSearchTerm('');
     };
 
-    // Typing in the search box can re-filter the list out from under an open
-    // row popover WITHOUT removing that row from `visibleSensorSet` above
-    // (e.g. a different row ahead of it in the list disappears, so this row
-    // merely shifts up) — no unmount happens, so the visibility effect above
-    // never fires, yet the popover (positioned via a one-time captured rect)
-    // is now floating over the wrong spot. `AnchoredPopover` already treats
-    // "the page may have moved under the popover" as "close it" rather than
-    // trying to reposition (see its own scroll/resize listener) — any search
-    // keystroke while a popover from this list is open gets the same
-    // conservative treatment, matching bug report #2 from the 2026-10-02 QA
-    // sweep.
+    // Typing in the search box re-filters the list under an open panel. The
+    // alarm popover (positioned from a one-time captured rect) would float over
+    // the wrong spot, so — like AnchoredPopover's own scroll/resize rule — it
+    // closes. The assignment sheet closes on a keystroke too (2026-10-03 spec:
+    // "search changes" is one of its dismissals); clearing the search through
+    // its ‹ › buttons is a programmatic change, not typing, so it keeps it open.
     const handleSearchChange = (value: string) => {
         setSearchTerm(value);
-        if (groupMenuFor) { setGroupMenuFor(null); setGroupMenuAnchor(null); }
+        if (fgSheetFor) setFgSheetFor(null);
         if (alarmPanelFor) { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }
     };
+
+    // ── Failure Group Assignment sheet ───────────────────────────────────────
+    const getHostEl = useCallback(
+        () => (rootRef.current?.closest('.widget-section') as HTMLElement | null) ?? rootRef.current,
+        [],
+    );
+    const getSheetRowEl = useCallback(
+        () => (fgSheetFor ? rowEls.current.get(fgSheetFor) ?? null : null),
+        [fgSheetFor],
+    );
+    const getListEl = useCallback(() => listRef.current, []);
+
+    const openSheetFor = (sensor: string) => {
+        // Opening one popover closes the other: the alarm list is a
+        // `position: fixed` popover under the same row's bell button.
+        setAlarmPanelFor(null); setAlarmPanelAnchor(null);
+        setFgSheetFor(sensor);
+    };
+
+    const stepSheet = (direction: -1 | 1) => {
+        if (!fgSheetFor) return;
+        const next = allSensorsInOrder[allSensorsInOrder.indexOf(fgSheetFor) + direction];
+        if (!next) return;
+        // The target may sit in a collapsed component or be filtered out by the
+        // search — expand/clear on demand so its row exists to be highlighted.
+        const comp = getMetadata(next)?.component || UNCATEGORIZED;
+        setExpandedComponents(prev => (prev.has(comp) ? prev : new Set(prev).add(comp)));
+        setSearchTerm('');
+        setFgSheetFor(next);
+        setScrollToSensor(next);
+    };
+
+    const sheetIndex = fgSheetFor ? allSensorsInOrder.indexOf(fgSheetFor) : -1;
 
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
         // This sensor's own membership keys, straight out of the index
         // above — one Map lookup instead of re-scanning every model.
-        const ownMemberships = membershipIndex.get(sensor.toLowerCase());
+        const ownMemberships = membershipIndex.get(normalizeSensorTag(sensor));
         const isMemberOfKind = (groupNo: number, kind: ModelKind) =>
             ownMemberships?.has(membershipKey(groupNo, kind)) ?? false;
-        // Is the sensor a member of this group in ANY kind — used to tint
-        // the row in the group-assignment menu so an active group doesn't
-        // get lost among a long list of groups (2026-09-02, reported by the
-        // user as "ตาลาย" once there are 10+ groups: the toggle buttons'
-        // own highlight isn't enough at a glance, the row itself needs it).
-        const isMemberOfGroup = (groupNo: number) =>
-            ALL_KINDS.some(kind => isMemberOfKind(groupNo, kind));
         // Which (group, kind) pairs this sensor belongs to, in group order —
         // a sensor can carry more than one model kind per group (e.g. both an
         // Individual and a Relationship model), so membership is per kind,
@@ -298,40 +307,7 @@ export default function SensorSelection({
         const memberEntries: { group: FailureGroup; kind: ModelKind }[] = fgGroups.flatMap(g =>
             ALL_KINDS.filter(kind => isMemberOfKind(g.no, kind)).map(kind => ({ group: g, kind }))
         );
-        const menuOpen = groupMenuFor === sensor;
-
-        // Three small per-kind toggle buttons for one group (or "Not in
-        // Group", 0) — the single control for both adding AND removing a
-        // (sensor, group, kind) membership, letting the user pick more
-        // than one kind for the same group by clicking more than one
-        // (2026-08-31 redesign, replacing the old single +/✕ button).
-        const renderKindToggles = (groupNo: number, groupName: string) => (
-            <div style={{ display: 'flex', gap: '3px' }} onClick={e => e.stopPropagation()}>
-                {ALL_KINDS.map(kind => {
-                    const active = isMemberOfKind(groupNo, kind);
-                    return (
-                        <button
-                            key={kind}
-                            onClick={() => onToggleSensorGroupKind(sensor, groupNo, kind)}
-                            title={`${active ? 'Remove' : 'Add'} ${KIND_LABEL[kind]}${active ? ' from' : ' to'} ${groupName}`}
-                            // Matches the approved prototype's `.ktog` — 24x24,
-                            // deliberately larger than the inline sensor-row
-                            // kind badges (those stay 16px) since this is the
-                            // popup's own primary click target.
-                            style={{
-                                width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                borderRadius: '6px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
-                                border: `1px solid ${active ? KIND_ACCENT[kind] : 'var(--border)'}`,
-                                background: active ? KIND_ACCENT[kind] : 'none',
-                                color: active ? 'var(--bg-primary)' : 'var(--text-faint)',
-                            }}
-                        >
-                            {KIND_LETTER[kind]}
-                        </button>
-                    );
-                })}
-            </div>
-        );
+        const sheetOpen = fgSheetFor === sensor;
         // The bell only appears at all when the sensor has at least one
         // setpoint value — independent of whether it's currently checked
         // into the chart, so it's browsable before deciding to plot. The
@@ -346,7 +322,9 @@ export default function SensorSelection({
         return (
             <div
                 key={sensor}
-                className="sensor-list-row"
+                ref={(el) => { if (el) rowEls.current.set(sensor, el); else rowEls.current.delete(sensor); }}
+                className={`sensor-list-row${sheetOpen ? ' sensor-list-row--fg-target' : ''}`}
+                data-fg-target={sheetOpen ? 'true' : undefined}
                 onClick={() => handleSensorToggle(sensor)}
                 title={blockedByCap ? `Pair Plot supports at most ${maxSelectable} sensors` : undefined}
                 style={{
@@ -382,11 +360,9 @@ export default function SensorSelection({
                                     e.stopPropagation();
                                     if (alarmOpen) { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }
                                     else {
-                                        // Opening this one closes the add-to-FG menu if it's
-                                        // open on the same (or another) row — both are
-                                        // `position: fixed` at the same row height now, so
-                                        // having both open at once would overlap on screen.
-                                        setGroupMenuFor(null); setGroupMenuAnchor(null);
+                                        // Opening this one closes the assignment sheet if
+                                        // it's open — one panel at a time.
+                                        setFgSheetFor(null);
                                         setAlarmPanelAnchor(e.currentTarget.getBoundingClientRect()); setAlarmPanelFor(sensor);
                                     }
                                 }}
@@ -399,21 +375,18 @@ export default function SensorSelection({
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
-                                if (menuOpen) { setGroupMenuFor(null); setGroupMenuAnchor(null); }
-                                else {
-                                    // Same reasoning as the alarm button above, in reverse.
-                                    setAlarmPanelFor(null); setAlarmPanelAnchor(null);
-                                    setGroupMenuAnchor(e.currentTarget.getBoundingClientRect()); setGroupMenuFor(sensor);
-                                }
+                                // Clicking the open sensor's own 📁 closes the sheet;
+                                // clicking ANOTHER sensor's switches it over.
+                                if (sheetOpen) setFgSheetFor(null);
+                                else openSheetFor(sensor);
                             }}
                             onContextMenu={(e) => {
                                 e.preventDefault(); e.stopPropagation();
-                                setAlarmPanelFor(null); setAlarmPanelAnchor(null);
-                                setGroupMenuAnchor(e.currentTarget.getBoundingClientRect());
-                                setGroupMenuFor(sensor);
+                                openSheetFor(sensor);
                             }}
                             title="Add to failure group"
-                            className={`row-action-btn${menuOpen ? ' on' : ''}`}
+                            aria-expanded={sheetOpen}
+                            className={`row-action-btn${sheetOpen ? ' on' : ''}`}
                         >
                             <FolderPlus size={14} />
                         </button>
@@ -498,150 +471,12 @@ export default function SensorSelection({
                         </div>
                     </AnchoredPopover>
                 )}
-                {menuOpen && (
-                    <AnchoredPopover
-                        anchorRect={groupMenuAnchor}
-                        onRequestClose={() => { setGroupMenuFor(null); setGroupMenuAnchor(null); }}
-                        // Deliberate deviation from the approved prototype's
-                        // literal 290px (see docs/PROJECT_HANDOVER.md's
-                        // 2026-10-02 structural-rebuild entry) -- this app's
-                        // real Failure Group names ("generator mechanical
-                        // condition", "generator electrical condition", ...)
-                        // are far longer than the prototype's placeholder
-                        // names ("Bearing wear") and clipped even at 290px.
-                        // Widened into the 360-400px range the user asked
-                        // for; AnchoredPopover's own clamp logic already
-                        // keeps it on-screen at typical anchor positions.
-                        width={380}
-                        style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
-                    >
-                        <div className="fg-menu-heading">Add to failure group</div>
-                        {fgGroups.filter(g => g.no !== 0).map(g => {
-                            const isEditing = editingGroupNo === g.no;
-                            if (isEditing) {
-                                return (
-                                    <div key={g.no} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px' }}>
-                                        <span className={`fg-group-color-${getGroupColor(g.no)}`} style={{
-                                            width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)',
-                                        }} />
-                                        <input
-                                            type="text"
-                                            value={editGroupDraft}
-                                            autoFocus
-                                            onChange={(e) => setEditGroupDraft(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') { onRenameGroup(g.no, editGroupDraft); setEditingGroupNo(null); }
-                                            }}
-                                            style={{
-                                                flex: 1, minWidth: 0, padding: '3px 6px',
-                                                background: 'var(--input-bg)', border: '1px solid var(--border)',
-                                                borderRadius: '4px', color: 'var(--text-primary)',
-                                                fontSize: '0.75rem', outline: 'none',
-                                            }}
-                                        />
-                                        <button
-                                            onClick={() => { onRenameGroup(g.no, editGroupDraft); setEditingGroupNo(null); }}
-                                            title="Save name"
-                                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
-                                        >
-                                            <Check size={14} />
-                                        </button>
-                                    </div>
-                                );
-                            }
-                            return (
-                                <div
-                                    key={g.no}
-                                    className={`fg-group-color-${getGroupColor(g.no)}`}
-                                    style={{
-                                        display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '6px', padding: '5px 6px',
-                                        background: isMemberOfGroup(g.no) ? 'var(--fg-tint)' : undefined,
-                                    }}
-                                >
-                                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
-                                    {/* Ellipsis stays as a last-resort fallback
-                                        only -- at 380px, a real group name
-                                        should fit unclipped in the common
-                                        case, unlike the prototype's 290px. */}
-                                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.76rem', color: 'var(--text-primary)' }}>{g.name}</span>
-                                    {renderKindToggles(g.no, g.name)}
-                                    <button
-                                        onClick={() => { setEditingGroupNo(g.no); setEditGroupDraft(g.name); }}
-                                        title={`Rename ${g.name}`}
-                                        style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
-                                    >
-                                        <Pencil size={13} />
-                                    </button>
-                                    <button
-                                        onClick={() => onDeleteGroup(g.no)}
-                                        title={`Delete ${g.name}`}
-                                        style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px', display: 'flex' }}
-                                    >
-                                        <Trash2 size={13} />
-                                    </button>
-                                </div>
-                            );
-                        })}
-                        {fgGroups.filter(g => g.no !== 0).length === 0 && (
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', padding: '4px 8px' }}>
-                                No failure groups yet
-                            </div>
-                        )}
-
-                        {/* "Not in Group" (FG-0) — same per-kind toggle mechanic
-                            as a real group, but no rename/delete since it's a
-                            permanent, non-editable bucket for a sensor that
-                            doesn't belong to a failure mode yet still needs a
-                            model built for it. */}
-                        <div
-                            className="fg-group-color-slate"
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '6px', padding: '5px 6px', marginTop: '2px', borderTop: '1px dashed var(--border)', paddingTop: '9px',
-                                background: isMemberOfGroup(0) ? 'var(--fg-tint)' : undefined,
-                            }}
-                        >
-                            <span style={{ width: '8px', height: '8px', borderRadius: '2px', flexShrink: 0, background: 'var(--fg-dot)' }} />
-                            <span style={{ flex: 1, minWidth: 0, fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Not in Group</span>
-                            {renderKindToggles(0, 'Not in Group')}
-                        </div>
-
-                        <div style={{ marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '6px' }}>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                                <input
-                                    type="text"
-                                    placeholder="New group name"
-                                    value={newGroupDraft}
-                                    onChange={(e) => { setNewGroupDraft(e.target.value); setNewGroupError(''); }}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') commitCreateGroup(sensor);
-                                    }}
-                                    style={{
-                                        flex: 1, minWidth: 0, padding: '4px 6px',
-                                        background: 'var(--input-bg)', border: `1px solid ${newGroupError ? 'var(--danger)' : 'var(--border)'}`,
-                                        borderRadius: '4px', color: 'var(--text-primary)',
-                                        fontSize: '0.75rem', outline: 'none',
-                                    }}
-                                />
-                                <button
-                                    className="text-btn"
-                                    onClick={() => commitCreateGroup(sensor)}
-                                    disabled={!newGroupDraft.trim()}
-                                >
-                                    Create
-                                </button>
-                            </div>
-                            {newGroupError && (
-                                <div style={{ fontSize: '0.68rem', color: 'var(--danger)', marginTop: '3px' }}>{newGroupError}</div>
-                            )}
-                        </div>
-                    </AnchoredPopover>
-                )}
             </div>
         );
     };
 
     return (
-        <div className="sensor-selection-widget h-full flex flex-col">
+        <div className="sensor-selection-widget h-full flex flex-col" ref={rootRef}>
             <div className="widget-header flex-shrink-0" style={{ flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
                 <input
                     type="text"
@@ -670,7 +505,7 @@ export default function SensorSelection({
                 )}
             </div>
 
-            <div className="sensor-list-widget flex-1 min-h-0 overflow-y-auto">
+            <div className="sensor-list-widget flex-1 min-h-0 overflow-y-auto" ref={listRef}>
                 {groupedSensors.map(([component, compSensors]) => {
                     const expanded = isComponentExpanded(component);
                     // "selected / total" (e.g. "2 / 8") once at least one
@@ -700,6 +535,28 @@ export default function SensorSelection({
                     <div className="no-results">No sensors found</div>
                 )}
             </div>
+
+            {fgSheetFor && (
+                <FailureGroupAssignSheet
+                    tag={fgSheetFor}
+                    sensorLabel={getMetadata(fgSheetFor)?.description || fgSheetFor}
+                    unit={getMetadata(fgSheetFor)?.unit}
+                    fgGroups={fgGroups}
+                    fgModels={fgModels}
+                    getGroupColor={getGroupColor}
+                    onToggleSensorGroupKind={onToggleSensorGroupKind}
+                    onCreateGroupForSensor={onCreateGroupForSensor}
+                    onRenameGroup={onRenameGroup}
+                    onDeleteGroup={onDeleteGroup}
+                    canStepPrev={sheetIndex > 0}
+                    canStepNext={sheetIndex >= 0 && sheetIndex < allSensorsInOrder.length - 1}
+                    onStep={stepSheet}
+                    onClose={() => setFgSheetFor(null)}
+                    getHostEl={getHostEl}
+                    getRowEl={getSheetRowEl}
+                    getListEl={getListEl}
+                />
+            )}
         </div>
     );
 }

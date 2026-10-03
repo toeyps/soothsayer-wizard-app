@@ -37,6 +37,10 @@ interface AnchoredPopoverProps {
  * 2026-09-30 SPEC FINAL entry: "popover ทุกตัว ... ต้องเรนเดอร์ผ่าน portal
  * ไม่อยู่ในรายการที่ scroll ได้" — the approved prototype's own build hit a
  * real clipping bug from rendering these inline inside a scrolling list).
+ * (2026-10-03: the add-to-failure-group menu is no longer one of these — it is
+ * the docked `FailureGroupAssignSheet`, which re-measures instead of closing on
+ * scroll/resize. This component still serves the colour picker, pin-Y-axis and
+ * alarm-setpoints popovers.)
  *
  * Position is computed ONCE from `anchorRect` (already viewport
  * coordinates, so `position: fixed` lines up directly) rather than

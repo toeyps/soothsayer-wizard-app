@@ -3,7 +3,7 @@ import { emit, UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Split from 'split.js';
 import { saveWorkspaceData, updateWorkspaceData, loadWorkspaceData } from '../../workspaceManager';
-import { withFailureGroupState } from '../../utils/failureGroupState';
+import { withFailureGroupState, restoreDeletedModel } from '../../utils/failureGroupState';
 import { modelSensorKey, sensorCategory } from '../../utils/modelGrouping';
 import { subscribe } from '../../utils/tauriEvents';
 import {
@@ -22,6 +22,8 @@ import { rgbaToHex } from '../charts/pairPlotColors';
 import { ALARM_LEVELS, alarmLevelColor } from '../../utils/alarmLevels';
 import FilterPanel, { FilterState } from './FilterPanel';
 import SensorSelection from './SensorSelection';
+import UndoToastStack from './UndoToastStack';
+import { KIND_LABEL, UNDO_SECONDS } from './FailureGroupAssignSheet';
 import FailureGroupsPanel from './FailureGroupsPanel';
 import HighlightsPanel from './HighlightsPanel';
 import ColorPlatePicker from './ColorPlatePicker';
@@ -66,6 +68,17 @@ const findKindIn = (models: FailureModel[], tag: string, kind: ModelKind) =>
     models.find(m => m.kind === kind && modelSensorKey(m) === normalizeSensorTag(tag));
 
 type PanelId = keyof typeof PANELS;
+
+// One "<Kind> model of <sensor> deleted — Undo" toast (see toggleSensorGroupKind).
+interface FgUndoEntry {
+    id: string;
+    message: string;
+    /** The deleted model. Filled from the mirror immediately and REPLACED by the
+     *  copy on disk when the write runs (disk is the truth). */
+    captured: { model: FailureModel };
+}
+// A burst of removals can't pile up an unbounded wall of toasts.
+const MAX_UNDO_TOASTS = 3;
 
 // Default split ratios used the first time a workspace is opened (no saved
 // layoutSizes yet). 66.67/33.33 mirrors the original CSS Grid `2fr 1fr`.
@@ -577,10 +590,74 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return [...models, makeDefaultModelForKind(tag, [groupNo], kind, sensorCategory(models, normalizeSensorTag(tag)))];
     }, [makeDefaultModelForKind]);
 
+    // 2026-10-03: removing a model's LAST group still deletes the model at once
+    // (the 2026-09-02 no-confirm policy stands), but now says so — a 7-second
+    // "<Kind> model of <sensor> deleted — Undo" toast. Undo puts the ORIGINAL
+    // model object back whole (same id, settings, training) through the same
+    // disk-derived write as any other FG edit, so it broadcasts
+    // `failure-group-state-changed` like they do and never reverts another
+    // window's write with a stale mirror.
+    const [undoToasts, setUndoToasts] = useState<FgUndoEntry[]>([]);
+    const undoSeq = useRef(0);
+    const dismissUndo = useCallback((id: string) => {
+        setUndoToasts(prev => prev.filter(t => t.id !== id));
+    }, []);
+
     const toggleSensorGroupKind = useCallback((tag: string, groupNo: number, kind: ModelKind) => {
+        const existing = findKindIn(fgModels, tag, kind);
+        const deletesModel = !!existing && existing.groupNos.length === 1 && existing.groupNos[0] === groupNo;
+        const entry: FgUndoEntry | null = deletesModel
+            ? {
+                id: `undo-${++undoSeq.current}`,
+                message: `${KIND_LABEL[kind]} model of ${getSensorMeta(tag)?.description || tag} deleted`,
+                captured: { model: existing! },
+            }
+            : null;
+        let announced = false;
+        const announce = (e: FgUndoEntry) => {
+            if (announced) return;
+            announced = true;
+            setUndoToasts(prev => [...prev, e].slice(-MAX_UNDO_TOASTS));
+        };
+        if (entry) announce(entry);
+
         setFgModels(applyToggle(fgModels, tag, groupNo, kind));
-        persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: applyToggle(disk.models, tag, groupNo, kind) }));
-    }, [fgModels, applyToggle, persistFailureGroupStateFrom]);
+        persistFailureGroupStateFrom(disk => {
+            const models = applyToggle(disk.models, tag, groupNo, kind);
+            const onDisk = findKindIn(disk.models, tag, kind);
+            const removedOnDisk = !!onDisk && !models.some(m => m.id === onDisk.id);
+            if (removedOnDisk) {
+                // What disk holds is the model actually being deleted — Undo
+                // restores THAT. (The mirror said no deletion, e.g. it was stale:
+                // announce from here instead.)
+                const e = entry ?? {
+                    id: `undo-${++undoSeq.current}`,
+                    message: `${KIND_LABEL[kind]} model of ${getSensorMeta(tag)?.description || tag} deleted`,
+                    captured: { model: onDisk! },
+                };
+                e.captured.model = onDisk!;
+                announce(e);
+            } else if (entry) {
+                // The mirror said "this deletes the model" but disk shows it
+                // survives (another window added it to a second group meanwhile):
+                // nothing was deleted, so retract the toast.
+                dismissUndo(entry.id);
+            }
+            return { groups: disk.groups, models };
+        });
+    }, [fgModels, applyToggle, persistFailureGroupStateFrom, getSensorMeta, dismissUndo]);
+
+    const undoModelDeletion = useCallback((id: string) => {
+        const entry = undoToasts.find(t => t.id === id);
+        dismissUndo(id);
+        if (!entry) return;
+        const original = entry.captured.model;
+        setFgModels(restoreDeletedModel(fgGroups, fgModels, original));
+        persistFailureGroupStateFrom(disk => ({
+            groups: disk.groups,
+            models: restoreDeletedModel(disk.groups, disk.models, original),
+        }));
+    }, [undoToasts, dismissUndo, fgGroups, fgModels, persistFailureGroupStateFrom]);
 
     // "Create a brand new group for this sensor" — creates the empty group
     // and, for convenience, reuses-or-creates this sensor's Individual
@@ -2717,6 +2794,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     return (
         <div className="dashboard-container">
+            <UndoToastStack
+                toasts={undoToasts}
+                onUndo={undoModelDeletion}
+                onExpire={dismissUndo}
+                durationMs={UNDO_SECONDS * 1000}
+            />
             {/* Collapsed Tabs Sidebar */}
             {collapsedPanels.size > 0 && (
                 <div className="collapsed-tabs-sidebar">

@@ -5766,3 +5766,378 @@ body {
     opacity: 0.45;
     cursor: not-allowed;
 }
+
+/* =============================================
+   Failure Group Assignment sheet (2026-10-03)
+   FailureGroupAssignSheet.tsx -- the full-height sheet docked to the left edge
+   of the Dashboard's Sensors panel that replaced the old AnchoredPopover
+   "Add to failure group" menu, plus UndoToastStack.tsx and the highlight on
+   the sensor row being edited. Matches the approved first design
+   (claude.ai artifact KdzE1gT85kLhcTwgXWveGH, NOT the Matrix popover): a
+   matrix with one row per Failure Group and one column per model kind.
+   Reuses the existing tokens/classes (--pop, --ki/--kr/--kc, .popover-surface,
+   .kind-badge, .row-action-btn, .fg-group-color-*, .fg-group-dot,
+   .sensor-row-tag) instead of adding new ones.
+   Positioning: Portal + position: fixed with a rect measured from the Sensors
+   panel by the component (inline left/top/width/height). The values below are
+   only the fallback used before the first measurement.
+   ============================================= */
+
+.fg-sheet {
+    position: fixed;
+    top: 12px;
+    bottom: 12px;
+    right: 390px;
+    width: 560px;
+    max-width: calc(100vw - 16px);
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    box-shadow: -24px 0 60px rgba(0, 0, 0, 0.55);
+    font-size: 0.8rem;
+    color: var(--text-primary);
+}
+
+/* The arrow pointing at the sensor row being edited, on the sheet's right edge. */
+.fg-sheet-notch {
+    position: absolute;
+    right: -7px;
+    top: 40px;
+    width: 12px;
+    height: 12px;
+    background: var(--pop);
+    border-top: 1px solid var(--border-strong);
+    border-right: 1px solid var(--border-strong);
+    transform: rotate(45deg);
+    z-index: 3;
+}
+
+.fg-sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 10px 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.fg-sheet-title { min-width: 0; flex: 1; }
+.fg-sheet-kicker {
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-weight: 600;
+}
+.fg-sheet-sensor {
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+}
+.fg-sheet-step {
+    display: flex;
+    gap: 2px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 2px;
+}
+.fg-sheet-step .row-action-btn { width: 26px; height: 24px; font-size: 16px; line-height: 1; }
+.fg-sheet-step .row-action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.fg-sheet-tools {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.fg-sheet-search {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    color: var(--text-faint);
+}
+.fg-sheet-search:focus-within { border-color: var(--accent-color); }
+.fg-sheet-search input {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: 0;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+}
+.fg-sheet-seg {
+    display: inline-flex;
+    flex-shrink: 0;
+    gap: 2px;
+    padding: 3px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+}
+.fg-sheet-seg button {
+    border: 0;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.fg-sheet-seg button:hover { color: var(--text-primary); }
+.fg-sheet-seg button.on { background: var(--accent-muted); color: var(--accent-hi); }
+.fg-sheet-num { font-family: var(--mono); font-size: 0.66rem; opacity: 0.75; }
+
+.fg-sheet-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 4px;
+    display: flex;
+    flex-direction: column;
+}
+/* Shared column template: dot | name | I | R | C | menu. */
+.fg-sheet-grid {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) repeat(3, minmax(52px, 72px)) 28px;
+    column-gap: 8px;
+    align-items: center;
+}
+/* Column headers stay put while the group list scrolls under them. */
+.fg-sheet-colh {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--pop);
+    margin: 0 -4px;
+    padding: 8px 14px 8px 16px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-strong);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.fg-sheet-ch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.68rem;
+    color: var(--text-primary);
+    text-align: center;
+    white-space: nowrap;
+}
+.fg-sheet-ch small {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: var(--text-faint);
+}
+.fg-sheet-ch small.has { color: var(--accent-hi); }
+.fg-sheet-sec {
+    font-size: 0.64rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 12px 12px 4px;
+}
+.fg-sheet-empty { padding: 14px 12px; font-size: 0.75rem; color: var(--text-faint); }
+
+.fg-sheet-row {
+    position: relative;
+    flex-shrink: 0;
+    min-height: 46px;
+    padding: 5px 10px 5px 12px;
+    border-radius: 9px;
+}
+.fg-sheet-row:hover { background: var(--hover-bg); }
+/* A group this sensor is in: a bar in the group's own colour + bold name. The
+   tint stays put when a cell is toggled (the row only changes colour in place). */
+.fg-sheet-row--in {
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: inset 3px 0 0 var(--fg-dot, var(--text-faint));
+}
+.fg-sheet-row--flash { animation: fg-sheet-flash 1.2s; }
+@keyframes fg-sheet-flash {
+    0% { background: oklch(0.72 0.15 150 / 0.3); }
+    100% { background: transparent; }
+}
+.fg-sheet-dot { width: 10px; height: 10px; border-radius: 3px; }
+.fg-sheet-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.3; }
+.fg-sheet-gname {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.fg-sheet-row--in .fg-sheet-gname { color: var(--text-primary); font-weight: 600; }
+.fg-sheet-gno { font-family: var(--mono); font-size: 0.62rem; color: var(--text-faint); }
+
+/* The matrix cell. Empty = an empty box (the + and the kind colour only show on
+   hover/focus); selected = filled with the kind colour and a check. */
+.fg-sheet-cell {
+    height: 32px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: var(--input-bg);
+    color: var(--cc);
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+}
+.fg-sheet-cell--individual { --cc: var(--ki); }
+.fg-sheet-cell--relationship { --cc: var(--kr); }
+.fg-sheet-cell--clustering { --cc: var(--kc); }
+.fg-sheet-cell svg { pointer-events: none; }
+.fg-sheet-plus { opacity: 0; display: grid; place-items: center; }
+.fg-sheet-cell:hover { border-color: var(--cc); }
+.fg-sheet-cell:hover .fg-sheet-plus,
+.fg-sheet-cell:focus-visible .fg-sheet-plus { opacity: 1; }
+.fg-sheet-cell.is-on { background: var(--cc); border-color: transparent; color: #06111f; }
+.fg-sheet-cell.is-on:hover { filter: brightness(1.1); }
+
+.fg-sheet-more { display: flex; justify-content: center; }
+.fg-sheet-dots { opacity: 0; font-size: 15px; letter-spacing: 1px; }
+.fg-sheet-row:hover .fg-sheet-dots,
+.fg-sheet-dots:focus-visible { opacity: 1; }
+
+/* Row menu: replaces the three cells with Rename / Delete... */
+.fg-sheet-acts { grid-column: 3 / 6; display: flex; gap: 6px; justify-content: flex-end; }
+.fg-sheet-renamefield { grid-column: 2 / 6; }
+.fg-sheet-confirm {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 6px;
+    padding: 6px 6px 6px 10px;
+    border-radius: 8px;
+    background: oklch(0.68 0.2 25 / 0.12);
+    font-size: 0.72rem;
+}
+.fg-sheet-confirm span { flex: 1; min-width: 0; }
+
+/* "Not in Group": pinned to the bottom of the list whatever the search says. */
+.fg-sheet-none {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin: auto -4px 0;
+    padding: 4px 4px 6px;
+    background: var(--pop);
+    border-top: 1px dashed var(--border-strong);
+}
+.fg-sheet-none .fg-sheet-gname { color: var(--text-secondary); font-weight: 500; }
+
+.fg-sheet-foot {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.fg-sheet-input {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    padding: 0 9px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    outline: none;
+}
+.fg-sheet-input:focus { border-color: var(--accent-color); }
+.fg-sheet-input.is-bad { border-color: var(--danger); }
+.fg-sheet-err { font-size: 0.68rem; color: var(--danger); padding: 0 14px 8px; margin-top: -4px; }
+.fg-sheet-err--row { grid-column: 2 / -1; padding: 4px 0 0; margin: 0; }
+
+.fg-sheet-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.74rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.fg-sheet-btn:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.18); background: var(--hover-bg); }
+.fg-sheet-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.fg-sheet-btn--primary { background: var(--accent-color); border-color: transparent; color: #06111f; font-weight: 600; }
+.fg-sheet-btn--primary:hover:not(:disabled) { background: var(--accent-hi); }
+.fg-sheet-btn--danger-o { color: var(--danger); }
+.fg-sheet-btn--danger { background: var(--danger); border-color: transparent; color: #fff; font-weight: 600; }
+.fg-sheet-btn--danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.1); }
+
+/* The sensor row the sheet's arrow points at -- chips inside it change live. */
+.sensor-list-row--fg-target {
+    background: var(--accent-muted);
+    box-shadow: inset 2px 0 0 var(--accent-color);
+}
+
+/* "<Kind> model of <sensor> deleted -- Undo" toasts (UndoToastStack.tsx). */
+.fg-undo-stack {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+}
+.fg-undo-toast {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    background: var(--pop);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    font-size: 0.75rem;
+    color: var(--text-primary);
+}
+.fg-undo-toast-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+.fg-undo-toast-msg { flex: 1; min-width: 0; }
+.fg-undo-toast-btn {
+    flex-shrink: 0;
+    border: 0;
+    background: none;
+    padding: 2px 8px;
+    border-radius: 6px;
+    color: var(--accent-hi);
+    font-weight: 600;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+.fg-undo-toast-btn:hover { background: var(--hover-bg); }
+
+@media (prefers-reduced-motion: reduce) {
+    .fg-sheet-row--flash { animation: none; }
+}
