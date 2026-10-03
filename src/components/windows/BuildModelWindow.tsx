@@ -2883,6 +2883,7 @@ export default function BuildModelWindow() {
                         getDesc={getDesc}
                         getUnit={getUnit}
                         rows={persistedRows}
+                        bounds={datasetBounds}
                         onOpen={() => setRcFilterOpen(true)}
                     />
 

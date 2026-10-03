@@ -77,15 +77,85 @@ describe('RunningConditionPanel — two-column layout (mockup 1pp59aydphzaDu2R1S
         expect(screen.getByTestId('rc-preview').className).toContain('rcm-preview');
     });
 
-    it('step 1 uses the period cards (P1, P2) and no longer draws a coverage strip or the old collapsible header', () => {
+    it('step 1 uses the period cards (P1, P2) and not the old collapsible header', () => {
         setup();
         const rows = within(screen.getByTestId('rc-periods')).getAllByTestId(/^period-row-/);
         expect(rows).toHaveLength(2);
         expect(rows[0].className).toContain('rcm-per');
         expect(rows[0].querySelector('.rcm-pn')!.textContent).toBe('P1');
-        expect(screen.queryByTestId('period-coverage')).toBeNull();
         expect(screen.queryByRole('button', { name: /Running Condition Filter/ })).toBeNull();
         expect(screen.queryByTestId('rc-summary')).toBeNull();
+    });
+});
+
+describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; removed by mistake in 011675b)', () => {
+    // bounds: 2025-01-01 00:00 -> 2026-03-31 23:50  => 455 days
+    const JAN = [p('a', '2025-01-01T00:00', '2025-01-31T23:59')];
+    const blockStyle = () => {
+        const i = within(screen.getByTestId('rc-periods')).getByTestId('period-coverage').querySelectorAll('.f4-strip i');
+        return Array.from(i).map(el => ({ left: parseFloat((el as HTMLElement).style.left), width: parseFloat((el as HTMLElement).style.width), cls: el.className }));
+    };
+
+    it('sits inside "1 Which time", ABOVE the period cards, with the hatched strip, axis ends and "N of M days used"', () => {
+        setup({ periods: JAN });
+        const section = screen.getByTestId('rc-periods');
+        const cov = within(section).getByTestId('period-coverage');
+        expect(cov.className).toContain('rcm-cov');
+        expect(cov.querySelector('.f4-strip')).not.toBeNull();
+        expect(cov.textContent).toContain('Jan 2025');
+        expect(cov.textContent).toContain('Mar 2026');
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 of 455 days used');
+        const firstRow = within(section).getByTestId('period-row-1');
+        // coverage comes before the first card in document order
+        expect(cov.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('draws one block per period', () => {
+        setup({ periods: [p('a', '2025-01-01T00:00', '2025-01-31T23:59'), p('b', '2025-06-01T00:00', '2025-06-30T23:59')] });
+        expect(blockStyle()).toHaveLength(2);
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('61 of 455 days used');
+    });
+
+    it('updates live while a date is being edited (the draft, not the committed list)', () => {
+        setup({ periods: JAN });
+        const before = blockStyle()[0].width;
+        fireEvent.change(screen.getByLabelText('Period 1 end'), { target: { value: '2025-03-31T23:59' } });
+        expect(blockStyle()[0].width).toBeGreaterThan(before);
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('90 of 455 days used');
+    });
+
+    it('open ends extend to the dataset edge (blank start -> 0%, blank end -> 100%)', () => {
+        setup({ periods: [p('a', '', '2025-01-31T23:59')] });
+        expect(blockStyle()[0].left).toBe(0);
+        cleanup();
+        setup({ periods: [p('a', '2026-03-01T00:00', '')] });
+        const b = blockStyle()[0];
+        expect(Math.round(b.left + b.width)).toBe(100);
+    });
+
+    it('a reversed period is drawn red (bad) and not counted as used days', () => {
+        setup({ periods: [p('a', '2025-03-01T00:00', '2025-02-01T00:00')] });
+        expect(blockStyle()[0].cls).toContain('bad');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('0 of 455 days used');
+    });
+
+    it('an overlapping period is drawn hatched (ovl)', () => {
+        setup({ periods: [p('a', '2025-01-01T00:00', '2025-02-28T23:59'), p('b', '2025-02-15T00:00', '2025-03-31T23:59')] });
+        const blocks = blockStyle();
+        expect(blocks[0].cls).toBe('');
+        expect(blocks[1].cls).toContain('ovl');
+    });
+
+    it('no strip, and no error, while the dataset bounds are not available yet', () => {
+        setup({ periods: JAN, bounds: null });
+        expect(screen.queryByTestId('period-coverage')).toBeNull();
+        expect(screen.getAllByTestId(/^period-row-/)).toHaveLength(1);
+    });
+
+    it('no strip when there is no period (the "No period" note covers the whole dataset)', () => {
+        setup({ periods: [] });
+        expect(screen.queryByTestId('period-coverage')).toBeNull();
+        expect(screen.getByTestId('periods-empty')).toBeTruthy();
     });
 });
 

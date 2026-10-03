@@ -180,6 +180,64 @@ describe('RunningConditionCard — Set', () => {
         expect(onOpen).toHaveBeenCalledTimes(1);
     });
 
+    describe('period strip (restored 2026-10-03)', () => {
+        // 2025-01-01 -> 2026-07-31 23:50 = 577 days
+        const B = { min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' };
+        const cov = () => within(screen.getByTestId('rc-card')).getByTestId('period-coverage');
+
+        it('draws one block per PERSISTED period under the rows-used bar, with start/end year-month and a short day count', () => {
+            card({ bounds: B });
+            expect(cov().querySelectorAll('.f4-strip i')).toHaveLength(2);
+            expect(cov().className).toContain('f4-cov--mini');
+            expect(cov().textContent).toContain('Jan 2025');
+            expect(cov().textContent).toContain('Jul 2026');
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 / 577 d'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
+            expect(screen.getByTestId('rc-card-use').contains(cov())).toBe(true);
+            // the rows-used count, % and bar are all still there
+            expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
+            expect(screen.getByTestId('rc-card-use').querySelector('.rcc-meter')).not.toBeNull();
+        });
+
+        it('reads the periods prop only: re-rendering with the same persisted periods does not change it', () => {
+            const { rerender } = render(
+                <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
+                    getDesc={() => ''} getUnit={() => ''} rows={OK} bounds={B} onOpen={vi.fn()} />,
+            );
+            const first = within(cov()).getByTestId('period-coverage-days').textContent;
+            expect(first).toBe('31 / 577 d');
+            rerender(
+                <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
+                    getDesc={() => ''} getUnit={() => ''} rows={{ status: 'ok', used: 1, total: 2 }} bounds={B} onOpen={vi.fn()} />,
+            );
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe(first);
+        });
+
+        it('no periods = a full strip ("all N days")', () => {
+            card({ periods: [], bounds: B });
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('all 577 days');
+        });
+
+        it('open ends reach the edge of the strip', () => {
+            card({ periods: [p('a', '2026-07-01T00:00', '')], bounds: B });
+            const b = cov().querySelector('.f4-strip i') as HTMLElement;
+            expect(Math.round(parseFloat(b.style.left) + parseFloat(b.style.width))).toBe(100);
+        });
+
+        it('hidden (no strip, nothing else changes) while the dataset bounds are unknown', () => {
+            card({ bounds: null });
+            expect(screen.queryByTestId('period-coverage')).toBeNull();
+            expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
+            cleanup();
+            card({ bounds: { min: null, max: null } });
+            expect(screen.queryByTestId('period-coverage')).toBeNull();
+        });
+
+        it('is not drawn on the unset / invalid cards', () => {
+            card({ state: 'unset', bounds: B });
+            expect(screen.queryByTestId('period-coverage')).toBeNull();
+        });
+    });
+
     it('while counting: "Counting rows…" first, then the previous numbers stay; on failure: "— rows" with a title; idle: nothing', () => {
         card({ rows: { status: 'loading', used: null, total: null } });
         expect(screen.getByTestId('rc-card-rows-loading').textContent).toBe('Counting rows…');

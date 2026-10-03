@@ -2221,6 +2221,48 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 100%');
         });
 
+        it('🆕 2026-10-03: Set card carries the small period strip (persisted periods, restored after 011675b dropped it); the modal draft moves its own strip only, Apply moves the card strip', async () => {
+            const impl = (cmd: string) => cmd === 'get_dataset_time_bounds'
+                ? Promise.resolve({ min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' })
+                : cmd === 'compute_sensor_stats' ? Promise.resolve({ count: 100 }) : Promise.resolve({});
+            mockInvoke.mockImplementation(impl);
+            const fg = setFg();
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: fg });
+            statefulUpdateMock(fg.models, fg);
+            await flush();
+            const cardCov = () => within(screen.getByTestId('rc-card')).getByTestId('period-coverage');
+            expect(cardCov().querySelectorAll('.f4-strip i')).toHaveLength(2);
+            expect(cardCov().textContent).toContain('Jan 2025');
+            expect(cardCov().textContent).toContain('Jul 2026');
+            const cardDays = () => within(cardCov()).getByTestId('period-coverage-days').textContent;
+            const persisted = cardDays();
+            expect(persisted).toMatch(/^\d+ \/ 577 d$/);
+
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await flush();
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            const modalDays = () => dlg.getByTestId('period-coverage-days').textContent;
+            const modalBefore = modalDays();
+            fireEvent.change(dlg.getByLabelText('Period 1 end'), { target: { value: '2026-02-10T23:59' } });
+            expect(modalDays()).not.toBe(modalBefore); // the modal strip follows the draft...
+            expect(cardDays()).toBe(persisted); // ...the card strip does not
+            fireEvent.blur(dlg.getByLabelText('Period 1 end')); // commit the typed date into the modal draft
+            await flush();
+            expect(cardDays()).toBe(persisted); // still the persisted periods (draft committed, not applied)
+
+            fireEvent.click(screen.getByTestId('rc-apply'));
+            await flush();
+            expect(cardDays()).not.toBe(persisted); // Apply commits -> the card now draws the new period
+        });
+
+        it('🆕 2026-10-03: no period strip on the card while the dataset bounds are unknown', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: setFg() });
+            await waitFor(() => expect(screen.getByTestId('rc-card-rows')).toBeTruthy());
+            expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
+        });
+
         it('Set with "Use all rows": "All rows — no condition" and a single unfiltered count query', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] }) });

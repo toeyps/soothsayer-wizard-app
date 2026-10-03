@@ -92,10 +92,21 @@ describe('TimePeriodsEditor - wide period cards (Running condition modal, mockup
         expect(onChange.mock.calls[0][0]).toEqual([B]);
     });
 
-    it('no coverage strip in the modal (the preview column carries the row count instead)', () => {
+    it('the modal keeps the coverage strip above the cards (restored — it was removed by mistake on 2026-10-03)', () => {
         render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={bounds} />);
+        const cov = screen.getByTestId('period-coverage');
+        expect(cov.className).toContain('rcm-cov');
+        expect(document.querySelector('.f4-strip')).not.toBeNull();
+        expect(cov.compareDocumentPosition(screen.getByTestId('period-row-1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.getByTestId('period-coverage-days').textContent).toMatch(/ of 74 days used$/);
+    });
+
+    it('no strip without dataset bounds, nor with an empty list', () => {
+        render(<TimePeriodsEditor periods={[A]} onChange={vi.fn()} bounds={null} />);
         expect(screen.queryByTestId('period-coverage')).toBeNull();
-        expect(document.querySelector('.f4-strip')).toBeNull();
+        cleanup();
+        render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} />);
+        expect(screen.queryByTestId('period-coverage')).toBeNull();
     });
 
     it('empty state: "No period — the whole dataset (N days) is used." plus the dashed "Add period" button', () => {

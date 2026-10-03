@@ -3,7 +3,8 @@ import { Check } from 'lucide-react';
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
-import { conditionChipParts, formatPeriodChip } from './periodDisplay';
+import { conditionChipParts, formatPeriodChip, type DataBounds } from './periodDisplay';
+import { PeriodCoverageBar } from './RunningConditionParts';
 import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 
 /*
@@ -51,6 +52,8 @@ interface RunningConditionCardProps {
     getUnit: (tag: string) => string;
     /** Row count of the PERSISTED condition. */
     rows: RowCountPreview;
+    /** Dataset extent (`useDatasetTimeBounds`) — null/unknown hides the period strip. */
+    bounds?: DataBounds | null;
     /** Opens the settings modal (Edit / Set running condition / Fix period). */
     onOpen: () => void;
 }
@@ -70,7 +73,7 @@ function PeriodChips({ periods }: { periods: TimePeriod[] }) {
     );
 }
 
-export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, onOpen }: RunningConditionCardProps) {
+export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen }: RunningConditionCardProps) {
     if (state === 'unset') {
         return (
             <section className="rcc-card rcc-card--req" data-testid="rc-card" data-state="unset">
@@ -147,6 +150,10 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                         <div className="rcc-meter" role="img" aria-label="Share of rows used"><span style={{ width: `${pct}%` }} /></div>
                     </>
                 )}
+                {/* Small period strip (restored 2026-10-03). PERSISTED periods only —
+                    the settings modal's draft never reaches this card. Hidden while the
+                    dataset bounds are unknown. */}
+                <PeriodCoverageBar periods={periods} bounds={bounds} mini />
             </div>
             <button type="button" className="rcx-btn rcx-btn--lg" data-testid="rc-card-open" onClick={onOpen}>Edit</button>
         </section>

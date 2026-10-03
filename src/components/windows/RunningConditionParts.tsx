@@ -11,12 +11,22 @@ import { buildRuleModel, computeCoverage, conditionChipParts, formatPeriodChip, 
  * `periodDisplay.ts`.
  */
 
-/** Dataset timeline with one block per period and "N of M days used". */
-export function PeriodCoverageBar({ periods, bounds }: { periods: TimePeriod[]; bounds: DataBounds | null | undefined }) {
+/** Dataset timeline with one block per period and "N of M days used".
+ *  `className` lets a host (the settings modal) restyle the wrapper;
+ *  `mini` is the Step-1 card variant: thinner strip, shorter day caption. */
+export function PeriodCoverageBar({ periods, bounds, className, mini = false }: {
+    periods: TimePeriod[];
+    bounds: DataBounds | null | undefined;
+    className?: string;
+    mini?: boolean;
+}) {
     const cov = computeCoverage(periods, bounds);
     if (!cov) return null;
+    const days = cov.unlimited
+        ? `all ${cov.totalDays} days`
+        : mini ? `${cov.usedDays} / ${cov.totalDays} d` : `${cov.usedDays} of ${cov.totalDays} days used`;
     return (
-        <div data-testid="period-coverage">
+        <div data-testid="period-coverage" className={[className, mini ? 'f4-cov--mini' : ''].filter(Boolean).join(' ') || undefined}>
             <div className="f4-strip" role="img" aria-label="Periods on the dataset timeline">
                 {cov.segments.map((s, i) => (
                     <i
@@ -29,9 +39,7 @@ export function PeriodCoverageBar({ periods, bounds }: { periods: TimePeriod[]; 
             </div>
             <div className="f4-strip-ax">
                 <span>{cov.axisLeft}</span>
-                <span data-testid="period-coverage-days">
-                    {cov.unlimited ? `all ${cov.totalDays} days` : `${cov.usedDays} of ${cov.totalDays} days used`}
-                </span>
+                <span data-testid="period-coverage-days">{days}</span>
                 <span>{cov.axisRight}</span>
             </div>
         </div>

@@ -31,7 +31,8 @@ import { PeriodCoverageBar } from './RunningConditionParts';
  * by the Overview's Running condition modal, is the 2026-10-03 redesign (mockup
  * 1pp59aydphzaDu2R1SvKGh): one card per period "P1 [start] -> [end] 31 d [bin]",
  * open ends as "Start of data" / "End of data" with Set date / x, overlap in a
- * yellow frame with Merge into one, an invalid period in a red frame.
+ * yellow frame with Merge into one, an invalid period in a red frame. The
+ * dataset coverage strip sits above the cards (same component as compact).
  */
 
 export interface PeriodBounds {
@@ -321,7 +322,12 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
                     <div data-testid="periods-empty" className="rcm-none">
                         <span><b>No period</b> — the whole dataset{totalDays !== null ? ` (${totalDays} days)` : ''} is used.</span>
                     </div>
-                ) : draft.map((p, i) => {
+                ) : (
+                    // Coverage strip (restored 2026-10-03 — it was removed by mistake in
+                    // 011675b): draws the editor's own draft, so it follows every edit.
+                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" />
+                )}
+                {draft.map((p, i) => {
                     const st = statuses[i];
                     const days = periodDays(p, boundsForCover);
                     return (

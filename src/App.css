@@ -6143,6 +6143,9 @@ body {
 .rcc-use-n b { font: 600 18px var(--mono); color: var(--text-primary); }
 .rcc-meter { height: 8px; border-radius: 99px; background: var(--chip-bg); overflow: hidden; }
 .rcc-meter span { display: block; height: 100%; background: var(--ok); border-radius: 99px; transition: width 0.25s; }
+/* small period strip under the rows-used meter (same PeriodCoverageBar, "mini") */
+.rcc-use .f4-cov--mini { margin-top: 2px; }
+.rcc-use .f4-cov--mini .f4-strip { height: 8px; border-radius: 99px; }
 
 /* results area while Step 1 is not done */
 .bmw-stage-lock { display: flex; align-items: center; justify-content: center; gap: 14px; text-align: left; color: var(--text-secondary); font-size: 12.5px; }
@@ -6168,6 +6171,10 @@ body {
 
 /* step 1: period cards */
 .rcm-periods { display: flex; flex-direction: column; gap: 8px; }
+/* dataset coverage strip above the period cards (PeriodCoverageBar, className rcm-cov) */
+.rcm-cov { padding: 2px 2px 4px; }
+.rcm-cov .f4-strip { height: 16px; border-radius: 8px; }
+.rcm-cov .f4-strip-ax { font-size: 10.5px; margin-top: 5px; }
 .rcm-per { display: grid; grid-template-columns: 28px minmax(0, 1fr) 18px minmax(0, 1fr) 56px 28px; gap: 8px; align-items: center; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 8px 10px; }
 .rcm-per--bad { border-color: var(--danger-line); background: var(--danger-muted); }
 .rcm-per--ovl { border-color: var(--warn-line); }
