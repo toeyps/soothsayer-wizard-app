@@ -23,6 +23,8 @@ import ResponsiveECharts from "../charts/ResponsiveECharts";
 import { ChartMarkLine } from "../charts/ChartTypes";
 import { useChartData } from "../../hooks/useChartData";
 import { debugLog } from "../../utils/debugLog";
+import SubModelsModal from "./SubModelsModal";
+import { useSubModelFits } from "./useSubModelFits";
 
 // Point budget for the target-sensor time series. Rust's `get_chart_data`
 // min/max-decimates the filtered rows down to at most this many x-positions,
@@ -817,29 +819,11 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     const [relFitProgress, setRelFitProgress] = useState<{ current: number; total: number } | null>(null);
 
     // ── Sub-model fits (per cumulative-step) ──────────────────────────
-    // For predictors=[p1,p2,p3] we make N=3 LinearGAM fits — f(p1),
-    // f(p1,p2), f(p1,p2,p3) — and stash each one's full preview payload.
-    // This lets the user open a "sub-models" view from the Relationship
-    // chart and see one detail chart per cumulative step, each with its
-    // own R² / 2·RMSE so they can judge how each added predictor
-    // contributes to the fit. Fired by the LayoutGrid button on the
-    // Relationship chart card header.
-    interface SubModelFit {
-        predictors: string[];                  // cumulative subset (length 1..N)
-        result: RelationshipPreviewResult;     // sidecar response for THIS subset
-    }
-    const [subModels, setSubModels] = useState<SubModelFit[] | null>(null);
-    const [subModelsLoading, setSubModelsLoading] = useState(false);
-    const [subModelsError, setSubModelsError] = useState<string | null>(null);
-    const [subModelsProgress, setSubModelsProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+    // The fit loop + the modal now live in `useSubModelFits` / `SubModelsModal`
+    // (shared with the Build Model Workbench's "Compare predictors" — extracted
+    // 2026-10-04, behaviour unchanged). This page only owns the open flag; the
+    // hook itself is called further down, once `relPreview` / `fitIsStale` exist.
     const [subModelsOpen, setSubModelsOpen] = useState(false);
-    // Generation counter for sub-model fits. Each call to `runSubModelFits`
-    // bumps this and remembers its own gen number; on completion it only
-    // commits results when its gen still matches `current` — guarantees a
-    // late-finishing older call can't overwrite a newer Apply's results.
-    // Needed because Apply now fires sub-models in the background, so two
-    // overlapping Applies are possible if the user re-clicks during phase 2.
-    const subModelsGenRef = useRef(0);
     // Clustering preview result + status.
     const [clusteringPreview, setClusteringPreview] = useState<ClusteringPreview | null>(null);
     const [clusteringLoading, setClusteringLoading] = useState(false);
@@ -899,18 +883,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [expandedChart]);
-
-    // ESC key closes the sub-models modal (parallels expandedChart above).
-    // Listener is only attached while the modal is open so unrelated key
-    // presses don't pay for it.
-    useEffect(() => {
-        if (!subModelsOpen) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setSubModelsOpen(false);
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [subModelsOpen]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1310,22 +1282,19 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         return false;
     }, [relPreview, predictorSensors]);
 
-    // True when cached sub-model fits no longer line up with the current
-    // predictor list (count or order). Drives a "Refresh" hint in the
-    // sub-models modal and lets `handleOpenSubModels` know to re-fit on
-    // open. Mirrors `fitIsStale` semantics — predictor list changes are
-    // surfaced as stale rather than silently invalidated, so the user
-    // chooses when to pay for the N additional sidecar calls.
-    const subModelsStale = useMemo(() => {
-        if (!subModels) return false;
-        if (subModels.length !== predictorSensors.length) return true;
-        const last = subModels[subModels.length - 1].predictors;
-        if (last.length !== predictorSensors.length) return true;
-        for (let i = 0; i < last.length; i++) {
-            if (last[i] !== predictorSensors[i]) return true;
-        }
-        return false;
-    }, [subModels, predictorSensors]);
+    // Sub-model fits (cumulative predictor subsets) — see `useSubModelFits`.
+    // The full-predictor step reuses the main fit while it is still current.
+    const subModelFits = useSubModelFits({
+        targetSensor,
+        predictors: predictorSensors,
+        lambda: relStiffness,
+        filter: dashboardFilterPayload,
+        blocked: filterBlocked,
+        reusable: relPreview && !fitIsStale ? relPreview.result : null,
+        // Any change to (target, lambda, dashboard filter) makes prior sub-fits
+        // moot; a predictor-list change shows up as `stale` instead.
+        resetKey: `${targetSensor}|${relStiffness}|${dashboardFilterKey}`,
+    });
 
     // Invalidate the cached fit whenever the regression target, the smoothness
     // parameter, or the dashboard filter changes — any of those produce a
@@ -1335,16 +1304,6 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
     useEffect(() => {
         setRelPreview(null);
         setRelError(null);
-    }, [targetSensor, relStiffness, dashboardFilterKey]);
-
-    // Sub-models share the same cache-invalidation contract as relPreview:
-    // any change to (target, lambda, dashboard filter) makes prior sub-fits
-    // moot. Predictor-list changes are surfaced via `subModelsStale`
-    // instead, so we don't silently throw away results the user might
-    // still want to compare against.
-    useEffect(() => {
-        setSubModels(null);
-        setSubModelsError(null);
     }, [targetSensor, relStiffness, dashboardFilterKey]);
 
     // Scatter chart option for the Relationship mode preview:
@@ -1733,227 +1692,18 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
         // the button re-enables and the user can keep working while phase 2
         // (cumulative sub-model fits) finishes IN THE BACKGROUND.
         await runRelationshipFit();
-        runSubModelFits().catch(err => {
-            // Errors are already surfaced via `subModelsError` state inside
-            // runSubModelFits; the catch here just prevents an unhandled
-            // promise rejection warning from the fire-and-forget pattern.
-            console.warn('Background sub-models fit failed:', err);
-        });
+        // `run` never throws (errors surface via `subModelFits.error`).
+        void subModelFits.run();
     };
-
-    /**
-     * Loops `preview_relationship_model` over CUMULATIVE subsets of the
-     * predictor list — predictors=[p1,p2,p3] yields three sequential
-     * sidecar calls returning fits for [p1], [p1,p2], [p1,p2,p3]. The
-     * full payload of each fit is stashed so the sub-models view can
-     * draw a per-step scatter alongside the per-step R² / 2·RMSE.
-     *
-     * Reuses the cached `relPreview` for the final (full-predictor)
-     * subset when it's already up-to-date, so we don't refit the same
-     * model twice on a fresh open.
-     *
-     * Awaited sequentially rather than `Promise.all`'d on purpose: the
-     * sidecar is a single-process pool, so parallel calls would queue
-     * anyway, and serial execution gives us cheap progress reporting.
-     */
-    const runSubModelFits = useCallback(async () => {
-        if (!targetSensor || predictorSensors.length === 0 || filterBlocked) return;
-        const subsetPredictors = [...predictorSensors];
-        const total = subsetPredictors.length;
-        // Claim a generation. Late-finishing older calls will see their
-        // gen != current at write time and skip the state commit.
-        const myGen = ++subModelsGenRef.current;
-        setSubModelsLoading(true);
-        setSubModelsError(null);
-        setSubModelsProgress({ current: 0, total });
-        const results: SubModelFit[] = [];
-        try {
-            for (let i = 1; i <= total; i++) {
-                const subset = subsetPredictors.slice(0, i);
-                const isLast = i === total;
-                const cachedMatches =
-                    relPreview &&
-                    !fitIsStale &&
-                    relPreview.predictorsAtApply.length === subset.length;
-                if (isLast && cachedMatches) {
-                    // Full-predictor fit already lives in `relPreview`; reuse it
-                    // verbatim so the bottom card matches the inline chart.
-                    results.push({ predictors: subset, result: relPreview!.result });
-                    setSubModelsProgress({ current: i, total });
-                    continue;
-                }
-                const r = await invoke<RelationshipPreviewResult>("preview_relationship_model", {
-                    predictors: subset,
-                    target: targetSensor,
-                    lambda: relStiffness,
-                    filter: dashboardFilterPayload,
-                });
-                if (r.error) throw new Error(r.error);
-                results.push({ predictors: subset, result: r });
-                setSubModelsProgress({ current: i, total });
-            }
-            if (myGen === subModelsGenRef.current) {
-                setSubModels(results);
-                debugLog("Sub-model fits complete:", results.map(r => ({
-                    predictors: r.predictors,
-                    rows: r.result.predicted.length,
-                    r2: r.result.r2_per_step[r.result.r2_per_step.length - 1],
-                })));
-            } else {
-                debugLog(`[PM] Discarding stale sub-models result (gen ${myGen} vs current ${subModelsGenRef.current})`);
-            }
-        } catch (e) {
-            if (myGen === subModelsGenRef.current) {
-                const msg = e instanceof Error ? e.message : String(e);
-                setSubModelsError(msg);
-                console.error("runSubModelFits failed:", e);
-            }
-        } finally {
-            // Only the latest gen flips loading off — older calls' finally
-            // would otherwise momentarily clear a still-running newer call's
-            // loading flag.
-            if (myGen === subModelsGenRef.current) {
-                setSubModelsLoading(false);
-            }
-        }
-    }, [targetSensor, predictorSensors, relStiffness, dashboardFilterPayload, filterBlocked, relPreview, fitIsStale]);
 
     /** Open the sub-models modal; lazy-fits when no/stale cache. */
     const handleOpenSubModels = () => {
         setSubModelsOpen(true);
         if (!targetSensor || predictorSensors.length === 0) return;
-        if ((!subModels || subModelsStale) && !subModelsLoading) {
-            runSubModelFits();
+        if ((!subModelFits.subModels || subModelFits.stale) && !subModelFits.loading) {
+            void subModelFits.run();
         }
     };
-
-    /**
-     * Build an ECharts scatter option for ONE sub-model fit. Mirrors the
-     * structure of the main `relScatterOption` but tailored for the
-     * compact card layout in the sub-models modal (smaller margins,
-     * font sizes). All sub-graphs share the same X-axis sensor — the
-     * first predictor in the cumulative subset, which is also the FIRST
-     * predictor of the full list, so apples-to-apples across cards.
-     */
-    const buildSubModelOption = useCallback((fit: SubModelFit, xSensor: string) => {
-        const { result, predictors } = fit;
-        const xRaw = result.predictor_raw;
-        const yRaw = result.target_raw;
-        const yPred = result.predicted;
-        if (!xRaw || !yRaw || !yPred) return null;
-        if (xRaw.length === 0) return null;
-
-        const xIdx = predictors.indexOf(xSensor);
-        if (xIdx < 0) return null;
-
-        // Visual refresh (2026-10-02): same literal values LineChart.tsx
-        // uses for its `txtPrimary`/`txtSecondary`/`gridLine`/`tooltipBg`/
-        // `tooltipBorder` (kept in sync by eye — ECharts renders to canvas
-        // and can't read CSS custom properties). These three preview-chart
-        // builders were still on the pre-refresh slate palette until this
-        // fix; see LineChart.tsx's own comment for the full rationale.
-        const txtPrimary    = '#ededef';
-        const txtSecondary  = '#8c8c94';
-        const gridLine      = '#2a2a30';
-        const tooltipBg     = 'rgba(23, 23, 28, 0.92)';
-        const tooltipBorder = 'rgba(255, 255, 255, 0.12)';
-
-        const rawPoints: [number, number][] = [];
-        const modelPoints: [number, number][] = [];
-        const n = Math.min(xRaw.length, yRaw.length, yPred.length);
-        for (let i = 0; i < n; i++) {
-            const xv = xRaw[i]?.[xIdx];
-            if (typeof xv !== 'number' || !Number.isFinite(xv)) continue;
-            const yr = yRaw[i];
-            if (typeof yr === 'number' && Number.isFinite(yr)) rawPoints.push([xv, yr]);
-            const yp = yPred[i];
-            if (typeof yp === 'number' && Number.isFinite(yp)) modelPoints.push([xv, yp]);
-        }
-
-        const totalPoints = rawPoints.length + modelPoints.length;
-        const isLargeData = totalPoints > 2000;
-        const isHugeData = totalPoints > 20000;
-        const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
-        const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
-
-        const seriesCommon = {
-            type: 'scatter' as const,
-            symbolSize,
-            large: isLargeData,
-            largeThreshold: 2000,
-            progressive: 5000,
-            progressiveThreshold: 10000,
-            emphasis: { scale: !isHugeData, disabled: isHugeData },
-            silent: isHugeData,
-        };
-
-        return {
-            backgroundColor: 'transparent',
-            textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
-            animation: !isLargeData,
-            tooltip: {
-                trigger: 'item',
-                backgroundColor: tooltipBg,
-                borderColor: tooltipBorder,
-                textStyle: { color: txtPrimary },
-                formatter: (p: any) => {
-                    const v = p.value as [number, number];
-                    return `<div style="font-weight:bold;margin-bottom:4px;color:${p.color}">${p.seriesName}</div>`
-                        + `<div>${xSensor}: ${typeof v?.[0] === 'number' ? v[0].toFixed(4) : '—'}</div>`
-                        + `<div>${targetSensor}: ${typeof v?.[1] === 'number' ? v[1].toFixed(4) : '—'}</div>`;
-                },
-            },
-            legend: {
-                data: ['Raw', 'Model'],
-                textStyle: { color: txtSecondary, fontSize: 11 },
-                top: 4,
-                right: 10,
-                itemWidth: 10,
-                itemHeight: 10,
-            },
-            grid: { left: 56, right: 22, top: 32, bottom: 50, containLabel: false },
-            dataZoom: [
-                { type: 'inside', xAxisIndex: 0, filterMode: 'filter' },
-                { type: 'inside', yAxisIndex: 0, filterMode: 'filter' },
-            ],
-            xAxis: {
-                type: 'value',
-                name: xSensor,
-                nameLocation: 'middle',
-                nameGap: 26,
-                nameTextStyle: { color: txtSecondary, fontSize: 11 },
-                scale: true,
-                axisLabel: { color: txtSecondary, fontSize: 10 },
-                axisLine: { lineStyle: { color: gridLine } },
-                splitLine: { show: false },
-            },
-            yAxis: {
-                type: 'value',
-                name: targetSensor,
-                nameLocation: 'middle',
-                nameGap: 40,
-                nameTextStyle: { color: txtSecondary, fontSize: 11 },
-                scale: true,
-                axisLabel: { color: txtSecondary, fontSize: 10 },
-                axisLine: { lineStyle: { color: gridLine } },
-                splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } },
-            },
-            series: [
-                {
-                    ...seriesCommon,
-                    name: 'Raw',
-                    data: rawPoints,
-                    itemStyle: { color: '#3b82f6', opacity: pointOpacity },
-                },
-                {
-                    ...seriesCommon,
-                    name: 'Model',
-                    data: modelPoints,
-                    itemStyle: { color: '#f43f5e', opacity: pointOpacity },
-                },
-            ],
-        };
-    }, [targetSensor]);
 
     const handleClusteringApply = async () => {
         if (filterBlocked) {
@@ -2552,19 +2302,19 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 </div>
                                 {/* Inline progress bar — visible across BOTH Apply phases:
                                     PHASE 1 (relLoading) is the main multivariate fit,
-                                    PHASE 2 (subModelsLoading) is the cumulative sub-model
+                                    PHASE 2 (subModelFits.loading) is the cumulative sub-model
                                     fits that Apply now pre-computes so the PDF report
                                     always has every step chart. Without the phase-2 arm,
                                     after phase 1 the chart appears but the page goes
                                     silent for the 1-3s/predictor of sub-model fitting —
                                     which read to the user as a "stuck spinner". */}
-                                {rcMode === 'relationship' && (relLoading || subModelsLoading) && (
+                                {rcMode === 'relationship' && (relLoading || subModelFits.loading) && (
                                     <div className="pm-progress">
                                         <div className="pm-progress-track">
-                                            {subModelsLoading && subModelsProgress.total > 0 ? (
+                                            {subModelFits.loading && subModelFits.progress.total > 0 ? (
                                                 <div
                                                     className="pm-progress-bar"
-                                                    style={{ width: `${Math.min(100, (subModelsProgress.current / subModelsProgress.total) * 100)}%` }}
+                                                    style={{ width: `${Math.min(100, (subModelFits.progress.current / subModelFits.progress.total) * 100)}%` }}
                                                 />
                                             ) : relFitProgress && relFitProgress.total > 1 ? (
                                                 <div
@@ -2577,8 +2327,8 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                         </div>
                                         <div className="pm-progress-label">
                                             <Loader2 size={11} className="pm-spin" />
-                                            {subModelsLoading
-                                                ? `Fitting sub-model ${Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of ${subModelsProgress.total}…`
+                                            {subModelFits.loading
+                                                ? `Fitting sub-model ${Math.min(subModelFits.progress.current + 1, subModelFits.progress.total)} of ${subModelFits.progress.total}…`
                                                 : relFitProgress && relFitProgress.total > 1
                                                     ? `Fitting predictor ${Math.min(relFitProgress.current + 1, relFitProgress.total)} of ${relFitProgress.total}…`
                                                     : 'Running Relation model…'}
@@ -2708,7 +2458,7 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
                                 // phase 2 (sub-models) runs in the background after
                                 // Apply returns, so the button re-enables as soon as
                                 // there's a chart to look at. Concurrent re-clicks
-                                // are handled by `subModelsGenRef` (older fits drop
+                                // are handled by `useSubModelFits`' generation counter (older fits drop
                                 // their writes when they discover a newer Apply
                                 // claimed a fresher generation).
                                 disabled={rcMode !== 'relationship' || relLoading}
@@ -3157,134 +2907,16 @@ export default function PredictiveModelBuild({ workspaceId, modelId, kind, senso
 
             {/* ── Sub-models Modal ─────────────────────────────────────────
                 Detail view fired from the LayoutGrid button on the
-                Relationship chart card. Renders one scatter card per
-                cumulative-predictor step (1, 2, …, N), each with its own
-                R² / 2·RMSE / RMSE / N so the user can see how each added
-                predictor moves the model. Charts share an X-axis (the
-                first predictor) so the comparison is apples-to-apples. */}
+                Relationship chart card — now the shared `SubModelsModal`
+                (also used by the Build Model Workbench). */}
             {subModelsOpen && (
-                <div
-                    className="pm-preview-modal-backdrop"
-                    onClick={() => setSubModelsOpen(false)}
-                    role="dialog"
-                    aria-modal="true"
-                >
-                    <div
-                        className="pm-preview-modal-card pm-submodels-modal-card"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        <div className="pm-preview-modal-header">
-                            <div className="pm-chart-title-block">
-                                <div className="pm-chart-title">Sub-models</div>
-                                <div className="pm-chart-subtitle">
-                                    One Relation model fit per cumulative-feature subset · target: <code>{targetSensor || '—'}</code> · stiffness: <code>{stiffnessLabel(relStiffness)}</code>
-                                </div>
-                            </div>
-                            <button
-                                className="pm-chart-modal-close"
-                                onClick={() => setSubModelsOpen(false)}
-                                title="Close (Esc)"
-                                aria-label="Close"
-                            >
-                                <X size={18} />
-                            </button>
-                        </div>
-                        <div className="pm-preview-modal-body pm-submodels-body">
-                            {!targetSensor ? (
-                                <div className="pm-preview-empty">No target sensor selected.</div>
-                            ) : predictorSensors.length === 0 ? (
-                                <div className="pm-preview-empty">Add at least one predictor to compute sub-models.</div>
-                            ) : subModelsLoading ? (
-                                <div className="pm-preview-empty">
-                                    <Loader2 size={14} className="animate-spin" />
-                                    Fitting Relation model {Math.min(subModelsProgress.current + 1, subModelsProgress.total)} of {subModelsProgress.total}…
-                                </div>
-                            ) : subModelsError ? (
-                                <div className="pm-preview-error">{subModelsError}</div>
-                            ) : !subModels || subModels.length === 0 ? (
-                                <div className="pm-preview-empty">
-                                    No sub-models computed yet.
-                                    <button
-                                        className="pm-btn pm-btn-secondary pm-btn-sm"
-                                        onClick={runSubModelFits}
-                                        style={{ marginLeft: 8 }}
-                                    >
-                                        Run now
-                                    </button>
-                                </div>
-                            ) : (
-                                <>
-                                    {subModelsStale && (
-                                        <div className="pm-submodels-stale-banner">
-                                            <span>
-                                                Predictor selection changed since last fit — these results may be stale.
-                                            </span>
-                                            <button
-                                                className="pm-btn pm-btn-secondary pm-btn-sm"
-                                                onClick={runSubModelFits}
-                                                disabled={subModelsLoading}
-                                            >
-                                                Refresh
-                                            </button>
-                                        </div>
-                                    )}
-                                    {subModels.map((fit, idx) => {
-                                        // Last entry of `r2_per_step` is the score for the
-                                        // full subset of THIS sub-fit (per the sidecar
-                                        // contract). We surface it as the headline R² for
-                                        // this card.
-                                        const r2 = fit.result.r2_per_step[fit.result.r2_per_step.length - 1];
-                                        const rmse2 = fit.result.rmse2_per_step[fit.result.rmse2_per_step.length - 1];
-                                        const xSensor = fit.predictors[0] ?? '';
-                                        const opt = buildSubModelOption(fit, xSensor);
-                                        return (
-                                            <div key={idx} className="pm-submodel-card">
-                                                <div className="pm-submodel-header">
-                                                    <div className="pm-submodel-title-block">
-                                                        <div className="pm-submodel-step">Step {idx + 1} of {subModels.length}</div>
-                                                        <div className="pm-submodel-predictors">
-                                                            <code>{fit.predictors.join(' + ')}</code>
-                                                            <span className="pm-submodel-arrow"> → </span>
-                                                            <code>{targetSensor}</code>
-                                                        </div>
-                                                    </div>
-                                                    <div className="pm-submodel-stats">
-                                                        <div className="pm-submodel-stat">
-                                                            <span className="pm-submodel-stat-label">R²</span>
-                                                            <span className="pm-submodel-stat-value">{typeof r2 === 'number' ? r2.toFixed(4) : '—'}</span>
-                                                        </div>
-                                                        <div className="pm-submodel-stat">
-                                                            <span className="pm-submodel-stat-label">RMSE</span>
-                                                            <span className="pm-submodel-stat-value">{typeof rmse2 === 'number' ? (rmse2 / 2).toFixed(4) : '—'}</span>
-                                                        </div>
-                                                        <div className="pm-submodel-stat">
-                                                            <span className="pm-submodel-stat-label">2·RMSE</span>
-                                                            <span className="pm-submodel-stat-value">{typeof rmse2 === 'number' ? rmse2.toFixed(4) : '—'}</span>
-                                                        </div>
-                                                        <div className="pm-submodel-stat">
-                                                            <span className="pm-submodel-stat-label">N</span>
-                                                            <span className="pm-submodel-stat-value">{fit.result.predicted.length.toLocaleString()}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div className="pm-submodel-chart">
-                                                    {opt ? (
-                                                        <ResponsiveECharts option={opt} style={{ height: '280px', minHeight: '280px' }} />
-                                                    ) : (
-                                                        <div className="plot-placeholder pm-chart-placeholder">
-                                                            <Activity size={32} style={{ opacity: 0.2 }} />
-                                                            <p>No data to render</p>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <SubModelsModal
+                    fits={subModelFits}
+                    targetSensor={targetSensor}
+                    predictorCount={predictorSensors.length}
+                    stiffnessText={stiffnessLabel(relStiffness)}
+                    onClose={() => setSubModelsOpen(false)}
+                />
             )}
         </div>
     );

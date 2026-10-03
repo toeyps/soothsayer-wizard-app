@@ -66,6 +66,7 @@ vi.mock('@tauri-apps/api/core', () => ({
         h.invokes.push({ cmd, args: JSON.parse(JSON.stringify(args ?? null)) });
         switch (cmd) {
             case 'get_dataset_time_bounds': return Promise.resolve({ min: '2026-01-01T00:00:00', max: '2026-12-31T23:59:00' });
+            case 'compute_health_preview': return Promise.resolve(makeHealthPreview((args as any)?.request));
             case 'compute_sensor_stats': return Promise.resolve(STATS);
             case 'preview_relationship_model': return Promise.resolve({
                 request: 'r', error: undefined, predicted: [1, 2, 3], residual: [0, 0, 0],
@@ -93,6 +94,7 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div data-test
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div data-testid="echarts-mock" /> }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
+import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';

@@ -3,33 +3,38 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
-import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Maximize2, Loader2, Activity, GitBranch, Layers } from "lucide-react";
-import { CsvRecord, FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
+import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Loader2 } from "lucide-react";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload } from "../../types";
 import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
 import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, type RunningConditionFg } from "../../utils/runningCondition";
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
-import { isModelStale as isModelStaleFor, NOT_TRAINED_BLOCK_REASON } from "../../utils/modelStatus";
-import { HEALTH_DEFAULT_MAX_POINTS } from "../../utils/healthRequest";
+import { isModelStale as isModelStaleFor, modelDotState, NOT_TRAINED_BLOCK_REASON, type ModelDotState } from "../../utils/modelStatus";
+import { HEALTH_DEFAULT_MAX_POINTS, relationshipLambda } from "../../utils/healthRequest";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
-import { useChartData } from "../../hooks/useChartData";
-import { validatePeriods, toFilterRanges, newPeriodId } from "../../utils/timePeriods";
+import { useHealthPreview } from "../../hooks/useHealthPreview";
+import { validatePeriods, newPeriodId } from "../../utils/timePeriods";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
-import { RunningConditionCard, RunningConditionStepBar, type RcStepState } from "./RunningConditionCard";
+import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { useRowCountPreview } from "./useRowCountPreview";
-import PredictiveModelBuild, { SensorPickerModal, SensorAutocomplete } from "./PredictiveModelBuild";
+import PredictiveModelBuild, { SensorPickerModal } from "./PredictiveModelBuild";
 import TimePeriodsEditor from "./TimePeriodsEditor";
-import LineChart from "../charts/LineChart";
-import ResponsiveECharts from "../charts/ResponsiveECharts";
-import { ChartMarkLine } from "../charts/ChartTypes";
+import SubModelsModal from "./SubModelsModal";
+import { useSubModelFits } from "./useSubModelFits";
+import ModelFitPage from "./workbench/ModelFitPage";
+import { CLUSTER_COLORS as CLUSTER_PALETTE } from "./workbench/chartTheme";
+import HealthScorePage from "./workbench/HealthScorePage";
+import WorkbenchStepBar, { workbenchStepLooks, type StepKey } from "./workbench/WorkbenchStepBar";
+import { PageSwitch, StaleBanner } from "./workbench/WorkbenchShellParts";
+import type { WorkbenchPage } from "./workbench/workbenchTypes";
 
 interface BuildModelData {
     workspaceId: string;
@@ -153,6 +158,30 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
 // an open-ended list like components, so it reads better presented in the
 // same order the kind toggles/badges use everywhere else in the app.
 const KIND_ORDER: ModelKind[] = ['individual', 'relationship', 'clustering'];
+/** Left-list dot colour per status: green = complete, yellow = needs input /
+ *  re-train, red = needs fixing, none = never trained (mockup `.kb[data-st]`). */
+const DOT_CLASS: Record<ModelDotState, 'complete' | 'need' | 'bad' | null> = {
+    complete: 'complete', trained: 'need', stale: 'need', blocked: 'bad', none: null,
+};
+const DOT_TITLE: Record<ModelDotState, string> = {
+    complete: 'Complete', trained: 'Trained — set points needed', stale: 'Re-train needed', blocked: 'Needs fixing', none: 'Incomplete',
+};
+/** Status pill on a kind tab (mockup `.wd-tabs .pill`) — only the states worth a word. */
+const TAB_PILL: Record<ModelDotState, { text: string; cls: string } | null> = {
+    complete: { text: 'Complete', cls: 'f4-pill--ok' },
+    trained: { text: 'Trained', cls: 'f4-pill--grey' },
+    stale: { text: 'Re-train', cls: 'f4-pill--warn' },
+    blocked: null,
+    none: null,
+};
+/** Next to every Model-settings field that is part of the training inputs
+ *  (training data, predictors, sensors, clusters, stiffness): changing it sets a
+ *  Complete model back to Incomplete (`applyIncompleteRule`) — say so up front. */
+const IncompleteHint = () => (
+    <span className="wb2-aff" data-testid="incomplete-hint">changing it sets the model to Incomplete</span>
+);
+/** Stable empty list for `useSubModelFits` when the active model is not a Relationship. */
+const NO_PREDICTORS: string[] = [];
 const DUPLICATE_NAME_BLOCK_REASON = 'Model name is already used by another model of this sensor';
 const KIND_LABEL: Record<ModelKind, string> = {
     individual: 'Individual',
@@ -195,13 +224,6 @@ interface TrainCacheEntry {
     fingerprint: string;
     result: TrainResult;
 }
-
-// Mirrors PredictiveModelBuild.tsx's own CLUSTER_PALETTE (not exported there).
-const CLUSTER_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6', '#ec4899', '#6366f1'];
-// Stable empty array for LineChart's unused row-based `data` prop (the chart
-// consumes the bounded `columnar` feed instead) — same convention as PM page.
-const EMPTY_RECORDS: CsvRecord[] = [];
-const RESULT_CHART_MAX_POINTS = 4000;
 
 /** 🆕 2026-09-30 [data-loss fix, repeat report]: `TimePeriodsEditor`'s date
  *  fields only commit an edit to the parent (`onPeriodsChange` ->
@@ -249,155 +271,6 @@ function formatTrainedAt(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
     return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-/** Relationship scatter option: Raw (blue) vs. Relation model output (red)
- *  against a chosen fitted predictor — mirrors PredictiveModelBuild.tsx's
- *  own `relScatterOption`/`effectiveScatterX` pair, reimplemented as a pure
- *  function (that memo is local to that component and not exported).
- *  🆕 2026-09-30: `xSensor` (the model's persisted `scatterXSensor`) picks
- *  which fitted predictor's column plots on the X-axis; falls back to the
- *  first fitted predictor when unset or no longer in the cached fit (a
- *  predictor removed since the last Train), same fallback rule as the PM
- *  page's `effectiveScatterX`. */
-function buildRelScatterOption(result: RelationshipPreviewResult, predictorsAtApply: string[], targetSensor: string, xSensor?: string) {
-    const xRaw = result.predictor_raw;
-    const yRaw = result.target_raw;
-    const yPred = result.predicted;
-    if (!xRaw || !yRaw || !yPred || xRaw.length === 0 || predictorsAtApply.length === 0) return null;
-    const xIdx = xSensor ? predictorsAtApply.indexOf(xSensor) : -1;
-    const effectiveXIdx = xIdx >= 0 ? xIdx : 0;
-    const effectiveXSensor = predictorsAtApply[effectiveXIdx];
-    // Visual refresh (2026-10-02): these previously matched LineChart.tsx's
-    // own pre-refresh slate palette but were never recoloured when that file
-    // was (Phase 1, same day) — same literal values LineChart.tsx now uses
-    // for its `txtSecondary`/`gridLine`/`tooltipBg`/`tooltipBorder`, kept in
-    // sync by eye since ECharts renders to canvas and can't read CSS custom
-    // properties. See that file's own comment for the full rationale.
-    const txtSecondary = '#8c8c94';
-    const gridLine = '#2a2a30';
-    const rawPoints: [number, number][] = [];
-    const modelPoints: [number, number][] = [];
-    const n = Math.min(xRaw.length, yRaw.length, yPred.length);
-    for (let i = 0; i < n; i++) {
-        const xv = xRaw[i]?.[effectiveXIdx];
-        if (typeof xv !== 'number' || !Number.isFinite(xv)) continue;
-        const yr = yRaw[i];
-        if (typeof yr === 'number' && Number.isFinite(yr)) rawPoints.push([xv, yr]);
-        const yp = yPred[i];
-        if (typeof yp === 'number' && Number.isFinite(yp)) modelPoints.push([xv, yp]);
-    }
-    const totalPoints = rawPoints.length + modelPoints.length;
-    const isLargeData = totalPoints > 2000;
-    const isHugeData = totalPoints > 20000;
-    const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
-    const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
-    const seriesCommon = {
-        type: 'scatter' as const, symbolSize, large: isLargeData, largeThreshold: 2000,
-        progressive: 5000, progressiveThreshold: 10000,
-        emphasis: { scale: !isHugeData, disabled: isHugeData }, silent: isHugeData,
-    };
-    return {
-        backgroundColor: 'transparent',
-        textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
-        animation: !isLargeData,
-        tooltip: { trigger: 'item', backgroundColor: 'rgba(23, 23, 28, 0.92)', borderColor: 'rgba(255, 255, 255, 0.12)', textStyle: { color: '#ededef' } },
-        legend: { show: false },
-        grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
-        dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
-        xAxis: { type: 'value', name: effectiveXSensor, nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: false } },
-        yAxis: { type: 'value', name: targetSensor, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } } },
-        series: [
-            { ...seriesCommon, name: 'Raw', data: rawPoints, itemStyle: { color: '#3b82f6', opacity: pointOpacity } },
-            { ...seriesCommon, name: 'Model', data: modelPoints, itemStyle: { color: '#f43f5e', opacity: pointOpacity } },
-        ],
-    };
-}
-
-/** Clustering scatter + per-cluster σ-ellipse option — mirrors
- *  PredictiveModelBuild.tsx's own `clusteringScatterOption` memo (not
- *  exported there), reimplemented as a pure function. */
-function buildClusteringScatterOption(preview: ClusteringPreview) {
-    const { first_sensor, second_sensor, clusters, n_rows } = preview;
-    if (!clusters || clusters.length === 0 || n_rows === 0) return null;
-    // Visual refresh (2026-10-02): these previously matched LineChart.tsx's
-    // own pre-refresh slate palette but were never recoloured when that file
-    // was (Phase 1, same day) — same literal values LineChart.tsx now uses
-    // for its `txtSecondary`/`gridLine`/`tooltipBg`/`tooltipBorder`, kept in
-    // sync by eye since ECharts renders to canvas and can't read CSS custom
-    // properties. See that file's own comment for the full rationale.
-    const txtSecondary = '#8c8c94';
-    const gridLine = '#2a2a30';
-    const totalPoints = clusters.reduce((acc, c) => acc + c.xs.length, 0);
-    const isLargeData = totalPoints > 2000;
-    const isHugeData = totalPoints > 20000;
-    const symbolSize = isHugeData ? 2 : isLargeData ? 3 : 5;
-    const pointOpacity = isHugeData ? 0.18 : isLargeData ? 0.35 : 0.55;
-    const ellipseCustomSeries = (
-        cluster: (typeof clusters)[number],
-        sigma: number,
-        opts: { stroke: string; fill?: string; lineWidth: number; lineDash?: number[]; opacity: number; name: string; z: number },
-    ) => {
-        const cx = cluster.ellipse.x_center;
-        const cy = cluster.ellipse.y_center;
-        const rx = cluster.ellipse.x_sd * sigma;
-        const ry = cluster.ellipse.y_sd * sigma;
-        const angleRad = (cluster.ellipse.angle_deg * Math.PI) / 180;
-        const cos = Math.cos(angleRad);
-        const sin = Math.sin(angleRad);
-        return {
-            type: 'custom' as const,
-            name: opts.name,
-            itemStyle: { color: opts.stroke },
-            data: [[cx, cy]],
-            z: opts.z,
-            renderItem: (params: any, api: any) => {
-                const polyPts: number[][] = [];
-                for (let theta = 0; theta < 2 * Math.PI; theta += Math.PI / 36) {
-                    const x = rx * Math.cos(theta);
-                    const y = ry * Math.sin(theta);
-                    polyPts.push(api.coord([cx + x * cos - y * sin, cy + x * sin + y * cos]));
-                }
-                return {
-                    type: 'polygon',
-                    shape: { points: polyPts },
-                    style: { fill: opts.fill ?? 'none', stroke: opts.stroke, lineWidth: opts.lineWidth, lineDash: opts.lineDash ?? [0, 0], opacity: opts.opacity },
-                    clipPath: { type: 'rect', shape: { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height } },
-                };
-            },
-        };
-    };
-    const scatterSeries: any[] = [];
-    const ellipseSeries: any[] = [];
-    clusters.forEach((cluster, i) => {
-        const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
-        const seriesName = clusters.length === 1 ? 'Data' : `Cluster ${cluster.cluster_id}`;
-        const points: [number, number][] = [];
-        const n = Math.min(cluster.xs.length, cluster.ys.length);
-        for (let j = 0; j < n; j++) {
-            const xv = cluster.xs[j], yv = cluster.ys[j];
-            if (Number.isFinite(xv) && Number.isFinite(yv)) points.push([xv, yv]);
-        }
-        scatterSeries.push({
-            type: 'scatter' as const, name: seriesName, data: points, symbolSize, large: isLargeData, largeThreshold: 2000,
-            progressive: 5000, progressiveThreshold: 10000, emphasis: { scale: !isHugeData, disabled: isHugeData },
-            silent: isHugeData, itemStyle: { color, opacity: pointOpacity }, z: 1,
-        });
-        ellipseSeries.push(ellipseCustomSeries(cluster, 1, { name: `${seriesName} 1σ`, stroke: color, fill: `${color}1F`, lineWidth: 2, opacity: 1, z: 3 }));
-        ellipseSeries.push(ellipseCustomSeries(cluster, 3, { name: `${seriesName} 3σ`, stroke: color, lineWidth: 1.5, lineDash: [5, 5], opacity: 0.55, z: 2 }));
-    });
-    return {
-        backgroundColor: 'transparent',
-        textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
-        animation: !isLargeData,
-        tooltip: { trigger: 'item', backgroundColor: 'rgba(23, 23, 28, 0.92)', borderColor: 'rgba(255, 255, 255, 0.12)', textStyle: { color: '#ededef' } },
-        legend: { show: false },
-        grid: { left: 60, right: 20, top: 16, bottom: 42, containLabel: false },
-        dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'filter' }, { type: 'inside', yAxisIndex: 0, filterMode: 'filter' }],
-        xAxis: { type: 'value', name: first_sensor, nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: false } },
-        yAxis: { type: 'value', name: second_sensor, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: txtSecondary }, scale: true, axisLabel: { color: txtSecondary }, axisLine: { lineStyle: { color: gridLine } }, splitLine: { show: true, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } } },
-        series: [...scatterSeries, ...ellipseSeries],
-    };
 }
 
 /**
@@ -519,21 +392,25 @@ export default function BuildModelWindow() {
      *  finished run is represented by its entry landing in `trainResults`. */
     const [trainStatus, setTrainStatus] = useState<Record<string, 'loading'>>({});
     const [trainError, setTrainError] = useState<Record<string, string>>({});
-    /** Full-screen expand of the CURRENTLY selected model's result chart —
-     *  mirrors the PM page's own `expandedChart` modal pattern (there isn't a
-     *  clean way to share that page-local state across the window boundary,
-     *  so this is a separate, visually-identical implementation). */
-    const [resultExpanded, setResultExpanded] = useState(false);
-    // Never leave the modal open pointed at a model the user has since
+    // ---- Two pages per model (health score phase 3b-1, 2026-10-04) ----
+    /** Which page of the detail pane each model is on ("Model fit" is the
+     *  default). Keyed by model id so switching sensors/kind tabs keeps each
+     *  model's page. The Health score page can never be SHOWN for a stale or
+     *  untrained model — `pageOf` below falls back to "Model fit". */
+    const [pageByModel, setPageByModel] = useState<Record<string, WorkbenchPage>>({});
+    /** The Rust session generation of the dataset this window was opened on
+     *  (`metadata.generation` of the `build-model-data` payload), sent as
+     *  `expectedGeneration` so a window left over from an old dataset gets
+     *  `STALE_SESSION` instead of another dataset's numbers. */
+    const [generation, setGeneration] = useState<number | undefined>(undefined);
+    /** Bumped after every Train so `useHealthPreview` refetches even when the
+     *  request itself is identical (a Relationship re-train re-fills Rust's fit cache). */
+    const [healthRevision, setHealthRevision] = useState(0);
+    /** "Compare predictors" (Sub-models) modal of the active Relationship model. */
+    const [compareOpen, setCompareOpen] = useState(false);
+    // Never leave the comparison open pointed at a model the user has since
     // navigated away from (switching sensor or kind tab).
-    useEffect(() => { setResultExpanded(false); }, [selectedSensorKey, activeTab]);
-    // Esc closes it — same as the PM page's own `expandedChart` modal.
-    useEffect(() => {
-        if (!resultExpanded) return;
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setResultExpanded(false); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [resultExpanded]);
+    useEffect(() => { setCompareOpen(false); }, [selectedSensorKey, activeTab]);
 
     // ---- Predictive Model page — an in-window "next page" (not a spawned
     //      OS window) reached from the detail footer's "Open full view ↗"
@@ -752,8 +629,10 @@ export default function BuildModelWindow() {
                 setTrainResults({});
                 setTrainStatus({});
                 setTrainError({});
-                setResultExpanded(false);
+                setPageByModel({});
+                setCompareOpen(false);
             }
+            setGeneration(d.metadata?.generation);
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
             const seq = ++loadSeq.current;
@@ -1367,6 +1246,9 @@ export default function BuildModelWindow() {
                 delete rest[id];
                 return rest;
             });
+            // The Relationship fit is now in Rust's cache under this key: make the
+            // health preview (re)fetch even if its request is byte-identical.
+            setHealthRevision(r => r + 1);
             if (opts.persistMeta) {
                 await persist((models, groups) => ({
                     groups,
@@ -1527,43 +1409,6 @@ export default function BuildModelWindow() {
     const orderedDetail = KIND_ORDER.flatMap(k => detailModels.filter(m => m.kind === k));
     const activeModel = orderedDetail.find(m => m.id === activeTab[selectedSensorKey ?? '']) ?? orderedDetail[0];
 
-    // ---- Individual chart's time-series feed (Phase B) ----------------
-    // Bounded columnar fetch via `get_chart_data`, same path PredictiveModelBuild.tsx's
-    // own `targetChartQuery` uses — only active once a successful
-    // `compute_sensor_stats` run exists for the currently active model, so
-    // switching sensors doesn't fire an unnecessary fetch for every kind tab.
-    const individualChartQuery = useMemo(() => {
-        if (!activeModel || activeModel.kind !== 'individual') return null;
-        const cached = trainResults[activeModel.id];
-        if (!cached || cached.result.kind !== 'individual') return null;
-        const eff = effectiveRunningCondition(activeModel, gateFg);
-        const rawFilters = eff.noneConfirmed ? [] : eff.filters;
-        const valueFilters = rawFilters
-            .filter(sf => isCompleteCondition(sf, gateHeaders))
-            .map(sf => ({
-                sensor: sf.sensor,
-                operation: sf.operation,
-                value1: sf.value1 !== '' ? parseFloat(sf.value1) : null,
-                value2: sf.value2 !== '' ? parseFloat(sf.value2) : null,
-            }));
-        const ranges = toFilterRanges(eff.periods);
-        const filterRanges = ranges.some(rg => rg.start === null && rg.end === null) ? [] : ranges;
-        return {
-            filter: {
-                sensors: [activeModel.targetSensor],
-                timestamp_start: null,
-                timestamp_end: null,
-                timestamp_ranges: filterRanges,
-                value_filters: valueFilters,
-            },
-            sampling: 'raw' as const,
-            operation: null,
-            maxPoints: RESULT_CHART_MAX_POINTS,
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, activeModel?.kind, activeModel?.targetSensor, trainResults, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
-    const { view: individualChartView } = useChartData(individualChartQuery);
-
     // ---- Auto-recompute on reopen (Phase B, per explicit user decision) ---
     // A model that is already Trained-and-fresh (per the WORKSPACE'S
     // persisted `lastTrainedAt`/`trainedFingerprint`) shows its result
@@ -1571,12 +1416,15 @@ export default function BuildModelWindow() {
     // read-only preview query in the background (cheap; same live query the
     // PM page already runs on every mount) whenever the Workbench doesn't yet
     // have a cached result for the CURRENT fingerprint (a fresh session, or
-    // this exact model wasn't open before). Never fires for a Complete model
-    // (status === true is not part of "Trained"), never persists anything
-    // (`persistMeta: false` — the fingerprint didn't change), and never fires
-    // while a run for this model is already in flight.
+    // this exact model wasn't open before). 🆕 2026-10-04 (health score 3b-1):
+    // this now ALSO runs for a Complete model — the Model fit page shows the
+    // charts of a Complete model too, and a Relationship model's health preview
+    // reads the fit that this run re-fills in Rust's cache after a reload. It
+    // never persists anything (`persistMeta: false` — the fingerprint didn't
+    // change, and `status` is never touched), and never fires while a run for
+    // this model is already in flight.
     useEffect(() => {
-        if (!activeModel || activeModel.status) return;
+        if (!activeModel) return;
         if (buildBlockReason(activeModel) !== null) return;
         const fp = computeTrainFingerprint(activeModel, gateFg);
         if (!activeModel.lastTrainedAt || activeModel.trainedFingerprint !== fp) return;
@@ -1586,6 +1434,65 @@ export default function BuildModelWindow() {
         void executeTrain(activeModel, fp, { persistMeta: false });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, activeModel?.trainedFingerprint, activeModel?.lastTrainedAt, activeModel?.status, activeModel?.category, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed]);
+
+    // ---- Health preview + Sub-models for the ACTIVE model (health score 3b-1) ----
+    // ONE `useHealthPreview` call feeds both pages of the detail pane: the bounded
+    // series/stats Rust returns for the Model fit charts and (3b-2) the score of
+    // the Health score page. It is given the DRAFT-merged model (same as Train),
+    // so an unsaved edit that changes the training inputs makes it idle ("stale")
+    // while the last data stays on screen under the "Out of date" overlay.
+    const activeEffective = activeModel ? effectiveModelFor(activeModel) : null;
+    const activeFingerprint = activeEffective ? computeTrainFingerprint(activeEffective, gateFg) : null;
+    const activeStale = activeEffective ? isModelStaleFor(activeEffective, gateFg) : false;
+    const activeTrainEntry = activeModel ? trainResults[activeModel.id] : undefined;
+    const activeFitKey = activeEffective
+        && activeEffective.kind === 'relationship'
+        && activeEffective.scatterXSensor
+        && activeEffective.predictorSensors.includes(activeEffective.scatterXSensor)
+        ? activeEffective.scatterXSensor : undefined;
+    // Only a model that was trained, is still current, has nothing blocking it and
+    // whose last run did not fail is asked for a preview. A Relationship preview
+    // ALSO needs its fit in Rust's cache — the Train / reopen run that filled it
+    // under THIS fingerprint must have landed first (`NOT_FITTED` otherwise).
+    const healthReady = !!activeModel && !!activeEffective?.lastTrainedAt && !activeStale
+        && buildBlockReason(activeModel) === null
+        && !trainError[activeModel.id]
+        && trainStatus[activeModel.id] !== 'loading'
+        && (activeModel.kind !== 'relationship' || activeTrainEntry?.fingerprint === activeFingerprint);
+    const healthPreview = useHealthPreview({
+        model: activeEffective,
+        fg: gateFg,
+        headers: gateHeaders,
+        // 3b-2: pass the DRAFT set points being edited here (state to add to this
+        // container) instead of the persisted ones, so the score follows typing.
+        setPoints: activeModel?.healthSetPoints,
+        enabled: healthReady,
+        xPredictor: activeFitKey,
+        expectedGeneration: generation,
+        revision: healthRevision,
+    });
+
+    // "Compare predictors" — the shared Sub-models fits (cumulative predictor subsets).
+    const subFilter = activeEffective && activeEffective.kind === 'relationship'
+        ? buildPreviewFilterPayload(effectiveRunningCondition(activeEffective, gateFg), gateHeaders)
+        : null;
+    const subLambda = activeEffective ? relationshipLambda(activeEffective) : 0;
+    const subModelFits = useSubModelFits({
+        targetSensor: activeEffective?.kind === 'relationship' ? (activeEffective.targetSensor ?? '') : '',
+        predictors: activeEffective?.kind === 'relationship' ? activeEffective.predictorSensors : NO_PREDICTORS,
+        lambda: subLambda,
+        filter: subFilter,
+        blocked: !activeModel || buildBlockReason(activeModel) !== null,
+        // The last step is the model's own fit: reuse it while it is current.
+        reusable: activeTrainEntry && activeTrainEntry.result.kind === 'relationship' && activeTrainEntry.fingerprint === activeFingerprint && !activeStale
+            ? activeTrainEntry.result.result : null,
+        resetKey: `${activeModel?.id ?? ''}|${subLambda}|${JSON.stringify(subFilter)}`,
+    });
+    const openCompare = () => {
+        setCompareOpen(true);
+        if (!activeEffective || activeEffective.kind !== 'relationship' || activeEffective.predictorSensors.length === 0) return;
+        if ((!subModelFits.subModels || subModelFits.stale) && !subModelFits.loading) void subModelFits.run();
+    };
 
     // ---- Clustering cluster-range slider bounds (2026-09-30 port) ---------
     // Mirrors PredictiveModelBuild.tsx's own `criteriaStats` effect: fetches
@@ -1768,6 +1675,13 @@ export default function BuildModelWindow() {
     const attnCount = sensorGroupsAll.filter(sensorBuildBlocked).length;
     const doneCount = sensorGroupsAll.filter(sensorAllComplete).length;
 
+    /** The status of one model for the left list's dot / the tab pill. A failed
+     *  run of this session overrides an otherwise "trained" model. */
+    const dotStateOf = (m: FailureModel): ModelDotState => {
+        const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders);
+        return st === 'trained' && trainError[m.id] ? 'stale' : st;
+    };
+
     // One left-list row for one sensor (within one grouping bucket — the same
     // sensor can render under several Failure Group buckets when it belongs
     // to more than one; selecting any of them shows the SAME detail pane).
@@ -1796,31 +1710,27 @@ export default function BuildModelWindow() {
                 </div>
                 <div className="f4-kinds">
                     {ordered.map(m => {
-                        // Phase B status dot in the badge's corner: no dot =
-                        // never trained, blue = Trained (not stale, not
-                        // Complete), green = Complete. Stale reads as "no
-                        // dot" here (same as the pill) — the badge is just a
-                        // glance, the detail pane's own results area is
-                        // where "Settings changed" actually shows.
-                        // 🆕 QA fix (2026-09-29): a model the GATE currently
-                        // blocks (e.g. its running-condition sensor vanished
-                        // from the dataset) or whose last preview attempt
-                        // errored in this session must not still read
-                        // "Trained" here just because its persisted
-                        // fingerprint happens to still match — same rule the
-                        // footer pill below now applies.
-                        const dot = isModelDone(m) ? 'complete'
-                            : (isModelTrainedFresh(m) && !trainError[m.id] && buildBlockReason(m) === null) ? 'trained'
-                            : null;
+                        // Status dot in the badge's corner (mockup `.kb[data-st]`), straight
+                        // from the ONE status rule (`modelDotState`, draft-aware):
+                        //   green  complete          (marked complete AND up to date)
+                        //   yellow needs input       (trained, waiting for set points / re-train;
+                        //                             incl. a Complete model whose inputs changed)
+                        //   red    needs fixing      (the gate blocks it: no category / running
+                        //                             condition / bad period)
+                        //   none   never trained, nothing wrong yet
+                        // A run that failed in THIS session never reads as "trained": it is
+                        // yellow ("needs input") like any other model that wants a re-train.
+                        const st = dotStateOf(m);
+                        const dot = DOT_CLASS[st];
                         return (
                             <span
                                 key={m.id}
                                 data-testid={`sensor-kind-badge-${m.id}`}
                                 className={`f4-kb model-kind-icon--${m.kind}`}
-                                title={`${KIND_LABEL[m.kind]} · ${isModelDone(m) ? 'Complete' : dot === 'trained' ? 'Trained' : 'Incomplete'}`}
+                                title={`${KIND_LABEL[m.kind]} · ${DOT_TITLE[st]}`}
                             >
                                 {KIND_ABBREV[m.kind]}
-                                {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
+                                {dot && <span data-testid={`sensor-kind-badge-dot-${m.id}`} data-state={st} className={`f4-kb-dot f4-kb-dot--${dot}`} aria-hidden="true" />}
                             </span>
                         );
                     })}
@@ -2069,6 +1979,7 @@ export default function BuildModelWindow() {
                 <>
                     <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
                         <span className="f4-lbl">Predictor sensors (≥ 1)</span>
+                        <IncompleteHint />
                         <SensorPickerModal
                             sensors={allSensors}
                             getDesc={getDesc}
@@ -2097,6 +2008,7 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="f4-fld">
                         <span className="f4-lbl">Stiffness</span>
+                        <IncompleteHint />
                         <div className="f4-seg">
                             {STIFFNESS_OPTIONS.map(opt => (
                                 <button
@@ -2124,6 +2036,7 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="f4-fld">
                         <span className="f4-lbl">Y sensor (target)</span>
+                        <IncompleteHint />
                         <SensorPickerModal
                             sensors={allSensors}
                             getDesc={getDesc}
@@ -2139,6 +2052,7 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="f4-fld">
                         <span className="f4-lbl">Criteria sensor (optional)</span>
+                        <IncompleteHint />
                         <SensorPickerModal
                             sensors={allSensors}
                             getDesc={getDesc}
@@ -2153,6 +2067,7 @@ export default function BuildModelWindow() {
                     </div>
                     <div className="f4-fld">
                         <span className="f4-lbl">Clusters</span>
+                        <IncompleteHint />
                         <span className="bmw-step">
                             <button type="button" aria-label="Fewer clusters" onClick={() => patchDraft(m, { numClusters: Math.max(1, d.numClusters - 1) })}>−</button>
                             <span>{d.numClusters}</span>
@@ -2184,6 +2099,7 @@ export default function BuildModelWindow() {
                 `.f4-fld--traindata` (App.css). */}
             <div className="f4-fld f4-fld--traindata">
                 <span className="f4-lbl">Training data</span>
+                <IncompleteHint />
                 <div className="f4-seg">
                     <button type="button" className={d.runningConditionMode === 'workspace' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'workspace')}>Workspace</button>
                     <button type="button" className={d.runningConditionMode === 'custom' ? 'on' : undefined} onClick={() => switchRunningConditionMode(m, 'custom')}>Custom</button>
@@ -2361,159 +2277,52 @@ export default function BuildModelWindow() {
         );
     };
 
-    /** The Phase-B chart+toolbar for a Trained-and-fresh model's cached
-     *  result — legend on the left, numeric readouts on the right, ⤢ expand.
-     *  Reuses the PM page's own `.pm-chart-card`/`.pm-chart-header`/
-     *  `.pm-legend-*`/`.pm-stats-*` classes (see PredictiveModelBuild.tsx)
-     *  rather than inventing a parallel set, composed into the "toolbar
-     *  above the chart" shape the SPEC FINAL results-area asks for. `expanded`
-     *  renders the chart alone (no card chrome) for the ⤢ modal. */
-    const renderResultChart = (m: FailureModel, entry: TrainCacheEntry, expanded = false) => {
-        if (entry.result.kind === 'individual') {
-            const s = entry.result.stats;
-            const hasChartData = (individualChartView?.timestamps.length ?? 0) > 0;
-            const markLines: ChartMarkLine[] = [
-                { sensor: m.targetSensor, y: s.mean, label: 'Mean', color: '#ededef', lineStyle: 'solid' },
-                { sensor: m.targetSensor, y: s.upper1, label: '+1σ', color: '#f59e0b', lineStyle: 'solid' },
-                { sensor: m.targetSensor, y: s.lower1, label: '−1σ', color: '#f59e0b', lineStyle: 'solid' },
-                { sensor: m.targetSensor, y: s.upper3, label: '+3σ', color: '#f43f5e', lineStyle: 'dashed' },
-                { sensor: m.targetSensor, y: s.lower3, label: '−3σ', color: '#f43f5e', lineStyle: 'dashed' },
-            ];
-            return !hasChartData ? (
-                <div className="plot-placeholder pm-chart-placeholder"><Activity size={40} style={{ opacity: 0.2 }} aria-hidden="true" /><p>No data available for {m.targetSensor}</p></div>
-            ) : (
-                <LineChart
-                    data={EMPTY_RECORDS}
-                    columnar={{ timestamps: individualChartView!.timestamps, series: individualChartView!.series }}
-                    sensors={[m.targetSensor]}
-                    headers={individualChartView!.headers.length ? individualChartView!.headers : [m.targetSensor]}
-                    markLines={markLines}
-                    hideYSplitLine
-                />
-            );
-        }
-        if (entry.result.kind === 'relationship') {
-            const option = buildRelScatterOption(entry.result.result, entry.result.predictorsAtApply, m.targetSensor, m.scatterXSensor);
-            return option ? (
-                <ResponsiveECharts option={option} style={{ minHeight: expanded ? '100%' : '200px', height: expanded ? '100%' : undefined }} />
-            ) : (
-                <div className="plot-placeholder pm-chart-placeholder"><GitBranch size={40} style={{ opacity: 0.2 }} aria-hidden="true" /><p>No chart data</p></div>
-            );
-        }
-        const option = buildClusteringScatterOption(entry.result.preview);
-        return option ? (
-            <ResponsiveECharts option={option} style={{ minHeight: expanded ? '100%' : '200px', height: expanded ? '100%' : undefined }} />
-        ) : (
-            <div className="plot-placeholder pm-chart-placeholder"><Layers size={40} style={{ opacity: 0.2 }} aria-hidden="true" /><p>No chart data</p></div>
-        );
+    /** Props the two pages share (`WorkbenchPageProps`) for the ACTIVE model. */
+    const pagePropsFor = (m: FailureModel) => {
+        const eff = effectiveModelFor(m);
+        const unitTag = (m.kind === 'clustering' ? m.ySensor : m.targetSensor) ?? '';
+        return {
+            model: eff,
+            stale: isModelStale(m),
+            preview: healthPreview,
+            unit: unitTag ? getUnit(unitTag) : '',
+            sensorLabel,
+            getDesc,
+        };
     };
 
-    const renderResultToolbar = (m: FailureModel, entry: TrainCacheEntry) => {
-        if (entry.result.kind === 'individual') {
-            const s = entry.result.stats;
-            return (
-                <>
-                    <div className="pm-chart-legend">
-                        <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-accent" />Target</span>
-                        <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-warn" />±1σ</span>
-                        <span className="pm-legend-dot"><span className="pm-legend-line pm-legend-danger pm-legend-dashed" />±3σ</span>
-                    </div>
-                    <div className="pm-stats-strip bmw-result-stats">
-                        <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{s.count.toLocaleString()}</span></div>
-                        <div className="pm-stats-item"><span className="pm-stats-label">Mean</span><span className="pm-stats-value">{s.mean.toFixed(3)}</span></div>
-                        <div className="pm-stats-item"><span className="pm-stats-label">1σ</span><span className="pm-stats-value">{s.lower1.toFixed(3)} – {s.upper1.toFixed(3)}</span></div>
-                        <div className="pm-stats-item"><span className="pm-stats-label">3σ</span><span className="pm-stats-value pm-stats-warn">{s.lower3.toFixed(3)} – {s.upper3.toFixed(3)}</span></div>
-                    </div>
-                </>
-            );
-        }
-        if (entry.result.kind === 'relationship') {
-            const r = entry.result.result;
-            const predictorsAtApply = entry.result.predictorsAtApply;
-            const r2 = r.r2_per_step.length ? r.r2_per_step[r.r2_per_step.length - 1] : null;
-            const rmse2 = r.rmse2_per_step.length ? r.rmse2_per_step[r.rmse2_per_step.length - 1] : null;
-            // 🆕 2026-09-30 [X-axis switcher port]: the same fallback rule as
-            // `buildRelScatterOption` (and the PM page's own
-            // `effectiveScatterX`) — whatever the model's persisted
-            // `scatterXSensor` is, as long as it's still one of the fitted
-            // predictors, else the first fitted predictor — so the dropdown
-            // never shows a blank/invalid selection.
-            const effectiveXSensor = (m.scatterXSensor && predictorsAtApply.includes(m.scatterXSensor))
-                ? m.scatterXSensor : predictorsAtApply[0];
-            return (
-                <>
-                    <div className="pm-chart-legend">
-                        <span className="pm-legend-dot"><span className="pm-legend-line" style={{ background: '#3b82f6' }} />Raw</span>
-                        <span className="pm-legend-dot"><span className="pm-legend-line" style={{ background: '#f43f5e' }} />Model</span>
-                    </div>
-                    {predictorsAtApply.length > 0 && (
-                        // Decision #1 (SPEC): writes immediately via
-                        // `changeScatterX` — a view choice for the chart, not
-                        // a draft/Save-changes model parameter.
-                        <div className="pm-scatter-x-selector">
-                            <label>X-axis:</label>
-                            <SensorAutocomplete
-                                sensors={predictorsAtApply}
-                                getDesc={getDesc}
-                                value={effectiveXSensor}
-                                onSelect={xSensor => changeScatterX(m.id, xSensor)}
-                                placeholder="Select X-axis sensor..."
-                                style={{ minWidth: '180px' }}
-                            />
-                        </div>
-                    )}
-                    <div className="pm-stats-strip bmw-result-stats">
-                        <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{r.predicted.length.toLocaleString()}</span></div>
-                        <div className="pm-stats-item"><span className="pm-stats-label">R²</span><span className="pm-stats-value">{r2 !== null ? r2.toFixed(4) : '—'}</span></div>
-                        <div className="pm-stats-item"><span className="pm-stats-label">2×RMSE</span><span className="pm-stats-value">{rmse2 !== null ? rmse2.toFixed(4) : '—'}</span></div>
-                        <div className="pm-stats-item"><span className="pm-stats-label">Stiffness</span><span className="pm-stats-value">{stiffnessLabel(m.relStiffness)}</span></div>
-                    </div>
-                </>
-            );
-        }
-        const preview = entry.result.preview;
-        const shares = preview.clusters.length > 1 ? (() => {
-            const sizes = preview.clusters.map(c => c.n_rows);
-            const total = sizes.reduce((a, b) => a + b, 0) || 1;
-            return { largest: Math.max(...sizes) / total * 100, smallest: Math.min(...sizes) / total * 100 };
-        })() : null;
-        return (
-            <>
-                <div className="pm-chart-legend">
-                    {preview.clusters.map((c, i) => (
-                        <span key={c.cluster_id} className="pm-legend-dot">
-                            <span className="pm-legend-line" style={{ background: CLUSTER_PALETTE[i % CLUSTER_PALETTE.length] }} />
-                            {preview.clusters.length === 1 ? 'Data' : `Cluster ${c.cluster_id}`}
-                        </span>
-                    ))}
-                </div>
-                <div className="pm-stats-strip bmw-result-stats">
-                    <div className="pm-stats-item"><span className="pm-stats-label">Rows</span><span className="pm-stats-value">{preview.n_rows.toLocaleString()}</span></div>
-                    <div className="pm-stats-item"><span className="pm-stats-label">Clusters</span><span className="pm-stats-value">{preview.cluster_count}</span></div>
-                    {shares && (
-                        <div className="pm-stats-item"><span className="pm-stats-label">Largest / smallest</span><span className="pm-stats-value">{shares.largest.toFixed(0)}% / {shares.smallest.toFixed(0)}%</span></div>
-                    )}
-                </div>
-            </>
-        );
+    /** Which page of the detail pane a model shows. The Health score page is only
+     *  ever shown for a model that was trained and is up to date (it reads the
+     *  trained fit); otherwise the stored choice is ignored, not erased. */
+    const pageOf = (m: FailureModel): WorkbenchPage => {
+        const want = pageByModel[m.id] ?? 'model';
+        return want === 'health' && (isModelStale(m) || !m.lastTrainedAt) ? 'model' : want;
     };
+    const setPage = (m: FailureModel, page: WorkbenchPage) => setPageByModel(prev => (prev[m.id] === page ? prev : { ...prev, [m.id]: page }));
+    /** Why the Health score page (and the "Health set points" / "Complete" steps)
+     *  cannot be opened right now, or null. */
+    const healthPageBlock = (m: FailureModel): string | null =>
+        isModelStale(m) ? 'Re-train first' : !m.lastTrainedAt ? 'Train the model first' : buildBlockReason(m) !== null ? 'Fix the settings first' : null;
 
-    /** Results area state machine (SPEC FINAL, results-area rule 5):
-     *  Complete -> unchanged Phase-A placeholder · incomplete config/gate ->
+    /** The Model fit page body — the old "results area" state machine, now ending
+     *  in the charts of `ModelFitPage`:
+     *  Complete without a train record -> placeholder · incomplete config/gate ->
      *  "N items to fix" list with jump-to-field links (reuses `missingItems`'
-     *  wording) · running -> progress · Trained-and-fresh -> chart+toolbar ·
-     *  stale -> "Settings changed" · never trained -> "Not trained yet". */
-    const renderResultsStage = (m: FailureModel) => {
-        if (isModelDone(m)) {
+     *  wording) · running -> progress · never trained -> "Not trained yet" ·
+     *  stale -> "Out of date" charts (or a message when there is nothing to
+     *  draw) · Relationship fit gone from memory -> "Re-train to recompute" ·
+     *  otherwise the charts. */
+    const renderModelFitBody = (m: FailureModel) => {
+        const reason = buildBlockReason(m);
+        if (isModelDone(m) && (reason !== null || !m.lastTrainedAt)) {
             return (
                 <div className="bmw-stage">
                     <div className="bmw-stage-empty" data-testid="results-placeholder">
-                        Marked complete — open full view to see the chart.
+                        Marked complete — train the model to see its charts.
                     </div>
                 </div>
             );
         }
-        const reason = buildBlockReason(m);
         if (reason !== null) {
             // Step 1 not done (2026-10-03): a model that FOLLOWS the workspace
             // condition is locked until the workspace running condition is
@@ -2582,17 +2391,46 @@ export default function BuildModelWindow() {
                 </div>
             );
         }
-        if (isModelStale(m)) {
-            return (
+        const props = pagePropsFor(m);
+        if (props.stale) {
+            // The last charts of this session (if any) stay up under "Out of date".
+            return healthPreview.data ? (
+                <div data-testid="results-chart" data-stale="true">
+                    <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} />
+                </div>
+            ) : (
                 <div className="bmw-stage">
                     <div className="bmw-stage-empty" data-testid="results-stale">Settings changed — re-train to see the result.</div>
                 </div>
             );
         }
-        const entry = trainResults[m.id];
-        if (!entry) {
+        if (healthPreview.notFitted) {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-not-fitted">
+                        <div>
+                            <b style={{ color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>Re-train to recompute</b>
+                            The fitted Relation model is no longer in memory (the data was reloaded or a special sensor changed).
+                            <div style={{ marginTop: '10px' }}>
+                                <button type="button" className="bmw-btn-retrain bmw-btn-retrain--stale" data-testid="results-not-fitted-retrain" onClick={() => runTrainClick(m)}>↻ Re-train</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        if (healthPreview.error && !healthPreview.data) {
+            return (
+                <div className="bmw-stage">
+                    <div className="bmw-stage-empty" data-testid="results-health-error" style={{ color: 'var(--warn)' }}>
+                        Couldn't load the charts: {healthPreview.error}
+                    </div>
+                </div>
+            );
+        }
+        if (!healthPreview.data) {
             // Trained-and-fresh per the workspace's persisted fields, but the
-            // auto-recompute effect hasn't landed its first result in THIS
+            // auto-recompute / preview has not landed its first result in THIS
             // session yet.
             return (
                 <div className="bmw-stage">
@@ -2603,21 +2441,17 @@ export default function BuildModelWindow() {
             );
         }
         return (
-            <div className="bmw-stage" style={{ flexDirection: 'column', gap: '10px' }}>
-                <div className="pm-chart-card" style={{ flex: 1, minHeight: 0 }} data-testid="results-chart">
-                    <div className="pm-chart-header">
-                        {renderResultToolbar(m, entry)}
-                        <button type="button" className="pm-chart-expand-btn" onClick={() => setResultExpanded(true)} title="Expand chart" aria-label="Expand chart">
-                            <Maximize2 size={14} />
-                        </button>
-                    </div>
-                    <div className="pm-chart-body">{renderResultChart(m, entry)}</div>
-                </div>
+            <div data-testid="results-chart">
+                <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} />
             </div>
         );
     };
 
-    const renderFooter = (m: FailureModel) => {
+    /** Footer of BOTH pages (mockup `.wd-foot`). Model fit: status · Open full
+     *  view · Save changes · Re-train · Mark complete · "Next: Health score →".
+     *  Health score: "← Model fit" · status · Mark complete.
+     *  Mark complete still lives here until the Health score page (3b-2) takes it. */
+    const renderFooter = (m: FailureModel, page: WorkbenchPage) => {
         const saveReason = modelBlockReason(m);
         const reason = buildBlockReason(m);
         const cat = categoryOf(m);
@@ -2637,8 +2471,14 @@ export default function BuildModelWindow() {
         const pillState: 'complete' | 'trained' | 'incomplete' =
             isModelDone(m) ? 'complete' : (trainedFresh && !hasSessionError && reason === null) ? 'trained' : 'incomplete';
         const pillLabel = pillState === 'complete' ? 'Complete' : pillState === 'trained' ? 'Trained' : 'Incomplete';
+        const healthBlock = healthPageBlock(m);
         return (
             <div className="f4-foot">
+                {page === 'health' && (
+                    <button type="button" className="f4-btn f4-btn--plain f4-btn--small" data-testid="footer-back-to-fit" onClick={() => setPage(m, 'model')}>
+                        ← Model fit
+                    </button>
+                )}
                 <span className={`model-status-pill model-status-pill--${pillState}`} style={{ cursor: 'default' }}>
                     {pillLabel}
                 </span>
@@ -2662,35 +2502,39 @@ export default function BuildModelWindow() {
                 ) : (
                     <span data-testid="footer-status" className="f4-foot-reason">{KIND_LABEL[m.kind]}{cat ? ` · ${CATEGORY_LABELS[cat]}` : ''}</span>
                 )}
-                <button
-                    type="button"
-                    className="f4-btn f4-btn--plain f4-btn--small"
-                    title={reason ?? 'Sub-models and full settings'}
-                    disabled={reason !== null}
-                    onClick={() => buildModel(m)}
-                >
-                    Open full view ↗
-                </button>
-                <button className="f4-btn-save" disabled={saveReason !== null} onClick={() => commitModel(m)}>
-                    Save changes
-                </button>
-                {/* Train/Re-train — fixed position (SPEC FINAL footer rule 6): always
-                    this same slot, never moves around based on state. Nothing renders
-                    here at all once the model is Complete or Trained-and-fresh with no
-                    error — there is nothing further to do until settings change. A
-                    failed preview run (this session) still shows the button even
-                    though the persisted fields still say "fresh", so there's always a
-                    way to retry. */}
-                {!isModelDone(m) && !(reason === null && trainedFresh && !training && !trainError[m.id]) && (
-                    <button
-                        type="button"
-                        className={reason !== null ? 'f4-btn f4-btn--plain f4-btn--small' : (stale || trainError[m.id]) ? 'bmw-btn-retrain bmw-btn-retrain--stale' : 'bmw-btn-retrain'}
-                        disabled={reason !== null || training}
-                        title={reason ?? undefined}
-                        onClick={() => runTrainClick(m)}
-                    >
-                        {training ? 'Training…' : (stale || trainError[m.id]) ? '↻ Re-train' : '▶ Train model'}
-                    </button>
+                {page === 'model' && (
+                    <>
+                        <button
+                            type="button"
+                            className="f4-btn f4-btn--plain f4-btn--small"
+                            title={reason ?? 'Sub-models and full settings'}
+                            disabled={reason !== null}
+                            onClick={() => buildModel(m)}
+                        >
+                            Open full view ↗
+                        </button>
+                        <button className="f4-btn-save" disabled={saveReason !== null} onClick={() => commitModel(m)}>
+                            Save changes
+                        </button>
+                        {/* Train/Re-train — fixed position (SPEC FINAL footer rule 6): always
+                            this same slot, never moves around based on state. Nothing renders
+                            here at all once the model is Complete or Trained-and-fresh with no
+                            error — there is nothing further to do until settings change. A
+                            failed preview run (this session) still shows the button even
+                            though the persisted fields still say "fresh", so there's always a
+                            way to retry. */}
+                        {!isModelDone(m) && !(reason === null && trainedFresh && !training && !trainError[m.id]) && (
+                            <button
+                                type="button"
+                                className={reason !== null ? 'f4-btn f4-btn--plain f4-btn--small' : (stale || trainError[m.id]) ? 'bmw-btn-retrain bmw-btn-retrain--stale' : 'bmw-btn-retrain'}
+                                disabled={reason !== null || training}
+                                title={reason ?? undefined}
+                                onClick={() => runTrainClick(m)}
+                            >
+                                {training ? 'Training…' : (stale || trainError[m.id]) ? '↻ Re-train' : '▶ Train model'}
+                            </button>
+                        )}
+                    </>
                 )}
                 {isModelDone(m) ? (
                     <button type="button" className="f4-btn f4-btn--plain f4-btn--small" onClick={() => toggleModelStatus(m.id)}>
@@ -2707,8 +2551,34 @@ export default function BuildModelWindow() {
                         ✓ Mark complete
                     </button>
                 )}
+                {page === 'model' && (
+                    <button
+                        type="button"
+                        className="rcx-btn rcx-btn--pri"
+                        data-testid="next-health-score"
+                        disabled={healthBlock !== null || training}
+                        title={healthBlock ?? undefined}
+                        onClick={() => setPage(m, 'health')}
+                    >
+                        Next: Health score →
+                    </button>
+                )}
             </div>
         );
+    };
+
+    /** Step-bar click: jump to the page / section that step lives on. */
+    const goToStep = (key: StepKey) => {
+        if (key === 'running-condition') { setRcFilterOpen(true); return; }
+        if (!activeModel) return;
+        if (key === 'model-settings') {
+            setPage(activeModel, 'model');
+            setSettingsOpenOverride(prev => ({ ...prev, [activeModel.id]: true }));
+            return;
+        }
+        if (key === 'train') { setPage(activeModel, 'model'); return; }
+        // 'health-set-points' and 'complete' both live on the Health score page.
+        if (healthPageBlock(activeModel) === null) setPage(activeModel, 'health');
     };
 
     const renderDetailPane = () => {
@@ -2725,6 +2595,10 @@ export default function BuildModelWindow() {
         const component = keyTag ? getComponent(keyTag) : '';
         const groupNos = [...new Set(detailModels.flatMap(m => m.groupNos))].sort((a, b) => a - b);
         const category = selectedSensorKey !== null ? sensorCategory(allModels, selectedSensorKey) : null;
+        const page = pageOf(activeModel);
+        const stale = isModelStale(activeModel);
+        const healthBlock = healthPageBlock(activeModel);
+        const training = trainStatus[activeModel.id] === 'loading';
         return (
             <>
                 <div className="bmw-dhead">
@@ -2777,6 +2651,14 @@ export default function BuildModelWindow() {
                             );
                         })}
                     </div>
+                    <PageSwitch
+                        page={page}
+                        modelFitDone={!!activeModel.lastTrainedAt && !stale}
+                        healthDone={isModelDone(activeModel)}
+                        healthDisabled={healthBlock !== null}
+                        healthDisabledTitle={healthBlock ?? undefined}
+                        onPage={p => setPage(activeModel, p)}
+                    />
                 </div>
 
                 {categoryWarn?.key === selectedSensorKey && (
@@ -2789,6 +2671,7 @@ export default function BuildModelWindow() {
                     {orderedDetail.map(m => {
                         const selected = m.id === activeModel.id;
                         const badge = gateBadge(m);
+                        const st = dotStateOf(m);
                         return (
                             <button
                                 key={m.id}
@@ -2805,6 +2688,9 @@ export default function BuildModelWindow() {
                                 <span className={`f4-sdot${isModelDone(m) ? ' f4-sdot--done' : ''}`} />
                                 {m.id in drafts && <span className="f4-dirty" title="Unsaved changes">edited</span>}
                                 {badge && <GateBadgePill text={badge} testId={`condition-badge-${m.id}`} title={gateReasonOf(m) ?? undefined} />}
+                                {!badge && TAB_PILL[st] && (
+                                    <span data-testid={`tab-status-${m.id}`} aria-hidden="true" className={`f4-pill ${TAB_PILL[st]!.cls}`}>{TAB_PILL[st]!.text}</span>
+                                )}
                             </button>
                         );
                     })}
@@ -2812,9 +2698,21 @@ export default function BuildModelWindow() {
                 </div>
 
                 <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`} style={{ display: 'contents' }}>
-                    {renderModelSettings(activeModel)}
-                    {renderResultsStage(activeModel)}
-                    {renderFooter(activeModel)}
+                    {/* One scroll area for settings + banner + the page body, so the
+                        footer below always stays in view however tall the charts are. */}
+                    <div className="wb2-scroll" data-testid="wb-scroll" data-page={page}>
+                        {page === 'model' && renderModelSettings(activeModel)}
+                        {stale && (
+                            <StaleBanner
+                                training={training}
+                                disabled={buildBlockReason(activeModel) !== null}
+                                disabledTitle={buildBlockReason(activeModel) ?? undefined}
+                                onRetrain={() => runTrainClick(activeModel)}
+                            />
+                        )}
+                        {page === 'model' ? renderModelFitBody(activeModel) : <HealthScorePage {...pagePropsFor(activeModel)} />}
+                    </div>
+                    {renderFooter(activeModel, page)}
                 </div>
             </>
         );
@@ -2824,6 +2722,31 @@ export default function BuildModelWindow() {
     // Step-1 card / step bar / lock message all read the PERSISTED condition.
     const rcPersistedInvalid = periodStatus.some(st => st.invalid);
     const rcStepState: RcStepState = !rcConfigured ? 'unset' : rcPersistedInvalid ? 'invalid' : 'set';
+
+    // Header step bar: looks from the ONE status rule, jumps via `goToStep`.
+    const activeDetailPage = activeModel ? pageOf(activeModel) : 'model';
+    const stepLooks = workbenchStepLooks({
+        rcState: rcStepState,
+        hasModel: !!activeModel,
+        settingsReady: !!activeModel && buildBlockReason(activeModel) === null,
+        trained: !!activeModel?.lastTrainedAt,
+        stale: !!activeModel && isModelStale(activeModel),
+        complete: !!activeModel && isModelDone(activeModel),
+        // 3b-2: pass the Health score page's verdict (valid / not valid) here.
+        healthValid: null,
+    });
+    const stepCurrent: StepKey[] = !activeModel ? [] : activeDetailPage === 'health' ? ['health-set-points'] : ['model-settings', 'train'];
+    const stepHealthBlock = activeModel ? healthPageBlock(activeModel) : 'Select a model first';
+    const stepDisabled: Partial<Record<StepKey, boolean>> = {
+        'model-settings': !activeModel,
+        train: !activeModel,
+        'health-set-points': stepHealthBlock !== null,
+        complete: stepHealthBlock !== null,
+    };
+    const stepDisabledTitle: Partial<Record<StepKey, string>> = {
+        'health-set-points': stepHealthBlock ?? undefined,
+        complete: stepHealthBlock ?? undefined,
+    };
 
     // The settings modal's own view: its draft once edited, else the persisted
     // values. Only the modal reads these — everything above (Step-1 card, gate,
@@ -2845,11 +2768,20 @@ export default function BuildModelWindow() {
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     {pmPageModel ? `Build Model — ${modelDisplayLabel(pmPageModel)}` : 'Build Model — Overview'}
                 </h2>
-                {/* Step bar (2026-10-03): Running condition -> Model settings ->
-                    Train & complete. Overview only; not interactive, so it is
-                    transparent to the drag region like the title. */}
-                <div className="pointer-events-none" style={{ flex: 1, minWidth: 0 }}>
-                    {!pmPageModel && <RunningConditionStepBar state={rcStepState} />}
+                {/* Step bar (2026-10-04): Running condition -> Model settings -> Train ->
+                    Health set points -> Complete. Overview only. Every step is a button
+                    (the `data-tauri-drag-region` above applies to this bar's own element
+                    only, never to its children, so the buttons stay clickable). */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
+                    {!pmPageModel && (
+                        <WorkbenchStepBar
+                            looks={stepLooks}
+                            current={stepCurrent}
+                            disabled={stepDisabled}
+                            disabledTitle={stepDisabledTitle}
+                            onStep={goToStep}
+                        />
+                    )}
                 </div>
                 <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
                     <X size={14} />
@@ -2985,7 +2917,9 @@ export default function BuildModelWindow() {
                         );
                     })()}
 
-                    <div className="bmw-wb" style={{ gridTemplateColumns: sidebarCollapsed ? '0 minmax(0,1fr)' : '300px minmax(0,1fr)' }}>
+                    {/* Hidden list: the <aside> is not rendered at all, so the detail pane must be the
+                        ONLY column (a leftover "0 1fr" template would put it in the 0px track). */}
+                    <div className={`bmw-wb${sidebarCollapsed ? ' bmw-wb--nolist' : ''}`} style={{ gridTemplateColumns: sidebarCollapsed ? 'minmax(0,1fr)' : '300px minmax(0,1fr)' }}>
                         {!sidebarCollapsed && (
                             <aside className="bmw-side">
                                 <div className="bmw-side-top">
@@ -3021,6 +2955,11 @@ export default function BuildModelWindow() {
                                     </div>
                                 </div>
                                 <div className="bmw-list">{renderLeftList()}</div>
+                                <div className="bmw-leg" data-testid="status-legend">
+                                    <span><i style={{ background: 'var(--warn)' }} />Needs input / re-train</span>
+                                    <span><i style={{ background: 'var(--danger)' }} />Fix</span>
+                                    <span><i style={{ background: 'var(--ok)' }} />Complete</span>
+                                </div>
                             </aside>
                         )}
                         <section className="bmw-detail">{renderDetailPane()}</section>
@@ -3114,26 +3053,16 @@ export default function BuildModelWindow() {
                 </div>
             )}
 
-            {/* Expand the active model's result chart — mirrors the PM page's
-                own `expandedChart` modal (same classes/shape), scoped to
-                whichever model the Workbench detail pane currently shows. */}
-            {resultExpanded && activeModel && trainResults[activeModel.id] && (
-                <div className="pm-chart-modal-backdrop" onClick={() => setResultExpanded(false)} role="dialog" aria-modal="true">
-                    <div className="pm-chart-modal-card" onClick={e => e.stopPropagation()}>
-                        <div className="pm-chart-modal-header">
-                            <div className="pm-chart-title-block">
-                                <div className="pm-chart-title">{KIND_LABEL[activeModel.kind]} result</div>
-                                <div className="pm-chart-subtitle">{modelDisplayLabel(activeModel)}</div>
-                            </div>
-                            <button className="pm-chart-modal-close" onClick={() => setResultExpanded(false)} title="Close (Esc)" aria-label="Close">
-                                <X size={18} />
-                            </button>
-                        </div>
-                        <div className="pm-chart-modal-body">
-                            {renderResultChart(activeModel, trainResults[activeModel.id]!, true)}
-                        </div>
-                    </div>
-                </div>
+            {/* "Compare predictors": the shared Sub-models comparison (one fit per
+                cumulative predictor subset) for the active Relationship model. */}
+            {compareOpen && activeModel && activeModel.kind === 'relationship' && (
+                <SubModelsModal
+                    fits={subModelFits}
+                    targetSensor={activeModel.targetSensor ?? ''}
+                    predictorCount={effectiveModelFor(activeModel).predictorSensors.length}
+                    stiffnessText={stiffnessLabel(effectiveModelFor(activeModel).relStiffness)}
+                    onClose={() => setCompareOpen(false)}
+                />
             )}
         </div>
     );

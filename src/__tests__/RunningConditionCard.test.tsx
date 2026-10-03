@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
-import { RunningConditionCard, RunningConditionStepBar, type RcStepState } from '../components/windows/RunningConditionCard';
+import { RunningConditionCard } from '../components/windows/RunningConditionCard';
 import type { RowCountPreview } from '../components/windows/useRowCountPreview';
 import type { WorkspaceSensorFilter } from '../types';
 
@@ -32,35 +32,6 @@ function card(over: Partial<React.ComponentProps<typeof RunningConditionCard>> =
     );
     return onOpen;
 }
-
-describe('RunningConditionStepBar', () => {
-    const looks = () => [1, 2, 3].map(n => screen.getByTestId(`rc-step-${n}`).getAttribute('data-look'));
-
-    it('three steps in order: Running condition -> Model settings -> Train & complete', () => {
-        render(<RunningConditionStepBar state="set" />);
-        const steps = [1, 2, 3].map(n => screen.getByTestId(`rc-step-${n}`));
-        expect(steps.map(s => s.textContent)).toEqual(['Running condition', '2Model settings', '3Train & complete']); // step 1 is done: a tick instead of its number
-    });
-
-    it('Set: step 1 is done (green tick, no number), step 2 is current (blue), step 3 is next', () => {
-        render(<RunningConditionStepBar state="set" />);
-        expect(looks()).toEqual(['done', 'now', 'next']);
-        const one = screen.getByTestId('rc-step-1');
-        expect(one.className).toContain('rcs-step--done');
-        expect(one.querySelector('.rcs-sn svg')).not.toBeNull(); // the tick
-        expect(screen.getByTestId('rc-step-2').className).toContain('rcs-step--now');
-        expect(screen.getByTestId('rc-step-2').getAttribute('aria-current')).toBe('step');
-        expect(screen.getByTestId('rc-step-2').querySelector('.rcs-sn')!.textContent).toBe('2');
-    });
-
-    it.each<RcStepState>(['unset', 'invalid'])('%s: step 1 is current, steps 2 and 3 are locked (faded)', state => {
-        render(<RunningConditionStepBar state={state} />);
-        expect(looks()).toEqual(['now', 'lock', 'lock']);
-        expect(screen.getByTestId('rc-step-2').className).toContain('rcs-step--lock');
-        expect(screen.getByTestId('rc-step-1').querySelector('.rcs-sn')!.textContent).toBe('1');
-        expect(screen.getByTestId('rc-step-1').querySelector('.rcs-sn svg')).toBeNull();
-    });
-});
 
 describe('RunningConditionCard — Not set', () => {
     it('big yellow card: number 1, "Set the running condition", the one-sentence reason, a primary "Set running condition →" button', () => {

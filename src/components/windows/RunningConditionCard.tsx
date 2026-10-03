@@ -8,37 +8,15 @@ import { PeriodCoverageBar } from './RunningConditionParts';
 import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 
 /*
- * Build Model window: the "Step 1 · Running condition" header step bar and the
- * Step-1 card that replaced the old one-line `.bmw-rcbar` (approved mockup
- * WKZxQbvJZLQiMLvMDEFoqq, 2026-10-03). Presentation only — the persisted state,
- * the build gate and the settings modal all stay in BuildModelWindow.
+ * Build Model window: the Step-1 card that replaced the old one-line
+ * `.bmw-rcbar` (approved mockup WKZxQbvJZLQiMLvMDEFoqq, 2026-10-03).
+ * Presentation only — the persisted state, the build gate and the settings
+ * modal all stay in BuildModelWindow. (The header step bar that used to live
+ * here is now `workbench/WorkbenchStepBar.tsx`, 2026-10-04.)
  */
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
 export type RcStepState = 'set' | 'unset' | 'invalid';
-
-type StepLook = 'done' | 'now' | 'next' | 'lock';
-
-const STEPS = ['Running condition', 'Model settings', 'Train & complete'] as const;
-
-/** `1 Running condition → 2 Model settings → 3 Train & complete`. Done = green
- *  tick, current = blue, locked = faded. Not interactive. */
-export function RunningConditionStepBar({ state }: { state: RcStepState }) {
-    const looks: StepLook[] = state === 'set' ? ['done', 'now', 'next'] : ['now', 'lock', 'lock'];
-    return (
-        <ol className="rcs-steps" data-testid="rc-steps" aria-label="Build steps">
-            {STEPS.map((label, i) => (
-                <Fragment key={label}>
-                    {i > 0 && <li className="rcs-line" aria-hidden="true" />}
-                    <li className={`rcs-step rcs-step--${looks[i]}`} data-testid={`rc-step-${i + 1}`} data-look={looks[i]} aria-current={looks[i] === 'now' ? 'step' : undefined}>
-                        <span className="rcs-sn">{looks[i] === 'done' ? <Check size={11} strokeWidth={3} aria-hidden="true" /> : i + 1}</span>
-                        {label}
-                    </li>
-                </Fragment>
-            ))}
-        </ol>
-    );
-}
 
 interface RunningConditionCardProps {
     state: RcStepState;

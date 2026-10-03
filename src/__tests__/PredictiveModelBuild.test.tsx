@@ -511,6 +511,69 @@ describe('PredictiveModelBuild', () => {
         });
     });
 
+    // 🆕 2026-10-04 (health score 3b-1): the Sub-models fits + modal were extracted into
+    // `useSubModelFits` / `SubModelsModal` (shared with the Build Model Workbench's
+    // "Compare predictors"). These pin that the PM page still behaves as before.
+    describe('Sub-models (shared useSubModelFits + SubModelsModal)', () => {
+        const relFit = (n: number) => ({
+            request: 'r', error: undefined, predicted: [1, 2, 3], residual: [0, 0, 0],
+            r2_per_step: [0.5 + 0.1 * n], rmse2_per_step: [0.4], target_raw: [1, 2, 3], predictor_raw: [[1, 2], [2, 3], [3, 4]],
+        });
+        const setup = async () => {
+            mockInvoke.mockImplementation((cmd: string, args: any) => {
+                if (cmd === 'compute_sensor_stats') return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+                if (cmd === 'preview_relationship_model') return Promise.resolve(relFit(args.predictors.length));
+                return Promise.resolve({});
+            });
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship', predictorSensors: ['PRED1', 'PRED2'] })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+            await act(async () => {
+                clickApply('Relationship Model');
+                for (let i = 0; i < 8; i++) await Promise.resolve();
+            });
+        };
+        const previewCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'preview_relationship_model').map(c => (c[1] as any).predictors);
+
+        it('Apply fits the full model first, then the cumulative subsets in the background', async () => {
+            await setup();
+            const calls = previewCalls();
+            expect(calls[0]).toEqual(['PRED1', 'PRED2']);
+            // (The background run starts from the Apply click's own closure, so it does not see the
+            // main fit that has just landed — it refits every step, exactly as before the extraction.)
+            expect(calls.slice(1)).toEqual([['PRED1'], ['PRED1', 'PRED2']]);
+        });
+
+        it('the sub-models button opens the shared modal with one card per step; Esc closes it', async () => {
+            await setup();
+            fireEvent.click(screen.getByLabelText('View sub-models'));
+            expect(screen.getByTestId('sub-models-modal')).toBeTruthy();
+            await waitFor(() => expect(screen.getAllByTestId('sub-model-card')).toHaveLength(2));
+            expect(screen.getByText('Step 1 of 2')).toBeTruthy();
+            expect(screen.getByText('Step 2 of 2')).toBeTruthy();
+            // The results of the background run are reused: opening the modal fitted nothing more.
+            expect(previewCalls()).toHaveLength(3);
+            fireEvent.keyDown(window, { key: 'Escape' });
+            expect(screen.queryByTestId('sub-models-modal')).toBeNull();
+        });
+
+        it('opening the modal before any fit exists fits lazily', async () => {
+            mockInvoke.mockImplementation((cmd: string, args: any) =>
+                cmd === 'preview_relationship_model' ? Promise.resolve(relFit(args.predictors.length)) : Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 }));
+            mockLoadWorkspaceData.mockResolvedValue({
+                name: 'WS',
+                failureGroupState: { groups: [], models: [makeStoredModel({ kind: 'relationship', predictorSensors: ['PRED1', 'PRED2'] })] },
+            });
+            await renderHydrated({ kind: 'relationship' });
+            expect(previewCalls()).toHaveLength(0);
+            fireEvent.click(screen.getByLabelText('View sub-models'));
+            await waitFor(() => expect(screen.getAllByTestId('sub-model-card')).toHaveLength(2));
+            expect(previewCalls()).toEqual([['PRED1'], ['PRED1', 'PRED2']]); // no cached main fit to reuse
+        });
+    });
+
     describe('Clustering Apply', () => {
         it('requires a predictor for the X-axis', async () => {
             mockLoadWorkspaceData.mockResolvedValue({

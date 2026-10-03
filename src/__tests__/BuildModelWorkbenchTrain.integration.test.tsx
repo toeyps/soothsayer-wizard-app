@@ -91,6 +91,7 @@ vi.mock('@tauri-apps/api/core', () => ({
                 first_sensor: 'TAG1', second_sensor: 'TAG3', criteria_sensor: null, cluster_count: 1, n_rows: 3,
                 clusters: [{ cluster_id: 1, range: null, n_rows: 3, ellipse: { x_center: 1, y_center: 1, x_sd: 1, y_sd: 1, angle_deg: 0 }, xs: [1, 2, 3], ys: [1, 2, 3] }],
             };
+            case 'compute_health_preview': return makeHealthPreview((args as any)?.request);
             default: return {};
         }
     },
@@ -107,6 +108,7 @@ vi.mock('../components/charts/LineChart', () => ({ default: () => <div data-test
 vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => <div data-testid="echarts-mock" /> }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
+import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -256,7 +258,7 @@ describe('(1) a model trained in the Workbench survives a round trip through the
         expect(pill()).toBe('Trained');
         expect(footerStatus()).toBe('Check the chart, then mark it complete');
         expect(markCompleteBtn().disabled).toBe(false);
-        expect(screen.getByTestId('results-chart')).toBeTruthy();
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy()); // the charts come from the debounced health preview
     });
 
     it('Relationship: an UNRELATED PM-page edit (model name) keeps it Trained; a fingerprinted one (stiffness) makes it stale', async () => {
@@ -279,7 +281,8 @@ describe('(1) a model trained in the Workbench survives a round trip through the
         });
         expect(diskModel('r1').relStiffness).toBe(1_000_000);
         expect(diskModel('r1').trainedFingerprint).toBe(fp); // not rewritten — it is the evidence of staleness
-        expect(screen.getByTestId('results-stale')).toBeTruthy();
+        // The trained charts of this session stay on screen, "Out of date", under the stale banner.
+        expect(screen.getByTestId('stale-banner')).toBeTruthy();
         expect(pill()).toBe('Incomplete');
         expect(footerStatus()).toBe('Settings changed — re-train');
         expect(screen.getByText('↻ Re-train')).toBeTruthy();
@@ -399,7 +402,7 @@ describe('(3) lastTrainedAt / trainedFingerprint survive a save + reload', () =>
         expect(diskFresh('i1')).toBe(true);
         // 2 = the Step-1 card's row count (unfiltered workspace -> ONE query) + the silent auto-recompute.
         expect(h.invokes.filter(c => c.cmd === 'compute_sensor_stats')).toHaveLength(2);
-        expect(screen.getByTestId('results-chart')).toBeTruthy();
+        await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy()); // the charts come from the debounced health preview
         expect(pill()).toBe('Trained');
         expect(markCompleteBtn().disabled).toBe(false);
     });

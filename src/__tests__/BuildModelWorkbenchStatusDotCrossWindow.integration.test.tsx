@@ -219,14 +219,22 @@ function dashDot(groupNo: number, key = 'tag1', kind = 'individual'): string {
 }
 
 /** Build Model left-list dot(s) for one model id — the same model can render
- *  under several FG buckets; they must all agree. */
+ *  under several FG buckets; they must all agree.
+ *  Health score 3b-1 (2026-10-04): Build Model's list now has three colours
+ *  (green complete / yellow needs input or re-train / red needs fixing) straight
+ *  from `modelDotState`, which stays on each dot as `data-state`. The Dashboard's
+ *  Failure Groups panel still draws the older none/trained/complete vocabulary
+ *  from the SAME `modelDotState`; this folds the Build Model dot back into that
+ *  vocabulary so the two windows are still compared on the one underlying state
+ *  (stale and blocked both read "no dot" there). */
 function bmwDot(modelId: string): string {
     expect(screen.getByTestId('build-model-window').querySelectorAll(`[data-testid="sensor-kind-badge-${modelId}"]`).length).toBeGreaterThan(0);
     const dots = [...screen.getByTestId('build-model-window').querySelectorAll(`[data-testid="sensor-kind-badge-dot-${modelId}"]`)];
-    const states = new Set(dots.map(d => d.className.match(/f4-kb-dot--(\w+)/)?.[1] ?? '?'));
+    const states = new Set(dots.map(d => d.getAttribute('data-state') ?? '?'));
     if (dots.length === 0) return 'none';
     expect(states.size).toBe(1);
-    return [...states][0];
+    const st = [...states][0];
+    return st === 'stale' || st === 'blocked' ? 'none' : st;
 }
 
 const pill = () => screen.getByTestId('build-model-window').querySelector('.f4-foot .model-status-pill')!.textContent;

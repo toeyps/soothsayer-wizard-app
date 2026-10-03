@@ -89,6 +89,7 @@ vi.mock('@tauri-apps/api/core', () => ({
                 first_sensor: 'TAG1', second_sensor: 'TAG3', criteria_sensor: null, cluster_count: 1, n_rows: 3,
                 clusters: [{ cluster_id: 1, range: null, n_rows: 3, ellipse: { x_center: 1, y_center: 1, x_sd: 1, y_sd: 1, angle_deg: 0 }, xs: [1, 2, 3], ys: [1, 2, 3] }],
             };
+            case 'compute_health_preview': return makeHealthPreview(args?.request);
             default: return undefined;
         }
     },
@@ -137,6 +138,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 
 import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
+import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
@@ -241,7 +243,8 @@ async function mountBoth() {
 const bmw = () => within(screen.getByTestId('build-model-window'));
 const bmwEl = () => screen.getByTestId('build-model-window');
 const pill = () => bmwEl().querySelector('.f4-foot .model-status-pill')!.textContent;
-const echartsX = () => bmw().getByTestId('echarts-mock').getAttribute('data-x-axis-name');
+// The Fit chart card's X-axis name. The charts come from the (debounced) health preview, so read it with waitFor.
+const echartsX = () => within(bmw().getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
 const dropBuildModelBroadcasts = () => {
     h.drop = (event, payload) => event === 'failure-group-state-changed' && payload?.origin === 'build-model';
 };
@@ -263,7 +266,8 @@ async function clickSave() {
 
 /** Drive the REAL SensorAutocomplete inside the Relationship X-axis switcher. */
 async function pickXAxis(tag: string) {
-    const wrap = bmwEl().querySelector('.pm-scatter-x-selector') as HTMLElement;
+    await waitFor(() => expect(bmwEl().querySelector('[data-testid="fit-x-selector"]')).toBeTruthy());
+    const wrap = bmwEl().querySelector('[data-testid="fit-x-selector"]') as HTMLElement;
     expect(wrap).toBeTruthy();
     const input = wrap.querySelector('input') as HTMLInputElement;
     fireEvent.change(input, { target: { value: tag } });
@@ -321,11 +325,11 @@ describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboar
 
             await clickTrain();
             expect(diskFresh('r1')).toBe(true);
-            expect(echartsX()).toBe('TAG2'); // first fitted predictor by default
+            await waitFor(() => expect(echartsX()).toBe('TAG2')); // first fitted predictor by default
 
             await pickXAxis('TAG3');
             expect(diskModel('r1').scatterXSensor).toBe('TAG3');
-            expect(echartsX()).toBe('TAG3');
+            await waitFor(() => expect(echartsX()).toBe('TAG3'));
             // A view choice, not a fit input: no staleness, no draft created.
             expect(pill()).toBe('Trained');
             expect(bmw().queryByText('edited')).toBeNull();
@@ -344,7 +348,7 @@ describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboar
             expect(diskFresh('r1')).toBe(true);
             // Dashboard's own broadcasts reached Build Model; the chart kept the axis.
             selectRow('TAG1');
-            expect(echartsX()).toBe('TAG3');
+            await waitFor(() => expect(echartsX()).toBe('TAG3'));
 
             // Reopen both windows from the file: auto-recompute lands on TAG3.
             cleanup();
@@ -481,7 +485,7 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
         expect(diskModel('r1').name).toBe('Renamed rel');
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
         expect(diskFresh('r1')).toBe(true);
-        expect(echartsX()).toBe('TAG3');
+        await waitFor(() => expect(echartsX()).toBe('TAG3'));
     });
 
     it('a fingerprinted draft edit made AFTER an X-axis change (stiffness) saves without reverting the axis, and re-training keeps it', async () => {
@@ -492,7 +496,8 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
 
         openSettings();
         fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
-        expect(bmw().getByTestId('results-stale')).toBeTruthy(); // X switcher hidden while stale
+        expect(bmw().getByTestId('stale-banner')).toBeTruthy(); // the charts stay, "Out of date", under the banner
+        expect(bmw().getAllByTestId('chart-outdated').length).toBeGreaterThan(0);
         await clickSave();
         expect(diskModel('r1').relStiffness).toBe(1_000_000);
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
@@ -501,7 +506,7 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
         await settle(30);
         expect(diskFresh('r1')).toBe(true);
         expect(diskModel('r1').scatterXSensor).toBe('TAG3');
-        expect(echartsX()).toBe('TAG3');
+        await waitFor(() => expect(echartsX()).toBe('TAG3'));
     });
 });
 
