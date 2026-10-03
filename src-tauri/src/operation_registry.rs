@@ -69,6 +69,35 @@ pub fn execute_multi_op(op_id: &str, values: &[f64]) -> Result<Option<f64>, Stri
     }
 }
 
+/// Resolve a single-sensor operation ONCE, so a per-row loop doesn't rebuild
+/// the whole registry `HashMap` for every cell (what `execute_single_op` does).
+pub fn single_op_fn(op_id: &str) -> Result<SingleOpFn, String> {
+    build_single_ops()
+        .get(op_id)
+        .copied()
+        .ok_or_else(|| format!("Unknown single operation: {}", op_id))
+}
+
+/// Resolve a multi-sensor operation ONCE (see [`single_op_fn`]).
+pub fn multi_op_fn(op_id: &str) -> Result<MultiOpFn, String> {
+    build_multi_ops()
+        .get(op_id)
+        .copied()
+        .ok_or_else(|| format!("Unknown multi operation: {}", op_id))
+}
+
+/// Does this multi operation need EVERY source value present for a row?
+///
+/// Decided by the user 2026-10-03: `sum` is "all or nothing" — a row where any
+/// source sensor is missing (NaN) has NO sum, exactly like `evaluate_formula`
+/// (a formula with a missing input is missing). A partial total (A+B with B
+/// missing silently returning A) looked like a wrong value. Every other multi
+/// op (`mean`, `median`) is an average-like statistic that is still meaningful
+/// over the remaining valid values, so it skips NaN sources instead.
+pub fn multi_op_needs_all_inputs(op_id: &str) -> bool {
+    op_id == "sum"
+}
+
 /// Get the display symbol for a single-sensor operation
 pub fn single_op_symbol(op_id: &str) -> Result<&'static str, String> {
     match op_id {
@@ -290,6 +319,23 @@ mod tests {
     fn multi_subtract_and_divide_were_removed() {
         assert!(execute_multi_op("subtract", &[2.0, 3.0]).is_err());
         assert!(execute_multi_op("divide", &[2.0, 3.0]).is_err());
+    }
+
+    // ── resolved fn pointers + sum rule ──────────────────────────────
+
+    #[test]
+    fn resolved_fns_match_execute() {
+        assert_eq!(single_op_fn("add").unwrap()(2.0, 3.0), Some(5.0));
+        assert_eq!(multi_op_fn("mean").unwrap()(&[2.0, 4.0]), Some(3.0));
+        assert!(single_op_fn("bogus").is_err());
+        assert!(multi_op_fn("bogus").is_err());
+    }
+
+    #[test]
+    fn only_sum_needs_all_inputs() {
+        assert!(multi_op_needs_all_inputs("sum"));
+        assert!(!multi_op_needs_all_inputs("mean"));
+        assert!(!multi_op_needs_all_inputs("median"));
     }
 
     // ── single_op_symbol ─────────────────────────────────────────────

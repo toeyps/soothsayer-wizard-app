@@ -9,7 +9,6 @@ use csv_processor::{
 };
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::sync::RwLock;
 use tauri::State;
 
@@ -417,7 +416,21 @@ fn write_user_file(path: String, contents: Vec<u8>) -> Result<(), String> {
 struct SessionData {
     data: ColumnarData,
     paths: Vec<String>,
+    /// Lower-cased, trimmed names (see [`name_key`]) of the columns that were
+    /// COMPUTED in this session by `calculate_new_sensor` / `evaluate_formula`
+    /// ("special sensors"), as opposed to imported from the CSV. Only these may
+    /// be overwritten (`replace`) or dropped (`remove_sensor_columns`) — a raw
+    /// CSV column is never touched. Rebuilt empty by every `load_csv`, so it can
+    /// never outlive the dataset it describes.
+    derived: std::collections::HashSet<String>,
+    /// Bumped by every `load_csv`. A special-sensor computation runs under a
+    /// READ lock and stores its result under a short write lock afterwards; if
+    /// a new dataset was loaded in between, the generation no longer matches
+    /// and the result is discarded instead of being attached to the wrong data.
+    generation: u64,
 }
+
+static SESSION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 struct AppState(RwLock<Option<SessionData>>);
 
@@ -436,6 +449,8 @@ fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport,
     *state_lock = Some(SessionData {
         data: merge_result.data,
         paths,
+        derived: std::collections::HashSet::new(),
+        generation: SESSION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
     });
 
     Ok(report)
@@ -2420,27 +2435,274 @@ struct SensorOperationConfig {
     custom_name: Option<String>,
 }
 
-/// Put a freshly computed column into the session under `name`.
+/// Canonical form of a sensor name for COLLISION / LOOKUP purposes: trimmed and
+/// lower-cased. The frontend's `sameTag` is case-insensitive and merges
+/// sensors by lowercase key, so Rust has to agree on what "the same name"
+/// means or "Sum All" and "sum all" would be two columns here but one sensor
+/// there.
+fn name_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+/// First header equal to `name` ignoring case and surrounding whitespace.
+fn find_column_ci(headers: &[String], name: &str) -> Option<usize> {
+    let key = name_key(name);
+    headers.iter().position(|h| name_key(h) == key)
+}
+
+/// Resolve a SOURCE sensor name (a `sensors[]` entry or a formula reference)
+/// to a column: exact match first, then the trimmed/case-insensitive match.
+/// Every reader (`validate_formula`, `evaluate_formula`,
+/// `calculate_new_sensor`) goes through this so they can never disagree about
+/// whether a sensor exists.
+fn resolve_sensor(headers: &[String], name: &str) -> Option<usize> {
+    headers
+        .iter()
+        .position(|h| h == name)
+        .or_else(|| find_column_ci(headers, name))
+}
+
+/// Put a freshly computed column into the session under `name`; returns the
+/// TRIMMED name that was actually stored (the caller must hand THAT to the
+/// frontend, never the raw input).
 ///
-/// `replace` is what makes EDITING a special sensor possible. Recomputing a
-/// recipe under its existing name has to overwrite that column in place,
-/// keeping its position among the headers. Appending a second column with the
-/// same name would not work at all: every lookup in this file resolves a
-/// sensor with `headers.iter().position(...)`, which returns the FIRST match,
-/// so the recomputed values would be stored and then never read.
+/// Collision rules (all comparisons trimmed + case-insensitive):
+/// * `replace == false` (create): the name must not exist at all — an
+///   existing column of that name, raw OR derived, is an `Err`. (Appending a
+///   second column used to be allowed, but every lookup in this file takes the
+///   FIRST header match, so the new values were stored and never read — the
+///   chart kept showing the old sensor's numbers.)
+/// * `replace == true` (recompute after an edit/rename, and workspace-reopen
+///   replay): a DERIVED column of that name is overwritten IN PLACE (position
+///   kept, header takes the new casing); a RAW (imported) column of that name,
+///   or the timestamp column, is an `Err` so a recompute can never overwrite
+///   imported data; no match at all appends (a replay onto a freshly loaded
+///   CSV where the special sensors don't exist yet).
 ///
-/// Creating still appends (`replace` false or absent) — a brand-new special
-/// sensor that happens to share a name with an existing column must not
-/// silently overwrite it.
-fn put_sensor_column(data: &mut ColumnarData, name: &str, col: Vec<f64>, replace: bool) {
-    if replace {
-        if let Some(idx) = data.headers.iter().position(|h| h == name) {
+/// Nothing is mutated unless this returns `Ok`.
+fn store_derived_column(
+    data: &mut ColumnarData,
+    derived: &mut std::collections::HashSet<String>,
+    name: &str,
+    col: Vec<f64>,
+    replace: bool,
+) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Sensor name cannot be empty".to_string());
+    }
+    if col.len() != data.n_rows() {
+        return Err(format!(
+            "Computed column has {} rows but the dataset has {}",
+            col.len(),
+            data.n_rows()
+        ));
+    }
+    let key = name_key(name);
+    match find_column_ci(&data.headers, name) {
+        Some(idx) => {
+            if !replace {
+                return Err(format!("A sensor named '{}' already exists", name));
+            }
+            if idx == 0 || !derived.contains(&key) {
+                return Err(format!(
+                    "'{}' is an imported data column and cannot be overwritten",
+                    name
+                ));
+            }
             data.columns[idx] = col;
-            return;
+            data.headers[idx] = name.to_string();
+        }
+        None => {
+            data.columns.push(col);
+            data.headers.push(name.to_string());
+            derived.insert(key);
         }
     }
-    data.columns.push(col);
-    data.headers.push(name.to_string());
+    Ok(name.to_string())
+}
+
+/// Drop derived (special-sensor) columns by name — trimmed + case-insensitive.
+/// Raw CSV columns and the timestamp column (`headers[0]`) are never removed:
+/// a name that isn't a derived column is skipped silently. Returns how many
+/// columns were actually removed.
+fn remove_derived_columns(
+    data: &mut ColumnarData,
+    derived: &mut std::collections::HashSet<String>,
+    names: &[String],
+) -> usize {
+    let mut removed = 0;
+    for name in names {
+        let key = name_key(name);
+        if !derived.remove(&key) {
+            continue;
+        }
+        if let Some(idx) = find_column_ci(&data.headers, name) {
+            if idx != 0 {
+                data.headers.remove(idx);
+                data.columns.remove(idx);
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// Store a computed column under a SHORT write lock. The computation itself
+/// ran under a read lock (it can take seconds on a big file — holding the
+/// write lock for that long froze every chart query), so first confirm the
+/// dataset is still the one the result was computed from.
+fn commit_derived(
+    state: &AppState,
+    generation: u64,
+    name: &str,
+    col: Vec<f64>,
+    replace: bool,
+) -> Result<String, String> {
+    let mut lock = state.0.write().map_err(|e| e.to_string())?;
+    let session = lock.as_mut().ok_or("No data loaded")?;
+    if session.generation != generation {
+        return Err("The dataset changed while the sensor was being computed; please try again".to_string());
+    }
+    store_derived_column(&mut session.data, &mut session.derived, name, col, replace)
+}
+
+fn remove_derived_in_state(state: &AppState, names: &[String]) -> Result<usize, String> {
+    let mut lock = state.0.write().map_err(|e| e.to_string())?;
+    match lock.as_mut() {
+        // Nothing loaded -> nothing to remove (a delete firing after the
+        // session was reset must not surface as an error).
+        None => Ok(0),
+        Some(session) => Ok(remove_derived_columns(
+            &mut session.data,
+            &mut session.derived,
+            names,
+        )),
+    }
+}
+
+/// Remove special-sensor columns from the in-memory session. Call it when the
+/// user DELETES a special sensor and for the OLD name after a RENAME —
+/// otherwise the stale column stays behind and shadows (or collides with) the
+/// next sensor created under that name.
+///
+/// Only columns created by `calculate_new_sensor` / `evaluate_formula` in this
+/// session are removed; matching is trimmed + case-insensitive. A name that is
+/// unknown, a raw CSV column, or the timestamp column is skipped (not an
+/// error). Returns the number of columns actually removed (0 if no dataset is
+/// loaded).
+#[tauri::command]
+fn remove_sensor_columns(names: Vec<String>, state: State<AppState>) -> Result<usize, String> {
+    remove_derived_in_state(&state, &names)
+}
+
+/// Pure core of `calculate_new_sensor`: validates and computes the column
+/// without touching the session. Returns `(final trimmed name, column)`.
+fn compute_operation_sensor(
+    data: &ColumnarData,
+    sensors: &[String],
+    config: &SensorOperationConfig,
+    replace: bool,
+) -> Result<(String, Vec<f64>), String> {
+    if sensors.is_empty() {
+        return Err("No sensors selected".to_string());
+    }
+
+    let mut indices = Vec::with_capacity(sensors.len());
+    for sensor in sensors {
+        match resolve_sensor(&data.headers, sensor) {
+            Some(idx) => indices.push(idx),
+            None => return Err(format!("Sensor not found: {}", sensor)),
+        }
+    }
+
+    enum Op<'a> {
+        Single(&'a SingleOperation),
+        Multi(&'a MultiOperation),
+    }
+    let (op, default_name) = match config.mode.as_str() {
+        "single" => {
+            if sensors.len() != 1 {
+                return Err("Single mode requires exactly one sensor".to_string());
+            }
+            let op = config.single_op.as_ref().ok_or("Missing singleOp config")?;
+            let symbol = operation_registry::single_op_symbol(&op.op_type)?;
+            (Op::Single(op), format!("{} {} {}", sensors[0], symbol, op.value))
+        }
+        "multi" => {
+            let op = config.multi_op.as_ref().ok_or("Missing multiOp config")?;
+            let op_name = operation_registry::multi_op_name(&op.op_type)?;
+            (Op::Multi(op), format!("{}({:?})", op_name, sensors))
+        }
+        _ => return Err("Invalid mode".to_string()),
+    };
+
+    let name = match config.custom_name.as_deref().map(str::trim) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => default_name.trim().to_string(),
+    };
+
+    // A recomputation must not read the column it is about to overwrite: it
+    // would compute from the OLD values and then replace them, so the sensor
+    // would drift a little further every time it was saved.
+    if replace {
+        if let Some(target) = find_column_ci(&data.headers, &name) {
+            if indices.contains(&target) {
+                return Err(format!("'{}' cannot be built from itself", name));
+            }
+        }
+    } else if find_column_ci(&data.headers, &name).is_some() {
+        // Fail fast, before the (possibly long) computation.
+        return Err(format!("A sensor named '{}' already exists", name));
+    }
+
+    // The whole column is built before anything touches the session, so an
+    // error part-way can't leave the dataset half-mutated.
+    let n = data.n_rows();
+    let mut new_col: Vec<f64> = Vec::with_capacity(n);
+    // Non-finite results (power/exp overflow, 0^-1, ...) become "missing":
+    // `inf` stored in a column poisons every downstream stat and chart axis.
+    let finite = |v: f64| if v.is_finite() { v } else { f64::NAN };
+
+    match op {
+        Op::Single(op) => {
+            let f = operation_registry::single_op_fn(&op.op_type)?;
+            for &v in data.columns[indices[0]].iter() {
+                new_col.push(if v.is_nan() {
+                    f64::NAN
+                } else {
+                    f(v, op.value).map(finite).unwrap_or(f64::NAN)
+                });
+            }
+        }
+        Op::Multi(op) => {
+            let f = operation_registry::multi_op_fn(&op.op_type)?;
+            let needs_all = operation_registry::multi_op_needs_all_inputs(&op.op_type);
+            let src_cols: Vec<&[f64]> =
+                indices.iter().map(|&i| data.columns[i].as_slice()).collect();
+            let mut valid: Vec<f64> = Vec::with_capacity(src_cols.len());
+            for r in 0..n {
+                valid.clear();
+                for col in &src_cols {
+                    let v = col[r];
+                    if !v.is_nan() {
+                        valid.push(v);
+                    }
+                }
+                // `sum` (needs_all): any missing source -> missing row, like
+                // `evaluate_formula`. Other ops skip missing sources and use
+                // what is left; an all-missing row stays missing.
+                let skip = valid.is_empty() || (needs_all && valid.len() != src_cols.len());
+                new_col.push(if skip {
+                    f64::NAN
+                } else {
+                    f(&valid).map(finite).unwrap_or(f64::NAN)
+                });
+            }
+        }
+    }
+
+    Ok((name, new_col))
 }
 
 #[tauri::command]
@@ -2451,108 +2713,42 @@ fn calculate_new_sensor(
     state: State<AppState>,
 ) -> Result<String, String> {
     let replace = replace.unwrap_or(false);
-    let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
-    let session = state_lock.as_mut().ok_or("No data loaded")?;
-    let data = &mut session.data;
-
-    if sensors.is_empty() {
-        return Err("No sensors selected".to_string());
-    }
-
-    // A recomputation must not read the column it is about to overwrite: it
-    // would compute from the OLD values and then replace them, so the sensor
-    // would drift a little further every time it was saved.
-    if replace {
-        if let Some(target) = config.custom_name.as_deref().map(str::trim) {
-            if !target.is_empty() && sensors.iter().any(|s| s == target) {
-                return Err(format!("'{}' cannot be built from itself", target));
-            }
-        }
-    }
-
-    let mut indices = Vec::new();
-    for sensor in &sensors {
-        match data.headers.iter().position(|h| h == sensor) {
-            Some(idx) => indices.push(idx),
-            None => return Err(format!("Sensor not found: {}", sensor)),
-        }
-    }
-
-    // Build the new column fully before touching `data`, so an operation
-    // error mid-way can't leave the dataset half-mutated (the old row-wise
-    // code pushed onto each row as it went).
-    let n = data.n_rows();
-    let mut new_col: Vec<f64> = Vec::with_capacity(n);
-    let mut new_sensor_name;
-
-    if config.mode == "single" {
-        if sensors.len() != 1 {
-            return Err("Single mode requires exactly one sensor".to_string());
-        }
-        let op = config.single_op.ok_or("Missing singleOp config")?;
-        let op_symbol = operation_registry::single_op_symbol(&op.op_type)?;
-        new_sensor_name = format!("{} {} {}", sensors[0], op_symbol, op.value);
-
-        let src = &data.columns[indices[0]];
-        for &v in src.iter() {
-            let new_val = if v.is_nan() {
-                None
-            } else {
-                operation_registry::execute_single_op(&op.op_type, v, op.value)
-                    .map_err(|e| e.to_string())?
-            };
-            new_col.push(new_val.unwrap_or(f64::NAN));
-        }
-    } else if config.mode == "multi" {
-        let op = config.multi_op.ok_or("Missing multiOp config")?;
-        let op_name = operation_registry::multi_op_name(&op.op_type)?;
-
-        let src_cols: Vec<&[f64]> = indices.iter().map(|&i| data.columns[i].as_slice()).collect();
-
-        new_sensor_name = format!("{}({:?})", op_name, sensors);
-
-        for r in 0..n {
-            let mut valid_values = Vec::new();
-            for col in &src_cols {
-                let v = col[r];
-                if !v.is_nan() {
-                    valid_values.push(v);
-                }
-            }
-
-            let new_val = if valid_values.is_empty() {
-                None
-            } else {
-                operation_registry::execute_multi_op(&op.op_type, &valid_values)?
-            };
-            new_col.push(new_val.unwrap_or(f64::NAN));
-        }
-    } else {
-        return Err("Invalid mode".to_string());
-    }
-
-    if let Some(name) = config.custom_name {
-        if !name.trim().is_empty() {
-            new_sensor_name = name;
-        }
-    }
-
-    put_sensor_column(data, &new_sensor_name, new_col, replace);
-
-    Ok(new_sensor_name)
+    // Compute under a READ lock (other queries keep running), store under a
+    // short write lock.
+    let (generation, name, col) = {
+        let lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = lock.as_ref().ok_or("No data loaded")?;
+        let (name, col) = compute_operation_sensor(&session.data, &sensors, &config, replace)?;
+        (session.generation, name, col)
+    };
+    commit_derived(&state, generation, &name, col, replace)
 }
 
 // ---------------------------------------------------------------------------
 // Formula engine helpers
 // ---------------------------------------------------------------------------
 
-/// Extract sensor references from a formula string.
+/// One `$Name` / `${Name}` occurrence in a formula, located by CHAR index
+/// (`start..end`, end exclusive) so callers can rebuild the text around it
+/// instead of doing a blind string replace (which corrupts a token that is a
+/// prefix of a longer one: `$A` inside `$A.PV`).
+struct SensorRefSpan {
+    start: usize,
+    end: usize,
+    token: String,
+    name: String,
+}
+
+/// The ONE tokenizer for sensor references — `extract_sensor_refs`,
+/// `rewrite_sensor_ref` and `prepare_formula_for_eval` all build on it so they
+/// can never disagree about where a name ends.
 /// Supports two patterns:
-///   - `$SensorName` (alphanumeric, underscores, dots)
-///   - `${Sensor Name With Spaces}` (anything inside braces)
+///   - `$SensorName` — the name runs while chars are alphanumeric, `_` or `.`
+///     (so `$Total-Power` is the sensor `Total` followed by `- Power`)
+///   - `${Sensor Name With Spaces}` (anything up to the first `}`)
 ///
-/// Returns a Vec of (full_match_token, sensor_name) pairs.
-fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
+/// An unclosed `${` and an empty `${}` yield no reference.
+fn scan_sensor_refs(formula: &str) -> Vec<SensorRefSpan> {
     let mut refs = Vec::new();
     let chars: Vec<char> = formula.chars().collect();
     let len = chars.len();
@@ -2561,7 +2757,6 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
     while i < len {
         if chars[i] == '$' {
             if i + 1 < len && chars[i + 1] == '{' {
-                // ${Sensor Name} pattern
                 let start = i;
                 let name_start = i + 2;
                 let mut j = name_start;
@@ -2572,16 +2767,13 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
                     let name: String = chars[name_start..j].iter().collect();
                     let token: String = chars[start..=j].iter().collect();
                     if !name.is_empty() {
-                        refs.push((token, name));
+                        refs.push(SensorRefSpan { start, end: j + 1, token, name });
                     }
                     i = j + 1;
                 } else {
                     i += 1;
                 }
-            } else if i + 1 < len
-                && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_')
-            {
-                // $SensorName pattern (alphanumeric, underscores, dots)
+            } else if i + 1 < len && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
                 let start = i;
                 let name_start = i + 1;
                 let mut j = name_start;
@@ -2593,7 +2785,7 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
                 let name: String = chars[name_start..j].iter().collect();
                 let token: String = chars[start..j].iter().collect();
                 if !name.is_empty() {
-                    refs.push((token, name));
+                    refs.push(SensorRefSpan { start, end: j, token, name });
                 }
                 i = j;
             } else {
@@ -2605,6 +2797,16 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
     }
 
     refs
+}
+
+/// Extract sensor references from a formula string.
+/// Returns a Vec of (full_match_token, sensor_name) pairs, in order of
+/// appearance. See [`scan_sensor_refs`] for the grammar.
+fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
+    scan_sensor_refs(formula)
+        .into_iter()
+        .map(|s| (s.token, s.name))
+        .collect()
 }
 
 /// Which sensors does each formula reference?
@@ -2635,16 +2837,20 @@ fn extract_formula_refs(formulas: Vec<String>) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Build the reference token for `name`, the same way the frontend's own
-/// `sensorRef()` (`useCalculationEngine.ts`) does -- braced whenever the name
-/// has a space or a dot, otherwise bare. The two are kept in sync by hand
-/// since one lives here and the other in TypeScript; there is no formula
-/// text built anywhere that doesn't go through one of the two.
+/// Build the reference token for `name`: bare `$Name` ONLY when the name is
+/// non-empty and made purely of alphanumerics and `_` — otherwise braced
+/// `${name}`. The bare grammar stops at the first char that is not
+/// alphanumeric / `_` / `.`, so a bare `Total-Power` re-parses as `$Total`
+/// minus `Power` (wrong, or silently the wrong sensor if `Total` exists).
+/// A `.` is braced too (it IS legal in the bare grammar, but braces are always
+/// safe). The TypeScript twin `sensorRef()` in `useCalculationEngine.ts` must
+/// follow the same rule by hand. A name containing `}` cannot be expressed
+/// either way (the braced form ends at the first `}`).
 fn sensor_ref_token(name: &str) -> String {
-    if name.contains(' ') || name.contains('.') {
-        format!("${{{}}}", name)
-    } else {
+    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         format!("${}", name)
+    } else {
+        format!("${{{}}}", name)
     }
 }
 
@@ -2657,65 +2863,24 @@ fn sensor_ref_token(name: &str) -> String {
 /// name can be a PREFIX of a longer one (`test` inside `test extend` via
 /// `${test extend}`, or `test` inside `testA` via `$testA`) -- naively
 /// replacing every literal occurrence of `$test` would also corrupt
-/// `$testA`. Matching is case-insensitive, same as every other tag
+/// `$testA`. Matching is trimmed + case-insensitive, same as every other tag
 /// comparison in the app. A formula that doesn't reference `old_name` at all
 /// comes back unchanged.
 fn rewrite_sensor_ref(formula: &str, old_name: &str, new_name: &str) -> String {
-    let old_lower = old_name.trim().to_lowercase();
+    let old_key = name_key(old_name);
     let chars: Vec<char> = formula.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
+    let new_token = sensor_ref_token(new_name.trim());
     let mut out = String::with_capacity(formula.len());
+    let mut pos = 0;
 
-    while i < len {
-        if chars[i] == '$' {
-            if i + 1 < len && chars[i + 1] == '{' {
-                let name_start = i + 2;
-                let mut j = name_start;
-                while j < len && chars[j] != '}' {
-                    j += 1;
-                }
-                if j < len {
-                    let name: String = chars[name_start..j].iter().collect();
-                    if name.to_lowercase() == old_lower {
-                        out.push_str(&sensor_ref_token(new_name));
-                    } else {
-                        out.push('$');
-                        out.push('{');
-                        out.push_str(&name);
-                        out.push('}');
-                    }
-                    i = j + 1;
-                } else {
-                    // Unclosed brace -- same as `extract_sensor_refs`, don't
-                    // capture the rest of the formula as a name.
-                    out.push(chars[i]);
-                    i += 1;
-                }
-            } else if i + 1 < len && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
-                let name_start = i + 1;
-                let mut j = name_start;
-                while j < len && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == '.') {
-                    j += 1;
-                }
-                let name: String = chars[name_start..j].iter().collect();
-                if name.to_lowercase() == old_lower {
-                    out.push_str(&sensor_ref_token(new_name));
-                } else {
-                    out.push('$');
-                    out.push_str(&name);
-                }
-                i = j;
-            } else {
-                out.push(chars[i]);
-                i += 1;
-            }
-        } else {
-            out.push(chars[i]);
-            i += 1;
+    for span in scan_sensor_refs(formula) {
+        if name_key(&span.name) == old_key {
+            out.extend(chars[pos..span.start].iter());
+            out.push_str(&new_token);
+            pos = span.end;
         }
     }
-
+    out.extend(chars[pos..].iter());
     out
 }
 
@@ -2732,24 +2897,36 @@ fn rename_formula_refs(formula: String, old_name: String, new_name: String) -> S
 }
 
 /// Convert sensor references to fasteval-safe variable names.
-/// Returns (transformed_expression, map_of_safe_name -> original_sensor_name).
+/// Returns (transformed_expression, [(safe_name, original_sensor_name)]) with
+/// ONE entry per distinct sensor name (the same name used twice shares a
+/// variable).
+///
+/// The expression is rebuilt from the tokenizer's spans, NOT by
+/// `expr.replace(token, ...)`: a string replace of `$11PT1214A` would also
+/// chew the front of `$11PT1214A.PV` (a real pair of sensor names), turning
+/// it into `__sensor_0.PV`.
 ///
 /// `^` needs no rewriting -- fasteval parses it natively as its exponent
 /// operator (`BinaryOp::EExp`).
-fn prepare_formula_for_eval(
-    formula: &str,
-    sensor_refs: &[(String, String)],
-) -> (String, Vec<(String, String)>) {
-    let mut expr = formula.to_string();
+fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
+    let chars: Vec<char> = formula.chars().collect();
+    let mut expr = String::with_capacity(formula.len());
     let mut safe_names: Vec<(String, String)> = Vec::new();
+    let mut pos = 0;
 
-    // Replace sensor references with safe variable names (fasteval needs
-    // simple alphanumeric identifiers).
-    for (i, (token, sensor_name)) in sensor_refs.iter().enumerate() {
-        let safe_name = format!("__sensor_{}", i);
-        expr = expr.replace(token, &safe_name);
-        safe_names.push((safe_name, sensor_name.clone()));
+    for span in scan_sensor_refs(formula) {
+        expr.extend(chars[pos..span.start].iter());
+        let idx = match safe_names.iter().position(|(_, n)| *n == span.name) {
+            Some(i) => i,
+            None => {
+                safe_names.push((format!("__sensor_{}", safe_names.len()), span.name.clone()));
+                safe_names.len() - 1
+            }
+        };
+        expr.push_str(&safe_names[idx].0);
+        pos = span.end;
     }
+    expr.extend(chars[pos..].iter());
 
     (expr, safe_names)
 }
@@ -2775,59 +2952,488 @@ fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
 }
 
 #[cfg(test)]
-mod put_sensor_column_tests {
+mod special_sensor_tests {
     use super::*;
+    use std::collections::HashSet;
+
+    const NAN: f64 = f64::NAN;
 
     fn dataset() -> ColumnarData {
         ColumnarData::from_parts(
             vec!["timestamp".into(), "A".into(), "B".into()],
-            vec![Some("2020-01-01T00:00".into()), Some("2020-01-01T00:01".into())],
             vec![
-                vec![f64::NAN; 2],
-                vec![1.0, 2.0],
-                vec![10.0, 20.0],
+                Some("2020-01-01T00:00".into()),
+                Some("2020-01-01T00:01".into()),
+                Some("2020-01-01T00:02".into()),
+            ],
+            vec![
+                vec![NAN; 3],
+                vec![1.0, 2.0, 3.0],
+                vec![10.0, 20.0, 30.0],
             ],
         )
     }
 
+    fn dataset_with(headers: &[&str], cols: Vec<Vec<f64>>) -> ColumnarData {
+        let n = cols[0].len();
+        let mut h: Vec<String> = vec!["timestamp".into()];
+        h.extend(headers.iter().map(|s| s.to_string()));
+        let mut c = vec![vec![NAN; n]];
+        c.extend(cols);
+        ColumnarData::from_parts(h, (0..n).map(|i| Some(format!("2020-01-01T00:0{}", i))).collect(), c)
+    }
+
+    fn single(op: &str, v: f64, name: Option<&str>) -> SensorOperationConfig {
+        SensorOperationConfig {
+            mode: "single".into(),
+            single_op: Some(SingleOperation { op_type: op.into(), value: v }),
+            multi_op: None,
+            custom_name: name.map(String::from),
+        }
+    }
+
+    fn multi(op: &str, name: Option<&str>) -> SensorOperationConfig {
+        SensorOperationConfig {
+            mode: "multi".into(),
+            single_op: None,
+            multi_op: Some(MultiOperation { op_type: op.into() }),
+            custom_name: name.map(String::from),
+        }
+    }
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn same(a: &[f64], b: &[f64]) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(x, y)| (x.is_nan() && y.is_nan()) || x == y)
+    }
+
+    // ── store_derived_column: create ─────────────────────────────────
+
     #[test]
-    fn appends_a_new_column_at_the_end() {
+    fn create_appends_and_tracks_the_column_as_derived() {
         let mut data = dataset();
-        put_sensor_column(&mut data, "C", vec![5.0, 6.0], false);
+        let mut derived = HashSet::new();
+        let name = store_derived_column(&mut data, &mut derived, "C", vec![5.0, 6.0, 7.0], false).unwrap();
+        assert_eq!(name, "C");
         assert_eq!(data.headers, vec!["timestamp", "A", "B", "C"]);
-        assert_eq!(data.columns[3], vec![5.0, 6.0]);
+        assert_eq!(data.columns[3], vec![5.0, 6.0, 7.0]);
+        assert!(derived.contains("c"));
     }
 
     #[test]
-    fn replacing_overwrites_in_place_and_keeps_the_column_order() {
+    fn create_over_an_existing_name_is_rejected_exact_and_different_case() {
         let mut data = dataset();
-        put_sensor_column(&mut data, "A", vec![7.0, 8.0], true);
-        assert_eq!(data.headers, vec!["timestamp", "A", "B"], "no second 'A' header");
-        assert_eq!(data.columns[1], vec![7.0, 8.0], "same slot, new values");
-        assert_eq!(data.columns[2], vec![10.0, 20.0], "B untouched");
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "Sum All", vec![1.0; 3], false).unwrap();
+        for dup in ["Sum All", "sum all", "  SUM ALL  ", "A", "a", "timestamp"] {
+            let err = store_derived_column(&mut data, &mut derived, dup, vec![9.0; 3], false).unwrap_err();
+            assert!(err.contains("already exists"), "{dup}: {err}");
+        }
+        assert_eq!(data.headers, vec!["timestamp", "A", "B", "Sum All"], "nothing was appended");
+        assert_eq!(data.columns[3], vec![1.0; 3], "nothing was overwritten");
     }
 
-    /// Without `replace`, a second column of the same name is unreachable:
-    /// every sensor lookup here takes the FIRST header match, so the new
-    /// values would be computed and then never read. This is the behaviour
-    /// that made editing a special sensor impossible before.
     #[test]
-    fn appending_over_an_existing_name_shadows_the_new_column() {
+    fn stores_and_returns_the_trimmed_name() {
         let mut data = dataset();
-        put_sensor_column(&mut data, "A", vec![7.0, 8.0], false);
-        assert_eq!(data.headers.iter().filter(|h| *h == "A").count(), 2);
-        let first = data.headers.iter().position(|h| h == "A").unwrap();
-        assert_eq!(data.columns[first], vec![1.0, 2.0], "lookups still find the OLD column");
+        let mut derived = HashSet::new();
+        let name = store_derived_column(&mut data, &mut derived, "  Total  ", vec![1.0; 3], false).unwrap();
+        assert_eq!(name, "Total");
+        assert_eq!(data.headers[3], "Total");
     }
 
     #[test]
-    fn replacing_a_name_that_is_not_there_yet_appends_instead() {
+    fn rejects_an_empty_name_and_a_wrong_length_column() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        assert!(store_derived_column(&mut data, &mut derived, "   ", vec![1.0; 3], false).is_err());
+        let err = store_derived_column(&mut data, &mut derived, "C", vec![1.0; 2], false).unwrap_err();
+        assert!(err.contains("rows"), "{err}");
+        assert_eq!(data.headers.len(), 3);
+        assert_eq!(data.columns.len(), 3);
+        assert!(derived.is_empty());
+    }
+
+    // ── store_derived_column: replace ────────────────────────────────
+
+    #[test]
+    fn replace_overwrites_a_derived_column_in_place_keeping_its_position() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "X", vec![1.0; 3], false).unwrap();
+        store_derived_column(&mut data, &mut derived, "Y", vec![2.0; 3], false).unwrap();
+        // Different case on purpose: the sensor is the same one.
+        let name = store_derived_column(&mut data, &mut derived, " x ", vec![7.0, 8.0, 9.0], true).unwrap();
+        assert_eq!(name, "x");
+        assert_eq!(data.headers, vec!["timestamp", "A", "B", "x", "Y"], "same slot, no second X");
+        assert_eq!(data.columns[3], vec![7.0, 8.0, 9.0]);
+        assert_eq!(data.columns[4], vec![2.0; 3], "Y untouched");
+    }
+
+    #[test]
+    fn replace_on_a_raw_column_or_the_timestamp_column_errors_and_changes_nothing() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        for raw in ["A", "a", "timestamp"] {
+            let err = store_derived_column(&mut data, &mut derived, raw, vec![9.0; 3], true).unwrap_err();
+            assert!(err.contains("imported"), "{raw}: {err}");
+        }
+        assert_eq!(data.columns[1], vec![1.0, 2.0, 3.0]);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B"]);
+    }
+
+    #[test]
+    fn replace_of_a_name_that_is_not_there_appends() {
         // What a workspace reopen does: the recipes replay against freshly
         // loaded CSV data where none of the special sensors exist yet.
         let mut data = dataset();
-        put_sensor_column(&mut data, "C", vec![5.0, 6.0], true);
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "C", vec![5.0, 6.0, 7.0], true).unwrap();
         assert_eq!(data.headers, vec!["timestamp", "A", "B", "C"]);
-        assert_eq!(data.columns[3], vec![5.0, 6.0]);
+        assert!(derived.contains("c"), "and it is derived, so a later replace works");
+        store_derived_column(&mut data, &mut derived, "C", vec![0.0; 3], true).unwrap();
+        assert_eq!(data.columns[3], vec![0.0; 3]);
+    }
+
+    // ── the user's bug: delete then recreate ─────────────────────────
+
+    /// Reproduces "special sensor values don't match": create X, delete X in
+    /// the UI, create a NEW X with a different formula. Before the fix a
+    /// second column named X was appended and every lookup (FIRST match) read
+    /// the old deleted sensor's numbers.
+    #[test]
+    fn recreate_after_remove_serves_the_new_values_on_first_lookup() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "X", vec![1.0, 1.0, 1.0], false).unwrap();
+
+        // While X still exists, creating another X is refused.
+        assert!(store_derived_column(&mut data, &mut derived, "X", vec![2.0; 3], false).is_err());
+
+        let removed = remove_derived_columns(&mut data, &mut derived, &strs(&["X"]));
+        assert_eq!(removed, 1);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B"]);
+
+        store_derived_column(&mut data, &mut derived, "X", vec![2.0, 2.0, 2.0], false).unwrap();
+        assert_eq!(data.headers.iter().filter(|h| *h == "X").count(), 1, "exactly one X");
+        let first = resolve_sensor(&data.headers, "X").unwrap();
+        assert_eq!(data.columns[first], vec![2.0, 2.0, 2.0], "the FIRST lookup returns the NEW values");
+        assert_eq!(data.col_index("X"), Some(first));
+    }
+
+    #[test]
+    fn rename_leaves_no_old_name_behind_once_the_old_column_is_removed() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "Old", vec![1.0; 3], false).unwrap();
+        // The frontend's rename: remove the old name, create/replace the new.
+        remove_derived_columns(&mut data, &mut derived, &strs(&["Old"]));
+        store_derived_column(&mut data, &mut derived, "New", vec![1.0; 3], true).unwrap();
+        // The old name is free to be reused with different data.
+        store_derived_column(&mut data, &mut derived, "Old", vec![4.0; 3], false).unwrap();
+        let i = resolve_sensor(&data.headers, "Old").unwrap();
+        assert_eq!(data.columns[i], vec![4.0; 3]);
+    }
+
+    // ── remove_derived_columns ───────────────────────────────────────
+
+    #[test]
+    fn remove_never_touches_raw_or_timestamp_columns() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "X", vec![1.0; 3], false).unwrap();
+        let removed = remove_derived_columns(&mut data, &mut derived, &strs(&["A", "B", "timestamp", "TIMESTAMP", "nope"]));
+        assert_eq!(removed, 0);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B", "X"]);
+        assert_eq!(data.columns.len(), 4);
+        assert!(derived.contains("x"));
+    }
+
+    #[test]
+    fn remove_matches_trimmed_case_insensitively_and_counts_correctly() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        store_derived_column(&mut data, &mut derived, "X", vec![1.0; 3], false).unwrap();
+        store_derived_column(&mut data, &mut derived, "Y z", vec![2.0; 3], false).unwrap();
+        store_derived_column(&mut data, &mut derived, "W", vec![3.0; 3], false).unwrap();
+        // "x" and " y Z " hit; "X" again (duplicate in the request), "A" (raw) and
+        // "ghost" don't count.
+        let removed = remove_derived_columns(&mut data, &mut derived, &strs(&["x", " y Z ", "X", "A", "ghost"]));
+        assert_eq!(removed, 2);
+        assert_eq!(data.headers, vec!["timestamp", "A", "B", "W"]);
+        assert_eq!(data.columns.len(), data.headers.len());
+        assert_eq!(data.columns[3], vec![3.0; 3], "W kept its own values after the shift");
+        assert_eq!(derived, HashSet::from(["w".to_string()]));
+    }
+
+    // ── session-level wrappers ───────────────────────────────────────
+
+    fn app_state(generation: u64) -> AppState {
+        AppState(RwLock::new(Some(SessionData {
+            data: dataset(),
+            paths: vec![],
+            derived: HashSet::new(),
+            generation,
+        })))
+    }
+
+    #[test]
+    fn commit_derived_refuses_a_result_computed_from_a_replaced_dataset() {
+        let state = app_state(5);
+        let err = commit_derived(&state, 4, "X", vec![1.0; 3], false).unwrap_err();
+        assert!(err.contains("changed"), "{err}");
+        assert_eq!(state.0.read().unwrap().as_ref().unwrap().data.headers.len(), 3);
+        assert_eq!(commit_derived(&state, 5, "X", vec![1.0; 3], false).unwrap(), "X");
+    }
+
+    #[test]
+    fn commit_and_remove_through_the_session() {
+        let state = app_state(1);
+        commit_derived(&state, 1, "X", vec![1.0; 3], false).unwrap();
+        assert!(commit_derived(&state, 1, "x", vec![2.0; 3], false).is_err());
+        assert_eq!(remove_derived_in_state(&state, &strs(&["X", "A"])).unwrap(), 1);
+        assert_eq!(state.0.read().unwrap().as_ref().unwrap().data.headers, vec!["timestamp", "A", "B"]);
+    }
+
+    #[test]
+    fn with_no_dataset_remove_is_a_noop_and_commit_errors() {
+        let state = AppState(RwLock::new(None));
+        assert_eq!(remove_derived_in_state(&state, &strs(&["X"])).unwrap(), 0);
+        assert!(commit_derived(&state, 1, "X", vec![], false).is_err());
+    }
+
+    // ── resolve_sensor ───────────────────────────────────────────────
+
+    #[test]
+    fn resolve_prefers_an_exact_match_then_falls_back_to_trimmed_case_insensitive() {
+        let headers = strs(&["timestamp", "a", "A", "Tag B"]);
+        assert_eq!(resolve_sensor(&headers, "A"), Some(2), "exact wins over an earlier case-variant");
+        assert_eq!(resolve_sensor(&headers, "a"), Some(1));
+        assert_eq!(resolve_sensor(&headers, " tag b "), Some(3));
+        assert_eq!(resolve_sensor(&headers, "zzz"), None);
+    }
+
+    // ── compute_operation_sensor ─────────────────────────────────────
+
+    #[test]
+    fn single_op_computes_and_names_the_column() {
+        let data = dataset();
+        let (name, col) = compute_operation_sensor(&data, &strs(&["A"]), &single("multiply", 2.0, None), false).unwrap();
+        assert_eq!(name, "A * 2");
+        assert_eq!(col, vec![2.0, 4.0, 6.0]);
+    }
+
+    #[test]
+    fn custom_name_is_trimmed() {
+        let data = dataset();
+        let (name, _) = compute_operation_sensor(&data, &strs(&["A"]), &single("add", 1.0, Some("  My Sensor ")), false).unwrap();
+        assert_eq!(name, "My Sensor");
+    }
+
+    #[test]
+    fn create_rejects_an_existing_name_before_computing() {
+        let data = dataset();
+        let err = compute_operation_sensor(&data, &strs(&["A"]), &single("add", 1.0, Some("b")), false).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn replace_cannot_read_the_column_it_overwrites_even_with_different_case() {
+        let data = dataset();
+        let err = compute_operation_sensor(&data, &strs(&["A"]), &single("add", 1.0, Some(" a ")), true).unwrap_err();
+        assert!(err.contains("cannot be built from itself"), "{err}");
+    }
+
+    #[test]
+    fn unknown_sensor_and_bad_config_are_errors() {
+        let data = dataset();
+        assert!(compute_operation_sensor(&data, &strs(&["nope"]), &single("add", 1.0, None), false).unwrap_err().contains("Sensor not found"));
+        assert!(compute_operation_sensor(&data, &[], &single("add", 1.0, None), false).is_err());
+        assert!(compute_operation_sensor(&data, &strs(&["A", "B"]), &single("add", 1.0, None), false).is_err());
+        assert!(compute_operation_sensor(&data, &strs(&["A"]), &single("bogus", 1.0, None), false).is_err());
+        let bad_mode = SensorOperationConfig { mode: "x".into(), single_op: None, multi_op: None, custom_name: None };
+        assert!(compute_operation_sensor(&data, &strs(&["A"]), &bad_mode, false).is_err());
+    }
+
+    #[test]
+    fn single_op_missing_input_stays_missing_and_non_finite_results_become_missing() {
+        let data = dataset_with(&["P"], vec![vec![NAN, 0.0, 1e300]]);
+        // divide by zero -> None -> NaN
+        let (_, col) = compute_operation_sensor(&data, &strs(&["P"]), &single("divide", 0.0, Some("d")), false).unwrap();
+        assert!(col.iter().all(|v| v.is_nan()));
+        // 0^-1 = inf and 1e300^2 = inf must NOT be stored as inf
+        let (_, col) = compute_operation_sensor(&data, &strs(&["P"]), &single("power", -1.0, Some("neg")), false).unwrap();
+        assert!(col[0].is_nan() && col[1].is_nan(), "{col:?}");
+        assert!(col[2] > 0.0 && col[2].is_finite(), "{col:?}");
+        let (_, col) = compute_operation_sensor(&data, &strs(&["P"]), &single("power", 2.0, Some("sq")), false).unwrap();
+        assert!(same(&col, &[NAN, 0.0, NAN]), "{col:?}");
+        assert!(col.iter().all(|v| !v.is_infinite()));
+    }
+
+    // ── multi-op NaN semantics (decided 2026-10-03) ──────────────────
+
+    fn nan_dataset() -> ColumnarData {
+        // row0: all valid, row1: B missing, row2: all missing
+        dataset_with(&["A", "B"], vec![vec![1.0, 4.0, NAN], vec![3.0, NAN, NAN]])
+    }
+
+    #[test]
+    fn multi_sum_is_missing_when_any_source_is_missing() {
+        let (_, col) = compute_operation_sensor(&nan_dataset(), &strs(&["A", "B"]), &multi("sum", Some("S")), false).unwrap();
+        assert!(same(&col, &[4.0, NAN, NAN]), "{col:?}");
+    }
+
+    #[test]
+    fn multi_mean_and_median_skip_missing_sources_and_all_missing_stays_missing() {
+        let (_, mean) = compute_operation_sensor(&nan_dataset(), &strs(&["A", "B"]), &multi("mean", Some("M")), false).unwrap();
+        assert!(same(&mean, &[2.0, 4.0, NAN]), "{mean:?}");
+        let (_, med) = compute_operation_sensor(&nan_dataset(), &strs(&["A", "B"]), &multi("median", Some("D")), false).unwrap();
+        assert!(same(&med, &[2.0, 4.0, NAN]), "{med:?}");
+    }
+
+    #[test]
+    fn multi_op_with_all_valid_sources_is_unaffected() {
+        let data = dataset();
+        let (name, col) = compute_operation_sensor(&data, &strs(&["A", "B"]), &multi("sum", None), false).unwrap();
+        assert_eq!(name, "Sum([\"A\", \"B\"])");
+        assert_eq!(col, vec![11.0, 22.0, 33.0]);
+    }
+
+    #[test]
+    fn multi_op_can_be_built_from_a_derived_column() {
+        let mut data = dataset();
+        let mut derived = HashSet::new();
+        let (n, c) = compute_operation_sensor(&data, &strs(&["A"]), &single("multiply", 10.0, Some("A10")), false).unwrap();
+        store_derived_column(&mut data, &mut derived, &n, c, false).unwrap();
+        let (_, col) = compute_operation_sensor(&data, &strs(&["a10", "B"]), &multi("sum", Some("T")), false).unwrap();
+        assert_eq!(col, vec![20.0, 40.0, 60.0]);
+    }
+
+    // ── compute_formula_sensor ───────────────────────────────────────
+
+    #[test]
+    fn formula_computes_and_a_missing_input_gives_a_missing_row() {
+        let data = dataset_with(&["A", "B"], vec![vec![1.0, NAN, 3.0], vec![10.0, 20.0, 30.0]]);
+        let (name, col) = compute_formula_sensor(&data, "$A + $B", Some(" Total "), false).unwrap();
+        assert_eq!(name, "Total");
+        assert!(same(&col, &[11.0, NAN, 33.0]), "{col:?}");
+    }
+
+    /// `$11PT1214A` is a textual prefix of `$11PT1214A.PV`; a string replace
+    /// of the shorter token used to mangle the longer one.
+    #[test]
+    fn formula_with_one_name_a_prefix_of_another_uses_the_right_columns() {
+        let data = dataset_with(&["11PT1214A", "11PT1214A.PV"], vec![vec![1.0, 2.0], vec![100.0, 200.0]]);
+        let (_, col) = compute_formula_sensor(&data, "$11PT1214A + $11PT1214A.PV", Some("S"), false).unwrap();
+        assert_eq!(col, vec![101.0, 202.0]);
+        let (_, col) = compute_formula_sensor(&data, "$11PT1214A.PV - $11PT1214A", Some("D"), false).unwrap();
+        assert_eq!(col, vec![99.0, 198.0]);
+    }
+
+    #[test]
+    fn formula_reusing_one_sensor_twice_and_special_character_names() {
+        let data = dataset_with(&["Total-Power", "A/B"], vec![vec![2.0, 3.0], vec![4.0, 5.0]]);
+        let f = format!("{} * {} + {}", sensor_ref_token("Total-Power"), sensor_ref_token("Total-Power"), sensor_ref_token("A/B"));
+        let (_, col) = compute_formula_sensor(&data, &f, Some("R"), false).unwrap();
+        assert_eq!(col, vec![8.0, 14.0]);
+    }
+
+    #[test]
+    fn formula_resolves_sources_case_insensitively_and_trimmed() {
+        let data = dataset();
+        let (_, col) = compute_formula_sensor(&data, "$a * 2", Some("Z"), false).unwrap();
+        assert_eq!(col, vec![2.0, 4.0, 6.0]);
+    }
+
+    #[test]
+    fn formula_errors() {
+        let data = dataset();
+        assert!(compute_formula_sensor(&data, "1 + 2", Some("Z"), false).unwrap_err().contains("no sensor references"));
+        assert!(compute_formula_sensor(&data, "$nope + 1", Some("Z"), false).unwrap_err().contains("Sensor not found"));
+        assert!(compute_formula_sensor(&data, "$A + 1", Some("b"), false).unwrap_err().contains("already exists"));
+        assert!(compute_formula_sensor(&data, "$A + 1", Some("a"), true).unwrap_err().contains("cannot be built from itself"));
+        assert!(compute_formula_sensor(&data, "$A +", Some("Z"), false).unwrap_err().contains("parse error"));
+    }
+
+    #[test]
+    fn formula_non_finite_results_are_missing() {
+        let data = dataset_with(&["A"], vec![vec![0.0, 2.0]]);
+        let (_, col) = compute_formula_sensor(&data, "1 / $A", Some("Z"), false).unwrap();
+        assert!(same(&col, &[NAN, 0.5]), "{col:?}");
+    }
+
+    #[test]
+    fn formula_default_name_is_trimmed() {
+        let data = dataset();
+        let (name, _) = compute_formula_sensor(&data, "$A + 1 ", None, false).unwrap();
+        assert_eq!(name, "f($A + 1)");
+    }
+
+    // ── sensor_ref_token / tokenizer round trips ─────────────────────
+
+    #[test]
+    fn token_is_bare_only_for_alphanumeric_underscore_names() {
+        assert_eq!(sensor_ref_token("plain_1"), "$plain_1");
+        assert_eq!(sensor_ref_token("Temp"), "$Temp");
+        for braced in ["Total-Power", "A/B", "Eff%", "(x)", "Sum All", "a.b", "11PT1214A.PV", "", "a+b"] {
+            assert_eq!(sensor_ref_token(braced), format!("${{{}}}", braced), "{braced}");
+        }
+    }
+
+    #[test]
+    fn token_round_trips_through_extract_sensor_refs() {
+        for name in [
+            "plain_1", "Total-Power", "A/B", "Eff%", "(x)", "Sum All", "a.b", "11PT1214A.PV",
+            "ไทย", "อุณหภูมิ", "a+b", "x*y", "50%", "ºC",
+        ] {
+            let token = sensor_ref_token(name);
+            let formula = format!("1 + {} * 2", token);
+            let refs = extract_sensor_refs(&formula);
+            assert_eq!(refs, vec![(token.clone(), name.to_string())], "{name}");
+        }
+    }
+
+    #[test]
+    fn a_bare_name_with_a_dash_would_have_been_misparsed() {
+        // Documents WHY the brace rule exists.
+        let refs = extract_sensor_refs("$Total-Power");
+        assert_eq!(refs[0].1, "Total");
+    }
+
+    #[test]
+    fn rewrite_round_trips_special_character_names() {
+        assert_eq!(rewrite_sensor_ref("${Total-Power} + 1", "total-power", "Eff%"), "${Eff%} + 1");
+        assert_eq!(rewrite_sensor_ref("$A + $B", "A", "Total-Power"), "${Total-Power} + $B");
+        assert_eq!(rewrite_sensor_ref("$A + 1", "A", "  Spacey Name "), "${Spacey Name} + 1");
+        // the rewritten formula parses back to the new name
+        let out = rewrite_sensor_ref("$A * 2", "A", "A/B");
+        assert_eq!(extract_sensor_refs(&out)[0].1, "A/B");
+    }
+
+    // ── prepare_formula_for_eval ─────────────────────────────────────
+
+    #[test]
+    fn prepare_rebuilds_the_expression_from_spans_not_string_replace() {
+        let (expr, names) = prepare_formula_for_eval("$A + $A.PV * ${x y} - $A");
+        assert_eq!(expr, "__sensor_0 + __sensor_1 * __sensor_2 - __sensor_0");
+        assert_eq!(
+            names,
+            vec![
+                ("__sensor_0".to_string(), "A".to_string()),
+                ("__sensor_1".to_string(), "A.PV".to_string()),
+                ("__sensor_2".to_string(), "x y".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prepare_leaves_non_reference_text_alone() {
+        let (expr, names) = prepare_formula_for_eval("sqrt(4) + 2 ^ 3 $ {oops");
+        assert_eq!(expr, "sqrt(4) + 2 ^ 3 $ {oops");
+        assert!(names.is_empty());
     }
 }
 
@@ -3088,18 +3694,19 @@ fn validate_formula(
     let session = state_lock.as_ref().ok_or("No data loaded")?;
     let data = &session.data;
 
-    // 1. Extract sensor references
+    // 1. Extract sensor references (distinct, in order of appearance)
     let sensor_refs = extract_sensor_refs(&formula);
-    let referenced_sensors: Vec<String> = sensor_refs
-        .iter()
-        .map(|(_, name)| name.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+    let mut referenced_sensors: Vec<String> = Vec::new();
+    for (_, name) in &sensor_refs {
+        if !referenced_sensors.contains(name) {
+            referenced_sensors.push(name.clone());
+        }
+    }
 
-    // 2. Check all referenced sensors exist in loaded data
+    // 2. Check all referenced sensors exist in loaded data — through the same
+    //    resolver `evaluate_formula` uses, so "valid" here means "will run".
     for sensor_name in &referenced_sensors {
-        if !data.headers.contains(sensor_name) {
+        if resolve_sensor(&data.headers, sensor_name).is_none() {
             return Ok(FormulaValidationResult {
                 valid: false,
                 error: Some(format!("Sensor not found: {}", sensor_name)),
@@ -3109,7 +3716,7 @@ fn validate_formula(
     }
 
     // 3. Try to parse the expression (with dummy values)
-    let (expr, safe_names) = prepare_formula_for_eval(&formula, &sensor_refs);
+    let (expr, safe_names) = prepare_formula_for_eval(&formula);
 
     let parser = fasteval::Parser::new();
     let mut slab = fasteval::Slab::new();
@@ -3148,59 +3755,49 @@ fn validate_formula(
     }
 }
 
-#[tauri::command]
-fn evaluate_formula(
-    formula: String,
-    custom_name: Option<String>,
-    replace: Option<bool>,
-    state: State<AppState>,
-) -> Result<String, String> {
-    check_formula_limits(&formula)?;
-    let replace = replace.unwrap_or(false);
-
-    let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
-    let session = state_lock.as_mut().ok_or("No data loaded")?;
-    let data = &mut session.data;
+/// Pure core of `evaluate_formula`: validates and evaluates without touching
+/// the session. Returns `(final trimmed name, column)`; a row with ANY missing
+/// (NaN) input, or a non-finite / failed evaluation, is NaN.
+fn compute_formula_sensor(
+    data: &ColumnarData,
+    formula: &str,
+    custom_name: Option<&str>,
+    replace: bool,
+) -> Result<(String, Vec<f64>), String> {
+    check_formula_limits(formula)?;
 
     // 1. Extract sensor references from formula
-    let sensor_refs = extract_sensor_refs(&formula);
-    if sensor_refs.is_empty() {
+    if extract_sensor_refs(formula).is_empty() {
         return Err("Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.".to_string());
     }
 
-    // 2. Check all referenced sensors exist in the loaded data
-    let unique_sensors: std::collections::HashSet<String> =
-        sensor_refs.iter().map(|(_, name)| name.clone()).collect();
-
-    for sensor_name in &unique_sensors {
-        if !data.headers.iter().any(|h| h == sensor_name) {
-            return Err(format!("Sensor not found: {}", sensor_name));
-        }
+    // 2. Rewrite to fasteval-safe variables and resolve every distinct sensor
+    //    to a column (all of them must exist).
+    let (expr, safe_names) = prepare_formula_for_eval(formula);
+    let mut safe_name_to_idx: Vec<(&str, usize)> = Vec::with_capacity(safe_names.len());
+    for (safe_name, original_name) in &safe_names {
+        let idx = resolve_sensor(&data.headers, original_name)
+            .ok_or_else(|| format!("Sensor not found: {}", original_name))?;
+        safe_name_to_idx.push((safe_name.as_str(), idx));
     }
 
+    // 3. Final name + collision rules.
+    let name = match custom_name.map(str::trim) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => format!("f({})", formula.trim()),
+    };
     // A recomputation must not read the column it is about to overwrite —
-    // see `put_sensor_column`. `$self + 1` would otherwise creep upward by
-    // one every time the formula was saved.
+    // `$self + 1` would otherwise creep upward by one every time the formula
+    // was saved.
     if replace {
-        if let Some(target) = custom_name.as_deref().map(str::trim) {
-            if !target.is_empty() && unique_sensors.iter().any(|s| s == target) {
-                return Err(format!("'{}' cannot be built from itself", target));
+        if let Some(target) = find_column_ci(&data.headers, &name) {
+            if safe_name_to_idx.iter().any(|(_, idx)| *idx == target) {
+                return Err(format!("'{}' cannot be built from itself", name));
             }
         }
-    }
-
-    // 3. Prepare the expression for fasteval
-    let (expr, safe_names) = prepare_formula_for_eval(&formula, &sensor_refs);
-
-    // Build a map from safe_name -> column index
-    let mut safe_name_to_idx: Vec<(String, usize)> = Vec::new();
-    for (safe_name, original_name) in &safe_names {
-        let idx = data
-            .headers
-            .iter()
-            .position(|h| h == original_name)
-            .ok_or(format!("Sensor not found: {}", original_name))?;
-        safe_name_to_idx.push((safe_name.clone(), idx));
+    } else if find_column_ci(&data.headers, &name).is_some() {
+        // Fail fast, before the (possibly long) evaluation.
+        return Err(format!("A sensor named '{}' already exists", name));
     }
 
     // 4. Pre-compile the expression once
@@ -3213,52 +3810,61 @@ fn evaluate_formula(
     // 5. Evaluate for each row (NaN in `new_col` = missing result)
     let n = data.n_rows();
     let mut new_col: Vec<f64> = Vec::with_capacity(n);
-    {
-        let src_cols: Vec<(&str, &[f64])> = safe_name_to_idx
-            .iter()
-            .map(|(safe_name, idx)| (safe_name.as_str(), data.columns[*idx].as_slice()))
-            .collect();
+    let var_names: Vec<&str> = safe_name_to_idx.iter().map(|(s, _)| *s).collect();
+    let src_cols: Vec<&[f64]> = safe_name_to_idx
+        .iter()
+        .map(|(_, idx)| data.columns[*idx].as_slice())
+        .collect();
+    let mut row_values: Vec<f64> = vec![0.0; src_cols.len()];
 
-        for r in 0..n {
-            // A missing (NaN) input on any referenced sensor → missing result.
-            if src_cols.iter().any(|(_, col)| col[r].is_nan()) {
-                new_col.push(f64::NAN);
-                continue;
+    for r in 0..n {
+        // A missing (NaN) input on any referenced sensor → missing result.
+        if src_cols.iter().any(|col| col[r].is_nan()) {
+            new_col.push(f64::NAN);
+            continue;
+        }
+        for (j, col) in src_cols.iter().enumerate() {
+            row_values[j] = col[r];
+        }
+
+        let mut ns = |var: &str, args: Vec<f64>| -> Option<f64> {
+            match var_names.iter().position(|s| *s == var) {
+                Some(j) => Some(row_values[j]),
+                None => eval_extra_math_fn(var, &args),
             }
+        };
 
-            // Build the namespace with actual sensor values for this row
-            let row_values: BTreeMap<&str, f64> = src_cols
-                .iter()
-                .map(|(safe_name, col)| (*safe_name, col[r]))
-                .collect();
-
-            let mut ns = |name: &str, args: Vec<f64>| -> Option<f64> {
-                match row_values.get(name) {
-                    Some(v) => Some(*v),
-                    None => eval_extra_math_fn(name, &args),
-                }
-            };
-
-            let expr_ref = slab.ps.get_expr(expr_i);
-            match expr_ref.eval(&slab, &mut ns) {
-                Ok(result) if result.is_finite() => new_col.push(result),
-                // NaN / Infinity / eval error → missing
-                _ => new_col.push(f64::NAN),
-            }
+        let expr_ref = slab.ps.get_expr(expr_i);
+        match expr_ref.eval(&slab, &mut ns) {
+            Ok(result) if result.is_finite() => new_col.push(result),
+            // NaN / Infinity / eval error → missing
+            _ => new_col.push(f64::NAN),
         }
     }
 
-    // 6. Determine the new sensor name
-    let new_sensor_name = match custom_name {
-        Some(ref name) if !name.trim().is_empty() => name.clone(),
-        _ => format!("f({})", formula),
+    Ok((name, new_col))
+}
+
+#[tauri::command]
+fn evaluate_formula(
+    formula: String,
+    custom_name: Option<String>,
+    replace: Option<bool>,
+    state: State<AppState>,
+) -> Result<String, String> {
+    check_formula_limits(&formula)?;
+    let replace = replace.unwrap_or(false);
+
+    // Evaluate under a READ lock, store under a short write lock (see
+    // `commit_derived`).
+    let (generation, name, col) = {
+        let lock = state.0.read().map_err(|e| e.to_string())?;
+        let session = lock.as_ref().ok_or("No data loaded")?;
+        let (name, col) =
+            compute_formula_sensor(&session.data, &formula, custom_name.as_deref(), replace)?;
+        (session.generation, name, col)
     };
-
-    // 7. Store the column — appending a new one, or overwriting the existing
-    //    one of that name when this is a recomputation after an edit.
-    put_sensor_column(data, &new_sensor_name, new_col, replace);
-
-    Ok(new_sensor_name)
+    commit_derived(&state, generation, &name, col, replace)
 }
 
 #[tauri::command]
@@ -3737,6 +4343,7 @@ pub fn run() {
             preview_relationship_model,
             get_loaded_paths,
             calculate_new_sensor,
+            remove_sensor_columns,
             load_mapping_csv,
             apply_sensor_mapping,
             get_chart_data,
