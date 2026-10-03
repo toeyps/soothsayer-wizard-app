@@ -15,7 +15,7 @@ import { debugLog } from "../../utils/debugLog";
 import {
     buildSpecialSensorUsage, reorderRecipesByTags, usageFor, SpecialSensorUsage,
 } from "../../utils/specialSensorDeps";
-import { runSpecialSensorEdit, SpecialSensorEditError } from "../../utils/specialSensorEdit";
+import { EditFailureState, runSpecialSensorEdit, SpecialSensorEditError } from "../../utils/specialSensorEdit";
 import {
     renameTagInArray, renameTagInModels, renameTagInRunningConditionFilters,
 } from "../../utils/specialSensorRename";
@@ -592,6 +592,16 @@ export default function AddSensorWindow() {
      * Refused rather than repaired afterwards: a formula that references
      * nothing, one that makes the sensor depend on itself (directly or through
      * the chain), and a rename that collides with another sensor's tag.
+     *
+     * EDIT LOCK (2026-10-03, user decision): a sensor that a model -- or the
+     * workspace Running condition, or a special sensor built on it that one of
+     * them uses -- depends on may not be renamed nor have its values changed
+     * (only description / unit / component). The models are RE-READ FROM DISK
+     * at the start of this task (same as the delete commit), so a model added
+     * from another window after the click still refuses the edit; the check
+     * runs inside `runSpecialSensorEdit`'s read-only phase, before any column
+     * is touched. A model that starts using the sensor WHILE a task is already
+     * past that check is not stopped (it can only have picked the new values).
      */
     const saveEditTask = async (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => {
         const oldTag = next.renamedFrom;
@@ -601,6 +611,22 @@ export default function AddSensorWindow() {
             // Any deletion still waiting is settled first, so the dependency
             // graph this reasons about matches what the dashboard holds.
             await settleDeletions();
+
+            // Fresh models + Running condition for the edit lock. Unreadable =
+            // treated as locked (a guess of "nothing uses it" is how a trained
+            // model goes stale).
+            let failureState: EditFailureState;
+            try {
+                const fresh = await readFailureState();
+                setModels(fresh.models);
+                setRunningConditionFilters(fresh.rc);
+                setFailureKnown(true);
+                failureState = { known: true, models: fresh.models, runningConditionFilters: fresh.rc };
+            } catch (err) {
+                console.error('Could not re-read the models before editing a sensor:', err);
+                setFailureKnown(false);
+                failureState = { known: false, models: [], runningConditionFilters: [], reason: errorText(err) };
+            }
 
             if (oldTag) {
                 if (!newTag.trim()) throw new Error('Name is required.');
@@ -615,8 +641,12 @@ export default function AddSensorWindow() {
                 next: next.recipe,
                 oldTag,
                 invoker,
+                failureState,
             });
             const { downstream, renamedDownstream, recipeOrder, applyEdit } = outcome;
+            // What was really saved: for a metadata-only save of a locked
+            // sensor, the stored recipe untouched.
+            const savedRecipe = outcome.recipe;
 
             setRecipes(prev => reorderRecipesByTags(applyEdit(prev), recipeOrder));
             setSensorMetadata(prev => {
@@ -651,9 +681,9 @@ export default function AddSensorWindow() {
                 });
             } else {
                 await emit('update-special-sensor', {
-                    recipe: next.recipe,
+                    recipe: savedRecipe,
                     metadata: next.metadata,
-                    recomputed: [next.recipe.tag, ...downstream.map(r => r.tag)],
+                    recomputed: outcome.metadataOnly ? [] : [next.recipe.tag, ...downstream.map(r => r.tag)],
                     recipeOrder,
                     workspaceId: workspaceIdRef.current,
                 });

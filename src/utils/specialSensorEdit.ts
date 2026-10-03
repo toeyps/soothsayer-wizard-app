@@ -1,6 +1,7 @@
-import { SpecialSensorRecipe } from '../types';
+import { FailureModel, SpecialSensorRecipe } from '../types';
 import {
-    buildSpecialSensorUsage, cycleConflicts, dependentsToRecompute, orderRecipesByDependency,
+    buildSpecialSensorUsage, cycleConflicts, dependentsToRecompute, describeEditLock,
+    EditLock, orderRecipesByDependency, usageFor,
 } from './specialSensorDeps';
 import { recomputeSpecialSensors, Invoker } from './specialSensorRecompute';
 import { renameTagInRecipes } from './specialSensorRename';
@@ -27,6 +28,24 @@ import { sameTag } from './specialSensorNaming';
  * edit let `A -> $C*2` followed by `C -> $A+1` through as an A <-> C cycle.
  */
 
+/**
+ * What the edit lock (2026-10-03) is decided from -- read FRESH by the caller,
+ * inside the serial queue, immediately before the edit runs.
+ *
+ * A special sensor that a model (or the workspace Running condition) uses --
+ * directly, or through a special sensor built on it -- may not be renamed, nor
+ * have its formula / operation / sources changed: a Trained or Complete model
+ * built from it would go stale. Only its description / unit / component can
+ * change. `known: false` (the models could not be read) is treated as locked.
+ */
+export interface EditFailureState {
+    known: boolean;
+    models: FailureModel[];
+    runningConditionFilters: Array<{ sensor: string }>;
+    /** Why it is not known (shown to the user). */
+    reason?: string;
+}
+
 export interface EditArgs {
     /** The window's full, current recipe list (stored order). */
     recipes: SpecialSensorRecipe[];
@@ -35,6 +54,9 @@ export interface EditArgs {
     /** The sensor's previous tag -- set exactly when it was renamed. */
     oldTag?: string;
     invoker: Invoker;
+    /** When given, the edit lock is enforced (see `EditFailureState`). Omitted
+     *  = no lock check (only callers that have no models to ask). */
+    failureState?: EditFailureState;
 }
 
 export interface EditOutcome {
@@ -47,6 +69,12 @@ export interface EditOutcome {
     /** The whole list in a valid build order, after the edit -- only when that
      *  differs from the stored order. */
     recipeOrder?: string[];
+    /** The recipe that was actually saved: `next`, or -- for a metadata-only save
+     *  of a locked sensor -- the stored recipe, untouched. */
+    recipe: SpecialSensorRecipe;
+    /** True when nothing but description / unit / component changed on a locked
+     *  sensor: no column was touched, nothing was recomputed. */
+    metadataOnly: boolean;
     /** Apply the edit to a recipe list (swap in the edited recipe, take the
      *  rewritten downstream ones). Pure; run it on whatever the list is now. */
     applyEdit: (list: SpecialSensorRecipe[]) => SpecialSensorRecipe[];
@@ -61,7 +89,49 @@ export class SpecialSensorEditError extends Error {
     inconsistent: string[] = [];
 }
 
+/** Thrown (before anything is written) when the edit lock refuses a rename or a
+ *  change to a locked sensor's values. */
+export class SpecialSensorLockedError extends Error {
+    constructor(message: string, readonly lock: EditLock) {
+        super(message);
+        this.name = 'SpecialSensorLockedError';
+    }
+}
+
 const key = (tag: string) => tag.trim().toLowerCase();
+
+/** JSON with sorted keys and no `undefined`, so two configs that mean the same
+ *  thing compare equal whatever order they were built in. */
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+    if (value && typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
+        return `{${Object.keys(obj).filter(k => obj[k] !== undefined).sort()
+            .map(k => `${JSON.stringify(k)}:${stableJson(obj[k])}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * Do two recipes produce the same values from the same inputs? Compared on what
+ * decides the column: kind, tag, formula text (trimmed) / source sensors in
+ * order + operation config. An operation's `customName` is ignored -- it is
+ * forced back to the tag, so it carries no information of its own.
+ */
+export function recipesEquivalent(a: SpecialSensorRecipe, b: SpecialSensorRecipe): boolean {
+    if (a.kind !== b.kind || a.tag !== b.tag) return false;
+    if (a.kind === 'formula' && b.kind === 'formula') return a.formula.trim() === b.formula.trim();
+    if (a.kind === 'operation' && b.kind === 'operation') {
+        const strip = (c: SpecialSensorRecipe & { kind: 'operation' }) => {
+            const { customName: _ignored, ...rest } = c.operationConfig;
+            void _ignored;
+            return rest;
+        };
+        return stableJson(a.sourceSensors) === stableJson(b.sourceSensors)
+            && stableJson(strip(a)) === stableJson(strip(b));
+    }
+    return false;
+}
 
 /** Formula tag -> sensors it reads, straight from Rust (`extract_formula_refs`).
  *  The edited formula is asked about on its own, so what a recipe reads and what
@@ -87,8 +157,12 @@ async function readRefs(
     return { refsByTag, nextRefs };
 }
 
+function nextRefsOrSources(recipe: SpecialSensorRecipe, refsByTag: Map<string, string[]>): string[] {
+    return recipe.kind === 'operation' ? recipe.sourceSensors ?? [] : refsByTag.get(key(recipe.tag)) ?? [];
+}
+
 export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome> {
-    const { recipes, next, oldTag, invoker } = args;
+    const { recipes, next, oldTag, invoker, failureState } = args;
     const newTag = next.tag;
     const identityTag = oldTag ?? next.tag;
     const removesOldColumn = !!oldTag && !sameTag(oldTag, newTag);
@@ -124,9 +198,45 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
     const usage = buildSpecialSensorUsage({
         recipes,
         formulaRefs: refsByTag,
-        models: [],
+        models: failureState?.models ?? [],
+        runningConditionFilters: failureState?.runningConditionFilters,
         selectedSensors: [],
+        failureKnown: failureState?.known ?? true,
     });
+
+    // ---- Edit lock: decided HERE, in the read-only phase, so a refused edit
+    // has not touched a single column (and the window has not changed its own
+    // state either). Only a rename or a change to what the sensor computes is
+    // refused; description / unit / component never are.
+    const originalEdited = recipes.find(r => sameTag(r.tag, identityTag));
+    if (failureState && originalEdited) {
+        const lock = usageFor(usage, identityTag)?.editLock;
+        if (lock?.locked) {
+            const renaming = !!oldTag;
+            const changesValues = !recipesEquivalent(originalEdited, { ...next, tag: originalEdited.tag } as SpecialSensorRecipe);
+            if (renaming || changesValues) {
+                const what = renaming ? 'rename' : 'change the formula, operation or sources of';
+                const why = lock.unknown
+                    ? `couldn't check whether a model uses it${failureState.reason ? ` (${failureState.reason})` : ''} — try again in a moment`
+                    : describeEditLock(lock);
+                throw new SpecialSensorLockedError(
+                    lock.unknown
+                        ? `Can't ${what} "${originalEdited.tag}" right now: ${why}.`
+                        : `Can't ${what} "${originalEdited.tag}". ${why} (Its description, unit and component can still be edited.)`,
+                    lock,
+                );
+            }
+            // Metadata only: the recipe is saved exactly as stored.
+            return {
+                nextInputs: nextRefsOrSources(originalEdited, refsByTag),
+                downstream: [],
+                renamedDownstream: [],
+                recipe: originalEdited,
+                metadataOnly: true,
+                applyEdit: list => list.map(r => (sameTag(r.tag, identityTag) ? originalEdited : r)),
+            };
+        }
+    }
 
     const conflicts = cycleConflicts(recipes, usage, identityTag, nextInputs);
     if (conflicts.length > 0) {
@@ -135,7 +245,6 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
 
     // Build order, whatever order the stored list happens to be in.
     const downstream = dependentsToRecompute(recipes, usage, identityTag, inputsOfStored);
-    const originalEdited = recipes.find(r => sameTag(r.tag, identityTag));
 
     // Carry a rename into every downstream recipe BEFORE any of them replays.
     // Still read-only (a rewrite is text, not a column write).
@@ -200,6 +309,8 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
         nextInputs,
         downstream,
         renamedDownstream,
+        recipe: next,
+        metadataOnly: false,
         recipeOrder: orderChanged ? ordered.map(r => r.tag) : undefined,
         applyEdit,
     };

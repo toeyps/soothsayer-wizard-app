@@ -1784,27 +1784,26 @@ describe('AddSensorWindow: models / Running condition follow the workspace file,
         expect(mockLoadWorkspace).not.toHaveBeenCalled();
     });
 
-    it('a RENAME carries into the window\'s own models and Running condition at once: the renamed sensor is still protected before the Dashboard\'s broadcast lands', async () => {
+    it('a model-used / Running-condition-used sensor can NOT be renamed any more (edit lock, 2026-10-03): the rename-into-models carry-over is unreachable from this window, and both stay protected from deletion', async () => {
         const rust = fakeRust({ derived: ['A', 'B'] });
         mockInvoke.mockImplementation(rust.invoke);
+        disk.models = [usingA];
+        disk.rc = [{ id: 'r1', sensor: 'B', operation: 'greater_than', value1: '3', value2: '' }];
         await openWindow({
             workspaceId: 'ws-1', sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB],
             models: [usingA],
-            runningConditionFilters: [{ id: 'r1', sensor: 'B', operation: 'greater_than', value1: '3', value2: '' }],
+            runningConditionFilters: disk.rc,
         });
         await goManage();
-        // Rename A -> A2 (model uses A) and B -> B2 (Running condition uses B).
-        for (const [from, to] of [['A', 'A2'], ['B', 'B2']]) {
+        for (const from of ['A', 'B']) {
             await act(async () => { fireEvent.click(screen.getByLabelText(`Edit ${from}`)); });
-            fireEvent.change(screen.getByLabelText('Name'), { target: { value: to } });
-            fillEditor();
-            await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
-            await flush();
+            // The Name field is read-only: it cannot even be changed here.
+            expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+            await act(async () => { fireEvent.click(screen.getByText('Cancel')); });
         }
-        // No broadcast was ever delivered, yet both are still blocked under their new names.
-        expect((screen.getByLabelText('Delete A2') as HTMLButtonElement).disabled).toBe(true);
-        expect((screen.getByLabelText('Delete B2') as HTMLButtonElement).disabled).toBe(true);
-        expect(mockLoadWorkspace).not.toHaveBeenCalled();
+        expect(rust.calls.filter(c => c.cmd === 'remove_sensor_columns')).toHaveLength(0);
+        expect((screen.getByLabelText('Delete A') as HTMLButtonElement).disabled).toBe(true);
+        expect((screen.getByLabelText('Delete B') as HTMLButtonElement).disabled).toBe(true);
     });
 });
 
@@ -2069,5 +2068,193 @@ describe('AddSensorWindow: a failed edit is rolled back', () => {
         expect(rust.has('A2')).toBe(false);
         expect(rust.has('A')).toBe(true);
         expect(mockEmit).not.toHaveBeenCalledWith('rename-special-sensor', expect.anything());
+    });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// 2026-10-03 -- EDIT LOCK. A special sensor that a model (or the workspace
+// Running condition, or a sensor built on it that one of them uses) depends on
+// can no longer be renamed or have its values changed -- only its description /
+// unit / component. Enforced inside the serial queue against models re-read
+// from the workspace file; the editor's read-only state is the friendly half.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('AddSensorWindow: edit lock for sensors a model uses', () => {
+    const usingA = {
+        id: 'm1', groupNos: [1], name: 'Uses A', kind: 'relationship', category: null,
+        notes: '', status: true, targetSensor: 'A', predictorSensors: [], xSensor: '', ySensor: '',
+        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
+        clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
+        filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+    };
+    const WRITES = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'rename_formula_refs'];
+    const writes = (rust: ReturnType<typeof fakeRust>) => rust.calls.filter(c => WRITES.includes(c.cmd) || c.args?.replace);
+    const broadcast = async (payload: Record<string, unknown>) => {
+        await act(async () => { for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) cb({ payload }); });
+        await flush();
+    };
+    const editorAlert = () => screen.queryAllByRole('alert').map(a => a.textContent).join(' / ');
+    const save = async () => { await act(async () => { fireEvent.click(screen.getByText('Save changes')); }); await flush(); };
+    const nameInput = () => screen.getByLabelText('Name') as HTMLInputElement;
+
+    async function open(extra: Record<string, unknown> = {}, rustOpts = {}) {
+        const rust = fakeRust({ derived: ['A', 'B'], ...rustOpts });
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({
+            workspaceId: 'ws-1', sensors: ['TAG1', 'A', 'B'], specialSensorRecipes: [recA, recB],
+            sensorMetadata: [{ tag: 'A', description: 'Sensor A', unit: 'bar', component: 'Uncategorized' }],
+            ...extra,
+        });
+        await goManage();
+        rust.calls.length = 0;
+        return rust;
+    }
+    const edit = async (tag: string) => { await act(async () => { fireEvent.click(screen.getByLabelText(`Edit ${tag}`)); }); await flush(); };
+
+    it('opens the editor of a model-used sensor with Name and Formula READ-ONLY, a banner naming the model, and the metadata fields still editable', async () => {
+        disk.models = [usingA];
+        await open({ models: [usingA] });
+        await edit('A');
+        expect(nameInput().readOnly).toBe(true);
+        expect(nameInput().value).toBe('A');
+        const formula = screen.getByLabelText('Formula') as HTMLTextAreaElement;
+        expect(formula.readOnly).toBe(true);
+        expect(formula.value).toBe('$TAG1 * 2');
+        const banner = screen.getByTestId('edit-lock-banner');
+        expect(banner.textContent).toMatch(/Name and formula are locked\./);
+        expect(banner.textContent).toMatch(/Used by 1 model: Uses A \(Relationship\)\. Remove it from those models first, then you can edit it\./);
+        expect((screen.getByLabelText('Description') as HTMLInputElement).readOnly).toBe(false);
+        expect((screen.getByLabelText('Unit') as HTMLInputElement).readOnly).toBe(false);
+    });
+
+    it('a sensor no model uses opens a normal, editable editor (no banner)', async () => {
+        await open();
+        await edit('A');
+        expect(nameInput().readOnly).toBe(false);
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+    });
+
+    it('METADATA-ONLY save of a locked sensor is accepted: no column is touched, the Dashboard gets update-special-sensor with the STORED recipe and nothing recomputed', async () => {
+        disk.models = [usingA];
+        const rust = await open({ models: [usingA] });
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Generator power' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kW' } });
+        await save();
+        expect(writes(rust)).toHaveLength(0);
+        expect(rust.calls.filter(c => c.cmd === 'rename_formula_refs')).toHaveLength(0);
+        const call = mockEmit.mock.calls.find(c => c[0] === 'update-special-sensor');
+        expect(call).toBeTruthy();
+        expect(call![1]).toMatchObject({
+            recipe: recA, recomputed: [],
+            metadata: { tag: 'A', description: 'Generator power', unit: 'kW' },
+        });
+        expect(mockEmit.mock.calls.some(c => c[0] === 'rename-special-sensor')).toBe(false);
+        // The editor closed on success.
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+    });
+
+    it('RENAME of a model-used sensor is refused in the queue (even with the editor driven past its read-only state): inline reason, NO invoke that writes, nothing emitted', async () => {
+        // Nothing uses A when the editor opens (unlocked, Name editable)...
+        const rust = await open();
+        await edit('A');
+        fireEvent.change(nameInput(), { target: { value: 'A2' } });
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'd' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
+        // ...then another window makes it a model's target. NO broadcast: the
+        // queued task must find out on its own, from the file.
+        disk.models = [usingA];
+        await save();
+        expect(editorAlert()).toMatch(/Can't rename "A"\. Used by 1 model: Uses A \(Relationship\)\./);
+        expect(writes(rust)).toHaveLength(0);
+        expect(mockEmit.mock.calls.filter(c => c[0] === 'rename-special-sensor' || c[0] === 'update-special-sensor')).toHaveLength(0);
+        expect(mockLoadWorkspace).toHaveBeenCalledWith('ws-1');
+    });
+
+    it('a formula change is refused the same way when a model started using the sensor after the editor opened -- the values stay what they were', async () => {
+        const rust = await open();
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 9' } });
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'd' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
+        disk.models = [usingA];
+        await save();
+        expect(editorAlert()).toMatch(/Can't change the formula, operation or sources of "A"/);
+        expect(writes(rust)).toHaveLength(0);
+        // The window's own recipe list still says $TAG1 * 2.
+        await act(async () => { fireEvent.click(screen.getByText('Cancel')); });
+        expect(screen.getAllByText('$TAG1 * 2').length).toBeGreaterThan(0);
+        expect(screen.queryByText('$TAG1 * 9')).toBeNull();
+    });
+
+    it('the running condition locks it: banner says "Used by the running condition"; the window also learns this from sensors-data', async () => {
+        await open({ runningConditionFilters: [{ id: 'r1', sensor: 'A', operation: 'greater_than', value1: '3', value2: '' }] });
+        await edit('A');
+        expect(screen.getByTestId('edit-lock-banner').textContent).toMatch(/Used by the running condition\./);
+        expect(nameInput().readOnly).toBe(true);
+    });
+
+    it('TRANSITIVE: B is built on A and a model uses B -> A is locked too, and the explanation names B', async () => {
+        const usingB = { ...usingA, id: 'm2', name: 'Uses B', kind: 'individual', targetSensor: 'B' };
+        disk.models = [usingB];
+        const rust = await open({ models: [usingB] });
+        await edit('A');
+        expect(nameInput().readOnly).toBe(true);
+        expect(screen.getByTestId('edit-lock-banner').textContent)
+            .toMatch(/Built on by "B", which is used by 1 model: Uses B \(Individual\)\. Remove "B" from those models first, then you can edit it\./);
+        // And the queued task agrees, even if a rename is forced through.
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'd2' } });
+        await save();
+        expect(writes(rust)).toHaveLength(0); // metadata-only
+    });
+
+    it('Manage\'s expanded row explains the lock (and the Delete reason) in one place', async () => {
+        disk.models = [usingA];
+        await open({ models: [usingA] });
+        fireEvent.click(screen.getByText('Used by 1 sensor and 1 model'));
+        const lock = screen.getByTestId('edit-lock-A');
+        expect(lock.textContent).toMatch(/Name and formula are locked:/);
+        expect(lock.textContent).toMatch(/Used by 1 model: Uses A \(Relationship\)/);
+        expect(screen.getByText(/Used by models:/)).toBeTruthy(); // the existing delete explanation is still there
+    });
+
+    it('UNLOCKS when the model stops using the sensor (Build Model broadcast -> re-read): the Name field becomes editable and a rename goes through', async () => {
+        disk.models = [usingA];
+        const rust = await open({ models: [usingA] });
+        await edit('A');
+        expect(nameInput().readOnly).toBe(true);
+        disk.models = [];
+        await broadcast({ workspaceId: 'ws-1', origin: 'build-model', groups: [], models: [] });
+        expect(nameInput().readOnly).toBe(false);
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+        fireEvent.change(nameInput(), { target: { value: 'A2' } });
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'd' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
+        await save();
+        expect(rust.calls.some(c => c.cmd === 'remove_sensor_columns')).toBe(true);
+        expect(mockEmit.mock.calls.some(c => c[0] === 'rename-special-sensor')).toBe(true);
+    });
+
+    it('UNKNOWN models (the workspace file cannot be read) hold the name/formula back: the editor says so, and a forced change is refused with no write', async () => {
+        const rust = await open({ models: undefined as unknown as never });
+        await edit('A');
+        expect(nameInput().readOnly).toBe(true);
+        expect(screen.getByTestId('edit-lock-banner').textContent).toMatch(/Still checking what uses this sensor/);
+        // Make the re-read succeed: the lock lifts.
+        await broadcast({ workspaceId: 'ws-1', origin: 'dashboard', groups: [], models: [] });
+        expect(nameInput().readOnly).toBe(false);
+        // Now the file cannot be read at the moment the edit runs.
+        fireEvent.change(nameInput(), { target: { value: 'A2' } });
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'd' } });
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u' } });
+        fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
+        disk.failRead = true;
+        await save();
+        expect(editorAlert()).toMatch(/Can't rename "A" right now: couldn't check whether a model uses it \(disk unavailable\)/);
+        expect(writes(rust)).toHaveLength(0);
     });
 });

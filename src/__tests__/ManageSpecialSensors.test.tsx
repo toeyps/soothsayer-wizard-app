@@ -177,3 +177,59 @@ describe('ManageSpecialSensors', () => {
         expect(screen.getByText('Boiler total flow')).toBeTruthy();
     });
 });
+
+describe('ManageSpecialSensors -- edit lock', () => {
+    const chain = { recipes: [specialA, specialB], formulaRefs: new Map([['special a', ['11PT1214A.PV']], ['special b', ['special A']]]) };
+
+    it('an unused sensor opens an unlocked editor', () => {
+        renderList({ editingTag: 'special A' });
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
+    });
+
+    it('a sensor a model uses opens a locked editor naming the model, and the expanded row repeats the reason', () => {
+        renderList({ models: [makeModel({ targetSensor: 'special A' })], editingTag: 'special A' });
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+        expect(screen.getByTestId('edit-lock-banner').textContent)
+            .toContain('Used by 1 model: Boiler efficiency (Individual). Remove it from those models first, then you can edit it.');
+        // The Edit button itself stays usable (description / unit / component are editable).
+        expect((screen.getByLabelText('Edit special A') as HTMLButtonElement).disabled).toBe(false);
+        fireEvent.click(screen.getByText('Used by 1 model'));
+        expect(screen.getByTestId('edit-lock-special A').textContent).toContain('Name and formula are locked:');
+    });
+
+    it('the Running condition locks it: "Used by the running condition"', () => {
+        renderList({ runningConditionFilters: [{ sensor: 'special A' }], editingTag: 'special A' });
+        expect(screen.getByTestId('edit-lock-banner').textContent).toContain('Used by the running condition.');
+    });
+
+    it('TRANSITIVE: B is built on A and a model uses B -> A is locked, B is locked, and the message names B', () => {
+        renderList({ ...chain, models: [makeModel({ targetSensor: 'special B' })], editingTag: 'special A' });
+        expect(screen.getByTestId('edit-lock-banner').textContent)
+            .toContain('Built on by "special B", which is used by 1 model: Boiler efficiency (Individual).');
+    });
+
+    it('a used source does not lock the sensor built on it', () => {
+        renderList({ ...chain, models: [makeModel({ targetSensor: 'special A' })], editingTag: 'special B' });
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+    });
+
+    it('while the models / references are not known yet, the editor is held back ("Still checking")', () => {
+        renderList({ usageKnown: false, editingTag: 'special A' });
+        expect(screen.getByTestId('edit-lock-banner').textContent).toContain('Still checking what uses this sensor');
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+    });
+
+    it('formulaRefs still null (lookup in flight) is treated the same way', () => {
+        renderList({ formulaRefs: null, editingTag: 'special A' });
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+    });
+
+    it('unlocks when the models change (re-render with the model gone)', () => {
+        const { rerender, props } = renderList({ models: [makeModel({ targetSensor: 'special A' })], editingTag: 'special A' });
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+        rerender(<ManageSpecialSensors {...props} models={[]} />);
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+    });
+});

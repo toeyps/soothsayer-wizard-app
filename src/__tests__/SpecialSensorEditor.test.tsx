@@ -377,4 +377,67 @@ describe('SpecialSensorEditor', () => {
             expect(save().disabled).toBe(false);
         });
     });
+
+    // Edit lock (2026-10-03): used by a model / the Running condition.
+    describe('locked (lockMessage set)', () => {
+        const lockMessage = 'Used by 1 model: Pump model (Individual). Remove it from those models first, then you can edit it.';
+
+        it('shows the banner with the reason and leaves Name and Formula read-only (the stored values, not local edits)', () => {
+            renderEditor({ lockMessage });
+            const banner = screen.getByTestId('edit-lock-banner');
+            expect(banner.textContent).toContain('Name and formula are locked.');
+            expect(banner.textContent).toContain(lockMessage);
+            expect(banner.textContent).toContain('You can still change the description, unit and component.');
+            const name = screen.getByLabelText('Name') as HTMLInputElement;
+            expect(name.readOnly).toBe(true);
+            expect(name.value).toBe('special A');
+            const formula = screen.getByLabelText('Formula') as HTMLTextAreaElement;
+            expect(formula.readOnly).toBe(true);
+            expect(formula.value).toBe('$TAG1 * 2');
+            expect((screen.getByLabelText('Description') as HTMLInputElement).readOnly).toBe(false);
+            expect(screen.queryByText(/can't be renamed/)).toBeNull();
+        });
+
+        it('an operation sensor shows its calculation read-only, with no source picker', () => {
+            renderEditor({ recipe: operationRecipe, sensorMetadata: [], lockMessage });
+            const calc = screen.getByLabelText('Calculation') as HTMLTextAreaElement;
+            expect(calc.readOnly).toBe(true);
+            expect(calc.value).toBe('sum(TAG1, TAG2)');
+            expect(screen.queryByLabelText('Add a source sensor')).toBeNull();
+            expect(screen.queryByLabelText('Remove TAG1')).toBeNull();
+        });
+
+        it('Save sends the STORED recipe back unchanged, with only the descriptive fields changed and no renamedFrom', () => {
+            const { props } = renderEditor({ lockMessage });
+            fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Doubled pressure' } });
+            fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+            expect(save().disabled).toBe(false);
+            fireEvent.click(save());
+            expect(props.onSave).toHaveBeenCalledTimes(1);
+            const arg = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0];
+            expect(arg.recipe).toBe(formulaRecipe);
+            expect(arg.renamedFrom).toBeUndefined();
+            expect(arg.metadata).toMatchObject({ tag: 'special A', description: 'Doubled pressure', unit: 'kPa', component: 'Pump' });
+        });
+
+        it('for an operation sensor the stored operation (not a rebuilt one) is what Save sends', () => {
+            const { props } = renderEditor({ recipe: operationRecipe, sensorMetadata: [], lockMessage });
+            fillRequiredFields();
+            fireEvent.click(save());
+            expect((props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe).toBe(operationRecipe);
+        });
+
+        it('still needs description / unit / component, but never asks for a name', () => {
+            renderEditor({ sensorMetadata: [], lockMessage });
+            expect(screen.getByText('Fill in a description, a unit, a component before saving.')).toBeTruthy();
+            expect(save().disabled).toBe(true);
+        });
+
+        it('without lockMessage the editor is the normal editable one', () => {
+            renderEditor({ lockMessage: null });
+            expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+            expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
+            expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        });
+    });
 });

@@ -7,6 +7,7 @@ import {
     cycleConflicts,
     orderRecipesByDependency,
     reorderRecipesByTags,
+    describeEditLock,
 } from '../utils/specialSensorDeps';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
@@ -388,5 +389,170 @@ describe('dependentsToRecompute -- build order', () => {
         const stored = [A, B, C];
         const usage = build({ recipes: stored, formulaRefs: { A: ['RAW'], B: ['A'], C: ['B'] } });
         expect(dependentsToRecompute(stored, usage, 'A', inputsOf).map(r => r.tag)).toEqual(['B', 'C']);
+    });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// Edit lock (2026-10-03): a special sensor used by a model is locked.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('buildSpecialSensorUsage -- editLock', () => {
+    const lockOf = (usage: ReturnType<typeof build>, tag: string) => usageFor(usage, tag)!.editLock;
+    const A = formula('A', '$RAW.PV * 2');
+    const refsA = { A: ['RAW.PV'] };
+
+    it('an unused special sensor is not locked', () => {
+        const lock = lockOf(build({ recipes: [A], formulaRefs: refsA }), 'A');
+        expect(lock).toMatchObject({ locked: false, unknown: false, via: [] });
+        expect(describeEditLock(lock)).toBe('');
+    });
+
+    it.each([
+        ['targetSensor', 'target sensor'],
+        ['predictorSensors', 'predictor'],
+        ['xSensor', 'X sensor'],
+        ['ySensor', 'Y sensor'],
+        ['criteriaSensor', 'criteria sensor'],
+    ])('locked when a model uses it as %s', (field, label) => {
+        const value = field === 'predictorSensors' ? ['A'] : 'A';
+        const lock = lockOf(build({
+            recipes: [A], formulaRefs: refsA,
+            models: [makeModel({ id: 'm1', name: 'Pump model', kind: 'relationship', [field]: value } as Partial<FailureModel>)],
+        }), 'A');
+        expect(lock.locked).toBe(true);
+        expect(lock.direct.models).toEqual([{ modelId: 'm1', modelName: 'Pump model', kind: 'relationship', fields: [label] }]);
+    });
+
+    it("locked when a model's own custom running condition names it (even while the model is in workspace mode)", () => {
+        const lock = lockOf(build({
+            recipes: [A], formulaRefs: refsA,
+            models: [makeModel({
+                customRunningConditionFilters: [{ id: 'c', sensor: 'a', operation: 'greater_than', value1: '1', value2: '' }],
+            })],
+        }), 'A');
+        expect(lock.locked).toBe(true);
+        expect(lock.direct.models[0].fields).toEqual(['custom running condition']);
+    });
+
+    it('locked when the workspace Running condition names it', () => {
+        const usage = buildSpecialSensorUsage({
+            recipes: [A], formulaRefs: new Map([['a', ['RAW.PV']]]), models: [],
+            runningConditionFilters: [{ sensor: 'A' }], selectedSensors: [],
+        });
+        const lock = lockOf(usage, 'A');
+        expect(lock).toMatchObject({ locked: true, direct: { models: [], runningCondition: true } });
+        expect(describeEditLock(lock)).toMatch(/^Used by the running condition\./);
+    });
+
+    it('one model naming it in several fields is ONE model with all its fields', () => {
+        const lock = lockOf(build({
+            recipes: [A], formulaRefs: refsA,
+            models: [makeModel({ targetSensor: 'A', predictorSensors: ['A'] })],
+        }), 'A');
+        expect(lock.direct.models).toHaveLength(1);
+        expect(lock.direct.models[0].fields).toEqual(['target sensor', 'predictor']);
+    });
+
+    it('TRANSITIVE: B is built on A and B is used by a model -> A is locked too, and B itself', () => {
+        const usage = build({
+            recipes: [A, formula('B', '${A} + 1')],
+            formulaRefs: { A: ['RAW.PV'], B: ['A'] },
+            models: [makeModel({ name: 'Uses B', targetSensor: 'B' })],
+        });
+        const a = lockOf(usage, 'A');
+        expect(a.locked).toBe(true);
+        expect(a.direct.models).toEqual([]);
+        expect(a.via.map(v => v.tag)).toEqual(['B']);
+        expect(a.via[0].models[0].modelName).toBe('Uses B');
+        expect(lockOf(usage, 'B').locked).toBe(true);
+        expect(describeEditLock(a)).toMatch(/Built on by "B", which is used by 1 model: Uses B \(Individual\)\./);
+    });
+
+    it('TRANSITIVE through a chain (A -> B -> C, only C used): A and B are locked, and the Running condition counts the same way', () => {
+        const recipes = [A, formula('B', '${A} + 1'), operation('C', ['B', 'RAW2.PV'])];
+        const refs = { A: ['RAW.PV'], B: ['A'] };
+        const viaModel = build({ recipes, formulaRefs: refs, models: [makeModel({ targetSensor: 'C' })] });
+        expect(lockOf(viaModel, 'A').via.map(v => v.tag)).toEqual(['C']);
+        expect(lockOf(viaModel, 'B').locked).toBe(true);
+        const viaRc = buildSpecialSensorUsage({
+            recipes, formulaRefs: new Map(Object.entries(refs).map(([k, v]) => [k.toLowerCase(), v])),
+            models: [], runningConditionFilters: [{ sensor: 'C' }], selectedSensors: [],
+        });
+        expect(lockOf(viaRc, 'A').locked).toBe(true);
+    });
+
+    it('a sensor built on by an UNUSED special sensor is not locked (the edit just recomputes it)', () => {
+        const usage = build({
+            recipes: [A, formula('B', '${A} + 1')], formulaRefs: { A: ['RAW.PV'], B: ['A'] },
+            models: [makeModel({ targetSensor: 'RAW.PV' })], // raw column, not special
+        });
+        expect(lockOf(usage, 'A').locked).toBe(false);
+        expect(lockOf(usage, 'B').locked).toBe(false);
+    });
+
+    it('the lock does not flow DOWN: a used source does not lock the sensor built on it', () => {
+        const usage = build({
+            recipes: [A, formula('B', '${A} + 1')], formulaRefs: { A: ['RAW.PV'], B: ['A'] },
+            models: [makeModel({ targetSensor: 'A' })],
+        });
+        expect(lockOf(usage, 'A').locked).toBe(true);
+        expect(lockOf(usage, 'B').locked).toBe(false);
+    });
+
+    it('a dependency cycle in a stored list cannot hang the walk', () => {
+        const usage = build({
+            recipes: [formula('X', '$Y'), formula('Y', '$X')], formulaRefs: { X: ['Y'], Y: ['X'] },
+            models: [makeModel({ targetSensor: 'Y' })],
+        });
+        expect(lockOf(usage, 'X').locked).toBe(true);
+    });
+
+    it('unknown (models / references not known fresh) -> every sensor is locked + unknown', () => {
+        const usage = buildSpecialSensorUsage({
+            recipes: [A], formulaRefs: new Map(), models: [], selectedSensors: [], failureKnown: false,
+        });
+        const lock = lockOf(usage, 'A');
+        expect(lock).toMatchObject({ locked: true, unknown: true });
+        expect(describeEditLock(lock)).toMatch(/Still checking what uses this sensor/);
+    });
+
+    it('unlocks the moment the model stops using it (same recipes, models re-read)', () => {
+        const args = { recipes: [A], formulaRefs: refsA };
+        expect(lockOf(build({ ...args, models: [makeModel({ targetSensor: 'A' })] }), 'A').locked).toBe(true);
+        expect(lockOf(build({ ...args, models: [makeModel({ targetSensor: 'RAW.PV' })] }), 'A').locked).toBe(false);
+    });
+});
+
+describe('describeEditLock -- wording', () => {
+    const A = formula('GENERATOR ACTIVE POWER', '$RAW.PV');
+    const lockFor = (models: FailureModel[]) =>
+        buildSpecialSensorUsage({
+            recipes: [A], formulaRefs: new Map([['generator active power', ['RAW.PV']]]), models, selectedSensors: [],
+        }).get('generator active power')!.editLock;
+
+    it('names the models, groups kinds per model name, and says what to do', () => {
+        const msg = describeEditLock(lockFor([
+            makeModel({ id: 'm1', name: 'GENERATOR ACTIVE POWER', kind: 'individual', targetSensor: A.tag }),
+            makeModel({ id: 'm2', name: 'GENERATOR ACTIVE POWER', kind: 'relationship', targetSensor: A.tag }),
+        ]));
+        expect(msg).toBe('Used by 2 models: GENERATOR ACTIVE POWER (Individual, Relationship). Remove it from those models first, then you can edit it.');
+    });
+
+    it('truncates a long list: the first three, then "and N more"', () => {
+        const models = [1, 2, 3, 4, 5].map(i => makeModel({ id: `m${i}`, name: `Model ${i}`, targetSensor: A.tag }));
+        const msg = describeEditLock(lockFor(models));
+        expect(msg).toContain('Used by 5 models: Model 1 (Individual), Model 2 (Individual), Model 3 (Individual) and 2 more.');
+    });
+
+    it('an unnamed model reads "Untitled model"; model + running condition are both named', () => {
+        const usage = buildSpecialSensorUsage({
+            recipes: [A], formulaRefs: new Map([['generator active power', ['RAW.PV']]]),
+            models: [makeModel({ id: 'm1', name: '', targetSensor: A.tag })],
+            runningConditionFilters: [{ sensor: A.tag }], selectedSensors: [],
+        });
+        const msg = describeEditLock(usage.get('generator active power')!.editLock);
+        expect(msg).toMatch(/Used by 1 model: Untitled model \(Individual\) and the running condition\./);
+        expect(msg).toMatch(/from those models and the running condition first/);
     });
 });

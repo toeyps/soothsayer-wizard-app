@@ -949,30 +949,36 @@ describe('3. rename', () => {
         await expectConsistent(recipes);
     });
 
-    it('a model using the renamed sensor follows the rename (on disk), and the window keeps blocking its delete', async () => {
+    // 2026-10-03 (edit lock): these two used to assert that renaming a sensor a
+    // model uses is CARRIED INTO the model (and that the window protected the
+    // new name from deletion before the Dashboard's broadcast landed). The user
+    // decided instead that a model-used sensor cannot be renamed at all (a
+    // trained model built from it would go stale), so the premise is gone:
+    // the rename is refused and the model keeps the name it was built on. The
+    // Dashboard's rename-into-models code stays as a safety net but is
+    // unreachable from the window; see "9. edit lock" below for the full set.
+    it('a model using the sensor blocks its RENAME: Name is read-only, the model on disk keeps pointing at A, and the window keeps blocking its delete', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')], {
             failureGroupState: { groups: [], models: [mk({ id: 'm1', targetSensor: 'A' })] } as any,
         });
-        await renameViaEditor('A', 'A2');
+        await openEditor('A');
+        expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
         await tick(400);
-        expect(h.disk.get(WS).failureGroupState.models[0].targetSensor).toBe('A2');
+        expect(h.disk.get(WS).failureGroupState.models[0].targetSensor).toBe('A');
+        expect(h.log.some(e => e.event === 'rename-special-sensor')).toBe(false);
         await goManage();
-        expect(deleteBtn('A2').disabled).toBe(true);
+        expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Was a BUG (medium-low): the window does not rename its OWN `models` copy; it
-    // waits for the Dashboard's `failure-group-state-changed` round trip
-    // (disk write + broadcast, best-effort IPC). Until that lands -- or for
-    // good, if it is missed -- the renamed sensor looks unused and can be
-    // deleted, which now really drops the column the model trains on.
-    it('regression: model m1 targets A -> rename A to A2 -> before the Dashboard\'s FG broadcast arrives, "Delete A2" is enabled (the window\'s model list still says A)', async () => {
+    it('regression (superseded by the edit lock): model m1 targets A -> the rename cannot even start, so there is no window in which "Delete A2" is enabled before the FG broadcast arrives', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')], {
             failureGroupState: { groups: [], models: [mk({ id: 'm1', targetSensor: 'A' })] } as any,
         });
         h.hold(e => e === 'failure-group-state-changed');
-        await renameViaEditor('A', 'A2');
+        await openEditor('A');
+        expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
         await goManage();
-        expect(deleteBtn('A2').disabled).toBe(true);
+        expect(deleteBtn('A').disabled).toBe(true);
     });
 
     // Was a BUG (medium): Dashboard's rename handler re-keys selection, colours,
@@ -1533,5 +1539,163 @@ describe('8. interleavings', () => {
         const recipes = await persistedRecipes();
         expect(recipes.map(r => r.tag)).toEqual(['A']);
         await expectConsistent(recipes);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// 9. Edit lock (2026-10-03) -- a special sensor used by a model cannot be
+//    edited / renamed / deleted; only its description, unit and component can
+//    change. Real Dashboard + real window + fake Rust session.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('9. edit lock: a sensor a model uses', () => {
+    const WRITES = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'rename_formula_refs'];
+    const sessionWrites = (from: number) => rust.calls.slice(from).filter(c => WRITES.includes(c.cmd) || c.args?.replace);
+    const modelOn = (tag: string, over: Record<string, unknown> = {}) =>
+        mk({ id: 'm1', name: 'Pump model', kind: 'relationship', targetSensor: tag, ...over });
+    const withModel = (m: any, extra: Record<string, unknown> = {}) =>
+        ({ failureGroupState: { groups: [], models: [m], ...extra } as any });
+    const banner = () => W().queryByTestId('edit-lock-banner');
+    const sentEvents = (names: string[]) => h.log.filter(e => names.includes(e.event));
+
+    it('end to end: model on A -> Name/Formula are read-only with the reason; a rename/formula edit cannot be made; Delete is off with the reason; remove the model -> the same edit works and the values update', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2'), F('B', '${A} + 1')], {
+            selectedSensors: ['B'], visibleSensors: ['B'], ...withModel(modelOn('A')),
+        });
+        expect(chartSeriesFor('B')).toEqual([3, 5, 7, 9]);
+
+        // Edit / rename: locked, with a plain reason.
+        await openEditor('A');
+        expect(banner()!.textContent).toContain('Used by 1 model: Pump model (Relationship). Remove it from those models first, then you can edit it.');
+        expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+        expect((W().getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
+
+        // Delete: off, with the reason in the same row.
+        await goManage();
+        expect(deleteBtn('A').disabled).toBe(true);
+        await act(async () => { fireEvent.click(W().getByText('Used by 1 sensor and 1 model')); });
+        expect(W().getByText(/Used by models:/)).toBeTruthy();
+        expect(W().getByTestId('edit-lock-A').textContent).toContain('Pump model (Relationship)');
+
+        // The user removes the sensor from the model in Build Model.
+        await writerPersistsThenBroadcasts([modelOn('TAG3')]);
+        await tick(400);
+        expect(deleteBtn('A').disabled).toBe(true); // B is still built on it -- an unrelated, existing rule
+        // The editor is still open on A and simply unlocks in place.
+        expect(banner()).toBeNull();
+        expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
+        await setEditor({ formula: '$TAG1 * 3' });
+        await saveEditor();
+        expect(editorError()).toBe('');
+        expect(chartSeriesFor('B')).toEqual([4, 7, 10, 13]); // A and B recomputed
+        expect(rust.chartValues('A')).toEqual([3, 6, 9, 12]);
+        await expectConsistent(await persistedRecipes());
+    });
+
+    it('a metadata-only save of a locked sensor is accepted: values, columns and recipes are untouched, the description is saved and reaches the Dashboard', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2'), F('B', '${A} + 1')], {
+            selectedSensors: ['B'], visibleSensors: ['B'], ...withModel(modelOn('B')),
+        });
+        const from = rust.calls.length;
+        await openEditor('A'); // locked transitively through B
+        expect(banner()!.textContent).toContain('Built on by "B", which is used by 1 model: Pump model (Relationship).');
+        await act(async () => { fireEvent.change(W().getByLabelText('Description'), { target: { value: 'Generator power' } }); });
+        await act(async () => { fireEvent.change(W().getByLabelText('Unit'), { target: { value: 'kW' } }); });
+        await saveEditor();
+        expect(editorError()).toBe('');
+        expect(sessionWrites(from)).toHaveLength(0);
+        expect(rust.chartValues('A')).toEqual([2, 4, 6, 8]);
+        expect(chartSeriesFor('B')).toEqual([3, 5, 7, 9]);
+        const recipes = await persistedRecipes();
+        expect(recipes).toEqual([F('A', '$TAG1 * 2'), F('B', '${A} + 1')]);
+        expect(h.disk.get(WS).extraSensorMetadata.find((m: SensorMetadata) => m.tag === 'A')).toMatchObject({ description: 'Generator power', unit: 'kW' });
+        await expectConsistent(recipes);
+    });
+
+    it('a model added from ANOTHER window after the editor was opened (no broadcast at all) still refuses the save: inline reason, the session untouched, the Dashboard never told', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2')], { selectedSensors: ['A'], visibleSensors: ['A'] });
+        await openEditor('A');
+        expect(banner()).toBeNull(); // unlocked when opened
+        await setEditor({ name: 'A2', formula: '$TAG1 * 5' });
+        // Build Model persists a model that targets A -- the window is NOT told.
+        await writerPersistsThenBroadcasts([modelOn('A')], {}, 'build-model', { broadcast: false });
+        const from = rust.calls.length;
+        await saveEditor();
+        expect(editorError()).toMatch(/Can't rename "A"\. Used by 1 model: Pump model \(Relationship\)\./);
+        expect(sessionWrites(from)).toHaveLength(0);
+        expect(sentEvents(['rename-special-sensor', 'update-special-sensor'])).toHaveLength(0);
+        expect(rust.chartValues('A')).toEqual([2, 4, 6, 8]);
+        expect(rust.has('A2')).toBe(false);
+        expect((await persistedRecipes()).map(r => r.tag)).toEqual(['A']);
+    });
+
+    it('the same refusal for a formula-only change (no rename)', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2')]);
+        await openEditor('A');
+        await setEditor({ formula: '$TAG1 * 5' });
+        await writerPersistsThenBroadcasts([modelOn('A')], {}, 'build-model', { broadcast: false });
+        const from = rust.calls.length;
+        await saveEditor();
+        expect(editorError()).toMatch(/Can't change the formula, operation or sources of "A"/);
+        expect(sessionWrites(from)).toHaveLength(0);
+        expect(rust.chartValues('A')).toEqual([2, 4, 6, 8]);
+    });
+
+    it('the workspace Running condition locks a sensor the same way ("Used by the running condition") -- edit, rename and delete', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2')], {
+            failureGroupState: {
+                groups: [], models: [],
+                runningConditionFilters: [{ id: 'rc1', sensor: 'A', operation: 'greater_than', value1: '3', value2: '' }],
+            } as any,
+        });
+        await openEditor('A');
+        expect(banner()!.textContent).toContain('Used by the running condition.');
+        expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+        await goManage();
+        expect(deleteBtn('A').disabled).toBe(true);
+    });
+
+    it('a model\'s own Custom running condition counts too', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2')], withModel(mk({
+            id: 'm1', name: 'Custom RC', targetSensor: 'TAG3', runningConditionMode: 'custom',
+            customRunningConditionFilters: [{ id: 'c1', sensor: 'A', operation: 'greater_than', value1: '1', value2: '' }],
+        })));
+        await openEditor('A');
+        expect(banner()!.textContent).toContain('Custom RC (Individual)');
+    });
+
+    it('TRANSITIVE through a chain: only C (built on B, built on A) is used by a model -> A and B are locked; an unrelated unused sensor stays editable', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2'), F('B', '${A} + 1'), F('C', '$B * 10'), F('Z', '$TAG3 + 1')], withModel(modelOn('C')));
+        await openEditor('A');
+        expect(banner()!.textContent).toContain('Built on by "C", which is used by 1 model');
+        await openEditor('B');
+        expect(banner()!.textContent).toContain('Built on by "C"');
+        await openEditor('Z');
+        expect(banner()).toBeNull();
+        expect((W().getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
+    });
+
+    it('a failed read of the workspace file at save time (models unknown) refuses a rename -- nothing is touched', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2')]);
+        await openEditor('A');
+        await setEditor({ name: 'A2' });
+        // The file becomes unreadable right now.
+        const real = h.disk.get(WS);
+        h.disk.delete(WS);
+        const from = rust.calls.length;
+        await saveEditor();
+        h.disk.set(WS, real);
+        expect(editorError()).toMatch(/Can't rename "A" right now: couldn't check whether a model uses it/);
+        expect(sessionWrites(from)).toHaveLength(0);
+        expect(rust.has('A2')).toBe(false);
+    });
+
+    it('an unlocked sensor still renames exactly as before (the lock must not get in the way)', async () => {
+        await openWorkspace([F('A', '$TAG1 * 2'), F('B', '${A} + 1')], { selectedSensors: ['A'], visibleSensors: ['A'], ...withModel(modelOn('TAG3')) });
+        await renameViaEditor('A', 'A2');
+        expect(editorError()).toBe('');
+        expect(rust.has('A')).toBe(false);
+        expect(rust.chartValues('A2')).toEqual([2, 4, 6, 8]);
+        await expectConsistent(await persistedRecipes());
     });
 });

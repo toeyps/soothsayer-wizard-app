@@ -1,4 +1,4 @@
-import { FailureModel, SpecialSensorRecipe } from '../types';
+import { FailureModel, ModelKind, SpecialSensorRecipe } from '../types';
 
 /**
  * Who still depends on a special sensor — the check that decides whether
@@ -53,6 +53,54 @@ export interface ModelReference {
     field: string;
 }
 
+/** One model that names a special sensor, with every field it names it in. */
+export interface LockedModelUse {
+    modelId: string;
+    modelName: string;
+    kind: ModelKind;
+    /** e.g. `target sensor`, `predictor`, `custom running condition`. */
+    fields: string[];
+}
+
+/** Who uses ONE sensor directly: models and/or the workspace Running condition. */
+export interface EditLockSource {
+    models: LockedModelUse[];
+    runningCondition: boolean;
+}
+
+/**
+ * Whether a special sensor may still be edited.
+ *
+ * 2026-10-03 decision (user): a special sensor used by a model is LOCKED --
+ * its values and its name are frozen, because a Trained / Complete model that
+ * was built from it goes stale (and the saved results / health-score input
+ * become wrong) if either changes underneath it. This replaces the earlier
+ * idea of putting special-sensor formulas into the train fingerprint:
+ * prevention instead of detection.
+ *
+ * Locked when ANY of:
+ *   - a model names it (any field `MODEL_SENSOR_FIELDS` lists, incl. a model's
+ *     own Custom running condition),
+ *   - the workspace Running condition names it (a changed sensor changes which
+ *     rows EVERY model trains on),
+ *   - transitively: a special sensor built on it (directly, or through other
+ *     special sensors) is itself used by a model / the Running condition --
+ *     changing this one changes that one's values.
+ * A sensor that is merely built on by an UNUSED special sensor is not locked
+ * (editing it already recomputes everything downstream).
+ *
+ * `unknown` means the models / references could not be read fresh: everything
+ * is then treated as locked, because "nothing uses it" would be a guess.
+ */
+export interface EditLock {
+    locked: boolean;
+    unknown: boolean;
+    /** Uses of this very sensor. */
+    direct: EditLockSource;
+    /** Downstream special sensors that are themselves used (the transitive part). */
+    via: Array<EditLockSource & { tag: string }>;
+}
+
 export interface SpecialSensorUsage {
     /** The special sensor's tag, exactly as it appears in its recipe. */
     tag: string;
@@ -68,6 +116,8 @@ export interface SpecialSensorUsage {
     /** False exactly when `dependentSensors` or `modelReferences` is non-empty,
      *  or `runningCondition` is set. */
     deletable: boolean;
+    /** Whether renaming / changing the values of this sensor is refused. */
+    editLock: EditLock;
 }
 
 /** Tag comparison is case-insensitive everywhere else in the app (see the
@@ -114,8 +164,13 @@ export function buildSpecialSensorUsage(args: {
     runningConditionFilters?: Array<{ sensor: string }>;
     /** Sensors currently plotted on the chart. */
     selectedSensors: string[];
+    /** False when `models` / `runningConditionFilters` / `formulaRefs` are not
+     *  known fresh: every sensor's `editLock` is then locked + unknown.
+     *  Default true. */
+    failureKnown?: boolean;
 }): Map<string, SpecialSensorUsage> {
     const { recipes, formulaRefs, models, selectedSensors, runningConditionFilters } = args;
+    const failureKnown = args.failureKnown ?? true;
 
     const usage = new Map<string, SpecialSensorUsage>();
     for (const recipe of recipes) {
@@ -126,6 +181,7 @@ export function buildSpecialSensorUsage(args: {
             runningCondition: false,
             onChart: false,
             deletable: true,
+            editLock: { locked: false, unknown: false, direct: { models: [], runningCondition: false }, via: [] },
         });
     }
 
@@ -180,7 +236,118 @@ export function buildSpecialSensorUsage(args: {
             && !entry.runningCondition;
     }
 
+    // Edit lock. Direct uses first (model references grouped per model), then
+    // the transitive part: walk everything built on a sensor, collecting the
+    // downstream sensors that are used themselves.
+    const modelById = new Map(models.map(m => [m.id, m]));
+    const directOf = (entry: SpecialSensorUsage): EditLockSource => {
+        const byModel = new Map<string, LockedModelUse>();
+        for (const ref of entry.modelReferences) {
+            const existing = byModel.get(ref.modelId);
+            if (existing) {
+                if (!existing.fields.includes(ref.field)) existing.fields.push(ref.field);
+            } else {
+                byModel.set(ref.modelId, {
+                    modelId: ref.modelId,
+                    modelName: ref.modelName,
+                    kind: modelById.get(ref.modelId)?.kind ?? 'individual',
+                    fields: [ref.field],
+                });
+            }
+        }
+        return { models: [...byModel.values()], runningCondition: entry.runningCondition };
+    };
+
+    for (const entry of usage.values()) {
+        const direct = directOf(entry);
+        const via: EditLock['via'] = [];
+        const seen = new Set<string>([key(entry.tag)]);
+        const queue = [...entry.dependentSensors];
+        while (queue.length > 0) {
+            const next = queue.shift()!;
+            if (seen.has(key(next))) continue;
+            seen.add(key(next));
+            const downstream = usage.get(key(next));
+            if (!downstream) continue;
+            const src = directOf(downstream);
+            if (isUsed(src)) via.push({ tag: downstream.tag, ...src });
+            queue.push(...downstream.dependentSensors);
+        }
+        entry.editLock = {
+            locked: !failureKnown || isUsed(direct) || via.length > 0,
+            unknown: !failureKnown,
+            direct,
+            via,
+        };
+    }
+
     return usage;
+}
+
+function isUsed(src: EditLockSource): boolean {
+    return src.models.length > 0 || src.runningCondition;
+}
+
+const KIND_LABEL: Record<ModelKind, string> = {
+    individual: 'Individual',
+    relationship: 'Relationship',
+    clustering: 'Clustering',
+};
+
+/** `Name (Kind, Kind)` per distinct model name; the first few, then "and N more". */
+function listModels(models: LockedModelUse[]): string {
+    const byName = new Map<string, string[]>();
+    for (const m of models) {
+        const name = m.modelName?.trim() || 'Untitled model';
+        const kinds = byName.get(name) ?? [];
+        const label = KIND_LABEL[m.kind] ?? m.kind;
+        if (!kinds.includes(label)) kinds.push(label);
+        byName.set(name, kinds);
+    }
+    const entries = [...byName.entries()].map(([name, kinds]) => `${name} (${kinds.join(', ')})`);
+    const MAX = 3;
+    return entries.length <= MAX
+        ? entries.join(', ')
+        : `${entries.slice(0, MAX).join(', ')} and ${entries.length - MAX} more`;
+}
+
+/** "2 models: A (Individual, Relationship), B (Clustering)" and/or "the running condition". */
+function describeSource(src: EditLockSource): string {
+    const parts: string[] = [];
+    if (src.models.length > 0) {
+        const n = new Set(src.models.map(m => m.modelId)).size;
+        parts.push(`${n} model${n > 1 ? 's' : ''}: ${listModels(src.models)}`);
+    }
+    if (src.runningCondition) parts.push('the running condition');
+    return parts.join(' and ');
+}
+
+/**
+ * The plain-language reason a sensor's name / formula / sources are locked --
+ * shown in Manage and used as the refusal message of a refused edit.
+ * Empty string when the sensor is not locked.
+ */
+export function describeEditLock(lock: EditLock): string {
+    if (!lock.locked) return '';
+    if (lock.unknown) {
+        return 'Still checking what uses this sensor, so its name, formula and sources are held back for now.';
+    }
+    const sentences: string[] = [];
+    if (isUsed(lock.direct)) sentences.push(`Used by ${describeSource(lock.direct)}.`);
+    for (const v of lock.via) {
+        sentences.push(`Built on by "${v.tag}", which is used by ${describeSource(v)}.`);
+    }
+    const subjects: string[] = [];
+    if (isUsed(lock.direct)) subjects.push('it');
+    for (const v of lock.via) subjects.push(`"${v.tag}"`);
+    const all = [lock.direct, ...lock.via];
+    const hasModels = all.some(s => s.models.length > 0);
+    const hasRc = all.some(s => s.runningCondition);
+    const where = hasModels && hasRc ? 'those models and the running condition'
+        : hasRc ? 'the running condition'
+            : 'those models';
+    sentences.push(`Remove ${subjects.join(' and ')} from ${where} first, then you can edit it.`);
+    return sentences.join(' ');
 }
 
 /** Look up one sensor's usage, tolerating case differences in the tag. */

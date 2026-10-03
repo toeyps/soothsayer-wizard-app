@@ -7,6 +7,7 @@ import {
 import { useCalculationEngine, CalculationEngineSeed } from "../../hooks/useCalculationEngine";
 import { ButtonBuilder, BASE_OP_IDS, ComponentSelect } from "./SensorTooling";
 import { nameProblem } from "../../utils/specialSensorNaming";
+import { describeRecipe } from "../../utils/specialSensorDescribe";
 
 /**
  * Edit one special sensor in place.
@@ -25,6 +26,13 @@ import { nameProblem } from "../../utils/specialSensorNaming";
  * does the formula parse, does it create a cycle, does the new name collide
  * with an existing one — is decided by the caller, which has the backend and
  * the dependency graph; it reports back through `error`.
+ *
+ * Edit lock (2026-10-03): when `lockMessage` is set -- a model, the Running
+ * condition, or a sensor built on this one that one of them uses -- the name,
+ * formula and sources are shown read-only under a banner saying who uses it,
+ * and Save sends the STORED recipe back unchanged with only the description /
+ * unit / component the user edited. The caller still re-checks the lock inside
+ * its queue; this is the friendly half, not the enforcement.
  *
  * An operation-kind recipe (`sum(...)`, `a + 10`, ...) is edited with the
  * SAME single-sensor-vs-combine button UI Create uses (`ButtonBuilder`),
@@ -57,6 +65,9 @@ interface Props {
     saving: boolean;
     /** Why the last save attempt was refused, in the user's words. */
     error: string | null;
+    /** Set while the sensor is locked (see the edit-lock note above): the
+     *  plain-language reason, shown in a banner. */
+    lockMessage?: string | null;
 }
 
 const fieldStyle: React.CSSProperties = {
@@ -95,8 +106,9 @@ function seedFromRecipe(recipe: SpecialSensorRecipe): CalculationEngineSeed | un
 }
 
 export default function SpecialSensorEditor({
-    recipe, sensorMetadata, availableSensors, onCancel, onSave, saving, error,
+    recipe, sensorMetadata, availableSensors, onCancel, onSave, saving, error, lockMessage,
 }: Props) {
+    const locked = !!lockMessage;
     const meta = sensorMetadata?.find(m => m.tag.toLowerCase() === recipe.tag.toLowerCase());
     const [description, setDescription] = useState(meta?.description ?? '');
     const [unit, setUnit] = useState(meta?.unit ?? '');
@@ -108,8 +120,8 @@ export default function SpecialSensorEditor({
     // ---- Name (rename support) ---------------------------------------------
     const [tag, setTag] = useState(recipe.tag);
     const trimmedTag = tag.trim();
-    const tagChanged = trimmedTag !== recipe.tag;
-    const tagError = !trimmedTag
+    const tagChanged = !locked && trimmedTag !== recipe.tag;
+    const tagError = locked ? null : !trimmedTag
         ? 'Name is required'
         : tagChanged && availableSensors.some(
             s => s.toLowerCase() !== recipe.tag.toLowerCase() && s.toLowerCase() === trimmedTag.toLowerCase(),
@@ -178,7 +190,7 @@ export default function SpecialSensorEditor({
     // AddSensorWindow's `missingCreateFields`), so a sensor can't leave this
     // form half-described either.
     const missingFields = [
-        !trimmedTag && 'a name',
+        !locked && !trimmedTag && 'a name',
         !description.trim() && 'a description',
         !unit.trim() && 'a unit',
         !component.trim() && 'a component',
@@ -186,9 +198,24 @@ export default function SpecialSensorEditor({
 
     const canSave =
         !saving && !tagError && missingFields.length === 0
-        && (isFormula ? formula.trim().length > 0 : buildResult.kind !== 'none');
+        && (locked || (isFormula ? formula.trim().length > 0 : buildResult.kind !== 'none'));
 
     const submit = () => {
+        if (locked) {
+            // Only the descriptive fields can change: hand the stored recipe
+            // back as it is, under its own name.
+            onSave({
+                recipe,
+                metadata: {
+                    ...(meta ?? { tag: recipe.tag, description: '', unit: '', component: '' }),
+                    tag: recipe.tag,
+                    description: description.trim(),
+                    unit: unit.trim(),
+                    component: component.trim() || 'Uncategorized',
+                },
+            });
+            return;
+        }
         const nextMetadata: SensorMetadata = {
             ...(meta ?? { tag: trimmedTag, description: '', unit: '', component: '' }),
             tag: trimmedTag,
@@ -231,24 +258,55 @@ export default function SpecialSensorEditor({
                 className="rounded px-3 py-3 flex flex-col gap-3"
                 style={{ backgroundColor: 'var(--surface-hi)', border: '1px solid var(--border)' }}
             >
+                {locked && (
+                    <div
+                        role="note"
+                        data-testid="edit-lock-banner"
+                        className="rounded px-2.5 py-2"
+                        style={{ fontSize: '11.5px', color: 'var(--text-primary)', border: '1px solid var(--warn)', backgroundColor: 'var(--card-bg)' }}
+                    >
+                        <span style={{ fontWeight: 600, color: 'var(--warn)' }}>Name and formula are locked.</span>{' '}
+                        {lockMessage}
+                        <div style={{ marginTop: 3, color: 'var(--text-secondary)' }}>
+                            You can still change the description, unit and component.
+                        </div>
+                    </div>
+                )}
                 <div>
-                    <span style={labelStyle}>Name <span style={{ color: 'var(--danger)' }}>*</span></span>
+                    <span style={labelStyle}>Name {!locked && <span style={{ color: 'var(--danger)' }}>*</span>}</span>
                     <input
                         aria-label="Name"
-                        value={tag}
+                        value={locked ? recipe.tag : tag}
                         onChange={e => setTag(e.target.value)}
-                        style={{ ...fieldStyle, borderColor: tagError ? 'var(--danger)' : undefined }}
+                        readOnly={locked}
+                        aria-readonly={locked || undefined}
+                        style={{ ...fieldStyle, borderColor: tagError ? 'var(--danger)' : undefined, ...(locked ? { opacity: 0.7, cursor: 'not-allowed' } : null) }}
                     />
-                    {tagError ? (
+                    {locked ? null : tagError ? (
                         <p role="alert" style={{ fontSize: '11px', color: 'var(--danger)', marginTop: 3 }}>{tagError}</p>
                     ) : (
                         <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
-                            Renaming updates every formula, model, and chart setting that points at this sensor.
+                            Renaming updates every formula and chart setting that points at this sensor. A sensor used by a model can't be renamed.
                         </p>
                     )}
                 </div>
 
-                {isFormula ? (
+                {locked ? (
+                    // Locked: the calculation is shown, not editable -- for
+                    // either kind, the text the list shows for it.
+                    <div>
+                        <span style={labelStyle}>{isFormula ? 'Formula' : 'Calculation'}</span>
+                        <textarea
+                            value={describeRecipe(recipe)}
+                            readOnly
+                            aria-readonly
+                            rows={isFormula ? 3 : 1}
+                            spellCheck={false}
+                            aria-label={isFormula ? 'Formula' : 'Calculation'}
+                            style={{ ...fieldStyle, fontFamily: 'var(--font-mono, monospace)', resize: 'none', opacity: 0.7, cursor: 'not-allowed' }}
+                        />
+                    </div>
+                ) : isFormula ? (
                     <div>
                         <span style={labelStyle}>Formula</span>
                         <textarea

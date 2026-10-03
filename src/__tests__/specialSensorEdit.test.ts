@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { SpecialSensorRecipe } from '../types';
-import { runSpecialSensorEdit, SpecialSensorEditError } from '../utils/specialSensorEdit';
+import {
+    runSpecialSensorEdit, SpecialSensorEditError, SpecialSensorLockedError, recipesEquivalent, type EditFailureState,
+} from '../utils/specialSensorEdit';
+import { mk } from './helpers/failureModelFixture';
 import { createFakeRust } from './helpers/fakeRustSession';
 
 const F = (tag: string, formula: string): SpecialSensorRecipe => ({ kind: 'formula', tag, formula });
@@ -179,5 +182,153 @@ describe('runSpecialSensorEdit -- outcome', () => {
         expect(applied.map(r => r.tag)).toEqual(['A2', 'B', 'C', 'Z']);
         expect((applied[1] as { formula: string }).formula).toBe('$A2 + 1');
         expect(applied[3]).toBe(list[3]);
+    });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// Edit lock (2026-10-03): a sensor used by a model cannot be renamed or have
+// its values changed -- decided in the read-only phase, before any column is
+// touched.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('runSpecialSensorEdit -- edit lock', () => {
+    const state = (over: Partial<EditFailureState> = {}): EditFailureState => ({
+        known: true, models: [], runningConditionFilters: [], ...over,
+    });
+    const usesA = state({ models: [mk({ id: 'm1', name: 'Pump model', kind: 'relationship', targetSensor: 'A' })] });
+    /** Nothing that could change a column or the session's names. */
+    const WRITES = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'rename_formula_refs'];
+    const wrote = (rust: Awaited<ReturnType<typeof session>>) =>
+        rust.calls.filter(c => WRITES.includes(c.cmd) || c.args?.replace);
+
+    it('a formula change on a model-used sensor is refused BEFORE any write, with the reason', async () => {
+        const rust = await session(CHAIN);
+        const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: usesA }).catch(e => e);
+        expect(err).toBeInstanceOf(SpecialSensorLockedError);
+        expect((err as Error).message).toMatch(/Can't change the formula, operation or sources of "A"\./);
+        expect((err as Error).message).toMatch(/Used by 1 model: Pump model \(Relationship\)\./);
+        expect((err as Error).message).toMatch(/Remove it from those models first, then you can edit it\./);
+        expect(wrote(rust)).toHaveLength(0);
+        expect(rust.resolvedValues('A')).toEqual([2, 4, 6, 8]); // still the OLD formula's values
+    });
+
+    it('a RENAME of a model-used sensor is refused before any write -- no old-column removal, no downstream rewrite', async () => {
+        const rust = await session(CHAIN);
+        const err = await run(rust, { recipes: CHAIN, next: F('A2', '$TAG1 * 2'), oldTag: 'A', failureState: usesA }).catch(e => e);
+        expect(err).toBeInstanceOf(SpecialSensorLockedError);
+        expect((err as Error).message).toMatch(/Can't rename "A"\./);
+        expect(wrote(rust)).toHaveLength(0);
+        expect(rust.cmds('rename_formula_refs')).toHaveLength(0);
+    });
+
+    it('a case-only rename is a rename: refused too', async () => {
+        const rust = await session(CHAIN);
+        await expect(run(rust, { recipes: CHAIN, next: F('a', '$TAG1 * 2'), oldTag: 'A', failureState: usesA }))
+            .rejects.toBeInstanceOf(SpecialSensorLockedError);
+        expect(wrote(rust)).toHaveLength(0);
+    });
+
+    it('changing an OPERATION sensor\'s sources or operation is refused as well', async () => {
+        const recipes = [SUM('S', ['TAG1', 'TAG3'])];
+        const rust = await session(recipes);
+        const lockedS = state({ models: [mk({ id: 'm1', targetSensor: 'S' })] });
+        await expect(run(rust, { recipes, next: SUM('S', ['TAG1']), failureState: lockedS })).rejects.toBeInstanceOf(SpecialSensorLockedError);
+        await expect(run(rust, {
+            recipes,
+            next: { kind: 'operation', tag: 'S', sourceSensors: ['TAG1', 'TAG3'], operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'S' } },
+            failureState: lockedS,
+        })).rejects.toBeInstanceOf(SpecialSensorLockedError);
+        expect(wrote(rust)).toHaveLength(0);
+    });
+
+    it('a metadata-only save (same recipe) of a locked sensor is ACCEPTED, and recomputes nothing', async () => {
+        const rust = await session(CHAIN);
+        const before = rust.resolvedValues('A');
+        // Same formula (even with stray whitespace) / an operation whose customName differs.
+        const out = await run(rust, { recipes: CHAIN, next: F('A', '  $TAG1 * 2 '), failureState: usesA });
+        expect(out.metadataOnly).toBe(true);
+        expect(out.recipe).toBe(CHAIN[0]); // the STORED recipe, untouched
+        expect(out.downstream).toEqual([]);
+        expect(wrote(rust)).toHaveLength(0);
+        expect(rust.resolvedValues('A')).toEqual(before);
+        // applyEdit keeps the stored recipe in place.
+        expect(out.applyEdit(CHAIN)).toEqual(CHAIN);
+
+        const opRecipes = [SUM('S', ['TAG1', 'TAG3'])];
+        const rust2 = await session(opRecipes);
+        const out2 = await run(rust2, {
+            recipes: opRecipes,
+            next: { kind: 'operation', tag: 'S', sourceSensors: ['TAG1', 'TAG3'], operationConfig: { mode: 'multi', multiOp: { type: 'sum' }, customName: 'whatever' } },
+            failureState: state({ models: [mk({ id: 'm1', targetSensor: 'S' })] }),
+        });
+        expect(out2.metadataOnly).toBe(true);
+        expect(wrote(rust2)).toHaveLength(0);
+    });
+
+    it('TRANSITIVE: A is built-on by B which a model uses -> editing A is refused, naming B', async () => {
+        const rust = await session(CHAIN);
+        const usesB = state({ models: [mk({ id: 'm1', name: 'Uses B', targetSensor: 'B' })] });
+        const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: usesB }).catch(e => e);
+        expect(err).toBeInstanceOf(SpecialSensorLockedError);
+        expect((err as Error).message).toMatch(/Built on by "B", which is used by 1 model: Uses B \(Individual\)\./);
+        expect(wrote(rust)).toHaveLength(0);
+    });
+
+    it('the workspace Running condition locks it too ("Used by the running condition")', async () => {
+        const rust = await session(CHAIN);
+        const err = await run(rust, {
+            recipes: CHAIN, next: F('A', '$TAG1 * 3'),
+            failureState: state({ runningConditionFilters: [{ sensor: 'A' }] }),
+        }).catch(e => e);
+        expect(err).toBeInstanceOf(SpecialSensorLockedError);
+        expect((err as Error).message).toMatch(/Used by the running condition\./);
+        expect(wrote(rust)).toHaveLength(0);
+    });
+
+    it('UNKNOWN models (could not be read) -> locked: a values change is refused, a metadata-only save still goes through', async () => {
+        const rust = await session(CHAIN);
+        const unknown = state({ known: false, reason: 'disk unavailable' });
+        const err = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: unknown }).catch(e => e);
+        expect(err).toBeInstanceOf(SpecialSensorLockedError);
+        expect((err as Error).message).toMatch(/couldn't check whether a model uses it \(disk unavailable\)/);
+        expect(wrote(rust)).toHaveLength(0);
+        const ok = await run(rust, { recipes: CHAIN, next: CHAIN[0], failureState: unknown });
+        expect(ok.metadataOnly).toBe(true);
+    });
+
+    it('an UNLOCKED sensor edits exactly as before (recompute, downstream, no metadataOnly) even when the failure state is supplied', async () => {
+        const rust = await session(CHAIN);
+        const out = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: state({ models: [mk({ id: 'm1', targetSensor: 'TAG1' })] }) });
+        expect(out.metadataOnly).toBe(false);
+        expect(out.downstream.map(r => r.tag)).toEqual(['B', 'C']);
+        expect(rust.resolvedValues('A')).toEqual([3, 6, 9, 12]);
+    });
+
+    it('UNLOCKS once the model no longer uses it: the same edit that was refused now goes through', async () => {
+        const rust = await session(CHAIN);
+        await expect(run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: usesA })).rejects.toBeInstanceOf(SpecialSensorLockedError);
+        const out = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3'), failureState: state() });
+        expect(out.metadataOnly).toBe(false);
+        expect(wrote(rust).length).toBeGreaterThan(0);
+    });
+
+    it('without a failureState nothing is checked (callers with no models to ask)', async () => {
+        const rust = await session(CHAIN);
+        const out = await run(rust, { recipes: CHAIN, next: F('A', '$TAG1 * 3') });
+        expect(out.metadataOnly).toBe(false);
+    });
+});
+
+describe('recipesEquivalent', () => {
+    it('compares what decides the column: formula text (trimmed), sources in order, operation config -- not customName', () => {
+        expect(recipesEquivalent(F('A', '$x'), F('A', ' $x '))).toBe(true);
+        expect(recipesEquivalent(F('A', '$x'), F('A', '$y'))).toBe(false);
+        expect(recipesEquivalent(F('A', '$x'), F('B', '$x'))).toBe(false);
+        expect(recipesEquivalent(SUM('S', ['a', 'b']), SUM('S', ['a', 'b']))).toBe(true);
+        expect(recipesEquivalent(SUM('S', ['a', 'b']), SUM('S', ['b', 'a']))).toBe(false);
+        expect(recipesEquivalent(F('S', '$a'), SUM('S', ['a']))).toBe(false);
+        const withName = { ...SUM('S', ['a']), operationConfig: { mode: 'multi' as const, multiOp: { type: 'sum' as const }, customName: 'other' } };
+        expect(recipesEquivalent(SUM('S', ['a']), withName)).toBe(true);
     });
 });

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Trash2, Lock, Search, Undo2, Pencil } from "lucide-react";
 import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
-import { buildSpecialSensorUsage, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
+import { buildSpecialSensorUsage, describeEditLock, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
+import { describeRecipe } from "../../utils/specialSensorDescribe";
 import SpecialSensorEditor from "./SpecialSensorEditor";
 
 interface Props {
@@ -43,25 +44,6 @@ interface Props {
     editError: string | null;
 }
 
-/** How the recipe reads in the list — the formula as typed, or the operation
- *  spelled out as `sum(a, b)` / `a + 10`. */
-function describeRecipe(recipe: SpecialSensorRecipe): string {
-    if (recipe.kind === 'formula') return recipe.formula;
-    const sources = recipe.sourceSensors.join(', ');
-    const config = recipe.operationConfig;
-    if (config.mode === 'multi') return `${config.multiOp?.type ?? 'sum'}(${sources})`;
-    const op = config.singleOp;
-    if (!op) return sources;
-    switch (op.type) {
-        case 'add': return `${sources} + ${op.value}`;
-        case 'subtract': return `${sources} - ${op.value}`;
-        case 'multiply': return `${sources} × ${op.value}`;
-        case 'divide': return `${sources} ÷ ${op.value}`;
-        case 'power': return `${sources} ^ ${op.value}`;
-        default: return `${op.type}(${sources})`;
-    }
-}
-
 /** One line saying why the delete button is off — the short version that fits
  *  on the row; the full list is in the expanded panel. */
 function blockedSummary(usage: SpecialSensorUsage): string | null {
@@ -92,8 +74,11 @@ export default function ManageSpecialSensors({
             models,
             runningConditionFilters,
             selectedSensors,
+            // Until both lookups have answered, "nothing uses it" would be a
+            // guess -- the edit lock then holds name / formula / sources back.
+            failureKnown: usageKnown && formulaRefs !== null,
         }),
-        [recipes, formulaRefs, models, runningConditionFilters, selectedSensors],
+        [recipes, formulaRefs, models, runningConditionFilters, selectedSensors, usageKnown],
     );
 
     const metaFor = (tag: string) => sensorMetadata?.find(m => m.tag.toLowerCase() === tag.toLowerCase());
@@ -150,6 +135,10 @@ export default function ManageSpecialSensors({
                     const info = usageFor(usage, recipe.tag)!;
                     const meta = metaFor(recipe.tag);
                     const summary = blockedSummary(info);
+                    // Edit lock: why this sensor's name / formula / sources are
+                    // frozen (a model uses it, or one built on it does). The
+                    // description / unit / component stay editable.
+                    const lockMessage = info.editLock.locked ? describeEditLock(info.editLock) : null;
                     // Deletion stays off until the reference lookup has
                     // actually answered — see `formulaRefs` above — and until
                     // the models / running condition are known fresh.
@@ -278,6 +267,12 @@ export default function ManageSpecialSensors({
                                                 <div style={{ marginTop: 2 }}>Remove that condition (Build Model → Running condition) first.</div>
                                             </div>
                                         )}
+                                        {lockMessage && (
+                                            <div data-testid={`edit-lock-${recipe.tag}`}>
+                                                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Name and formula are locked:</span>{' '}
+                                                {lockMessage}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -295,6 +290,7 @@ export default function ManageSpecialSensors({
                                     onSave={onSaveEdit}
                                     saving={savingEdit}
                                     error={editError}
+                                    lockMessage={lockMessage}
                                 />
                             )}
                         </div>
