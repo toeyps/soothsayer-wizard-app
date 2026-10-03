@@ -6817,7 +6817,8 @@ pub fn run() {
         //
         // The visibility filter handles the recent-workspace-navigation case:
         // when the user clicks a Recent Workspace whose `lastRoute` is
-        // `failure-group` / `predictive-model`, the main window calls
+        // `failure-group` / `predictive-model` (old routes that no longer exist —
+        // a sub-window is a `?window=` label now), the main window calls
         // `Window.destroy()` immediately after spawning the sub-window. If
         // that destroy races a re-mount and the manager-map entry lingers as
         // a hidden window, the visibility filter ignores it so the app still

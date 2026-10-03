@@ -268,7 +268,7 @@ export default function AddSensorWindow() {
      *  and refuses to even start (or to hand back a result) once the window's
      *  epoch has moved on. */
     const invokerFor = (ctx: TaskCtx): Invoker => {
-        const bound = bindToGeneration((cmd, args) => invoke(cmd, args), ctx.generation);
+        const bound = bindToGeneration((cmd, args) => invoke<unknown>(cmd, args), ctx.generation);
         return async (cmd, args) => {
             assertCurrent(ctx);
             let out: unknown;

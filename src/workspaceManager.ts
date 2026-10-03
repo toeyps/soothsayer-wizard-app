@@ -24,7 +24,7 @@ const STORE_FILE = 'settings.json';
  */
 export async function writeUserTextFile(path: string, content: string): Promise<void> {
     const bytes = new TextEncoder().encode(content);
-    await invoke('write_user_file', {
+    await invoke<void>('write_user_file', {
         path,
         contents: Array.from(bytes),
     });

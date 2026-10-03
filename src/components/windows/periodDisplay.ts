@@ -1,5 +1,4 @@
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
-import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
 
 /*
@@ -214,34 +213,4 @@ export interface RuleInput {
     combine: 'and' | 'or';
     /** "No condition — use all rows" is active. */
     none: boolean;
-}
-
-export interface RuleModel {
-    /** "P1", "P2" ... (row numbers of the valid periods); empty = any time. */
-    periodLabels: string[];
-    condMode: 'none' | 'empty' | 'list';
-    conditions: string[];
-    condOp: 'AND' | 'OR';
-}
-
-export function buildRuleModel(input: RuleInput): RuleModel {
-    const status = validatePeriods(input.periods);
-    const periodLabels = input.periods.flatMap((_, i) => (status[i].invalid ? [] : [`P${i + 1}`]));
-    const conditions = input.filters.filter(f => isCompleteCondition(f)).map(f => conditionText(f));
-    return {
-        periodLabels,
-        condMode: input.none ? 'none' : conditions.length === 0 ? 'empty' : 'list',
-        conditions,
-        condOp: input.combine === 'or' ? 'OR' : 'AND',
-    };
-}
-
-/** Plain-text rule line, e.g. `Row is used when ( P1 OR P2 ) AND ( A > 1 AND B < 2 )`. */
-export function ruleText(input: RuleInput): string {
-    const m = buildRuleModel(input);
-    const time = m.periodLabels.length ? m.periodLabels.join(' OR ') : 'any time';
-    const cond = m.condMode === 'none' ? 'no condition (every row)'
-        : m.condMode === 'empty' ? 'no condition yet'
-        : m.conditions.join(` ${m.condOp} `);
-    return `Row is used when ( ${time} ) AND ( ${cond} )`;
 }

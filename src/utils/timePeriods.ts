@@ -158,23 +158,6 @@ export function isRangeFullyCovered(list: TimePeriod[], bounds: { min: string; m
     return coveredTo >= max;
 }
 
-/** Chip text: dates only when the range is whole days (00:00 → 23:59), else
- *  date + time. Open ends read "Start of data" / "End of data". */
-export function periodChipLabel(p: TimePeriod): string {
-    const fmtPart = (s: string, isEnd: boolean, wholeDay: boolean): string => {
-        if (!(s ?? '').trim()) return isEnd ? 'End of data' : 'Start of data';
-        const norm = s.trim().replace(' ', 'T');
-        const [date, time = ''] = norm.split('T');
-        return wholeDay || !time ? date : `${date} ${time.slice(0, 5)}`;
-    };
-    const startTime = (p.start ?? '').trim().replace(' ', 'T').split('T')[1]?.slice(0, 5);
-    const endTime = (p.end ?? '').trim().replace(' ', 'T').split('T')[1]?.slice(0, 5);
-    const startOk = !(p.start ?? '').trim() || !startTime || startTime === '00:00';
-    const endOk = !(p.end ?? '').trim() || !endTime || endTime === '23:59';
-    const whole = startOk && endOk;
-    return `${fmtPart(p.start, false, whole)} – ${fmtPart(p.end, true, whole)}`;
-}
-
 /** Wire shape for `timestamp_ranges`: invalid periods are dropped, `''` → null.
  *  NOTE: an empty result is ambiguous ("no periods" vs "none valid") — callers
  *  must check `validatePeriods` themselves before sending `[]`. */

@@ -173,7 +173,7 @@ export default function ManageSpecialSensors({
                                 <div
                                     className="hidden md:block truncate"
                                     title={describeRecipe(recipe)}
-                                    style={{ flex: '0 1 240px', fontFamily: 'var(--font-mono, monospace)', fontSize: '11px', color: 'var(--text-secondary)' }}
+                                    style={{ flex: '0 1 240px', fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-secondary)' }}
                                 >
                                     {describeRecipe(recipe)}
                                 </div>

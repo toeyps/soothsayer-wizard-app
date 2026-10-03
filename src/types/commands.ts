@@ -55,19 +55,6 @@ export interface RelationshipPreviewResult {
   health_preview?: HealthPreview;
 }
 
-/** New: result of `train_individual_model` (writes JSON to disk). */
-export interface IndividualModelInfo {
-  model_name: string;
-  publish_id: number;
-  training_set_start_date: string;
-  training_set_end_date: string;
-  mean: number;
-  sd: number;
-  boundary_1sd: [number, number];
-  boundary_3sd: [number, number];
-  saved_path: string;
-}
-
 /** Ellipse parameters from a single Gaussian fit (one cluster). */
 interface EllipseFit {
   x_center: number;
@@ -114,26 +101,6 @@ export interface ClusteringPreview {
   n_rows: number;
   /** One entry per cluster, in cluster_id order (1..=N). */
   clusters: ClusterDetail[];
-}
-
-/** Result of `train_clustering_model` (writes JSON to disk). */
-export interface ClusteringModelInfo {
-  model_name: string;
-  first_sensor: string;
-  second_sensor: string;
-  criteria_sensor: string | null;
-  cluster_count: number;
-  clusters: ClusterDetail[];
-  saved_path: string;
-}
-
-/** New: result of `train_relationship_model`. */
-export interface RelationshipTrainResult {
-  model_path: string;
-  r2: number;
-  rmse2: number;
-  n_rows: number;
-  info_path: string;
 }
 
 /**

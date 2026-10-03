@@ -13,9 +13,18 @@ export default defineConfig(async () => ({
       output: {
         // Split the app's heaviest dependencies into their own vendor
         // chunks instead of one monolithic bundle.
-        manualChunks: {
-          echarts: ['echarts', 'echarts-for-react'],
-          "regl-scatterplot": ['regl-scatterplot'],
+        //
+        // Function form (not the `{ chunk: [pkgs] }` object form), with React in its
+        // own chunk: left to the default, Rollup put React (and the CJS interop helper)
+        // INSIDE the echarts chunk because echarts-for-react imports it — so the main
+        // window's entry statically imported, and index.html modulepreloaded, all 1.1 MB
+        // of echarts even though echarts is only needed once a chart mounts.
+        manualChunks(id: string) {
+          if (id.includes("commonjsHelpers") || /node_modules[\/](react|react-dom|scheduler)[\/]/.test(id)) return "react";
+          if (!id.includes("node_modules")) return undefined;
+          if (/node_modules[\/](echarts|zrender|echarts-for-react)[\/]/.test(id)) return "echarts";
+          if (/node_modules[\/]regl-scatterplot[\/]/.test(id)) return "regl-scatterplot";
+          return undefined;
         },
       },
     },

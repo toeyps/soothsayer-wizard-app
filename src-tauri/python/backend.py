@@ -18,7 +18,7 @@ Phase 1 (Hybrid Rust/Python architecture) goals satisfied by this file:
 
 Phase 5: the legacy compat shim has been removed. The response now contains
 only the new shape: `request, r2_per_step, rmse2_per_step, predicted,
-residual`. The TypeScript types and PredictiveModelBuild UI consume this
+residual`. The TypeScript types and the Build Model window's Model fit page consume this
 shape directly.
 """
 

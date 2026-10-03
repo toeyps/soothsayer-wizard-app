@@ -103,22 +103,3 @@ export function migrateHealthSetPoints(state: WorkspaceState): WorkspaceState {
     });
     return changed ? withFailureGroupState(state, { models }) : state;
 }
-
-export interface MigrationSteps {
-    periods?: boolean;
-    categories?: boolean;
-    gate?: boolean;
-    healthSetPoints?: boolean;
-    /** Only with `periods`: also delete the old start/end keys. */
-    dropLegacyKeys?: boolean;
-}
-
-/** Runs the chosen steps in order: periods -> categories -> gate. */
-export function migrateToLatest(state: WorkspaceState, steps: MigrationSteps = {}): WorkspaceState {
-    let s = state;
-    if (steps.periods) s = migratePeriods(s, { dropLegacyKeys: steps.dropLegacyKeys });
-    if (steps.categories) s = normalizeCategories(s);
-    if (steps.gate) s = flagLegacyGate(s);
-    if (steps.healthSetPoints) s = migrateHealthSetPoints(s);
-    return s;
-}

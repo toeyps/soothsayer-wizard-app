@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    buildRuleModel, computeCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, overlapDays, periodDays, ruleText,
+    computeCoverage, conditionChipParts, conditionSymbol, formatDate, formatPeriod, formatPeriodChip, overlapDays, periodDays,
 } from '../components/windows/periodDisplay';
 import type { WorkspaceSensorFilter } from '../types';
 
@@ -103,52 +103,8 @@ describe('computeCoverage', () => {
     });
 });
 
-describe('rule line ("Row is used when ...")', () => {
-    const P3 = [
-        p('a', '2025-01-01T00:00', '2025-02-28T23:59'),
-        p('b', '2025-06-01T00:00', '2025-07-31T23:59'),
-        p('c', '2025-11-03T06:00', '2025-12-19T18:00'),
-    ];
-    const C2 = [f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', '2.4')];
-
-    it('the mockup sentence: periods OR-ed, conditions AND-ed', () => {
-        expect(ruleText({ periods: P3, filters: C2, combine: 'and', none: false }))
-            .toBe('Row is used when ( P1 OR P2 OR P3 ) AND ( I_MOT_A > 12 AND PT_2041 > 2.4 )');
-    });
-
-    it('Match OR joins the conditions with OR; periods still use OR', () => {
-        expect(ruleText({ periods: P3.slice(0, 2), filters: C2, combine: 'or', none: false }))
-            .toBe('Row is used when ( P1 OR P2 ) AND ( I_MOT_A > 12 OR PT_2041 > 2.4 )');
-        const m = buildRuleModel({ periods: P3, filters: C2, combine: 'or', none: false });
-        expect(m.condOp).toBe('OR');
-    });
-
-    it('"No condition" replaces the condition list', () => {
-        expect(ruleText({ periods: P3.slice(0, 1), filters: C2, combine: 'and', none: true }))
-            .toBe('Row is used when ( P1 ) AND ( no condition (every row) )');
-    });
-
-    it('no periods reads "any time"', () => {
-        expect(ruleText({ periods: [], filters: C2, combine: 'and', none: false }))
-            .toBe('Row is used when ( any time ) AND ( I_MOT_A > 12 AND PT_2041 > 2.4 )');
-        expect(ruleText({ periods: [], filters: [], combine: 'and', none: true }))
-            .toBe('Row is used when ( any time ) AND ( no condition (every row) )');
-    });
-
-    it('incomplete conditions are left out; none complete reads "no condition yet"', () => {
-        expect(ruleText({ periods: [], filters: [f('A', 'greater_than', ''), f('B', 'less_than', '5')], combine: 'and', none: false }))
-            .toBe('Row is used when ( any time ) AND ( B < 5 )');
-        expect(ruleText({ periods: [], filters: [f('A', 'greater_than', '')], combine: 'and', none: false }))
-            .toBe('Row is used when ( any time ) AND ( no condition yet )');
-    });
-
-    it('between shows its range; invalid periods are dropped but keep their row numbers', () => {
-        const bad = p('x', '2025-06-01T00:00', '2025-05-20T23:59');
-        expect(ruleText({ periods: [P3[0], bad, P3[2]], filters: [f('T', 'between', '1', '5')], combine: 'and', none: false }))
-            .toBe('Row is used when ( P1 OR P3 ) AND ( T between 1–5 )');
-    });
-
-    it('condition symbols', () => {
+describe('condition symbols', () => {
+    it('maps each operator to its symbol', () => {
         expect(['greater_than', 'less_than', 'between', 'equals'].map(o => conditionSymbol(o as WorkspaceSensorFilter['operation'])))
             .toEqual(['>', '<', 'between', '=']);
     });

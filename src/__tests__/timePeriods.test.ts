@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { TimePeriod } from '../types';
 import {
     validatePeriods, sortPeriods, mergeOverlapping, nextDefaultPeriod,
-    isRangeFullyCovered, periodChipLabel, toFilterRanges,
+    isRangeFullyCovered, toFilterRanges,
 } from '../utils/timePeriods';
 
 const p = (id: string, start: string, end: string): TimePeriod => ({ id, start, end });
@@ -120,19 +120,6 @@ describe('isRangeFullyCovered', () => {
     });
     it('overlapping periods still cover', () => {
         expect(isRangeFullyCovered([p('a', '', '2025-02-15T00:00'), p('b', '2025-02-01T00:00', '')], bounds)).toBe(true);
-    });
-});
-
-describe('periodChipLabel', () => {
-    it('shows dates only for whole-day ranges', () => {
-        expect(periodChipLabel(p('a', '2025-01-01T00:00', '2025-01-31T23:59'))).toBe('2025-01-01 – 2025-01-31');
-    });
-    it('shows times when not whole days', () => {
-        expect(periodChipLabel(p('a', '2025-01-01T08:30', '2025-01-31T23:59'))).toBe('2025-01-01 08:30 – 2025-01-31 23:59');
-    });
-    it('names open ends', () => {
-        expect(periodChipLabel(p('a', '', ''))).toBe('Start of data – End of data');
-        expect(periodChipLabel(p('a', '2025-01-01T00:00', ''))).toBe('2025-01-01 – End of data');
     });
 });
 

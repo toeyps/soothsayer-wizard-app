@@ -321,28 +321,3 @@ export interface ModelFilesResult {
  *  `STALE_SESSION` — `expected_generation` did not match the loaded dataset.
  *  `VALIDATION` — only from the direct `train_*` commands. */
 export type HealthErrorCode = 'NOT_FITTED' | 'NO_DATA' | 'BAD_REQUEST' | 'STALE_SESSION' | 'VALIDATION';
-
-/** The `code` values `HealthIssue.code` can take today (stable strings; the
- *  UI may key on them, or just show `message`). Informational — `code` stays
- *  typed `string` so a new Rust code never breaks the build. */
-export type HealthValidationCode =
-    | 'required'
-    | 'degenerate_band'
-    | 'ordering'
-    | 'lower_equals_3sd'
-    | 'lower_inside_3sd'
-    | 'upper_equals_3sd'
-    | 'upper_inside_3sd'
-    | 'must_be_negative'
-    | 'must_be_positive'
-    | 'point80_equals_band'
-    | 'point80_inside_band'
-    | 'point0_equals_point80'
-    | 'point0_inside_point80'
-    | 'outer_sd_equals_3'
-    | 'outer_sd_not_above_3'
-    | 'outer_sd_not_a_number'
-    /** Error: a set point is NaN / infinite. */
-    | 'not_finite'
-    /** WARNING (non-blocking): the model's name cannot be used as it is in a file name. */
-    | 'unsafe_file_name';

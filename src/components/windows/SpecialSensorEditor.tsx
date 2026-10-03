@@ -303,7 +303,7 @@ export default function SpecialSensorEditor({
                             rows={isFormula ? 3 : 1}
                             spellCheck={false}
                             aria-label={isFormula ? 'Formula' : 'Calculation'}
-                            style={{ ...fieldStyle, fontFamily: 'var(--font-mono, monospace)', resize: 'none', opacity: 0.7, cursor: 'not-allowed' }}
+                            style={{ ...fieldStyle, fontFamily: 'var(--mono)', resize: 'none', opacity: 0.7, cursor: 'not-allowed' }}
                         />
                     </div>
                 ) : isFormula ? (
@@ -315,7 +315,7 @@ export default function SpecialSensorEditor({
                             rows={3}
                             spellCheck={false}
                             aria-label="Formula"
-                            style={{ ...fieldStyle, fontFamily: 'var(--font-mono, monospace)', resize: 'vertical' }}
+                            style={{ ...fieldStyle, fontFamily: 'var(--mono)', resize: 'vertical' }}
                         />
                         <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
                             Reference a sensor as <code>$Name</code>, or <code>{'${Name With Spaces}'}</code>.

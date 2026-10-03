@@ -147,7 +147,7 @@ src/
 │  ├─ upload/              DataUploadPage (3-step: choose/create → name → upload+map)
 │  ├─ dashboard/           Dashboard, FailureGroupsPanel, SensorSelection, FilterPanel
 │  ├─ charts/              LineChart, ScatterChart, PairPlotChart/Cell
-│  ├─ windows/              secondary windows: AddSensor, BuildModelWindow (hosts PredictiveModelBuild inline)
+│  ├─ windows/              secondary windows: AddSensor, BuildModelWindow (Workbench: Model fit + Health score pages per model)
 │  └─ reports/              PM report shared types (pmReportTypes.ts)
 ├─ hooks/                  data-fetching + Tauri-binding hooks (useChartData, useScatterSample, ...)
 ├─ types/commands.ts       shared payload types for Tauri command args/results

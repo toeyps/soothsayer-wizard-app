@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { migratePeriods, normalizeCategories, flagLegacyGate, migrateHealthSetPoints, migrateToLatest } from '../utils/workspaceMigrations';
+import { migratePeriods, normalizeCategories, flagLegacyGate, migrateHealthSetPoints } from '../utils/workspaceMigrations';
 import { mk as baseMk } from './helpers/failureModelFixture';
 
 /** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
@@ -199,51 +199,5 @@ describe('migrateHealthSetPoints', () => {
         const once = migrateHealthSetPoints(s);
         expect(JSON.stringify(s)).toBe(snap);
         expect(migrateHealthSetPoints(once)).toBe(once);
-    });
-    it('is a migrateToLatest step, run last and only when asked', () => {
-        const s = ws({ models: three() });
-        expect(migrateToLatest(s, { periods: true }).failureGroupState!.models[0].healthSetPoints).toBeUndefined();
-        expect(migrateToLatest(s, { periods: true, healthSetPoints: true }).failureGroupState!.models[0].healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: null });
-    });
-});
-
-describe('migrateToLatest', () => {
-    const legacy = () => ws({
-        runningConditionTimeStart: '2025-01-01T00:00',
-        models: [
-            mk({ id: 'i', targetSensor: 'T', category: 'performance' }),
-            mk({ id: 'r', kind: 'relationship', targetSensor: 'T', category: 'condition' }),
-        ],
-    });
-    it('no steps -> same state', () => {
-        const s = legacy();
-        expect(migrateToLatest(s)).toBe(s);
-    });
-    it('runs only the chosen steps', () => {
-        const out = migrateToLatest(legacy(), { categories: true }).failureGroupState!;
-        expect(out.categoryNormalisationNotice).toHaveLength(1);
-        expect(out.runningConditionTimePeriods).toBeUndefined();
-        expect(out.rcLegacyNotice).toBeUndefined();
-    });
-    it('runs all steps in order and loses nothing', () => {
-        const out = migrateToLatest(legacy(), { periods: true, categories: true, gate: true }).failureGroupState!;
-        expect(out.runningConditionTimePeriods).toHaveLength(1);
-        expect(out.categoryNormalisationNotice).toHaveLength(1);
-        expect(out.rcLegacyNotice).toBe('pending');
-        expect((out as unknown as Old).runningConditionTimeStart).toBe('2025-01-01T00:00');
-        expect(out.models).toHaveLength(2);
-    });
-    it('is idempotent across the whole pipeline (running twice equals once)', () => {
-        const steps = { periods: true, categories: true, gate: true, dropLegacyKeys: true };
-        const once = migrateToLatest(legacy(), steps);
-        expect(migrateToLatest(once, steps)).toEqual(once);
-    });
-    it('does not re-fire notices after the user dismissed them', () => {
-        const steps = { periods: true, categories: true, gate: true };
-        const once = migrateToLatest(legacy(), steps);
-        const dismissed: WorkspaceState = { ...once, failureGroupState: { ...once.failureGroupState!, categoryNormalisationNotice: null, rcLegacyNotice: null } };
-        const again = migrateToLatest(dismissed, steps).failureGroupState!;
-        expect(again.categoryNormalisationNotice).toBeNull();
-        expect(again.rcLegacyNotice).toBeNull();
     });
 });

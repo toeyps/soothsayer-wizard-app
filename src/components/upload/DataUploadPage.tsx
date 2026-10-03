@@ -71,7 +71,7 @@ interface DataUploadPageProps {
 async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation: number | undefined): Promise<string[]> {
   const { failed, skipped } = await replaySpecialSensorRecipes(
     recipes,
-    bindToGeneration((cmd, args) => invoke(cmd, args), generation),
+    bindToGeneration((cmd, args) => invoke<unknown>(cmd, args), generation),
   );
   if (failed.length + skipped.length > 0) {
     const parts = [

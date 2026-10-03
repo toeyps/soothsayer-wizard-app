@@ -596,6 +596,8 @@ export default function BuildModelWindow() {
         // A running "Mark complete" (export + save) is waited for, so files that were
         // written always end with the status saved or a clear refusal — but never
         // forever: a hung sidecar makes the close wait give up once, with a message.
+        // (Holds even when the window was re-pointed at another workspace mid-run:
+        // `runMarkComplete` saves into the workspace captured at click time.)
         if (markRunsRef.current.size > 0 && !closeWaitGivenUpRef.current) {
             let timer: ReturnType<typeof setTimeout> | undefined;
             const finished = Promise.allSettled([...markRunsRef.current]).then(() => true);
@@ -722,8 +724,11 @@ export default function BuildModelWindow() {
                 setSaveInfo({});
                 setAttemptIssues({});
                 setPointsSeededRef.current = new Set();
-                completeRunningRef.current = new Set();
-                markRunsRef.current = new Set();
+                // `completeRunningRef` / `markRunsRef` are deliberately NOT reset: a Mark
+                // complete of the old workspace may still be exporting. It finishes and saves
+                // into ITS workspace (see `runMarkComplete`), and a window close must still
+                // wait for it (`flushAllPending`); model ids are unique across workspaces, so
+                // keeping them cannot block a model of the new one.
                 closeWaitGivenUpRef.current = false;
                 setCloseNotice(null);
             }
@@ -1457,7 +1462,13 @@ export default function BuildModelWindow() {
         if (!ws) return 'No workspace is open.';
         if (completeRunningRef.current.has(m.id)) return 'Saving is already in progress.';
         const id = m.id;
+        // `true` while this window still shows the workspace the click was made in. The
+        // run can outlive that (the window is re-pointed at another project meanwhile): the
+        // files and the save always go to `ws`, but window state (banner, drafts, in-memory
+        // workspace slice) is only touched while it still describes `ws`.
+        const stillHere = (): boolean => workspaceIdRef.current === ws;
         const fail = (message: string, issues: HealthIssue[] | null = null): string => {
+            if (!stillHere()) return message; // re-pointed: nothing on screen is about this model any more
             setSaveInfo(prev => ({ ...prev, [id]: { phase: 'error', message } }));
             if (issues) setAttemptIssues(prev => ({ ...prev, [id]: issues }));
             return message;
@@ -1486,7 +1497,10 @@ export default function BuildModelWindow() {
                     setPoints: sp,
                     expectedGeneration: generation,
                 });
-                if (workspaceIdRef.current !== ws) return 'The workspace changed.';
+                // No "workspace changed" bail-out here: `completeModel` has already written
+                // the model files into A's output folder, so the save below MUST still
+                // happen — into `ws` (the id captured at click time), never into whatever
+                // this window points at now.
                 if (!res.ok) {
                     if (res.reason === 'validation') return fail('Some set points are not valid — fix them in Checks first.', res.issues);
                     if (res.code === 'NOT_FITTED') return fail('Re-train first — the fitted Relation model is no longer in memory.');
@@ -1498,9 +1512,12 @@ export default function BuildModelWindow() {
                 await trackPending((async () => {
                     const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', record, race);
                     persisted.reason = r.reason;
-                    if (workspaceIdRef.current === ws && r.next?.failureGroupState) applyFg(r.next.failureGroupState);
+                    if (stillHere() && r.next?.failureGroupState) applyFg(r.next.failureGroupState);
                 })());
                 if (persisted.reason !== null) return fail(`The files were written, but the model was not marked complete: ${persisted.reason}`);
+                // Re-pointed meanwhile: A's Complete is on disk (and was broadcast with A's
+                // id by `persistModelComplete`); this window's own state is B's — leave it.
+                if (!stillHere()) return null;
                 // What was typed is now what is on disk.
                 if (spDraftsRef.current[id] !== undefined && sameSetPoints(spDraftsRef.current[id], res.setPoints)) {
                     const rest = { ...spDraftsRef.current };
