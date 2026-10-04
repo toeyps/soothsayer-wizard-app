@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 /* Tailwind v4 scans every non-ignored file for class names. A doc that quotes a Windows path
    containing a backslash followed by hex digits is read as a CSS escape with an impossible code
    point and the whole build dies with "Invalid code point" (hit 2026-10-04). The app uses
@@ -7,7 +8,6 @@
 @source not "../scripts";
 @source not "../CLAUDE.md";
 @source not "../README.md";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 #root {
     height: 100%;
