@@ -16,6 +16,14 @@ import { getErrors, dismissAllErrors } from '../errorReporter';
 // Mocks
 // ─────────────────────────────────────────────────────────────────────────
 
+const mockAsk = vi.fn();
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  ask: (...args: unknown[]) => mockAsk(...args),
+  open: vi.fn(),
+  save: vi.fn(),
+  message: vi.fn(),
+}));
+
 const mockInvoke = vi.fn();
 const mockListen = vi.fn();
 const mockEmit = vi.fn();
@@ -300,9 +308,10 @@ describe('A. Workspace sidebar', () => {
     });
   });
 
-  it('A6. clicking delete on a row calls deleteWorkspace and refreshes the list immediately, with no confirmation dialog (2026-08-31: no confirmations anywhere in the app, per explicit user request)', async () => {
+  it('A6. clicking delete asks first (2026-10-04: workspace delete now confirms — it also removes the exported model files); confirming deletes and refreshes the list', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
     mockDeleteWorkspace.mockResolvedValue(undefined);
+    mockAsk.mockResolvedValue(true);
 
     render(<DataUploadPage onDataReady={onDataReady} />);
     await waitFor(() => screen.getByText('Engine pressure run'));
@@ -312,8 +321,25 @@ describe('A. Workspace sidebar', () => {
     await waitFor(() => {
       expect(mockDeleteWorkspace).toHaveBeenCalledWith('ws_1');
     });
+    expect(mockAsk).toHaveBeenCalledTimes(1);
+    expect(String(mockAsk.mock.calls[0][0])).toContain('Engine pressure run');
     // refreshWorkspaces() runs after delete → second getRecent call
     expect(mockGetRecent).toHaveBeenCalledTimes(2);
+  });
+
+  it('A6b. cancelling the delete prompt leaves the workspace and its files alone', async () => {
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    mockAsk.mockResolvedValue(false);
+
+    render(<DataUploadPage onDataReady={onDataReady} />);
+    await waitFor(() => screen.getByText('Engine pressure run'));
+
+    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
+    await waitFor(() => expect(mockAsk).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
+    expect(mockGetRecent).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { subscribe } from "../../utils/tauriEvents";
 import { useDataUpload } from "../../hooks/useDataUpload";
@@ -476,10 +477,19 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     }
   };
 
-  // 2026-08-31: no confirmation dialog anywhere in the app, per explicit
-  // user request — click delete, it's deleted, including whole workspaces.
+  // 2026-10-04: deleting a whole workspace asks first (explicit user request —
+  // it now also removes the model output folder, which cannot be undone). This
+  // supersedes the 2026-08-31 "no confirmations" rule for THIS action only;
+  // every other delete in the app is still immediate. Uses the Tauri dialog
+  // (`ask`), not window.confirm, which does not block in the webview.
   const handleDeleteWorkspace = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const name = workspaces.find((w) => w.id === id)?.name ?? id;
+    const ok = await ask(
+      `Delete workspace "${name}"? Its saved data and exported model files will be removed and this cannot be undone.`,
+      { title: 'Delete workspace', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' },
+    );
+    if (!ok) return;
     await deleteWorkspace(id);
     refreshWorkspaces();
   };
