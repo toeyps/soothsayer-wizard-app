@@ -155,6 +155,27 @@ describe('App', () => {
             expect(screen.getByText('trigger-data-ready')).toBeTruthy();
         });
 
+        it('onNew while the Import page is showing bumps newProjectSignal each time (File > New Workspace / Ctrl+N starts a new project on step 0)', () => {
+            render(<App />);
+            expect(last(dataUploadProps).newProjectSignal).toBe(0);
+
+            act(() => { capturedMenuHandlers.onNew(); });
+            expect(last(dataUploadProps).newProjectSignal).toBe(1);
+            act(() => { capturedMenuHandlers.onNew(); });
+            expect(last(dataUploadProps).newProjectSignal).toBe(2);
+            expect(screen.getByText('trigger-data-ready')).toBeTruthy();
+        });
+
+        it('onNew with a workspace open only goes back to the Import page -- it does not also start a project', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByText('trigger-data-ready'));
+            expect(await screen.findByText('trigger-back')).toBeTruthy();
+
+            act(() => { capturedMenuHandlers.onNew(); });
+            expect(screen.getByText('trigger-data-ready')).toBeTruthy();
+            expect(last(dataUploadProps).newProjectSignal).toBe(0);
+        });
+
         it('hasWorkspace reflects whether a dataset is loaded', () => {
             render(<App />);
             expect(capturedMenuHandlers.hasWorkspace).toBe(false);

@@ -152,6 +152,10 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
     },
 }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.0.0') }));
+// The Import page's step-0 illustration is a canvas animation; jsdom has no 2D
+// context (and logs "Not implemented" on every getContext) -- stand in a marker.
+vi.mock('../components/upload/MachineMorphCanvas', () => ({ default: () => null }));
+
 vi.mock('@tauri-apps/plugin-dialog', () => ({
     message: (text: string, opts: unknown) => h.message(text, opts),
     ask: () => Promise.resolve(true),
@@ -299,7 +303,7 @@ async function renderApp() {
     await flush();
 }
 
-/** Click a workspace in the import page's "Open recent project" list. */
+/** Click a workspace in the import page's "Recent projects" list. */
 async function openRecent(name: string, opts: { settle?: boolean } = {}) {
     await act(async () => { fireEvent.click(A().getAllByText(name)[0]); });
     if (opts.settle === false) { await flush(); return; }
@@ -1083,8 +1087,8 @@ describe('4. reopening: specials restored exactly once each', () => {
 // 5. New workspace right after A
 // ═════════════════════════════════════════════════════════════════════════
 
-describe('5. "Create new project" right after working in A', () => {
-    it('A with specials (one created live) -> Back -> Create new project on the SAME CSV -> the new workspace has no specials, no A metadata, and no leftover derived columns', async () => {
+describe('5. "New project" right after working in A', () => {
+    it('A with specials (one created live) -> Back -> New project on the SAME CSV -> the new workspace has no specials, no A metadata, and no leftover derived columns', async () => {
         await start(null);
         await openRecent('Alpha');
         await clickAddSpecialSensor();
@@ -1093,7 +1097,7 @@ describe('5. "Create new project" right after working in A', () => {
         await tick(400);
         await backToImport();
 
-        await act(async () => { fireEvent.click(A().getByText('Create new project')); });
+        await act(async () => { fireEvent.click(A().getByRole('button', { name: /New project/ })); });
         await flush();
         const nameInput = app!.container.querySelector('input[placeholder="e.g. Compressor Line 3 — Q3 Baseline"]') as HTMLInputElement;
         await act(async () => { fireEvent.change(nameInput, { target: { value: 'Gamma' } }); });

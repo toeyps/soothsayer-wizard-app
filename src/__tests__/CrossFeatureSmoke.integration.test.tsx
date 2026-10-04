@@ -74,6 +74,10 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
     },
 }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.7.0') }));
+// The Import page's step-0 illustration is a canvas animation; jsdom has no 2D
+// context (and logs "Not implemented" on every getContext) -- stand in a marker.
+vi.mock('../components/upload/MachineMorphCanvas', () => ({ default: () => null }));
+
 vi.mock('@tauri-apps/plugin-dialog', () => ({
     message: vi.fn().mockResolvedValue(undefined),
     ask: vi.fn().mockResolvedValue(true),
@@ -229,9 +233,9 @@ async function renderApp() {
 
 const onDashboard = () => !!document.querySelector('button[title="Back to Import"]');
 
-/** Import page: Create new project -> name -> browse -> Parse files -> Continue. */
+/** Import page: New project -> name -> browse -> Parse files -> Continue. */
 async function importProject(name: string, path: string) {
-    await act(async () => { fireEvent.click(app().getByText('Create new project')); });
+    await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
     fireEvent.change(app().getByPlaceholderText('e.g. Compressor Line 3 — Q3 Baseline'), { target: { value: name } });
     await act(async () => { fireEvent.click(app().getByText('Continue')); });
@@ -557,10 +561,10 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
 
         // 10) Back -> delete A: workspace file + model output folder gone; B untouched.
         await backToImport();
-        let row: HTMLElement | null = app().getAllByText('Alpha')[0];
-        while (row && !row.querySelector('button[title="Delete workspace"]')) row = row.parentElement;
-        expect(row, 'Recent row of Alpha').toBeTruthy();
-        await act(async () => { fireEvent.click(row!.querySelector('button[title="Delete workspace"]')!); });
+        // 2026-10-04: the delete confirms in the row -- trash button, then [Delete].
+        await act(async () => { fireEvent.click(app().getByLabelText('Delete project Alpha')); });
+        expect(env.files.has(`workspaces/${A}.json`), 'nothing deleted before the in-row confirm').toBe(true);
+        await act(async () => { fireEvent.click(within(app().getByRole('alertdialog')).getByRole('button', { name: 'Delete' })); });
         await settle(200);
         expect(env.files.has(`workspaces/${A}.json`)).toBe(false);
         expect([...env.files.keys()].filter(k => k.startsWith(`workspaces/${A}/`))).toEqual([]);

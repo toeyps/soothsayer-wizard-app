@@ -13,12 +13,9 @@ import {
   CheckCircle2,
   XCircle,
   Pencil,
-  Plus,
-  FolderOpen,
 } from "lucide-react";
 import type { MappingResult } from "../../types/dataUpload";
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { subscribe } from "../../utils/tauriEvents";
 import { useDataUpload } from "../../hooks/useDataUpload";
@@ -35,8 +32,17 @@ import { formatDateTime } from "../../utils/dateFormat";
 import { reportError } from "../../errorReporter";
 import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
 import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
+import { DARK, mono, type Tokens } from "./uploadTheme";
+import HomeStep from "./HomeStep";
 
 interface DataUploadPageProps {
+  /**
+   * Bumped by App each time the native File > New Workspace menu item (or its
+   * Ctrl/Cmd+N accelerator) fires while this page is showing. On step 0 that
+   * starts a new project, like the "New project" button; on steps 1-2 it is
+   * ignored. Idempotent with HomeStep's own Ctrl+N key handler.
+   */
+  newProjectSignal?: number;
   onDataReady: (
     metadata: CsvMetadata,
     workspaceState: WorkspaceState,
@@ -93,58 +99,6 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
   return [...failed, ...skipped];
 }
 
-/* ---------------------------------------------------------------- */
-/* Theme tokens (ported from design handoff)                        */
-/* ---------------------------------------------------------------- */
-
-interface Tokens {
-  bg: string;
-  surface: string;
-  surfaceHi: string;
-  border: string;
-  borderStrong: string;
-  text: string;
-  textMuted: string;
-  textFaint: string;
-  accent: string;
-  accentHi: string;
-  accentMuted: string;
-  ok: string;
-  warn: string;
-  danger: string;
-  hover: string;
-  chipBg: string;
-  s1: string;
-  s2: string;
-  s3: string;
-  s4: string;
-}
-
-const DARK: Tokens = {
-  bg: "#0a0a0b",
-  surface: "#101012",
-  surfaceHi: "#16161a",
-  border: "rgba(255,255,255,0.07)",
-  borderStrong: "rgba(255,255,255,0.12)",
-  text: "#ededef",
-  textMuted: "#8c8c94",
-  textFaint: "#5b5b63",
-  accent: "oklch(0.68 0.17 245)",
-  accentHi: "oklch(0.74 0.17 245)",
-  accentMuted: "oklch(0.4 0.1 245 / 0.18)",
-  ok: "oklch(0.72 0.15 150)",
-  warn: "oklch(0.78 0.14 75)",
-  danger: "oklch(0.68 0.2 25)",
-  hover: "rgba(255,255,255,0.04)",
-  chipBg: "rgba(255,255,255,0.05)",
-  s1: "oklch(0.72 0.16 245)",
-  s2: "oklch(0.74 0.15 155)",
-  s3: "oklch(0.78 0.14 70)",
-  s4: "oklch(0.7 0.15 310)",
-};
-
-const mono = 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace';
-
 const fmt = (n: number | undefined | null) =>
   typeof n === "number" ? n.toLocaleString() : String(n ?? "");
 
@@ -152,7 +106,7 @@ const fmt = (n: number | undefined | null) =>
 /* Page                                                             */
 /* ---------------------------------------------------------------- */
 
-export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
+export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: DataUploadPageProps) {
   const dataUpload = useDataUpload();
   const mapping = useMappingData();
   const T = DARK;
@@ -160,6 +114,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMetadata[]>([]);
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [wsSearch, setWsSearch] = useState("");
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
@@ -171,11 +126,12 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
-  const [showRecentPicker, setShowRecentPicker] = useState(false);
   const canCreateProject = projectName.trim().length > 0;
 
   const refreshWorkspaces = () => {
-    getRecentWorkspaces().then(setWorkspaces).catch(console.error);
+    getRecentWorkspaces()
+      .then((list) => { setWorkspaces(list); setWorkspacesLoaded(true); })
+      .catch((err) => { console.error(err); setWorkspacesLoaded(true); });
   };
 
   useEffect(() => {
@@ -477,20 +433,17 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
     }
   };
 
-  // 2026-10-04: deleting a whole workspace asks first (explicit user request —
-  // it now also removes the model output folder, which cannot be undone). This
-  // supersedes the 2026-08-31 "no confirmations" rule for THIS action only;
-  // every other delete in the app is still immediate. Uses the Tauri dialog
-  // (`ask`), not window.confirm, which does not block in the webview.
-  const handleDeleteWorkspace = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const name = workspaces.find((w) => w.id === id)?.name ?? id;
-    const ok = await ask(
-      `Delete workspace "${name}"? Its saved data and exported model files will be removed and this cannot be undone.`,
-      { title: 'Delete workspace', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' },
-    );
-    if (!ok) return;
-    await deleteWorkspace(id);
+  // Deleting a whole workspace also removes its model output folder, which
+  // cannot be undone -- so the UI asks first. 2026-10-04: the confirmation is
+  // IN THE ROW ("Delete this project? [Delete] [Cancel]", RecentProjectCard /
+  // WorkspaceRow), replacing the earlier Tauri `ask` dialog; this handler only
+  // runs once the user has confirmed.
+  const handleDeleteWorkspace = async (id: string) => {
+    try {
+      await deleteWorkspace(id);
+    } catch (err) {
+      setWorkspaceError(String(err));
+    }
     refreshWorkspaces();
   };
 
@@ -499,20 +452,104 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
   const handleRenameWorkspace = async (id: string, newName: string, currentName: string) => {
     const trimmed = newName.trim();
     if (!trimmed || trimmed === currentName) return;
-    await renameWorkspaceFile(id, trimmed);
+    try {
+      await renameWorkspaceFile(id, trimmed);
+    } catch (err) {
+      setWorkspaceError(String(err));
+    }
     refreshWorkspaces();
   };
 
+  // Native File > New Workspace (App bumps `newProjectSignal`): on step 0 it
+  // starts a new project; on steps 1-2 and while a load is running it is a
+  // no-op, same as before. Idempotent with HomeStep's own Ctrl+N handler --
+  // whichever fires first moves to step 1, the other then finds step !== 0.
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  const loadingWorkspaceRef = useRef(loadingWorkspace);
+  loadingWorkspaceRef.current = loadingWorkspace;
+  const seenNewProjectSignalRef = useRef(newProjectSignal);
+  useEffect(() => {
+    if (newProjectSignal === seenNewProjectSignalRef.current) return;
+    seenNewProjectSignalRef.current = newProjectSignal;
+    if (stepRef.current === 0 && !loadingWorkspaceRef.current) setStep(1);
+  }, [newProjectSignal]);
+
   /* ----------------- Render ----------------- */
 
+  const pageStyle: CSSProperties = {
+    width: "100%", height: "100vh", background: T.bg, color: T.text,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+    display: "flex", flexDirection: "column", overflow: "hidden",
+  };
+
+  // Full-screen loading overlay. Sits on top of EVERYTHING (sidebar, sticky
+  // bar, content) while a workspace is loading so the user can tell the app is
+  // working, not frozen. The wrapping div absorbs all pointer events (default
+  // for non-transparent divs) and we set cursor: 'wait' for a busy affordance.
+  const loadingOverlay = loadingWorkspace ? (
+    <div
+      aria-busy="true"
+      role="alert"
+      aria-live="polite"
+      style={{
+        position: "fixed", inset: 0, zIndex: 100,
+        background: "rgba(10,10,11,0.65)",
+        backdropFilter: "blur(4px)",
+        WebkitBackdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "wait",
+      }}
+    >
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        gap: 14, padding: "26px 36px",
+        background: T.surface,
+        border: `1px solid ${T.borderStrong}`,
+        borderRadius: 12,
+        boxShadow: "0 16px 48px rgba(0,0,0,0.35)",
+        minWidth: 240,
+      }}>
+        <Loader2 size={26} className="animate-spin" style={{ color: T.accentHi }} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
+            Loading workspace…
+          </div>
+          <div style={{ fontSize: 11, color: T.textMuted, fontFamily: mono }}>
+            Reading dataset and metadata
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  // Step 0 ("Get started") is its own full-bleed screen -- no sidebar, title
+  // block or action bar. Steps 1-2 below are unchanged.
+  if (step === 0) {
+    return (
+      <div style={pageStyle}>
+        <HomeStep
+          T={T}
+          workspaces={workspaces}
+          loaded={workspacesLoaded}
+          activeWorkspaceId={activeWorkspaceId}
+          busy={loadingWorkspace}
+          error={workspaceError}
+          onNewProject={() => setStep(1)}
+          onOpenWorkspace={handleLoadWorkspace}
+          onRenameWorkspace={handleRenameWorkspace}
+          onDeleteWorkspace={handleDeleteWorkspace}
+        />
+        {loadingOverlay}
+      </div>
+    );
+  }
+
   return (
-    <div style={{ width: "100%", height: "100vh", background: T.bg, color: T.text, fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif', display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      {/* Main grid: sidebar + content. The sidebar duplicates the recent-
-          project list that the step-0 choice screen already shows, so it's
-          suppressed on step 0 to avoid showing every workspace name twice —
-          it reappears once the user has committed to "Create new project"
-          (step 1+), where it's useful for switching away mid-flow. */}
-      <div style={{ display: "grid", gridTemplateColumns: step === 0 ? "1fr" : "240px 1fr", background: T.bg, flex: 1, minHeight: 0 }}>
+    <div style={pageStyle}>
+      {/* Main grid: sidebar + content (steps 1-2). The sidebar lets the user
+          switch to another project mid-flow. */}
+      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", background: T.bg, flex: 1, minHeight: 0 }}>
         {/* Sidebar */}
         {step > 0 && (
         <aside style={{ borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -553,7 +590,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                 description={w.description}
                 active={w.id === activeWorkspaceId}
                 onClick={() => handleLoadWorkspace(w.id)}
-                onDelete={(e) => handleDeleteWorkspace(w.id, e)}
+                onDelete={() => handleDeleteWorkspace(w.id)}
                 onRename={(newName) => handleRenameWorkspace(w.id, newName, w.name)}
               />
             ))}
@@ -574,22 +611,18 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
           padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12,
           minWidth: 0, minHeight: 0, overflow: "hidden",
         }}>
-              {/* Step indicator — only once the user has committed to the
-                  "new project" path. Step 0 (the new-vs-recent choice) has
-                  no number of its own, matching the flow diagram where it's
-                  the branch point BEFORE "create project" begins. */}
-              {step > 0 && (
-                <StepIndicator
-                  T={T}
-                  step={step as 1 | 2}
-                  onStepClick={(s) => {
-                    // Only ever navigate BACKWARD by clicking a step bubble —
-                    // step 2 requires a project name, so forward navigation
-                    // always goes through the Continue button's validation.
-                    if (s < step) setStep(s);
-                  }}
-                />
-              )}
+              {/* Step indicator. Step 0 ("Get started") is its own screen --
+                  see the early return above. */}
+              <StepIndicator
+                T={T}
+                step={step}
+                onStepClick={(s) => {
+                  // Only ever navigate BACKWARD by clicking a step bubble —
+                  // step 2 requires a project name, so forward navigation
+                  // always goes through the Continue button's validation.
+                  if (s < step) setStep(s);
+                }}
+              />
 
               {/* Title block */}
               <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>
@@ -598,17 +631,15 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                     margin: 0, fontSize: 19, fontWeight: 600, color: T.text,
                     letterSpacing: "-0.02em", lineHeight: 1.2,
                   }}>
-                    {step === 0 ? "Get started" : step === 1 ? "Create your project" : "Prepare your dataset"}
+                    {step === 1 ? "Create your project" : "Prepare your dataset"}
                   </h1>
                   <p style={{
                     margin: "2px 0 0", fontSize: 12, color: T.textMuted,
                     maxWidth: 720, lineHeight: 1.4,
                   }}>
-                    {step === 0
-                      ? "Start a brand new project, or jump back into one you were already working on."
-                      : step === 1
-                        ? "Name your project first — this becomes the workspace everything downstream (data, mappings, results) is filed under."
-                        : "Upload sensor CSV files, apply an optional tag-to-name mapping, then choose how you'd like to analyze the data."}
+                    {step === 1
+                      ? "Name your project first — this becomes the workspace everything downstream (data, mappings, results) is filed under."
+                      : "Upload sensor CSV files, apply an optional tag-to-name mapping, then choose how you'd like to analyze the data."}
                   </p>
                 </div>
               </div>
@@ -624,20 +655,6 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
                   <AlertTriangle size={14} />
                   <span>{workspaceError}</span>
                 </div>
-              )}
-
-              {step === 0 && (
-                <StartChoiceStep
-                  T={T}
-                  workspaces={filteredWs}
-                  showAll={showRecentPicker}
-                  onShowAll={() => setShowRecentPicker(true)}
-                  activeWorkspaceId={activeWorkspaceId}
-                  onCreateNew={() => setStep(1)}
-                  onSelectWorkspace={handleLoadWorkspace}
-                  onDeleteWorkspace={handleDeleteWorkspace}
-                  onRenameWorkspace={handleRenameWorkspace}
-                />
               )}
 
               {step === 1 && (
@@ -1012,17 +1029,11 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
       <div style={{
         position: "sticky", bottom: 0, zIndex: 5,
         background: T.surface, borderTop: `1px solid ${T.border}`,
-        padding: "10px 24px", display: "grid", gridTemplateColumns: step === 0 ? "1fr" : "240px 1fr",
+        padding: "10px 24px", display: "grid", gridTemplateColumns: "240px 1fr",
       }}>
-        {step > 0 && <div />}
+        <div />
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {step === 0 ? (
-            <span style={{
-              fontSize: 11, color: T.textFaint, fontFamily: mono, letterSpacing: "0.04em",
-            }}>
-              Pick an option above to get started
-            </span>
-          ) : step === 1 ? (
+          {step === 1 ? (
             <>
               <span style={{
                 fontSize: 11, color: T.textFaint, fontFamily: mono, letterSpacing: "0.04em",
@@ -1052,46 +1063,7 @@ export default function DataUploadPage({ onDataReady }: DataUploadPageProps) {
         </div>
       </div>
 
-      {/* Full-screen loading overlay. Sits on top of EVERYTHING (sidebar,
-          sticky bar, content) while a workspace is loading so the user can
-          tell the app is working, not frozen. The wrapping div absorbs all
-          pointer events (default for non-transparent divs) and we set
-          cursor: 'wait' for a busy affordance. */}
-      {loadingWorkspace && (
-        <div
-          aria-busy="true"
-          role="alert"
-          aria-live="polite"
-          style={{
-            position: "fixed", inset: 0, zIndex: 100,
-            background: "rgba(10,10,11,0.65)",
-            backdropFilter: "blur(4px)",
-            WebkitBackdropFilter: "blur(4px)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "wait",
-          }}
-        >
-          <div style={{
-            display: "flex", flexDirection: "column", alignItems: "center",
-            gap: 14, padding: "26px 36px",
-            background: T.surface,
-            border: `1px solid ${T.borderStrong}`,
-            borderRadius: 12,
-            boxShadow: "0 16px 48px rgba(0,0,0,0.35)",
-            minWidth: 240,
-          }}>
-            <Loader2 size={26} className="animate-spin" style={{ color: T.accentHi }} />
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
-                Loading workspace…
-              </div>
-              <div style={{ fontSize: 11, color: T.textMuted, fontFamily: mono }}>
-                Reading dataset and metadata
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {loadingOverlay}
     </div>
   );
 }
@@ -1183,115 +1155,6 @@ function StepIndicator({
   );
 }
 
-function StartChoiceStep({
-  T, workspaces, showAll, onShowAll, activeWorkspaceId,
-  onCreateNew, onSelectWorkspace, onDeleteWorkspace, onRenameWorkspace,
-}: {
-  T: Tokens;
-  workspaces: WorkspaceMetadata[];
-  showAll: boolean;
-  onShowAll: () => void;
-  activeWorkspaceId: string | null;
-  onCreateNew: () => void;
-  onSelectWorkspace: (id: string) => void;
-  onDeleteWorkspace: (id: string, e: React.MouseEvent) => void;
-  onRenameWorkspace: (id: string, newName: string, currentName: string) => void;
-}) {
-  const PREVIEW_COUNT = 3;
-  const visible = showAll ? workspaces : workspaces.slice(0, PREVIEW_COUNT);
-  const hasMore = !showAll && workspaces.length > PREVIEW_COUNT;
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, flex: 1, minHeight: 0 }}>
-      {/* Create new project */}
-      <button
-        onClick={onCreateNew}
-        style={{
-          display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 10,
-          padding: 18, textAlign: "left", cursor: "pointer",
-          background: T.surface, border: `1.5px dashed ${T.borderStrong}`, borderRadius: 10,
-          fontFamily: "inherit", color: T.text, alignSelf: "flex-start", width: "100%",
-        }}
-      >
-        <div style={{
-          width: 34, height: 34, borderRadius: 8,
-          background: T.accentMuted, color: T.accentHi,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <Plus size={17} />
-        </div>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
-            Create new project
-          </div>
-          <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 3, lineHeight: 1.4 }}>
-            Start fresh — name your project, then upload a new CSV dataset.
-          </div>
-        </div>
-      </button>
-
-      {/* Recent projects */}
-      <Card T={T} style={{ padding: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{
-          padding: "12px 16px 10px", display: "flex", alignItems: "center", gap: 10,
-          borderBottom: workspaces.length > 0 ? `1px solid ${T.border}` : "none",
-        }}>
-          <div style={{
-            width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-            background: "oklch(0.7 0.15 310 / 0.18)", color: T.s4,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <FolderOpen size={16} />
-          </div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
-              Open recent project
-            </div>
-            <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 1, lineHeight: 1.4 }}>
-              Continue where you left off.
-            </div>
-          </div>
-        </div>
-
-        {workspaces.length === 0 ? (
-          <div style={{
-            padding: "20px 16px", textAlign: "center", color: T.textFaint, fontSize: 12,
-          }}>
-            No saved projects yet
-          </div>
-        ) : (
-          <div style={{ padding: "6px 8px", overflowY: "auto", flex: 1, minHeight: 0 }}>
-            {visible.map((w) => (
-              <WorkspaceRow
-                key={w.id}
-                T={T}
-                name={w.name}
-                description={w.description}
-                active={w.id === activeWorkspaceId}
-                onClick={() => onSelectWorkspace(w.id)}
-                onDelete={(e) => onDeleteWorkspace(w.id, e)}
-                onRename={(newName) => onRenameWorkspace(w.id, newName, w.name)}
-              />
-            ))}
-            {hasMore && (
-              <button
-                onClick={onShowAll}
-                style={{
-                  width: "100%", padding: "6px 8px", marginTop: 2,
-                  background: "none", border: "none", cursor: "pointer",
-                  fontFamily: "inherit", fontSize: 11, color: T.accentHi, textAlign: "left",
-                }}
-              >
-                Show all {workspaces.length} projects…
-              </button>
-            )}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
 function CreateProjectStep({
   T, name, onNameChange, description, onDescriptionChange,
 }: {
@@ -1371,14 +1234,23 @@ function WorkspaceRow({
   T, name, description, active, onClick, onDelete, onRename,
 }: {
   T: Tokens; name: string; description?: string; active: boolean;
-  onClick: () => void; onDelete: (e: React.MouseEvent) => void;
+  onClick: () => void; onDelete: () => void;
   onRename: (newName: string) => void;
 }) {
   const [hover, setHover] = useState(false);
   const [editing, setEditing] = useState(false);
+  // In-row delete confirmation (replaces the 2026-10-04 `ask` dialog).
+  const [confirming, setConfirming] = useState(false);
   const [draft, setDraft] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
   const highlighted = active || hover;
+
+  useEffect(() => {
+    if (!confirming) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setConfirming(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirming]);
 
   // Keep the draft in sync if the underlying name changes (e.g. another tab
   // renamed it) but only while we're not actively editing.
@@ -1418,7 +1290,7 @@ function WorkspaceRow({
 
   return (
     <div
-      onClick={() => { if (!editing) onClick(); }}
+      onClick={() => { if (!editing && !confirming) onClick(); }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -1503,7 +1375,7 @@ function WorkspaceRow({
               <Pencil size={11} />
             </button>
             <button
-              onClick={onDelete}
+              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
               title="Delete workspace"
               style={{
                 ...iconBtnStyle,
@@ -1523,6 +1395,40 @@ function WorkspaceRow({
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {description}
+        </div>
+      )}
+      {confirming && (
+        <div
+          role="alertdialog"
+          aria-label={`Delete ${name}?`}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+            marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.border}`,
+            fontSize: 11, color: T.textMuted,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>Delete this project?</span>
+          <button
+            onClick={() => { setConfirming(false); onDelete(); }}
+            style={{
+              padding: "2px 8px", fontSize: 11, fontWeight: 600, fontFamily: "inherit",
+              color: "#fff", background: T.danger, border: "1px solid transparent",
+              borderRadius: 5, cursor: "pointer",
+            }}
+          >
+            Delete
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            style={{
+              padding: "2px 8px", fontSize: 11, fontFamily: "inherit",
+              color: T.textMuted, background: "none", border: `1px solid ${T.borderStrong}`,
+              borderRadius: 5, cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
         </div>
       )}
     </div>

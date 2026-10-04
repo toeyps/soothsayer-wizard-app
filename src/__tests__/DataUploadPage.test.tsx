@@ -16,9 +16,9 @@ import { getErrors, dismissAllErrors } from '../errorReporter';
 // Mocks
 // ─────────────────────────────────────────────────────────────────────────
 
-const mockAsk = vi.fn();
+// 2026-10-04: deleting a project confirms IN THE ROW now, not through a Tauri
+// `ask` dialog -- so no `ask` mock here (A6/A6b assert the in-row flow).
 vi.mock('@tauri-apps/plugin-dialog', () => ({
-  ask: (...args: unknown[]) => mockAsk(...args),
   open: vi.fn(),
   save: vi.fn(),
   message: vi.fn(),
@@ -51,17 +51,31 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: (...args: unknown[]) => mockGetCurrentWindow(...args),
 }));
 
-// workspaceManager — all 4 functions used by DataUploadPage
+// The app version shown in the step-0 footer.
+const mockGetVersion = vi.fn();
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: (...args: unknown[]) => mockGetVersion(...args),
+}));
+
+// The step-0 illustration runs a canvas animation (requestAnimationFrame + 2D
+// context), which jsdom cannot do -- stand in a marker element.
+vi.mock('../components/upload/MachineMorphCanvas', () => ({
+  default: (props: { variant?: string }) => <div data-testid="machine-canvas" data-variant={props.variant} />,
+}));
+
+// workspaceManager — all 5 functions used by DataUploadPage
 const mockGetRecent = vi.fn();
 const mockLoadWorkspace = vi.fn();
 const mockSaveWorkspace = vi.fn();
 const mockDeleteWorkspace = vi.fn();
+const mockRenameWorkspaceFile = vi.fn();
 
 vi.mock('../workspaceManager', () => ({
   getRecentWorkspaces: (...args: unknown[]) => mockGetRecent(...args),
   loadWorkspaceData: (...args: unknown[]) => mockLoadWorkspace(...args),
   saveWorkspaceData: (...args: unknown[]) => mockSaveWorkspace(...args),
   deleteWorkspace: (...args: unknown[]) => mockDeleteWorkspace(...args),
+  renameWorkspaceFile: (...args: unknown[]) => mockRenameWorkspaceFile(...args),
 }));
 
 // Stub both hooks so we drive page state via mock return values. The hooks
@@ -162,7 +176,7 @@ function rowFor(text: string): HTMLElement {
 //
 // The page boots into step 0 ("Get started" — new project vs. recent). The
 // dataset UI every group below asserts against lives on step 2, reached via:
-//   step 0 ──"Create new project"──▶ step 1 ──name + Continue──▶ step 2
+//   step 0 ──"New project"──▶ step 1 ──name + Continue──▶ step 2
 // so the groups that only care about the upload/mapping surface walk the flow
 // first and then assert exactly as before. The step 0 / step 1 screens have
 // their own coverage in group J.
@@ -174,13 +188,15 @@ const PROJECT_NAME = 'Test project';
 
 const renderPage = () => render(<DataUploadPage onDataReady={onDataReady} />);
 
+const newProjectButton = () => screen.getByRole('button', { name: /New project/ });
+
 const continueButton = () =>
   screen.getByText('Continue').closest('button') as HTMLButtonElement;
 
 /** Render and advance to step 1 ("Create your project"). */
 function renderAtStep1() {
   const utils = renderPage();
-  fireEvent.click(screen.getByText('Create new project'));
+  fireEvent.click(newProjectButton());
   return utils;
 }
 
@@ -214,6 +230,9 @@ let lastFocusHandler: ((e: { payload: boolean }) => void) | null = null;
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetRecent.mockResolvedValue([]);
+  mockGetVersion.mockResolvedValue('9.8.7');
+  mockDeleteWorkspace.mockResolvedValue(undefined);
+  mockRenameWorkspaceFile.mockResolvedValue(undefined);
   // `listen` must return a Promise<unlisten>; the page chains `.then()` on it
   // (e.g. the `upload-page-resumed` subscription). Default to a no-op.
   mockListen.mockResolvedValue(() => {});
@@ -308,38 +327,67 @@ describe('A. Workspace sidebar', () => {
     });
   });
 
-  it('A6. clicking delete asks first (2026-10-04: workspace delete now confirms — it also removes the exported model files); confirming deletes and refreshes the list', async () => {
+  it('A6. delete confirms IN THE ROW (no dialog): the trash button only opens the prompt; [Delete] removes the workspace and refreshes the list', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    mockDeleteWorkspace.mockResolvedValue(undefined);
-    mockAsk.mockResolvedValue(true);
 
     render(<DataUploadPage onDataReady={onDataReady} />);
     await waitFor(() => screen.getByText('Engine pressure run'));
 
-    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
+    fireEvent.click(screen.getByLabelText('Delete project Engine pressure run'));
+
+    // Prompt shown, nothing deleted yet.
+    const prompt = screen.getByRole('alertdialog', { name: 'Delete Engine pressure run?' });
+    expect(within(prompt).getByText('Delete this project?')).toBeTruthy();
+    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
+
+    fireEvent.click(within(prompt).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
       expect(mockDeleteWorkspace).toHaveBeenCalledWith('ws_1');
     });
-    expect(mockAsk).toHaveBeenCalledTimes(1);
-    expect(String(mockAsk.mock.calls[0][0])).toContain('Engine pressure run');
+    expect(mockDeleteWorkspace).toHaveBeenCalledTimes(1);
     // refreshWorkspaces() runs after delete → second getRecent call
-    expect(mockGetRecent).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
-  it('A6b. cancelling the delete prompt leaves the workspace and its files alone', async () => {
+  it('A6b. [Cancel] (and Esc) in the delete prompt leave the workspace and its files alone', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    mockAsk.mockResolvedValue(false);
 
     render(<DataUploadPage onDataReady={onDataReady} />);
     await waitFor(() => screen.getByText('Engine pressure run'));
 
-    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
-    await waitFor(() => expect(mockAsk).toHaveBeenCalledTimes(1));
-    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(screen.getByLabelText('Delete project Engine pressure run'));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
 
+    fireEvent.click(screen.getByLabelText('Delete project Engine pressure run'));
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    await act(async () => { await Promise.resolve(); });
     expect(mockDeleteWorkspace).not.toHaveBeenCalled();
     expect(mockGetRecent).toHaveBeenCalledTimes(1);
+    // The delete prompt never opens the project either.
+    expect(mockLoadWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('A6c. the step-1/2 sidebar row confirms in the row too (no dialog)', async () => {
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    renderAtStep1();
+    await waitFor(() => screen.getByText('Engine pressure run'));
+
+    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
+    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
+    const prompt = screen.getByRole('alertdialog');
+    fireEvent.click(within(prompt).getByRole('button', { name: 'Cancel' }));
+    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(mockDeleteWorkspace).toHaveBeenCalledWith('ws_1'));
+    await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -1186,36 +1234,41 @@ describe('I. Stale-report state', () => {
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('J. Onboarding flow', () => {
-  it('J45. boots into step 0 with both start choices and no dataset UI', async () => {
+  it('J45. boots into step 0 (Get started) with the hero, New project and no dataset UI', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
 
     renderPage();
 
-    expect(screen.getByText('Get started')).toBeTruthy();
-    expect(screen.getByText('Create new project')).toBeTruthy();
-    expect(screen.getByText('Open recent project')).toBeTruthy();
-    expect(screen.getByText('Pick an option above to get started')).toBeTruthy();
+    expect(screen.getByTestId('home-step')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('See the failure before it happens.');
+    expect(newProjectButton()).toBeTruthy();
     // Step 2's surface must not be mounted yet…
     expect(screen.queryByText('Dataset files')).toBeNull();
     expect(screen.queryByText('browse')).toBeNull();
     expect(screen.queryByText('Continue')).toBeNull();
-    // …nor the sidebar, which would duplicate the recents list on this step.
+    // …nor the step 1-2 chrome (sidebar search, step indicator, action bar).
     expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
+    expect(screen.queryByText('Create project')).toBeNull();
 
     await waitFor(() => expect(screen.getByText('Engine pressure run')).toBeTruthy());
+    expect(screen.getByText('Recent projects')).toBeTruthy();
   });
 
-  it('J46. step 0 with no saved workspaces shows the empty-recents copy', async () => {
+  it('J46. step 0 with no saved workspaces shows the "No projects yet" card and the 3 first steps', async () => {
     mockGetRecent.mockResolvedValue([]);
 
     renderPage();
 
-    await waitFor(() => expect(screen.getByText('No saved projects yet')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('No projects yet')).toBeTruthy());
+    expect(screen.getByText('Name the project')).toBeTruthy();
+    expect(screen.getByText('Add data')).toBeTruthy();
+    expect(screen.getByText('Explore in Dashboard')).toBeTruthy();
+    expect(screen.queryByPlaceholderText('Find project')).toBeNull();
     // The sidebar's differently-worded empty state belongs to step 1+
     expect(screen.queryByText('No workspaces yet')).toBeNull();
   });
 
-  it('J47. step 0 previews 3 recents and expands the rest via "Show all"', async () => {
+  it('J47. step 0 lists EVERY recent project as a card (no "Show all" cut-off any more)', async () => {
     const many: WorkspaceMetadata[] = [1, 2, 3, 4, 5].map((n) => ({
       id: `ws_${n}`,
       name: `Project ${n}`,
@@ -1227,19 +1280,14 @@ describe('J. Onboarding flow', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText('Project 1')).toBeTruthy());
-    expect(screen.getByText('Project 3')).toBeTruthy();
-    expect(screen.queryByText('Project 4')).toBeNull();
-
-    fireEvent.click(screen.getByText('Show all 5 projects…'));
-
-    expect(screen.getByText('Project 4')).toBeTruthy();
-    expect(screen.getByText('Project 5')).toBeTruthy();
+    expect(screen.getAllByTestId('project-card')).toHaveLength(5);
+    expect(screen.queryByText(/Show all/)).toBeNull();
   });
 
-  it('J48. "Create new project" advances to step 1 and reveals the sidebar', () => {
+  it('J48. "New project" advances to step 1 and reveals the sidebar', () => {
     renderPage();
 
-    fireEvent.click(screen.getByText('Create new project'));
+    fireEvent.click(newProjectButton());
 
     expect(screen.getByText('Create your project')).toBeTruthy();
     expect(screen.getByPlaceholderText(NAME_PLACEHOLDER)).toBeTruthy();
@@ -1249,6 +1297,7 @@ describe('J. Onboarding flow', () => {
     expect(screen.getByText('Prepare dataset')).toBeTruthy();
     // Sidebar comes back so the user can still switch workspaces mid-flow
     expect(screen.getByPlaceholderText('Find workspace…')).toBeTruthy();
+    expect(screen.queryByTestId('home-step')).toBeNull();
   });
 
   it('J49. step 1 Continue stays disabled until a non-blank project name is entered', () => {
@@ -1305,8 +1354,8 @@ describe('J. Onboarding flow', () => {
 
     fireEvent.click(screen.getByText('‹ Back'));
 
-    expect(screen.getByText('Get started')).toBeTruthy();
-    expect(screen.getByText('Create new project')).toBeTruthy();
+    expect(screen.getByTestId('home-step')).toBeTruthy();
+    expect(newProjectButton()).toBeTruthy();
     expect(screen.queryByText('Continue')).toBeNull();
   });
 
@@ -1528,5 +1577,361 @@ describe('K. dataset generation and latest-click-wins', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// L. 2026-10-04 -- the "Get started" page (step 0): hero, recent-project
+//    cards (rename / delete in the row), search, empty state, Ctrl+N.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('L. Get started page (step 0)', () => {
+  const HOUR_MS = 3_600_000;
+  const NOW = Date.now();
+  const WS: WorkspaceMetadata[] = [
+    { id: 'ws_1', name: 'Engine pressure run', description: 'Bearing temperature drift', lastModified: NOW - 2 * HOUR_MS, filePath: '/ws/ws_1.json' },
+    { id: 'ws_2', name: 'Compressor health', lastModified: NOW - 3 * 24 * HOUR_MS, filePath: '/ws/ws_2.json' },
+  ];
+  const cardOf = (name: string) =>
+    screen.getAllByTestId('project-card').find((c) => within(c).queryByText(name)) as HTMLElement;
+  const ctrlN = (target: Window | Element = window, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(target, { key: 'n', ctrlKey: true, ...init });
+
+  describe('hero + footer', () => {
+    it('L1. shows brand, eyebrow, description, the shortcut hint and the hero illustration (variant "hero")', async () => {
+      renderPage();
+      expect(screen.getByText('Wizard')).toBeTruthy();
+      expect(screen.getByText('Predictive maintenance studio')).toBeTruthy();
+      expect(screen.getByText(/Sensor data → failure models/)).toBeTruthy();
+      expect(screen.getByText(/Import plant sensor CSVs/)).toBeTruthy();
+      expect(screen.getByText('Ctrl+N')).toBeTruthy();
+      expect(screen.getByTestId('machine-canvas').getAttribute('data-variant')).toBe('hero');
+      await act(async () => { await Promise.resolve(); });
+    });
+
+    it('L2. footer shows the app version and the privacy line', async () => {
+      renderPage();
+      await waitFor(() => expect(screen.getByText('v9.8.7')).toBeTruthy());
+      expect(screen.getByText('Data stays on this machine')).toBeTruthy();
+    });
+
+    it('L3. when the version cannot be read the number is omitted but the privacy line stays', async () => {
+      mockGetVersion.mockRejectedValue(new Error('not in tauri'));
+      renderPage();
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(screen.queryByText(/^v\d/)).toBeNull();
+      expect(screen.getByText('Data stays on this machine')).toBeTruthy();
+    });
+  });
+
+  describe('recent project cards', () => {
+    it('L4. a card shows name, description (only when present), relative time and an initial', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+
+      const a = cardOf('Engine pressure run');
+      expect(within(a).getByText('Bearing temperature drift')).toBeTruthy();
+      expect(within(a).getByText('2 h ago')).toBeTruthy();
+      expect(within(a).getByText('EP')).toBeTruthy();
+
+      const b = cardOf('Compressor health');
+      expect(within(b).getByText('3 d ago')).toBeTruthy();
+      // Missing description: nothing invented -- initials + name + time only.
+      expect(b.textContent).toBe('CHCompressor health3 d ago');
+    });
+
+    it('L5. clicking a card (or its "Open …" button) opens the project via loadWorkspaceData', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      mockLoadWorkspace.mockReturnValue(new Promise(() => {}));
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+
+      fireEvent.click(screen.getByLabelText('Open Compressor health'));
+      expect(mockLoadWorkspace).toHaveBeenCalledWith('ws_2');
+      await waitFor(() => expect(screen.getByText('Loading workspace…')).toBeTruthy());
+    });
+
+    it('L6. Rename and Delete are reachable by keyboard focus (always in the DOM, not hover-only)', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      const rename = screen.getByLabelText('Rename project Engine pressure run') as HTMLButtonElement;
+      const del = screen.getByLabelText('Delete project Engine pressure run') as HTMLButtonElement;
+      rename.focus();
+      expect(document.activeElement).toBe(rename);
+      del.focus();
+      expect(document.activeElement).toBe(del);
+    });
+
+    it('L7. the home page does not render the old "Open recent project" / "Show all" chooser', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      expect(screen.queryByText('Open recent project')).toBeNull();
+      expect(screen.queryByText('Create new project')).toBeNull();
+      expect(screen.queryByText('Pick an option above to get started')).toBeNull();
+    });
+  });
+
+  describe('rename in the row', () => {
+    const startRename = async (name = 'Engine pressure run') => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText(name));
+      fireEvent.click(screen.getByLabelText(`Rename project ${name}`));
+      return screen.getByLabelText('Project name') as HTMLInputElement;
+    };
+
+    it('L8. Rename opens a prefilled input without opening the project; Enter saves via renameWorkspaceFile and refreshes the list', async () => {
+      const input = await startRename();
+      expect(input.value).toBe('Engine pressure run');
+      expect(mockLoadWorkspace).not.toHaveBeenCalled();
+
+      fireEvent.change(input, { target: { value: '  Engine run v2  ' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      await waitFor(() => expect(mockRenameWorkspaceFile).toHaveBeenCalledWith('ws_1', 'Engine run v2'));
+      expect(mockRenameWorkspaceFile).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
+      expect(screen.queryByLabelText('Project name')).toBeNull();
+    });
+
+    it('L9. Esc cancels: nothing is renamed and the old name is back', async () => {
+      const input = await startRename();
+      fireEvent.change(input, { target: { value: 'Something else' } });
+      fireEvent.keyDown(input, { key: 'Escape' });
+
+      expect(screen.queryByLabelText('Project name')).toBeNull();
+      expect(screen.getByText('Engine pressure run')).toBeTruthy();
+      await act(async () => { await Promise.resolve(); });
+      expect(mockRenameWorkspaceFile).not.toHaveBeenCalled();
+    });
+
+    it('L10. unchanged and empty/blank names are no-ops (no file rewrite, no list refresh)', async () => {
+      let input = await startRename();
+      fireEvent.keyDown(input, { key: 'Enter' }); // unchanged
+      await act(async () => { await Promise.resolve(); });
+
+      fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
+      input = screen.getByLabelText('Project name') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '   ' } });
+      fireEvent.keyDown(input, { key: 'Enter' }); // blank
+      await act(async () => { await Promise.resolve(); });
+
+      expect(mockRenameWorkspaceFile).not.toHaveBeenCalled();
+      expect(mockGetRecent).toHaveBeenCalledTimes(1);
+    });
+
+    it('L11. the save button commits, the cancel button discards', async () => {
+      let input = await startRename();
+      fireEvent.change(input, { target: { value: 'Saved by button' } });
+      fireEvent.click(screen.getByLabelText('Save name'));
+      await waitFor(() => expect(mockRenameWorkspaceFile).toHaveBeenCalledWith('ws_1', 'Saved by button'));
+
+      fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
+      input = screen.getByLabelText('Project name') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'Discarded' } });
+      fireEvent.click(screen.getByLabelText('Cancel rename'));
+      await act(async () => { await Promise.resolve(); });
+      expect(mockRenameWorkspaceFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('L12. a failing rename surfaces the error banner instead of an unhandled rejection', async () => {
+      mockRenameWorkspaceFile.mockRejectedValue(new Error('disk full'));
+      const input = await startRename();
+      fireEvent.change(input, { target: { value: 'New name' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('disk full'));
+    });
+  });
+
+  describe('delete in the row', () => {
+    it('L13. while the prompt is open the card does not open the project and Rename/Delete are hidden; the prompt names the consequence', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Delete project Compressor health'));
+
+      const card = cardOf('Compressor health');
+      expect(within(card).getByText(/exported model files/)).toBeTruthy();
+      expect(within(card).queryByLabelText('Rename project Compressor health')).toBeNull();
+      // Clicking the card body while confirming is not "open".
+      fireEvent.click(within(card).getByText('Compressor health'));
+      expect(mockLoadWorkspace).not.toHaveBeenCalled();
+      // The other card is untouched.
+      expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
+    });
+
+    it('L14. a failing delete shows the error banner and still refreshes the list', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      mockDeleteWorkspace.mockRejectedValue(new Error('locked'));
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Delete project Engine pressure run'));
+      fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('locked'));
+      await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
+    });
+  });
+
+  describe('search + empty states', () => {
+    it('L15. search filters by name AND description, case-insensitively, and "No matches" appears when nothing fits', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      const q = screen.getByLabelText('Search projects');
+
+      fireEvent.change(q, { target: { value: 'COMPRESSOR' } });
+      expect(screen.queryByText('Engine pressure run')).toBeNull();
+      expect(screen.getByText('Compressor health')).toBeTruthy();
+
+      fireEvent.change(q, { target: { value: 'bearing' } }); // description match
+      expect(screen.getByText('Engine pressure run')).toBeTruthy();
+      expect(screen.queryByText('Compressor health')).toBeNull();
+
+      fireEvent.change(q, { target: { value: 'zzz-no-such-thing' } });
+      expect(screen.getByText('No matches')).toBeTruthy();
+      expect(screen.queryByText('No projects yet')).toBeNull();
+      expect(screen.queryAllByTestId('project-card')).toHaveLength(0);
+    });
+
+    it('L16. the first-run "No projects yet" guide does not flash before the recent list has loaded', async () => {
+      let resolve!: (v: WorkspaceMetadata[]) => void;
+      mockGetRecent.mockReturnValue(new Promise<WorkspaceMetadata[]>((r) => { resolve = r; }));
+      renderPage();
+      expect(screen.queryByText('No projects yet')).toBeNull();
+
+      await act(async () => { resolve(WS); });
+      expect(screen.queryByText('No projects yet')).toBeNull();
+      expect(screen.getByText('Engine pressure run')).toBeTruthy();
+    });
+
+    it('L17. a failed recent-list fetch settles into the empty state (no endless blank)', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGetRecent.mockRejectedValue(new Error('no store'));
+      renderPage();
+      await waitFor(() => expect(screen.getByText('No projects yet')).toBeTruthy());
+      errSpy.mockRestore();
+    });
+
+    it('L18. a workspace load error is shown on the home page and the cards stay usable', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      mockLoadWorkspace.mockResolvedValue(null);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Open Engine pressure run'));
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Workspace not found'));
+      expect(screen.getAllByTestId('project-card')).toHaveLength(2);
+    });
+  });
+
+  describe('Ctrl+N', () => {
+    it('L19. Ctrl+N (and Cmd+N) on step 0 starts a new project', () => {
+      renderPage();
+      ctrlN();
+      expect(screen.getByText('Create your project')).toBeTruthy();
+      cleanup();
+
+      renderPage();
+      fireEvent.keyDown(window, { key: 'N', metaKey: true });
+      expect(screen.getByText('Create your project')).toBeTruthy();
+    });
+
+    it('L20. other key combos do nothing (plain N, Ctrl+Shift+N, Ctrl+Alt+N, Ctrl+M)', () => {
+      renderPage();
+      fireEvent.keyDown(window, { key: 'n' });
+      ctrlN(window, { shiftKey: true });
+      ctrlN(window, { altKey: true });
+      fireEvent.keyDown(window, { key: 'm', ctrlKey: true });
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+      expect(screen.queryByText('Create your project')).toBeNull();
+    });
+
+    it('L21. Ctrl+N is ignored while typing in the search box or renaming a project', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+
+      ctrlN(screen.getByLabelText('Search projects'));
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+
+      fireEvent.click(screen.getByLabelText('Rename project Engine pressure run'));
+      ctrlN(screen.getByLabelText('Project name'));
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+    });
+
+    it('L22. Ctrl+N is ignored while a project is loading (overlay up)', async () => {
+      mockGetRecent.mockResolvedValue(WS);
+      mockLoadWorkspace.mockReturnValue(new Promise(() => {}));
+      renderPage();
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Open Engine pressure run'));
+      await waitFor(() => screen.getByText('Loading workspace…'));
+
+      ctrlN();
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+    });
+
+    it('L23. on step 1 the shortcut is a no-op -- it never resets what the user typed', () => {
+      renderAtStep1();
+      fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Keep me' } });
+      ctrlN();
+      expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Keep me');
+    });
+
+    it('L24. the shortcut listener is removed when step 0 unmounts (no stray handler on later steps)', () => {
+      const added = vi.spyOn(window, 'addEventListener');
+      const removed = vi.spyOn(window, 'removeEventListener');
+      renderPage();
+      const keydownAdds = added.mock.calls.filter(([type]) => type === 'keydown').length;
+      expect(keydownAdds).toBeGreaterThan(0);
+      fireEvent.click(newProjectButton());
+      expect(removed.mock.calls.filter(([type]) => type === 'keydown').length).toBeGreaterThanOrEqual(keydownAdds);
+      added.mockRestore();
+      removed.mockRestore();
+    });
+  });
+
+  describe('native menu (File > New Workspace) via newProjectSignal', () => {
+    it('L25. a bumped signal on step 0 starts a new project; the key handler and the signal together are idempotent', () => {
+      const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
+      rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={1} />);
+      expect(screen.getByText('Create your project')).toBeTruthy();
+      // The key event of the same press arriving afterwards finds step 1: nothing changes.
+      ctrlN();
+      expect(screen.getByText('Create your project')).toBeTruthy();
+    });
+
+    it('L26. keydown first, then the menu signal: still exactly one transition, and typed text survives', () => {
+      const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
+      ctrlN();
+      fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Typed' } });
+      rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={1} />);
+      expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Typed');
+    });
+
+    it('L27. a signal while on step 1/2 is ignored, and so is one that arrives while a project is loading', async () => {
+      const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
+      ctrlN();
+      fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Typed' } });
+      rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={2} />);
+      expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Typed');
+      cleanup();
+
+      mockGetRecent.mockResolvedValue(WS);
+      mockLoadWorkspace.mockReturnValue(new Promise(() => {}));
+      const r2 = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByLabelText('Open Engine pressure run'));
+      await waitFor(() => screen.getByText('Loading workspace…'));
+      r2.rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={1} />);
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+    });
+
+    it('L28. mounting with a non-zero signal (App already bumped it before this page existed) does not start a project', () => {
+      render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={5} />);
+      expect(screen.getByTestId('home-step')).toBeTruthy();
+    });
   });
 });

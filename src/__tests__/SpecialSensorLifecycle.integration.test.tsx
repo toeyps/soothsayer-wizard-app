@@ -104,6 +104,10 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
         static getByLabel = () => Promise.resolve(null);
     },
 }));
+// The Import page's step-0 illustration is a canvas animation; jsdom has no 2D
+// context (and logs "Not implemented" on every getContext) -- stand in a marker.
+vi.mock('../components/upload/MachineMorphCanvas', () => ({ default: () => null }));
+
 vi.mock('@tauri-apps/plugin-dialog', () => ({
     message: (text: string, opts: unknown) => h.message(text, opts),
     ask: () => Promise.resolve(true),

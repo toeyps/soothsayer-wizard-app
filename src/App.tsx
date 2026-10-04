@@ -45,6 +45,11 @@ function App() {
   // lives in `DataUploadPage.handleLoadWorkspace`, which decides per-workspace
   // whether to land in Dashboard, Failure Group, or Predictive Model.
 
+  // File > New Workspace (Ctrl/Cmd+N). With a workspace open it returns to the
+  // Import page as before; already on the Import page it asks DataUploadPage to
+  // start a new project (it acts only on step 0 -- see its `newProjectSignal`).
+  const [newProjectSignal, setNewProjectSignal] = useState(0);
+
   const handleBackToImport = () => {
     setMetadata(null);
     setSensorMetadata(null);
@@ -61,7 +66,7 @@ function App() {
 
   useAppMenu({
     hasWorkspace: !!metadata,
-    onNew: handleBackToImport,
+    onNew: () => { if (metadata) handleBackToImport(); else setNewProjectSignal((n) => n + 1); },
     onCloseWorkspace: handleBackToImport,
     onRename: () => setRenameTrigger(t => t + 1),
     onAbout: async () => {
@@ -95,6 +100,7 @@ function App() {
           {!metadata ? (
             <div className="app-page-transition">
               <DataUploadPage
+                newProjectSignal={newProjectSignal}
                 onDataReady={(data, workspaceState, sm) => {
                   setMetadata(data);
                   setSensorMetadata(sm ?? null);
