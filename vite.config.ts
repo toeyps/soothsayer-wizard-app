@@ -47,8 +47,25 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching everything the app does not import.
+      //    Vite full-reloads the page for a change to ANY watched file that is
+      //    not in its module graph — verified 2026-10-04: even `touch CLAUDE.md`
+      //    logs `page reload`, which throws away the Dashboard's React state and
+      //    lands the user back on the Import page (there is no auto-resume). So
+      //    editing docs, tests, scripts or the Rust/Python side while `tauri dev`
+      //    has a workspace open must not touch the webview. (`src-tauri` is also
+      //    watched by the Tauri CLI itself, which rebuilds/restarts on Rust edits.)
+      ignored: [
+        "**/src-tauri/**",
+        "**/docs/**",
+        "**/scripts/**",
+        "**/.claude/**",
+        "**/src/__tests__/**",
+        "**/*.md",
+        "**/*.py",
+        "**/dist/**",
+        "**/coverage/**",
+      ],
     },
   },
 }));
