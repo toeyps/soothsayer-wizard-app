@@ -7,13 +7,20 @@ import { formatRelativeTime, projectColor, projectInitials } from './homeHelpers
 interface RecentProjectCardProps {
   T: Tokens;
   project: Pick<WorkspaceMetadata, 'id' | 'name' | 'description' | 'lastModified'>;
+  /**
+   * Static, non-interactive rendering of the SAME card ("Shows in recent
+   * projects as" on the Name step): no open / rename / delete, "just now" for the
+   * time, a muted placeholder for an empty name and "No description" for an empty
+   * description. `onOpen` / `onRename` / `onDelete` are not used.
+   */
+  preview?: boolean;
   /** True while this project is the one being opened (loading overlay is up). */
   active?: boolean;
-  onOpen: () => void;
+  onOpen?: () => void;
   /** Called with the edited name; the caller owns the "empty / unchanged = no-op" rules. */
-  onRename: (newName: string) => void;
+  onRename?: (newName: string) => void;
   /** Called once the user confirmed the in-row "Delete this project?" prompt. */
-  onDelete: () => void;
+  onDelete?: () => void;
 }
 
 /**
@@ -22,7 +29,60 @@ interface RecentProjectCardProps {
  * (or focusing anything inside) reveals Rename / Delete. Rename edits in place
  * (Enter saves, Esc cancels); Delete asks for confirmation inside the row.
  */
-export default function RecentProjectCard({ T, project, active = false, onOpen, onRename, onDelete }: RecentProjectCardProps) {
+export default function RecentProjectCard({ T, project, preview = false, active = false, onOpen, onRename, onDelete }: RecentProjectCardProps) {
+  if (preview) return <ProjectCardPreview T={T} project={project} />;
+  return <InteractiveProjectCard T={T} project={project} active={active} onOpen={onOpen ?? noop} onRename={onRename ?? noop} onDelete={onDelete ?? noop} />;
+}
+
+const noop = () => {};
+
+/** The look of a card without any behaviour -- see `preview` above. */
+function ProjectCardPreview({ T, project }: { T: Tokens; project: RecentProjectCardProps['project'] }) {
+  const name = project.name.trim();
+  const description = (project.description ?? '').trim();
+  return (
+    <div
+      data-testid="project-card-preview"
+      style={{
+        display: 'grid', gridTemplateColumns: '38px minmax(0, 1fr) auto', gap: 12, alignItems: 'center',
+        padding: '10px 12px', borderRadius: 12, border: `1px solid ${T.border}`, background: T.surfaceHi,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center',
+          fontFamily: mono, fontWeight: 600, fontSize: 13, color: T.text,
+          border: '1px solid rgba(255,255,255,0.08)', background: projectColor(project.id || name || 'preview'),
+        }}
+      >
+        {projectInitials(name)}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontSize: 13.5, fontWeight: 600, letterSpacing: '-0.005em', color: name ? T.text : T.textFaint,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {name || 'Project name'}
+        </div>
+        <div style={{
+          marginTop: 1, fontSize: 12, color: T.textFaint, opacity: description ? 1 : 0.7,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {description || 'No description'}
+        </div>
+      </div>
+      <span style={{ fontFamily: mono, fontSize: 11, color: T.textFaint, whiteSpace: 'nowrap' }}>just now</span>
+    </div>
+  );
+}
+
+function InteractiveProjectCard({
+  T, project, active, onOpen, onRename, onDelete,
+}: {
+  T: Tokens; project: RecentProjectCardProps['project']; active: boolean;
+  onOpen: () => void; onRename: (newName: string) => void; onDelete: () => void;
+}) {
   const { name, description } = project;
   const [hover, setHover] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);

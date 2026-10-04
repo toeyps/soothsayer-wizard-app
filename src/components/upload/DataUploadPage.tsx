@@ -1,20 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import {
-  Search,
-  Check,
-  X,
-  Download,
-  Info,
-  ArrowRight,
-  Filter as FilterIcon,
-  Activity,
-  Loader2,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  Pencil,
-} from "lucide-react";
-import type { MappingResult } from "../../types/dataUpload";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Check, Loader2, AlertTriangle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { subscribe } from "../../utils/tauriEvents";
@@ -32,8 +17,15 @@ import { formatDateTime } from "../../utils/dateFormat";
 import { reportError } from "../../errorReporter";
 import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
 import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
-import { DARK, mono, type Tokens } from "./uploadTheme";
+import { DARK, mono } from "./uploadTheme";
 import HomeStep from "./HomeStep";
+import SetupRail from "./SetupRail";
+import ProjectNameStep from "./ProjectNameStep";
+import SensorDataPanel from "./SensorDataPanel";
+import TagNamesPanel from "./TagNamesPanel";
+import { BackButton, PrimaryButton } from "./SetupPrimitives";
+import { useCsvLoadProgress } from "./useCsvLoadProgress";
+import { PROJECT_NAME_MAX, formatCount } from "./setupHelpers";
 
 interface DataUploadPageProps {
   /**
@@ -99,9 +91,6 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
   return [...failed, ...skipped];
 }
 
-const fmt = (n: number | undefined | null) =>
-  typeof n === "number" ? n.toLocaleString() : String(n ?? "");
-
 /* ---------------------------------------------------------------- */
 /* Page                                                             */
 /* ---------------------------------------------------------------- */
@@ -115,12 +104,11 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMetadata[]>([]);
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
-  const [wsSearch, setWsSearch] = useState("");
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
-  // Onboarding: (0) choose new-vs-recent, (1) name the project, (2) upload +
-  // prepare the dataset. Name/description live in local state until the
-  // final "Continue" on step 2 persists them into the WorkspaceState.
+  // Onboarding: (0) choose new-vs-recent, (1) name the project, (2) add the
+  // sensor data (+ optional tag names). Name/description live in local state
+  // until "Open Dashboard" on step 2 persists them into the WorkspaceState.
   // Step 0 is skipped only by picking a recent workspace (handleLoadWorkspace
   // never touches `step` — it navigates away from this page entirely).
   const [step, setStep] = useState<0 | 1 | 2>(0);
@@ -222,15 +210,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   // parse (add / remove / reorder) demotes the report back to not-ready so
   // the user is prompted to re-parse before continuing.
   const isReady = hasReport && !isStale && hasFiles;
-  const totalRows = report?.total_rows ?? 0;
-
-  const filteredWs = useMemo(
-    () =>
-      workspaces.filter(
-        (w) => !wsSearch || w.name.toLowerCase().includes(wsSearch.toLowerCase())
-      ),
-    [workspaces, wsSearch]
-  );
+  // Read progress of THIS page's own parse (the event is a global broadcast, so
+  // it is only followed while `Parse files` is running -- see the hook).
+  const readProgress = useCsvLoadProgress(dataUpload.isLoading);
 
   const handleApplyMapping = async () => {
     if (!report) return;
@@ -447,7 +429,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     refreshWorkspaces();
   };
 
-  // Rename a workspace from the inline edit field in the Recent sidebar.
+  // Rename a workspace from the inline edit field on a Get-started card.
   // No-ops on empty / unchanged names to avoid pointless file rewrites.
   const handleRenameWorkspace = async (id: string, newName: string, currentName: string) => {
     const trimmed = newName.trim();
@@ -483,8 +465,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     display: "flex", flexDirection: "column", overflow: "hidden",
   };
 
-  // Full-screen loading overlay. Sits on top of EVERYTHING (sidebar, sticky
-  // bar, content) while a workspace is loading so the user can tell the app is
+  // Full-screen loading overlay. Sits on top of EVERYTHING (rail, content,
+  // footer) while a workspace is loading so the user can tell the app is
   // working, not frozen. The wrapping div absorbs all pointer events (default
   // for non-transparent divs) and we set cursor: 'wait' for a busy affordance.
   const loadingOverlay = loadingWorkspace ? (
@@ -523,8 +505,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     </div>
   ) : null;
 
-  // Step 0 ("Get started") is its own full-bleed screen -- no sidebar, title
-  // block or action bar. Steps 1-2 below are unchanged.
+  // Step 0 ("Get started") is its own full-bleed screen -- no rail or action
+  // bar. Steps 1-2 below share the setup rail + footer.
   if (step === 0) {
     return (
       <div style={pageStyle}>
@@ -545,1014 +527,131 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     );
   }
 
+  const mappedCount = mapping.mappingResult?.matched.length ?? 0;
+  const rowsText = formatCount(report?.total_rows);
+  const dataSummary = isReady
+    ? [`${files.length} file${files.length === 1 ? "" : "s"}`, rowsText ? `${rowsText} rows` : null]
+        .filter(Boolean).join(" · ")
+    : null;
+
+  const statusStyle: CSSProperties = {
+    display: "inline-flex", alignItems: "center", gap: 7,
+    fontSize: 11.5, color: T.textFaint, fontFamily: mono, letterSpacing: "0.02em",
+  };
+
   return (
     <div style={pageStyle}>
-      {/* Main grid: sidebar + content (steps 1-2). The sidebar lets the user
-          switch to another project mid-flow. */}
-      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", background: T.bg, flex: 1, minHeight: 0 }}>
-        {/* Sidebar */}
-        {step > 0 && (
-        <aside style={{ borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <div style={{ padding: "16px 14px 10px" }}>
-            <div style={{
-              display: "flex", alignItems: "center", gap: 7,
-              padding: "6px 9px", background: T.surfaceHi,
-              border: `1px solid ${T.border}`, borderRadius: 7,
-            }}>
-              <Search size={12} style={{ color: T.textFaint }} />
-              <input
-                value={wsSearch}
-                onChange={(e) => setWsSearch(e.target.value)}
-                placeholder="Find workspace…"
-                style={{
-                  flex: 1, background: "transparent", border: "none", outline: "none",
-                  color: T.text, fontSize: 12, fontFamily: "inherit",
-                }}
-              />
-            </div>
-          </div>
+      <div style={{ display: "grid", gridTemplateColumns: "268px minmax(0, 1fr)", background: T.bg, flex: 1, minHeight: 0 }}>
+        <SetupRail
+          T={T}
+          step={step}
+          projectName={projectName}
+          dataSummary={dataSummary}
+          onStepClick={(s) => {
+            // Only ever navigate BACKWARD by clicking a step — step 2 requires
+            // a project name, so forward navigation always goes through the
+            // Continue button's validation.
+            if (s < step) setStep(s);
+          }}
+          onAllProjects={() => setStep(0)}
+        />
 
-          <div style={{
-            padding: "4px 10px", fontSize: 10.5, fontWeight: 600, color: T.textFaint,
-            letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: mono,
-          }}>
-            Recent
-          </div>
-          <div style={{
-            display: "flex", flexDirection: "column", padding: "4px 8px",
-            gap: 1, overflowY: "auto", flex: 1,
-          }}>
-            {filteredWs.map((w) => (
-              <WorkspaceRow
-                key={w.id}
-                T={T}
-                name={w.name}
-                description={w.description}
-                active={w.id === activeWorkspaceId}
-                onClick={() => handleLoadWorkspace(w.id)}
-                onDelete={() => handleDeleteWorkspace(w.id)}
-                onRename={(newName) => handleRenameWorkspace(w.id, newName, w.name)}
-              />
-            ))}
-            {filteredWs.length === 0 && (
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "34px 40px 24px" }}>
+            {workspaceError && (
               <div style={{
-                padding: 20, textAlign: "center", color: T.textFaint, fontSize: 11.5,
+                marginBottom: 16, padding: "10px 14px", borderRadius: 8,
+                background: "oklch(0.68 0.2 25 / 0.1)",
+                border: `1px solid oklch(0.68 0.2 25 / 0.3)`,
+                display: "flex", alignItems: "center", gap: 10,
+                fontSize: 12.5, color: T.danger,
               }}>
-                {workspaces.length === 0 ? "No workspaces yet" : "No matches"}
+                <AlertTriangle size={14} />
+                <span>{workspaceError}</span>
+              </div>
+            )}
+
+            {step === 1 && (
+              <ProjectNameStep
+                T={T}
+                name={projectName}
+                onNameChange={setProjectName}
+                description={projectDescription}
+                onDescriptionChange={setProjectDescription}
+                existing={workspaces}
+              />
+            )}
+
+            {step === 2 && (
+              <div data-testid="sensor-data-step">
+                <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 500, letterSpacing: "0.12em", textTransform: "uppercase", color: T.textFaint }}>
+                  Step 2 of 2 · {projectName.trim().slice(0, PROJECT_NAME_MAX)}
+                </div>
+                <h2 style={{ margin: "8px 0 0", fontSize: 28, fontWeight: 700, letterSpacing: "-0.025em", color: T.text }}>
+                  Add your sensor data
+                </h2>
+                <p style={{ margin: "8px 0 0", maxWidth: "70ch", fontSize: 13.5, lineHeight: 1.5, color: T.textMuted }}>
+                  Drop one or more CSV exports. Files are merged on their timestamps. Add a tag-name file to show readable names instead of tag codes.
+                </p>
+                <div style={{
+                  marginTop: 22, display: "grid", gap: 16, alignItems: "start",
+                  gridTemplateColumns: "minmax(0, 1.55fr) minmax(0, 1fr)",
+                }}>
+                  <SensorDataPanel
+                    T={T}
+                    files={files}
+                    report={report}
+                    isReady={isReady}
+                    isStale={isStale}
+                    isLoading={dataUpload.isLoading}
+                    error={dataUpload.error}
+                    progress={readProgress}
+                    onBrowse={dataUpload.selectFiles}
+                    onRemove={dataUpload.removeFile}
+                    onParse={dataUpload.uploadDataset}
+                  />
+                  <TagNamesPanel T={T} locked={!isReady} mapping={mapping} />
+                </div>
               </div>
             )}
           </div>
 
-        </aside>
-        )}
-
-        {/* Content */}
-        <section style={{
-          padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12,
-          minWidth: 0, minHeight: 0, overflow: "hidden",
-        }}>
-              {/* Step indicator. Step 0 ("Get started") is its own screen --
-                  see the early return above. */}
-              <StepIndicator
-                T={T}
-                step={step}
-                onStepClick={(s) => {
-                  // Only ever navigate BACKWARD by clicking a step bubble —
-                  // step 2 requires a project name, so forward navigation
-                  // always goes through the Continue button's validation.
-                  if (s < step) setStep(s);
-                }}
-              />
-
-              {/* Title block */}
-              <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>
-                <div>
-                  <h1 style={{
-                    margin: 0, fontSize: 19, fontWeight: 600, color: T.text,
-                    letterSpacing: "-0.02em", lineHeight: 1.2,
-                  }}>
-                    {step === 1 ? "Create your project" : "Prepare your dataset"}
-                  </h1>
-                  <p style={{
-                    margin: "2px 0 0", fontSize: 12, color: T.textMuted,
-                    maxWidth: 720, lineHeight: 1.4,
-                  }}>
-                    {step === 1
-                      ? "Name your project first — this becomes the workspace everything downstream (data, mappings, results) is filed under."
-                      : "Upload sensor CSV files, apply an optional tag-to-name mapping, then choose how you'd like to analyze the data."}
-                  </p>
-                </div>
-              </div>
-
-              {workspaceError && (
-                <div style={{
-                  padding: "10px 14px", borderRadius: 8,
-                  background: "oklch(0.68 0.2 25 / 0.1)",
-                  border: `1px solid oklch(0.68 0.2 25 / 0.3)`,
-                  display: "flex", alignItems: "center", gap: 10,
-                  fontSize: 12.5, color: T.danger,
-                }}>
-                  <AlertTriangle size={14} />
-                  <span>{workspaceError}</span>
-                </div>
-              )}
-
-              {step === 1 && (
-                <CreateProjectStep
-                  T={T}
-                  name={projectName}
-                  onNameChange={setProjectName}
-                  description={projectDescription}
-                  onDescriptionChange={setProjectDescription}
-                />
-              )}
-
-              {step === 2 && (
+          {/* Action bar */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12,
+            padding: "12px 24px", background: T.surface, borderTop: `1px solid ${T.border}`,
+          }}>
+            {step === 1 ? (
               <>
-              {/* Upload row: 2fr + 1fr */}
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, flex: 1, minHeight: 0 }}>
-                {/* Dataset files */}
-                <Card T={T} style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                  <div style={{
-                    padding: "10px 14px", borderBottom: `1px solid ${T.border}`,
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <div style={{
-                      width: 26, height: 26, borderRadius: 6,
-                      background: T.accentMuted, color: T.accentHi,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <Activity size={13} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
-                        Dataset files
-                      </div>
-                      <div style={{ fontSize: 11, color: T.textFaint, marginTop: 1, fontFamily: mono }}>
-                        CSV · timestamp index required
-                      </div>
-                    </div>
-                    {isReady && (
-                      <Pill T={T} tone="ok">
-                        <Check size={9} /> {files.length} added
-                      </Pill>
-                    )}
-                  </div>
-
-                  <div style={{
-                    padding: "6px 14px", background: T.bg,
-                    borderBottom: `1px solid ${T.border}`,
-                    display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-                    fontSize: 10.5, color: T.textMuted, fontFamily: mono,
-                  }}>
-                    <Req T={T} ok>First column = datetime</Req>
-                    <Req T={T} ok>No duplicate column names</Req>
-                    <Req T={T} ok>Shared datetime index</Req>
-                  </div>
-
-                  <div style={{ padding: 12, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                    <button
-                      onClick={dataUpload.selectFiles}
-                      disabled={dataUpload.isLoading}
-                      style={{
-                        width: "100%", border: `1.5px dashed ${T.borderStrong}`, borderRadius: 9,
-                        padding: "12px 14px", textAlign: "center",
-                        background: `repeating-linear-gradient(135deg, transparent 0 10px, ${T.hover} 10px 11px)`,
-                        cursor: dataUpload.isLoading ? "wait" : "pointer",
-                        color: T.text, fontFamily: "inherit",
-                        display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <div style={{
-                        width: 32, height: 32, borderRadius: 8,
-                        background: T.surface, border: `1px solid ${T.border}`,
-                        display: "flex", alignItems: "center", justifyContent: "center", color: T.accentHi,
-                        flexShrink: 0,
-                      }}>
-                        <Download size={15} />
-                      </div>
-                      <div style={{ textAlign: "left" }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
-                          Drop CSV files or{" "}
-                          <span style={{ color: T.accentHi, textDecoration: "underline", textUnderlineOffset: 3 }}>
-                            browse
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 10.5, color: T.textFaint, marginTop: 1, fontFamily: mono }}>
-                          Up to 2 GB · multi-select supported
-                        </div>
-                      </div>
-                    </button>
-
-                    {files.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 5, overflowY: "auto", minHeight: 0, flex: 1 }}>
-                        {files.map((path) => {
-                          const name = path.split(/[/\\]/).pop() ?? path;
-                          return (
-                            <div key={path} style={{
-                              display: "grid",
-                              gridTemplateColumns: "auto 1fr auto",
-                              gap: 12, alignItems: "center",
-                              padding: "9px 10px", background: T.surfaceHi,
-                              border: `1px solid ${T.border}`, borderRadius: 7,
-                            }}>
-                              <div style={{
-                                width: 26, height: 26, borderRadius: 5,
-                                background: T.accentMuted, color: T.accentHi,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                fontSize: 9, fontWeight: 700, fontFamily: mono,
-                              }}>CSV</div>
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{
-                                  fontSize: 12.5, fontWeight: 600, color: T.text,
-                                  fontFamily: mono,
-                                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                                }}>{name}</div>
-                                <div style={{
-                                  fontSize: 10.5, color: T.textFaint,
-                                  fontFamily: mono, marginTop: 3,
-                                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                                }}>{path}</div>
-                              </div>
-                              <button
-                                onClick={() => dataUpload.removeFile(path)}
-                                style={{
-                                  background: "none", border: "none", color: T.textFaint,
-                                  cursor: "pointer", padding: 4, display: "flex",
-                                }}
-                              >
-                                <X size={13} />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {hasFiles && !isReady && (
-                      <button
-                        onClick={dataUpload.uploadDataset}
-                        disabled={dataUpload.isLoading}
-                        style={{
-                          width: "100%", padding: "8px 14px", flexShrink: 0,
-                          background: T.accent, color: "#fff",
-                          border: `1px solid ${T.accent}`, borderRadius: 8,
-                          fontSize: 13, fontWeight: 600, cursor: "pointer",
-                          fontFamily: "inherit",
-                          display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
-                          opacity: dataUpload.isLoading ? 0.6 : 1,
-                        }}
-                      >
-                        {dataUpload.isLoading ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" /> Parsing…
-                          </>
-                        ) : (
-                          <>Parse files</>
-                        )}
-                      </button>
-                    )}
-
-                    {dataUpload.error && (
-                      <div style={{
-                        marginTop: 10, padding: "8px 10px", borderRadius: 7,
-                        background: "oklch(0.68 0.2 25 / 0.1)",
-                        border: `1px solid oklch(0.68 0.2 25 / 0.3)`,
-                        display: "flex", alignItems: "center", gap: 8,
-                        fontSize: 11.5, color: T.danger,
-                      }}>
-                        <AlertTriangle size={13} />
-                        <span>{dataUpload.error}</span>
-                      </div>
-                    )}
-
-                    {/* Non-fatal issues Rust found while parsing (duplicate
-                        columns, duplicate timestamps merged, a Buddhist-Era
-                        year corrected to Gregorian, ...) — parsing still
-                        succeeded, but the user should know before Continue. */}
-                    {report && report.warnings.length > 0 && (
-                      <div style={{
-                        marginTop: 10, padding: "8px 10px", borderRadius: 7,
-                        background: "oklch(0.78 0.14 75 / 0.1)",
-                        border: `1px solid oklch(0.78 0.14 75 / 0.3)`,
-                        display: "flex", flexDirection: "column", gap: 5,
-                        fontSize: 11.5, color: T.warn,
-                      }}>
-                        {report.warnings.map((w, i) => (
-                          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                            <AlertTriangle size={13} style={{ marginTop: 1, flexShrink: 0 }} />
-                            <span>{w}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </Card>
-
-                {/* Sensor mapping — locked until raw data is parsed */}
-                <Card T={T} style={{ padding: 0, display: "flex", flexDirection: "column", opacity: isReady ? 1 : 0.55 }}>
-                  <div style={{
-                    padding: "10px 14px", borderBottom: `1px solid ${T.border}`,
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <div style={{
-                      width: 26, height: 26, borderRadius: 6,
-                      background: "oklch(0.7 0.15 310 / 0.18)", color: T.s4,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <FilterIcon size={13} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, color: T.text, letterSpacing: "-0.005em" }}>
-                        Sensor mapping
-                        <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 500, color: T.textFaint, fontFamily: mono }}>
-                          optional
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 11, color: T.textFaint, marginTop: 1, fontFamily: mono }}>
-                        Tag → name lookup
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column", gap: 10, minHeight: 0, overflowY: "auto" }}>
-                    <p style={{ margin: 0, fontSize: 11, color: T.textMuted, lineHeight: 1.4 }}>
-                      Replace cryptic tags like{" "}
-                      <span style={{
-                        fontFamily: mono, color: T.text, background: T.surfaceHi,
-                        padding: "1px 5px", borderRadius: 3, fontSize: 10.5,
-                      }}>850P402.PV</span>{" "}
-                      with human-readable sensor names.
-                    </p>
-
-                    {!isReady ? (
-                      <div style={{
-                        padding: "14px 12px",
-                        border: `1px dashed ${T.borderStrong}`, borderRadius: 8,
-                        background: "transparent",
-                        display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                        color: T.textFaint,
-                      }}>
-                        <Info size={15} />
-                        <span style={{ fontSize: 12, fontWeight: 500, color: T.textMuted, textAlign: "center" }}>
-                          Parse dataset first
-                        </span>
-                        <span style={{ fontSize: 10.5, color: T.textFaint, fontFamily: mono, textAlign: "center" }}>
-                          Mapping becomes available after the CSV files are parsed
-                        </span>
-                      </div>
-                    ) : mapping.mappingFilePath ? (
-                      <div style={{
-                        padding: "10px 12px", background: T.surfaceHi,
-                        border: `1px solid ${T.border}`, borderRadius: 7,
-                        display: "flex", alignItems: "center", gap: 10,
-                      }}>
-                        <div style={{
-                          width: 24, height: 24, borderRadius: 5,
-                          background: T.accentMuted, color: T.accentHi,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 9, fontWeight: 700, fontFamily: mono,
-                        }}>CSV</div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{
-                            fontSize: 12, fontWeight: 600, color: T.text, fontFamily: mono,
-                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                          }}>
-                            {mapping.mappingFilePath.split(/[/\\]/).pop()}
-                          </div>
-                          <div style={{ fontSize: 10.5, color: T.textFaint, fontFamily: mono, marginTop: 1 }}>
-                            {mapping.mappingData
-                              ? `${mapping.mappingData.rows.length} rows${mapping.mappingResult ? ` · ${mapping.mappingResult.matched.length} matched` : ""}`
-                              : "loading…"}
-                          </div>
-                        </div>
-                        <button
-                          onClick={mapping.clearMapping}
-                          style={{
-                            background: "none", border: "none", color: T.textFaint,
-                            cursor: "pointer", padding: 4, display: "flex",
-                          }}
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={mapping.selectMappingFile}
-                        disabled={mapping.isLoading}
-                        style={{
-                          width: "100%", padding: "14px 12px",
-                          border: `1px dashed ${T.borderStrong}`, borderRadius: 8,
-                          background: "transparent", cursor: "pointer",
-                          display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                          fontFamily: "inherit", color: T.text,
-                        }}
-                      >
-                        <Download size={15} style={{ color: T.textMuted }} />
-                        <span style={{ fontSize: 12.5, fontWeight: 500, color: T.text }}>
-                          Select mapping CSV
-                        </span>
-                        <span style={{ fontSize: 10.5, color: T.textFaint, fontFamily: mono }}>
-                          2 cols: tag, display_name
-                        </span>
-                      </button>
-                    )}
-
-                    {mapping.mappingData && !mapping.keyColumn && (
-                      <div style={{
-                        padding: 10, background: T.surfaceHi, border: `1px solid ${T.border}`,
-                        borderRadius: 7, display: "flex", flexDirection: "column", gap: 6,
-                      }}>
-                        <div style={{ fontSize: 10, color: T.textFaint, fontFamily: mono, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                          Pick tag column
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                          {mapping.mappingData.headers.map((h) => (
-                            <button
-                              key={h}
-                              onClick={() => mapping.setKeyColumn(h)}
-                              style={{
-                                padding: "3px 8px", fontSize: 11, fontFamily: mono,
-                                background: T.surface, border: `1px solid ${T.border}`,
-                                borderRadius: 4, color: T.text, cursor: "pointer",
-                              }}
-                            >{h}</button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {mapping.error && (
-                      <div style={{
-                        padding: "8px 10px", borderRadius: 7,
-                        background: "oklch(0.68 0.2 25 / 0.1)",
-                        border: `1px solid oklch(0.68 0.2 25 / 0.3)`,
-                        fontSize: 11.5, color: T.danger,
-                      }}>
-                        {mapping.error}
-                      </div>
-                    )}
-
-                    {mapping.mappingResult && (
-                      <MappingResultDetails T={T} result={mapping.mappingResult} />
-                    )}
-
-                  </div>
-                </Card>
-              </div>
-
-              {/* Empty-state hint */}
-              {!isReady && (
-                <div style={{
-                  padding: "14px 16px", borderRadius: 10,
-                  background: "oklch(0.78 0.14 75 / 0.08)",
-                  border: `1px solid oklch(0.78 0.14 75 / 0.25)`,
-                  display: "flex", alignItems: "center", gap: 10,
-                }}>
-                  <Info size={14} style={{ color: T.warn, flexShrink: 0 }} />
-                  <div style={{ fontSize: 12.5, color: T.text, flex: 1 }}>
-                    {!hasFiles
-                      ? "Add at least one CSV file to continue."
-                      : isStale
-                        ? "File selection changed — click Parse files to re-validate."
-                        : "Click Parse files to validate and continue."}
-                  </div>
-                </div>
-              )}
+                <span style={statusStyle}>
+                  {canCreateProject ? "Ready to continue" : "Enter a project name to continue"}
+                </span>
+                <div style={{ flex: 1 }} />
+                <BackButton T={T} onClick={() => setStep(0)} />
+                <PrimaryButton T={T} enabled={canCreateProject} onClick={() => setStep(2)}>Continue</PrimaryButton>
               </>
-              )}
-        </section>
-      </div>
-
-      {/* Sticky action bar */}
-      <div style={{
-        position: "sticky", bottom: 0, zIndex: 5,
-        background: T.surface, borderTop: `1px solid ${T.border}`,
-        padding: "10px 24px", display: "grid", gridTemplateColumns: "240px 1fr",
-      }}>
-        <div />
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {step === 1 ? (
-            <>
-              <span style={{
-                fontSize: 11, color: T.textFaint, fontFamily: mono, letterSpacing: "0.04em",
-              }}>
-                {canCreateProject ? "Ready to continue" : "Enter a project name to continue"}
-              </span>
-              <div style={{ flex: 1 }} />
-              <BackButton T={T} onClick={() => setStep(0)} />
-              <ContinueButton T={T} enabled={canCreateProject} onClick={() => setStep(2)} />
-            </>
-          ) : (
-            <>
-              <span style={{
-                fontSize: 11, color: T.textFaint, fontFamily: mono, letterSpacing: "0.04em",
-              }}>
-                {isReady
-                  ? `Ready · ${fmt(totalRows)} rows`
-                  : isStale
-                    ? "Selection changed · re-parse required"
-                    : "Awaiting data"}
-              </span>
-              <div style={{ flex: 1 }} />
-              <BackButton T={T} onClick={() => setStep(1)} />
-              <ContinueButton T={T} enabled={isReady} onClick={handleContinue} />
-            </>
-          )}
+            ) : (
+              <>
+                <span style={{ ...statusStyle, color: isReady ? T.ok : T.textFaint }}>
+                  {isReady && <Check size={12} />}
+                  {isReady
+                    ? `Ready · ${rowsText ?? "0"} rows · ${mappedCount > 0 ? `${mappedCount} names mapped` : "no tag names"}`
+                    : isStale
+                      ? "Selection changed · re-parse required"
+                      : dataUpload.isLoading
+                        ? "Reading files…"
+                        : "Awaiting data"}
+                </span>
+                <div style={{ flex: 1 }} />
+                <BackButton T={T} onClick={() => setStep(1)} />
+                <PrimaryButton T={T} enabled={isReady} onClick={handleContinue}>Open Dashboard</PrimaryButton>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {loadingOverlay}
     </div>
-  );
-}
-
-/* ---------------------------------------------------------------- */
-/* Sub-components                                                   */
-/* ---------------------------------------------------------------- */
-
-function Pill({ T, children, tone = "neutral" }: { T: Tokens; children: ReactNode; tone?: "neutral" | "info" | "ok" | "warn" }) {
-  const tones: Record<string, { bg: string; fg: string; bd: string }> = {
-    neutral: { bg: T.chipBg, fg: T.textMuted, bd: T.border },
-    info: { bg: T.accentMuted, fg: T.accentHi, bd: "transparent" },
-    ok: { bg: "oklch(0.7 0.15 150 / 0.12)", fg: T.ok, bd: "transparent" },
-    warn: { bg: "oklch(0.75 0.14 75 / 0.14)", fg: T.warn, bd: "transparent" },
-  };
-  const t = tones[tone];
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4,
-      padding: "2px 7px", fontSize: 10.5, fontWeight: 600,
-      letterSpacing: "0.02em", textTransform: "uppercase",
-      color: t.fg, background: t.bg, border: `1px solid ${t.bd}`,
-      borderRadius: 4, fontFamily: mono,
-    }}>{children}</span>
-  );
-}
-
-function Card({ T, children, style = {} }: { T: Tokens; children: ReactNode; style?: CSSProperties }) {
-  return (
-    <div style={{
-      background: T.surface, border: `1px solid ${T.border}`,
-      borderRadius: 10, ...style,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function StepIndicator({
-  T, step, onStepClick,
-}: {
-  T: Tokens; step: 1 | 2; onStepClick: (s: 1 | 2) => void;
-}) {
-  const steps: { n: 1 | 2; label: string }[] = [
-    { n: 1, label: "Create project" },
-    { n: 2, label: "Prepare dataset" },
-  ];
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-      {steps.map((s, i) => {
-        const active = s.n === step;
-        const done = s.n < step;
-        const clickable = s.n < step;
-        return (
-          <div key={s.n} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div
-              onClick={clickable ? () => onStepClick(s.n) : undefined}
-              style={{
-                display: "flex", alignItems: "center", gap: 7,
-                cursor: clickable ? "pointer" : "default",
-              }}
-            >
-              <span style={{
-                width: 18, height: 18, borderRadius: "50%",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 10.5, fontWeight: 700, fontFamily: mono,
-                background: active || done ? T.accent : T.surfaceHi,
-                color: active || done ? "#fff" : T.textFaint,
-                border: `1px solid ${active || done ? T.accent : T.border}`,
-                flexShrink: 0,
-              }}>
-                {done ? <Check size={10} strokeWidth={3} /> : s.n}
-              </span>
-              <span style={{
-                fontSize: 12, fontWeight: active ? 600 : 500,
-                color: active ? T.text : T.textMuted,
-                letterSpacing: "-0.005em",
-              }}>
-                {s.label}
-              </span>
-            </div>
-            {i < steps.length - 1 && (
-              <span style={{ width: 28, height: 1, background: T.border }} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function CreateProjectStep({
-  T, name, onNameChange, description, onDescriptionChange,
-}: {
-  T: Tokens;
-  name: string;
-  onNameChange: (v: string) => void;
-  description: string;
-  onDescriptionChange: (v: string) => void;
-}) {
-  return (
-    <Card T={T} style={{ padding: 16, maxWidth: 640, display: "flex", flexDirection: "column", gap: 14 }}>
-      <div>
-        <label style={{
-          display: "block", fontSize: 12, fontWeight: 600, color: T.text,
-          marginBottom: 6, letterSpacing: "-0.005em",
-        }}>
-          Project name{" "}
-          <span style={{ fontSize: 10.5, fontWeight: 600, color: T.warn, fontFamily: mono }}>
-            required
-          </span>
-        </label>
-        <input
-          value={name}
-          onChange={(e) => onNameChange(e.target.value)}
-          placeholder="e.g. Compressor Line 3 — Q3 Baseline"
-          style={{
-            width: "100%", padding: "9px 12px", fontSize: 13,
-            background: T.surfaceHi, border: `1px solid ${T.borderStrong}`,
-            borderRadius: 7, color: T.text, fontFamily: "inherit", outline: "none",
-            boxSizing: "border-box",
-          }}
-        />
-      </div>
-      <div>
-        <label style={{
-          display: "block", fontSize: 12, fontWeight: 600, color: T.text,
-          marginBottom: 6, letterSpacing: "-0.005em",
-        }}>
-          Description{" "}
-          <span style={{ fontSize: 10.5, fontWeight: 500, color: T.textFaint, fontFamily: mono }}>
-            optional
-          </span>
-        </label>
-        <textarea
-          value={description}
-          onChange={(e) => onDescriptionChange(e.target.value)}
-          placeholder="What is this workspace for?"
-          rows={4}
-          style={{
-            width: "100%", padding: "9px 12px", fontSize: 13,
-            background: T.surfaceHi, border: `1px solid ${T.borderStrong}`,
-            borderRadius: 7, color: T.text, fontFamily: "inherit", outline: "none",
-            resize: "vertical", boxSizing: "border-box",
-          }}
-        />
-      </div>
-    </Card>
-  );
-}
-
-function Req({ T, ok, children }: { T: Tokens; ok: boolean; children: ReactNode }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-      <span style={{
-        width: 12, height: 12, borderRadius: "50%",
-        background: ok ? "oklch(0.72 0.15 150 / 0.2)" : T.surfaceHi,
-        color: T.ok, display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <Check size={8} strokeWidth={2.5} color={T.ok} />
-      </span>
-      <span>{children}</span>
-    </span>
-  );
-}
-
-function WorkspaceRow({
-  T, name, description, active, onClick, onDelete, onRename,
-}: {
-  T: Tokens; name: string; description?: string; active: boolean;
-  onClick: () => void; onDelete: () => void;
-  onRename: (newName: string) => void;
-}) {
-  const [hover, setHover] = useState(false);
-  const [editing, setEditing] = useState(false);
-  // In-row delete confirmation (replaces the 2026-10-04 `ask` dialog).
-  const [confirming, setConfirming] = useState(false);
-  const [draft, setDraft] = useState(name);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const highlighted = active || hover;
-
-  useEffect(() => {
-    if (!confirming) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setConfirming(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [confirming]);
-
-  // Keep the draft in sync if the underlying name changes (e.g. another tab
-  // renamed it) but only while we're not actively editing.
-  useEffect(() => {
-    if (!editing) setDraft(name);
-  }, [name, editing]);
-
-  // Auto-focus + select-all when entering edit mode.
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
-
-  const startEdit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setDraft(name);
-    setEditing(true);
-  };
-
-  const commitEdit = () => {
-    setEditing(false);
-    onRename(draft);
-  };
-
-  const cancelEdit = () => {
-    setEditing(false);
-    setDraft(name);
-  };
-
-  const iconBtnStyle: CSSProperties = {
-    background: "none", border: "none", cursor: "pointer",
-    padding: 2, display: "flex",
-    transition: "color 120ms ease, opacity 120ms ease",
-  };
-
-  return (
-    <div
-      onClick={() => { if (!editing && !confirming) onClick(); }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        padding: "7px 8px", borderRadius: 6,
-        cursor: editing ? "default" : "pointer",
-        background: active ? T.surfaceHi : hover ? T.hover : "transparent",
-        border: `1px solid ${active ? T.border : "transparent"}`,
-        position: "relative",
-        transition: "background 120ms ease, border-color 120ms ease",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{
-          width: 6, height: 6, borderRadius: 2,
-          background: T.accent, flexShrink: 0,
-          opacity: highlighted ? 1 : 0.7,
-        }} />
-
-        {editing ? (
-          <input
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onBlur={commitEdit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
-              else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
-            }}
-            style={{
-              flex: 1, minWidth: 0,
-              fontSize: 12.5, fontWeight: 600,
-              color: T.text, fontFamily: "inherit",
-              background: T.bg, border: `1px solid ${T.borderStrong}`,
-              borderRadius: 4, padding: "1px 6px",
-              outline: "none",
-            }}
-          />
-        ) : (
-          <span style={{
-            fontSize: 12.5, fontWeight: 600,
-            color: highlighted ? T.text : T.textMuted,
-            letterSpacing: "-0.005em", flex: 1, minWidth: 0,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-            transition: "color 120ms ease",
-          }}>
-            {name}
-          </span>
-        )}
-
-        {editing ? (
-          <>
-            <button
-              onMouseDown={(e) => e.preventDefault() /* keep input focused */}
-              onClick={(e) => { e.stopPropagation(); commitEdit(); }}
-              title="Save (Enter)"
-              style={{ ...iconBtnStyle, color: T.accent, opacity: 1 }}
-            >
-              <Check size={11} />
-            </button>
-            <button
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => { e.stopPropagation(); cancelEdit(); }}
-              title="Cancel (Esc)"
-              style={{ ...iconBtnStyle, color: T.textFaint, opacity: 1 }}
-            >
-              <X size={11} />
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={startEdit}
-              title="Rename workspace"
-              style={{
-                ...iconBtnStyle,
-                color: hover ? T.text : T.textFaint,
-                opacity: hover ? 1 : 0,
-                pointerEvents: hover ? "auto" : "none",
-              }}
-            >
-              <Pencil size={11} />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
-              title="Delete workspace"
-              style={{
-                ...iconBtnStyle,
-                color: hover ? T.danger : T.textFaint,
-                opacity: hover ? 1 : 0.6,
-              }}
-            >
-              <X size={11} />
-            </button>
-          </>
-        )}
-      </div>
-      {description && (
-        <div style={{
-          paddingLeft: 12, marginTop: 1, fontSize: 10.5,
-          color: T.textFaint,
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-        }}>
-          {description}
-        </div>
-      )}
-      {confirming && (
-        <div
-          role="alertdialog"
-          aria-label={`Delete ${name}?`}
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
-            marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.border}`,
-            fontSize: 11, color: T.textMuted,
-          }}
-        >
-          <span style={{ flex: 1, minWidth: 0 }}>Delete this project?</span>
-          <button
-            onClick={() => { setConfirming(false); onDelete(); }}
-            style={{
-              padding: "2px 8px", fontSize: 11, fontWeight: 600, fontFamily: "inherit",
-              color: "#fff", background: T.danger, border: "1px solid transparent",
-              borderRadius: 5, cursor: "pointer",
-            }}
-          >
-            Delete
-          </button>
-          <button
-            onClick={() => setConfirming(false)}
-            style={{
-              padding: "2px 8px", fontSize: 11, fontFamily: "inherit",
-              color: T.textMuted, background: "none", border: `1px solid ${T.borderStrong}`,
-              borderRadius: 5, cursor: "pointer",
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MappingResultDetails({ T, result }: { T: Tokens; result: MappingResult }) {
-  const blocks: { tone: "ok" | "warn" | "danger"; icon: ReactNode; label: string; items: string[] }[] = [];
-  if (result.matched.length > 0) {
-    blocks.push({
-      tone: "ok",
-      icon: <CheckCircle2 size={12} />,
-      label: `${result.matched.length} column${result.matched.length !== 1 ? "s" : ""} matched`,
-      items: [],
-    });
-  }
-  if (result.not_in_dataset.length > 0) {
-    blocks.push({
-      tone: "warn",
-      icon: <AlertTriangle size={12} />,
-      label: `${result.not_in_dataset.length} key${result.not_in_dataset.length !== 1 ? "s" : ""} in mapping but not in dataset`,
-      items: result.not_in_dataset,
-    });
-  }
-  if (result.not_in_mapping.length > 0) {
-    blocks.push({
-      tone: "danger",
-      icon: <XCircle size={12} />,
-      label: `${result.not_in_mapping.length} dataset column${result.not_in_mapping.length !== 1 ? "s" : ""} not found in mapping`,
-      items: result.not_in_mapping,
-    });
-  }
-
-  const toneStyles: Record<string, { fg: string; bg: string; bd: string }> = {
-    ok: { fg: T.ok, bg: "oklch(0.72 0.15 150 / 0.1)", bd: "oklch(0.72 0.15 150 / 0.3)" },
-    warn: { fg: T.warn, bg: "oklch(0.78 0.14 75 / 0.1)", bd: "oklch(0.78 0.14 75 / 0.3)" },
-    danger: { fg: T.danger, bg: "oklch(0.68 0.2 25 / 0.1)", bd: "oklch(0.68 0.2 25 / 0.3)" },
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{
-        fontSize: 10, fontWeight: 600, color: T.textFaint,
-        letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: mono,
-      }}>
-        Mapping results
-      </div>
-      {blocks.map((b, i) => {
-        const s = toneStyles[b.tone];
-        return (
-          <div key={i} style={{
-            padding: "7px 10px", borderRadius: 7,
-            background: s.bg, border: `1px solid ${s.bd}`,
-          }}>
-            <div style={{
-              display: "flex", alignItems: "center", gap: 6,
-              fontSize: 11, fontWeight: 600, color: s.fg,
-            }}>
-              {b.icon}
-              <span>{b.label}</span>
-            </div>
-            {b.items.length > 0 && (
-              <div style={{
-                marginTop: 4, paddingLeft: 18, maxHeight: 72, overflowY: "auto",
-                display: "flex", flexDirection: "column", gap: 1,
-              }}>
-                {b.items.map((col) => (
-                  <div key={col} style={{
-                    fontSize: 10.5, color: s.fg, opacity: 0.75,
-                    fontFamily: mono,
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                  }}>{col}</div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ContinueButton({
-  T, enabled, onClick,
-}: {
-  T: Tokens; enabled: boolean; onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={enabled ? onClick : undefined}
-      disabled={!enabled}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 8,
-        padding: "9px 16px", fontSize: 13, fontWeight: 600,
-        color: "#fff",
-        background: enabled ? T.accent : T.surfaceHi,
-        border: `1px solid ${enabled ? T.accent : T.border}`,
-        borderRadius: 8, cursor: enabled ? "pointer" : "not-allowed",
-        fontFamily: "inherit", letterSpacing: "-0.005em",
-        opacity: enabled ? 1 : 0.6,
-        boxShadow: enabled ? `0 1px 0 0 rgba(255,255,255,0.15) inset, 0 4px 14px ${T.accentMuted}` : "none",
-      }}
-    >
-      Continue
-      <ArrowRight size={13} />
-    </button>
-  );
-}
-
-function BackButton({ T, onClick }: { T: Tokens; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        padding: "9px 14px", fontSize: 13, fontWeight: 500,
-        color: T.textMuted,
-        background: "none",
-        border: `1px solid ${T.border}`,
-        borderRadius: 8, cursor: "pointer",
-        fontFamily: "inherit",
-      }}
-    >
-      ‹ Back
-    </button>
   );
 }

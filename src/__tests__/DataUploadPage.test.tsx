@@ -60,7 +60,9 @@ vi.mock('@tauri-apps/api/app', () => ({
 // The step-0 illustration runs a canvas animation (requestAnimationFrame + 2D
 // context), which jsdom cannot do -- stand in a marker element.
 vi.mock('../components/upload/MachineMorphCanvas', () => ({
-  default: (props: { variant?: string }) => <div data-testid="machine-canvas" data-variant={props.variant} />,
+  default: (props: { variant?: string; style?: React.CSSProperties }) => (
+    <div data-testid="machine-canvas" data-variant={props.variant} style={props.style} />
+  ),
 }));
 
 // workspaceManager — all 5 functions used by DataUploadPage
@@ -175,7 +177,8 @@ function rowFor(text: string): HTMLElement {
 // Onboarding navigation helpers
 //
 // The page boots into step 0 ("Get started" — new project vs. recent). The
-// dataset UI every group below asserts against lives on step 2, reached via:
+// dataset UI every group below asserts against lives on step 2 ("Add your sensor
+// data"), reached via:
 //   step 0 ──"New project"──▶ step 1 ──name + Continue──▶ step 2
 // so the groups that only care about the upload/mapping surface walk the flow
 // first and then assert exactly as before. The step 0 / step 1 screens have
@@ -190,17 +193,22 @@ const renderPage = () => render(<DataUploadPage onDataReady={onDataReady} />);
 
 const newProjectButton = () => screen.getByRole('button', { name: /New project/ });
 
+/** Step 1's primary button. */
 const continueButton = () =>
   screen.getByText('Continue').closest('button') as HTMLButtonElement;
 
-/** Render and advance to step 1 ("Create your project"). */
+/** Step 2's primary button (was "Continue" before the 2026-10-04 redesign). */
+const openDashboardButton = () =>
+  screen.getByText('Open Dashboard').closest('button') as HTMLButtonElement;
+
+/** Render and advance to step 1 ("Name your project"). */
 function renderAtStep1() {
   const utils = renderPage();
   fireEvent.click(newProjectButton());
   return utils;
 }
 
-/** Render and advance to step 2 ("Prepare your dataset"), naming the project
+/** Render and advance to step 2 ("Add your sensor data"), naming the project
  *  on the way through since step 1's Continue is gated on a non-empty name. */
 function renderAtStep2({
   name = PROJECT_NAME,
@@ -260,10 +268,10 @@ afterEach(() => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// A. Workspace sidebar
+// A. Recent projects (step 0 cards; the old step 1-2 sidebar no longer exists)
 // ═════════════════════════════════════════════════════════════════════════
 
-describe('A. Workspace sidebar', () => {
+describe('A. Recent projects', () => {
   it('A1. fetches and renders recent workspaces on mount', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
 
@@ -276,39 +284,20 @@ describe('A. Workspace sidebar', () => {
     });
   });
 
-  // The sidebar is suppressed on step 0 (the choice screen lists recents
-  // itself); it reappears from step 1 onwards, so its own tests start there.
-  it('A2. shows "No workspaces yet" when list is empty', async () => {
-    mockGetRecent.mockResolvedValue([]);
-    renderAtStep1();
-    await waitFor(() => {
-      expect(screen.getByText('No workspaces yet')).toBeTruthy();
-    });
-  });
-
-  it('A3. search filters workspaces case-insensitively', async () => {
+  it('A2. steps 1 and 2 have no "Find workspace" sidebar / Recent list any more (the setup rail replaced it)', async () => {
     mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
     renderAtStep1();
-    await waitFor(() => screen.getByText('Engine pressure run'));
-
-    const input = screen.getByPlaceholderText('Find workspace…');
-    fireEvent.change(input, { target: { value: 'COMPRESSOR' } });
-
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
+    expect(screen.queryByText('Recent')).toBeNull();
     expect(screen.queryByText('Engine pressure run')).toBeNull();
-    expect(screen.getByText('Compressor health')).toBeTruthy();
-  });
-
-  it('A4. shows "No matches" when search has no hits', async () => {
-    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    renderAtStep1();
-    await waitFor(() => screen.getByText('Engine pressure run'));
-
-    fireEvent.change(screen.getByPlaceholderText('Find workspace…'), {
-      target: { value: 'zzz-no-such-thing' },
-    });
-
-    expect(screen.getByText('No matches')).toBeTruthy();
     expect(screen.queryByText('No workspaces yet')).toBeNull();
+    expect(screen.getByTestId('setup-rail')).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'x' } });
+    fireEvent.click(continueButton());
+    expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
+    expect(screen.getByTestId('setup-rail')).toBeTruthy();
   });
 
   it('A5. clicking a workspace row triggers loading state', async () => {
@@ -371,23 +360,6 @@ describe('A. Workspace sidebar', () => {
     expect(mockGetRecent).toHaveBeenCalledTimes(1);
     // The delete prompt never opens the project either.
     expect(mockLoadWorkspace).not.toHaveBeenCalled();
-  });
-
-  it('A6c. the step-1/2 sidebar row confirms in the row too (no dialog)', async () => {
-    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
-    renderAtStep1();
-    await waitFor(() => screen.getByText('Engine pressure run'));
-
-    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
-    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
-    const prompt = screen.getByRole('alertdialog');
-    fireEvent.click(within(prompt).getByRole('button', { name: 'Cancel' }));
-    expect(mockDeleteWorkspace).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getAllByTitle('Delete workspace')[0]);
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(mockDeleteWorkspace).toHaveBeenCalledWith('ws_1'));
-    await waitFor(() => expect(mockGetRecent).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -485,7 +457,7 @@ describe('C. Dataset parse', () => {
 
     renderAtStep2();
 
-    expect(screen.getByText('Ready · 1,234 rows')).toBeTruthy();
+    expect(screen.getByText('Ready · 1,234 rows · no tag names')).toBeTruthy();
   });
 
   it('C17. non-fatal load-report warnings (e.g. a Buddhist-Era year correction) render inside the dataset card', () => {
@@ -504,6 +476,8 @@ describe('C. Dataset parse', () => {
     renderAtStep2();
 
     expect(screen.getByText(/Buddhist-Era year/)).toBeTruthy();
+    // 2026-10-04: the box is headed "Fixed while reading"
+    expect(screen.getByText('Fixed while reading')).toBeTruthy();
   });
 
   it('C18. no warnings banner when the load report has none', () => {
@@ -514,6 +488,7 @@ describe('C. Dataset parse', () => {
     renderAtStep2();
 
     expect(screen.queryByText(/Buddhist-Era year/)).toBeNull();
+    expect(screen.queryByText('Fixed while reading')).toBeNull();
   });
 });
 
@@ -521,29 +496,30 @@ describe('C. Dataset parse', () => {
 // D. Mapping card
 // ═════════════════════════════════════════════════════════════════════════
 
-describe('D. Mapping card', () => {
-  it('D17. mapping is locked with placeholder when dataset is not parsed', () => {
+describe('D. Tag names panel', () => {
+  it('D17. Tag names is locked with an explanation when the dataset is not parsed', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload());
 
     renderAtStep2();
 
-    expect(screen.getByText('Parse dataset first')).toBeTruthy();
-    expect(screen.queryByText('Select mapping CSV')).toBeNull();
+    expect(screen.getByTestId('tag-names-locked')).toBeTruthy();
+    expect(screen.getByText('Add sensor data first')).toBeTruthy();
+    expect(screen.queryByText('Select tag-name CSV')).toBeNull();
   });
 
-  // Mapping card opens only when isReady — which now requires hasFiles too,
+  // The Tag names panel opens only when isReady — which now requires hasFiles too,
   // not just a loadReport. Every "ready" fixture sets both.
   const readyUpload = () =>
     makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT });
 
-  it('D18. clicking "Select mapping CSV" calls selectMappingFile', () => {
+  it('D18. clicking "Select tag-name CSV" calls selectMappingFile', () => {
     useDataUploadMock.mockReturnValue(readyUpload());
     const m = makeMapping();
     useMappingDataMock.mockReturnValue(m);
 
     renderAtStep2();
 
-    fireEvent.click(screen.getByText('Select mapping CSV').closest('button')!);
+    fireEvent.click(screen.getByText('Select tag-name CSV').closest('button')!);
     expect(m.selectMappingFile).toHaveBeenCalledTimes(1);
   });
 
@@ -630,20 +606,22 @@ describe('D. Mapping card', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// E. Continue → Dashboard
+// E. Open Dashboard
 // ═════════════════════════════════════════════════════════════════════════
 
-describe('E. Continue button', () => {
-  it('E24. Continue is disabled until dataset is ready', () => {
+describe('E. Open Dashboard button', () => {
+  it('E24. Open Dashboard is disabled until dataset is ready', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'] }));
 
     renderAtStep2();
 
-    const btn = continueButton();
+    const btn = openDashboardButton();
     expect(btn.disabled).toBe(true);
+    // the old step-2 label is gone
+    expect(screen.queryByText('Continue')).toBeNull();
   });
 
-  it('E25. clicking Continue saves a WorkspaceState with dashboard route', async () => {
+  it('E25. clicking Open Dashboard saves a WorkspaceState with dashboard route', async () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({ selectedFiles: ['/a.csv', '/b.csv'], loadReport: FAKE_REPORT })
     );
@@ -655,7 +633,7 @@ describe('E. Continue button', () => {
     // Name + description come from step 1 and are persisted by step 2's
     // Continue — this is the only place they get written to disk.
     renderAtStep2({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
-    fireEvent.click(continueButton());
+    fireEvent.click(openDashboardButton());
 
     await waitFor(() => expect(mockSaveWorkspace).toHaveBeenCalledTimes(1));
     const saved = mockSaveWorkspace.mock.calls[0][0] as WorkspaceState;
@@ -691,7 +669,7 @@ describe('E. Continue button', () => {
     mockSaveWorkspace.mockResolvedValue(undefined);
 
     renderAtStep2();
-    fireEvent.click(continueButton());
+    fireEvent.click(openDashboardButton());
 
     // handleContinue holds a 500 ms MIN_TRANSITION_MS floor before handing off.
     await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
@@ -1029,7 +1007,7 @@ describe('G. Empty-state hint + status bar', () => {
 
     expect(screen.queryByText('Add at least one CSV file to continue.')).toBeNull();
     expect(screen.queryByText('Click Parse files to validate and continue.')).toBeNull();
-    expect(screen.getByText('Ready · 1,234 rows')).toBeTruthy();
+    expect(screen.getByText('Ready · 1,234 rows · no tag names')).toBeTruthy();
   });
 });
 
@@ -1058,7 +1036,7 @@ describe('I. Stale-report state', () => {
     expect(screen.getByText('Parse files')).toBeTruthy();
   });
 
-  it('I38. stale report → Continue button is disabled', () => {
+  it('I38. stale report → Open Dashboard is disabled', () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({
         selectedFiles: ['/a.csv'],
@@ -1069,7 +1047,7 @@ describe('I. Stale-report state', () => {
 
     renderAtStep2();
 
-    const btn = continueButton();
+    const btn = openDashboardButton();
     expect(btn.disabled).toBe(true);
   });
 
@@ -1107,7 +1085,7 @@ describe('I. Stale-report state', () => {
     expect(screen.queryByText(/^Ready ·/)).toBeNull();
   });
 
-  it('I41. stale → mapping card relocks with "Parse dataset first" placeholder', () => {
+  it('I41. stale → Tag names relocks with the "Add sensor data first" explanation', () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({
         selectedFiles: ['/a.csv'],
@@ -1127,7 +1105,7 @@ describe('I. Stale-report state', () => {
 
     renderAtStep2();
 
-    expect(screen.getByText('Parse dataset first')).toBeTruthy();
+    expect(screen.getByText('Add sensor data first')).toBeTruthy();
     expect(screen.queryByText('sensors.csv')).toBeNull();
   });
 
@@ -1205,7 +1183,7 @@ describe('I. Stale-report state', () => {
     }
   });
 
-  it('I42. removing all files after parse → Continue disabled, no Parse button (nothing to parse)', () => {
+  it('I42. removing all files after parse → Open Dashboard disabled, no Parse button (nothing to parse)', () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({
         selectedFiles: [],                  // user removed everything
@@ -1216,7 +1194,7 @@ describe('I. Stale-report state', () => {
 
     renderAtStep2();
 
-    const continueBtn = continueButton();
+    const continueBtn = openDashboardButton();
     expect(continueBtn.disabled).toBe(true);
     // hasFiles=false → Parse button can't show even though stale
     expect(screen.queryByText('Parse files')).toBeNull();
@@ -1230,7 +1208,8 @@ describe('I. Stale-report state', () => {
 //   The page no longer boots straight into the upload UI. Step 0 is the
 //   new-project-vs-recent branch point, step 1 names the project, step 2 is
 //   the dataset surface every other group above asserts against. These tests
-//   cover the two screens the helpers walk through.
+//   cover the two screens the helpers walk through (steps 1-2 share the setup
+//   rail -- see groups M-Q for their own detail).
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('J. Onboarding flow', () => {
@@ -1243,12 +1222,13 @@ describe('J. Onboarding flow', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('See the failure before it happens.');
     expect(newProjectButton()).toBeTruthy();
     // Step 2's surface must not be mounted yet…
-    expect(screen.queryByText('Dataset files')).toBeNull();
+    expect(screen.queryByText('Sensor data')).toBeNull();
     expect(screen.queryByText('browse')).toBeNull();
     expect(screen.queryByText('Continue')).toBeNull();
-    // …nor the step 1-2 chrome (sidebar search, step indicator, action bar).
+    expect(screen.queryByText('Open Dashboard')).toBeNull();
+    // …nor the step 1-2 chrome (setup rail, action bar).
+    expect(screen.queryByTestId('setup-rail')).toBeNull();
     expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
-    expect(screen.queryByText('Create project')).toBeNull();
 
     await waitFor(() => expect(screen.getByText('Engine pressure run')).toBeTruthy());
     expect(screen.getByText('Recent projects')).toBeTruthy();
@@ -1284,19 +1264,21 @@ describe('J. Onboarding flow', () => {
     expect(screen.queryByText(/Show all/)).toBeNull();
   });
 
-  it('J48. "New project" advances to step 1 and reveals the sidebar', () => {
+  it('J48. "New project" advances to step 1 and shows the setup rail', () => {
     renderPage();
 
     fireEvent.click(newProjectButton());
 
-    expect(screen.getByText('Create your project')).toBeTruthy();
+    expect(screen.getByText('Name your project')).toBeTruthy();
     expect(screen.getByPlaceholderText(NAME_PLACEHOLDER)).toBeTruthy();
     expect(screen.getByPlaceholderText(DESC_PLACEHOLDER)).toBeTruthy();
-    // Step indicator only exists from step 1 onwards
-    expect(screen.getByText('Create project')).toBeTruthy();
-    expect(screen.getByText('Prepare dataset')).toBeTruthy();
-    // Sidebar comes back so the user can still switch workspaces mid-flow
-    expect(screen.getByPlaceholderText('Find workspace…')).toBeTruthy();
+    // The rail lists all three steps from step 1 onwards
+    const rail = within(screen.getByTestId('setup-rail'));
+    expect(rail.getByText('Name the project')).toBeTruthy();
+    expect(rail.getByText('Add sensor data')).toBeTruthy();
+    expect(rail.getByText('Explore in Dashboard')).toBeTruthy();
+    expect(rail.getByRole('button', { name: 'All projects' })).toBeTruthy();
+    expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
     expect(screen.queryByTestId('home-step')).toBeNull();
   });
 
@@ -1324,8 +1306,8 @@ describe('J. Onboarding flow', () => {
 
     fireEvent.click(continueButton());
 
-    expect(screen.getByText('Create your project')).toBeTruthy();
-    expect(screen.queryByText('Prepare your dataset')).toBeNull();
+    expect(screen.getByText('Name your project')).toBeTruthy();
+    expect(screen.queryByText('Add your sensor data')).toBeNull();
   });
 
   it('J51. a named project + Continue advances to step 2', () => {
@@ -1336,8 +1318,9 @@ describe('J. Onboarding flow', () => {
     });
     fireEvent.click(continueButton());
 
-    expect(screen.getByText('Prepare your dataset')).toBeTruthy();
-    expect(screen.getByText('Dataset files')).toBeTruthy();
+    expect(screen.getByText('Add your sensor data')).toBeTruthy();
+    expect(screen.getByText('Sensor data')).toBeTruthy();
+    expect(screen.getByText('Tag names')).toBeTruthy();
     expect(screen.getByText('browse')).toBeTruthy();
   });
 
@@ -1346,7 +1329,7 @@ describe('J. Onboarding flow', () => {
 
     fireEvent.click(screen.getByText('‹ Back'));
 
-    expect(screen.getByText('Create your project')).toBeTruthy();
+    expect(screen.getByText('Name your project')).toBeTruthy();
     expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value)
       .toBe('Line 3 baseline');
     expect((screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value)
@@ -1359,18 +1342,18 @@ describe('J. Onboarding flow', () => {
     expect(screen.queryByText('Continue')).toBeNull();
   });
 
-  it('J53. step-indicator bubbles navigate backward only', () => {
+  it('J53. the rail steps navigate backward only', () => {
     renderAtStep2();
 
-    // step 2 → 1 by clicking the completed "Create project" bubble
-    fireEvent.click(screen.getByText('Create project'));
-    expect(screen.getByText('Create your project')).toBeTruthy();
+    // step 2 → 1 by clicking the completed "Name the project" step
+    fireEvent.click(screen.getByText('Name the project'));
+    expect(screen.getByText('Name your project')).toBeTruthy();
 
-    // …but the step-2 bubble is not a shortcut forward; that path has to go
-    // through Continue so the project-name validation always runs.
-    fireEvent.click(screen.getByText('Prepare dataset'));
-    expect(screen.getByText('Create your project')).toBeTruthy();
-    expect(screen.queryByText('Prepare your dataset')).toBeNull();
+    // …but the "Add sensor data" step is not a shortcut forward; that path has
+    // to go through Continue so the project-name validation always runs.
+    fireEvent.click(screen.getByText('Add sensor data'));
+    expect(screen.getByText('Name your project')).toBeTruthy();
+    expect(screen.queryByText('Add your sensor data')).toBeNull();
   });
 });
 
@@ -1457,13 +1440,13 @@ describe('K. dataset generation and latest-click-wins', () => {
     expect(getErrors()).toHaveLength(0);
   });
 
-  it('K2. Create-project Continue hands the Dashboard the generation of the Parse that produced the dataset', async () => {
+  it('K2. Open Dashboard hands the Dashboard the generation of the Parse that produced the dataset', async () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: { ...FAKE_REPORT, generation: 21 } })
     );
     mockSaveWorkspace.mockResolvedValue(undefined);
     renderAtStep2();
-    fireEvent.click(continueButton());
+    fireEvent.click(openDashboardButton());
     await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
     expect((onDataReady.mock.calls[0][0] as CsvMetadata).generation).toBe(21);
   });
@@ -1830,12 +1813,12 @@ describe('L. Get started page (step 0)', () => {
     it('L19. Ctrl+N (and Cmd+N) on step 0 starts a new project', () => {
       renderPage();
       ctrlN();
-      expect(screen.getByText('Create your project')).toBeTruthy();
+      expect(screen.getByText('Name your project')).toBeTruthy();
       cleanup();
 
       renderPage();
       fireEvent.keyDown(window, { key: 'N', metaKey: true });
-      expect(screen.getByText('Create your project')).toBeTruthy();
+      expect(screen.getByText('Name your project')).toBeTruthy();
     });
 
     it('L20. other key combos do nothing (plain N, Ctrl+Shift+N, Ctrl+Alt+N, Ctrl+M)', () => {
@@ -1845,7 +1828,7 @@ describe('L. Get started page (step 0)', () => {
       ctrlN(window, { altKey: true });
       fireEvent.keyDown(window, { key: 'm', ctrlKey: true });
       expect(screen.getByTestId('home-step')).toBeTruthy();
-      expect(screen.queryByText('Create your project')).toBeNull();
+      expect(screen.queryByText('Name your project')).toBeNull();
     });
 
     it('L21. Ctrl+N is ignored while typing in the search box or renaming a project', async () => {
@@ -1897,10 +1880,10 @@ describe('L. Get started page (step 0)', () => {
     it('L25. a bumped signal on step 0 starts a new project; the key handler and the signal together are idempotent', () => {
       const { rerender } = render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={0} />);
       rerender(<DataUploadPage onDataReady={onDataReady} newProjectSignal={1} />);
-      expect(screen.getByText('Create your project')).toBeTruthy();
+      expect(screen.getByText('Name your project')).toBeTruthy();
       // The key event of the same press arriving afterwards finds step 1: nothing changes.
       ctrlN();
-      expect(screen.getByText('Create your project')).toBeTruthy();
+      expect(screen.getByText('Name your project')).toBeTruthy();
     });
 
     it('L26. keydown first, then the menu signal: still exactly one transition, and typed text survives', () => {
@@ -1933,5 +1916,719 @@ describe('L. Get started page (step 0)', () => {
       render(<DataUploadPage onDataReady={onDataReady} newProjectSignal={5} />);
       expect(screen.getByTestId('home-step')).toBeTruthy();
     });
+  });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// M-Q. 2026-10-04 -- Import page redesign, phase C: the setup rail and steps
+//      1-2 ("Name your project" / "Add your sensor data"). Behaviour of
+//      loading / mapping / replay is covered by the groups above; these
+//      cover the presentation: rail, name step, read progress, summary cards,
+//      time coverage, "Fixed while reading", Tag names.
+// ═════════════════════════════════════════════════════════════════════════
+
+const DAY_US = 86_400_000_000;
+const T0_US = Date.UTC(2025, 0, 1) * 1000;
+
+/** A report carrying every field the Rust side now sends (phase R). */
+const FULL_REPORT: CsvLoadReport = {
+  ...FAKE_REPORT,
+  total_rows: 159264,
+  files: [
+    { name: 'run-01.csv', size_bytes: 84.2 * 1024 * 1024, rows: 120000, start: '2025-01-01 00:00:00', end: '2025-12-31 00:00:00', start_micros: T0_US, end_micros: T0_US + 364 * DAY_US },
+    { name: 'run-02.csv', size_bytes: 12.6 * 1024 * 1024, rows: 39264, start: '2025-09-01 00:00:00', end: '2026-07-08 00:00:00', start_micros: T0_US + 243 * DAY_US, end_micros: T0_US + 553 * DAY_US },
+  ],
+  period_start: '2025-01-01 00:00:00',
+  period_end: '2026-07-08 00:00:00',
+  period_start_micros: T0_US,
+  period_end_micros: T0_US + 553 * DAY_US,
+  interval_seconds: 300,
+  missing_percent: 0.84,
+};
+
+const TWO_FILES = ['/d/run-01.csv', '/d/run-02.csv'];
+
+const readyTwoFiles = (report: CsvLoadReport = FULL_REPORT) =>
+  makeDataUpload({ selectedFiles: TWO_FILES, loadReport: report });
+
+describe('M. Setup rail (steps 1-2)', () => {
+  it('M1. step 1: step 1 is current, 2 and 3 are upcoming, nothing is summarised yet, and the mini illustration is a faint decoration', () => {
+    renderAtStep1();
+    const rail = within(screen.getByTestId('setup-rail'));
+    expect(rail.getByText('Name the project').closest('[aria-current="step"]')).toBeTruthy();
+    expect(rail.getByText('Add sensor data').closest('[aria-current="step"]')).toBeNull();
+    expect(screen.queryByTestId('rail-value-1')).toBeNull();
+    expect(screen.queryByTestId('rail-value-2')).toBeNull();
+
+    const canvas = within(screen.getByTestId('setup-rail')).getByTestId('machine-canvas');
+    expect(canvas.getAttribute('data-variant')).toBe('mini');
+    // decorative: faint + not interactive
+    expect(canvas.style.pointerEvents).toBe('none');
+    expect(Number(canvas.style.opacity)).toBeLessThan(0.7);
+    expect(canvas.style.position).toBe('absolute');
+  });
+
+  it('M2. step 2: the project name is summarised under the completed step and that step is a back button', () => {
+    renderAtStep2({ name: 'Line 3 baseline' });
+    expect(screen.getByTestId('rail-value-1').textContent).toBe('Line 3 baseline');
+    const rail = within(screen.getByTestId('setup-rail'));
+    expect(rail.getByText('Add sensor data').closest('[aria-current="step"]')).toBeTruthy();
+    expect(rail.getByRole('button', { name: 'Go back to Name the project' })).toBeTruthy();
+    // the current / upcoming steps are not buttons
+    expect(rail.queryByRole('button', { name: /Go back to Add sensor data/ })).toBeNull();
+    expect(rail.queryByRole('button', { name: /Explore in Dashboard/ })).toBeNull();
+  });
+
+  it('M3. once the files are read the rail summarises them ("N files · rows"); nothing before that', () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: TWO_FILES }));
+    const { unmount } = renderAtStep2();
+    expect(screen.queryByTestId('rail-value-2')).toBeNull();
+    unmount();
+    cleanup();
+
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    renderAtStep2();
+    expect(screen.getByTestId('rail-value-2').textContent).toBe(`2 files · ${(159264).toLocaleString()} rows`);
+  });
+
+  it('M4. the rail summary pluralises ("1 file") and drops a row count that is not a number', () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({ selectedFiles: ['/d/a.csv'], loadReport: { ...FAKE_REPORT, total_rows: Number.NaN } }),
+    );
+    renderAtStep2();
+    expect(screen.getByTestId('rail-value-2').textContent).toBe('1 file');
+  });
+
+  it('M5. clicking the completed "Name the project" step goes back and keeps what was typed', () => {
+    renderAtStep2({ name: 'Keep me', description: 'and me' });
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to Name the project' }));
+    expect(screen.getByText('Name your project')).toBeTruthy();
+    expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).value).toBe('Keep me');
+    expect((screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value).toBe('and me');
+  });
+
+  it('M6. "All projects" returns to the Get-started page from step 1 and from step 2', () => {
+    renderAtStep1();
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }));
+    expect(screen.getByTestId('home-step')).toBeTruthy();
+    expect(screen.queryByTestId('setup-rail')).toBeNull();
+    cleanup();
+
+    renderAtStep2();
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }));
+    expect(screen.getByTestId('home-step')).toBeTruthy();
+  });
+});
+
+describe('N. Step 1 "Name your project"', () => {
+  it('N1. shows the step heading, a name counter that starts at 0/80 and follows typing', () => {
+    renderAtStep1();
+    expect(screen.getByText('Step 1 of 2')).toBeTruthy();
+    expect(screen.getByTestId('name-counter').textContent).toBe('0/80');
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Pump A' } });
+    expect(screen.getByTestId('name-counter').textContent).toBe('6/80');
+  });
+
+  it('N2. the name input enforces the 80-character limit', () => {
+    renderAtStep1();
+    expect((screen.getByPlaceholderText(NAME_PLACEHOLDER) as HTMLInputElement).maxLength).toBe(80);
+  });
+
+  it('N3. an existing project name (case-insensitive, trimmed) shows a NON-blocking warning', async () => {
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    renderAtStep1();
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.queryByText(/already exists/)).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: '  engine PRESSURE run ' } });
+    expect(screen.getByText(/A project with this name already exists/)).toBeTruthy();
+    // non-blocking: Continue still works and the flow goes on
+    expect(continueButton().disabled).toBe(false);
+    fireEvent.click(continueButton());
+    expect(screen.getByText('Add your sensor data')).toBeTruthy();
+  });
+
+  it('N4. a different or partial name shows no warning (the tip is shown instead)', async () => {
+    mockGetRecent.mockResolvedValue(FAKE_WORKSPACES);
+    renderAtStep1();
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Engine pressure' } });
+    expect(screen.queryByText(/already exists/)).toBeNull();
+    expect(screen.getByText(/Tip: unit \+ topic/)).toBeTruthy();
+  });
+
+  it('N5. "Shows in recent projects as" previews the card live: placeholder, then name + description + initials', () => {
+    renderAtStep1();
+    expect(screen.getByText('Shows in recent projects as')).toBeTruthy();
+    const card = screen.getByTestId('project-card-preview');
+    expect(within(card).getByText('Project name')).toBeTruthy();
+    expect(within(card).getByText('No description')).toBeTruthy();
+    expect(within(card).getByText('just now')).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'GEG-4 Bearing study' } });
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), { target: { value: 'Drift Jan-Mar' } });
+    expect(within(card).getByText('GEG-4 Bearing study')).toBeTruthy();
+    expect(within(card).getByText('Drift Jan-Mar')).toBeTruthy();
+    expect(within(card).getByText('GB')).toBeTruthy();
+    expect(within(card).queryByText('No description')).toBeNull();
+  });
+
+  it('N6. the preview card is not interactive: no open / rename / delete controls, and it is not counted as a recent project', () => {
+    renderAtStep1();
+    const card = screen.getByTestId('project-card-preview');
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    expect(screen.queryAllByTestId('project-card')).toHaveLength(0);
+  });
+
+  it('N7. the "Next" card describes step 2', () => {
+    renderAtStep1();
+    expect(screen.getByText('Next')).toBeTruthy();
+    expect(screen.getByText('Add sensor CSVs')).toBeTruthy();
+    expect(screen.getByText('Tag-name file')).toBeTruthy();
+    expect(screen.getByText('Open the Dashboard')).toBeTruthy();
+  });
+
+  it('N8. the footer keeps Back + Continue (enabled only with a name)', () => {
+    renderAtStep1();
+    expect(screen.getByText('‹ Back')).toBeTruthy();
+    expect(continueButton().disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'X' } });
+    expect(continueButton().disabled).toBe(false);
+  });
+});
+
+describe('O. Step 2 "Sensor data" panel', () => {
+  it('O1. empty: a large dropzone with the three conditions as chips and the step eyebrow with the project name', () => {
+    renderAtStep2({ name: 'Line 3 baseline' });
+    expect(screen.getByText('Step 2 of 2 · Line 3 baseline')).toBeTruthy();
+    expect(screen.getByText('Drop CSV files here')).toBeTruthy();
+    expect(screen.getByText('First column is date/time')).toBeTruthy();
+    expect(screen.getByText('Unique column names')).toBeTruthy();
+    expect(screen.getByText('Up to 2 GB per file')).toBeTruthy();
+    // nothing about a dataset that does not exist yet
+    expect(screen.queryByTestId('summary-grid')).toBeNull();
+    expect(screen.queryByTestId('time-coverage')).toBeNull();
+  });
+
+  it('O2. with files the big dropzone becomes an "Add more files" button that calls selectFiles (disabled while parsing)', () => {
+    const hook = makeDataUpload({ selectedFiles: ['/d/a.csv'] });
+    useDataUploadMock.mockReturnValue(hook);
+    const { unmount } = renderAtStep2();
+    expect(screen.queryByText('Drop CSV files here')).toBeNull();
+    fireEvent.click(screen.getByText('Add more files').closest('button')!);
+    expect(hook.selectFiles).toHaveBeenCalledTimes(1);
+    unmount();
+    cleanup();
+
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/d/a.csv'], isLoading: true }));
+    renderAtStep2();
+    expect((screen.getByText('Add more files').closest('button') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('O3. after reading: each file shows rows and size from the report (columns only when it is the single file)', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    renderAtStep2();
+    const rows = screen.getAllByTestId('file-row');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText('run-01.csv')).toBeTruthy();
+    expect(within(rows[0]).getByText(`${(120000).toLocaleString()} rows`)).toBeTruthy();
+    expect(within(rows[0]).getByText('84.2 MB')).toBeTruthy();
+    expect(within(rows[1]).getByText(`${(39264).toLocaleString()} rows`)).toBeTruthy();
+    expect(within(rows[1]).getByText('12.6 MB')).toBeTruthy();
+    // merged column count is not one file's column count
+    expect(within(rows[0]).queryByText(/columns/)).toBeNull();
+  });
+
+  it('O4. a single file also shows its column count', () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({ selectedFiles: ['/d/run-01.csv'], loadReport: { ...FULL_REPORT, files: [FULL_REPORT.files![0]] } }),
+    );
+    renderAtStep2();
+    expect(within(screen.getByTestId('file-row')).getByText(/120,000 rows · 3 columns|120000 rows · 3 columns/)).toBeTruthy();
+  });
+
+  it('O5. summary cards: Rows, Sensors, Period (duration + dates), Interval and % empty', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    renderAtStep2();
+    const grid = within(screen.getByTestId('summary-grid'));
+    expect(grid.getByText('Rows')).toBeTruthy();
+    expect(grid.getByText((159264).toLocaleString())).toBeTruthy();
+    expect(grid.getByText('after merge')).toBeTruthy();
+    expect(grid.getByText('Sensors')).toBeTruthy();
+    expect(grid.getByText('2')).toBeTruthy();
+    expect(grid.getByText('Period')).toBeTruthy();
+    expect(grid.getByText('18.2 mo')).toBeTruthy();
+    expect(grid.getByText('2025-01-01 00:00:00 → 2026-07-08 00:00:00')).toBeTruthy();
+    expect(grid.getByText('Interval')).toBeTruthy();
+    expect(grid.getByText('5 min')).toBeTruthy();
+    expect(grid.getByText('% empty')).toBeTruthy();
+    expect(grid.getByText('0.8%')).toBeTruthy();
+  });
+
+  it('O6. a report with every new field null shows ONLY Rows and Sensors -- no Period / Interval / % empty / coverage, and never "NaN" or "undefined"', () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({
+        selectedFiles: ['/d/a.csv'],
+        loadReport: {
+          ...FAKE_REPORT,
+          files: [{ name: 'a.csv', size_bytes: 10, rows: 5, start: null, end: null, start_micros: null, end_micros: null }],
+          period_start: null, period_end: null, period_start_micros: null, period_end_micros: null,
+          interval_seconds: null, missing_percent: null,
+        },
+      }),
+    );
+    const { container } = renderAtStep2();
+    const grid = within(screen.getByTestId('summary-grid'));
+    expect(grid.getByText('Rows')).toBeTruthy();
+    expect(grid.getByText('Sensors')).toBeTruthy();
+    expect(grid.queryByText('Period')).toBeNull();
+    expect(grid.queryByText('Interval')).toBeNull();
+    expect(grid.queryByText('% empty')).toBeNull();
+    expect(screen.queryByTestId('time-coverage')).toBeNull();
+    expect(container.textContent).not.toMatch(/NaN|undefined|null/);
+  });
+
+  it('O7. an old-style report (no new fields at all, e.g. a saved fixture) renders the same way -- no crash, no made-up numbers', () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT }));
+    const { container } = renderAtStep2();
+    expect(screen.queryByText('Period')).toBeNull();
+    expect(screen.queryByText('Interval')).toBeNull();
+    expect(screen.queryByText('% empty')).toBeNull();
+    expect(screen.queryByTestId('time-coverage')).toBeNull();
+    expect(container.textContent).not.toMatch(/NaN|undefined|null/);
+    // the file row has no size / rows to show -- just name and path
+    expect(within(screen.getByTestId('file-row')).queryByText(/rows|MB|KB|GB/)).toBeNull();
+  });
+
+  it('O8. summary cards only appear when the dataset is ready (not for a stale report)', () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/d/run-01.csv'], loadReport: FULL_REPORT, isStale: true }));
+    renderAtStep2();
+    expect(screen.queryByTestId('summary-grid')).toBeNull();
+    expect(screen.queryByTestId('time-coverage')).toBeNull();
+  });
+
+  it('O9. a "% empty" below 0.05 reads "<0.1%" rather than 0.0%', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles({ ...FULL_REPORT, missing_percent: 0.001 }));
+    renderAtStep2();
+    expect(within(screen.getByTestId('summary-grid')).getByText('<0.1%')).toBeTruthy();
+  });
+
+  it('O10. Period without microseconds shows the dates alone (no duration invented)', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles({ ...FULL_REPORT, period_start_micros: null, period_end_micros: null }));
+    renderAtStep2();
+    const grid = within(screen.getByTestId('summary-grid'));
+    expect(grid.getByText('2025-01-01 00:00:00 → 2026-07-08 00:00:00')).toBeTruthy();
+    expect(grid.queryByText(/ mo$/)).toBeNull();
+  });
+
+  it('O11. the header pill counts the files that are ready', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    renderAtStep2();
+    expect(screen.getByText(/2 files ready/)).toBeTruthy();
+  });
+
+  it('O12. footer: "Ready · rows · no tag names" with no mapping; "N names mapped" with one', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    const { unmount } = renderAtStep2();
+    expect(screen.getByText(`Ready · ${(159264).toLocaleString()} rows · no tag names`)).toBeTruthy();
+    unmount();
+    cleanup();
+
+    useMappingDataMock.mockReturnValue(
+      makeMapping({
+        mappingFilePath: '/lookup/sensors.csv', mappingData: FAKE_MAPPING_DATA, keyColumn: 'tag',
+        mappingResult: FAKE_MAPPING_RESULT,
+      }),
+    );
+    renderAtStep2();
+    expect(screen.getByText(`Ready · ${(159264).toLocaleString()} rows · 2 names mapped`)).toBeTruthy();
+  });
+
+  it('O13. footer while parsing says "Reading files…"', () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/d/a.csv'], isLoading: true }));
+    renderAtStep2();
+    expect(screen.getByText('Reading files…')).toBeTruthy();
+  });
+
+  it('O14. "Fixed while reading": every warning is listed in the amber box (and none for a clean report)', () => {
+    useDataUploadMock.mockReturnValue(
+      readyTwoFiles({ ...FULL_REPORT, warnings: ['212 duplicate timestamps merged', 'Duplicate column "TAG1" found in file 1, file 2'] }),
+    );
+    renderAtStep2();
+    const box = within(screen.getByTestId('fixed-while-reading'));
+    expect(box.getByText('Fixed while reading')).toBeTruthy();
+    expect(box.getByText('212 duplicate timestamps merged')).toBeTruthy();
+    expect(box.getByText(/Duplicate column "TAG1"/)).toBeTruthy();
+    expect(box.getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('O15. the Parse button still validates (calls uploadDataset) and an error from the parse is shown', () => {
+    const hook = makeDataUpload({ selectedFiles: ['/d/a.csv'], error: 'Cannot read' });
+    useDataUploadMock.mockReturnValue(hook);
+    renderAtStep2();
+    expect(screen.getByText('Cannot read')).toBeTruthy();
+    fireEvent.click(screen.getByText('Parse files'));
+    expect(hook.uploadDataset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('P. Time coverage', () => {
+  it('P1. one bar per file on a shared axis; the overlap is noted, overlapping bars really overlap', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    renderAtStep2();
+    const cov = within(screen.getByTestId('time-coverage'));
+    expect(cov.getByText('Time coverage')).toBeTruthy();
+    expect(cov.getByText(/files overlap/)).toBeTruthy();
+    const bars = cov.getAllByTestId('coverage-bar') as HTMLElement[];
+    expect(bars).toHaveLength(2);
+    const span = (b: HTMLElement) => [parseFloat(b.style.left), parseFloat(b.style.left) + parseFloat(b.style.width)];
+    const [a0, a1] = span(bars[0]);
+    const [b0, b1] = span(bars[1]);
+    expect(a0).toBe(0);
+    expect(b1).toBeCloseTo(100, 4);
+    expect(b0).toBeLessThan(a1); // run-02 starts before run-01 ends
+    expect(b0).toBeGreaterThan(a0);
+    expect(cov.getAllByTestId('coverage-lane')).toHaveLength(2);
+  });
+
+  it('P2. files that do not overlap are said not to', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles({
+      ...FULL_REPORT,
+      files: [
+        { ...FULL_REPORT.files![0], end_micros: T0_US + 100 * DAY_US },
+        { ...FULL_REPORT.files![1], start_micros: T0_US + 200 * DAY_US },
+      ],
+    }));
+    renderAtStep2();
+    expect(within(screen.getByTestId('time-coverage')).getByText('files do not overlap')).toBeTruthy();
+  });
+
+  it('P3. a single file is one full-width bar', () => {
+    useDataUploadMock.mockReturnValue(
+      makeDataUpload({ selectedFiles: ['/d/run-01.csv'], loadReport: { ...FULL_REPORT, files: [FULL_REPORT.files![0]] } }),
+    );
+    renderAtStep2();
+    const bar = screen.getByTestId('coverage-bar') as HTMLElement;
+    expect(bar.style.left).toBe('0%');
+    expect(bar.style.width).toBe('100%');
+    expect(screen.getByText('one file')).toBeTruthy();
+  });
+
+  it('P4. the axis shows dates; files without a readable range are mentioned, not drawn', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles({
+      ...FULL_REPORT,
+      files: [FULL_REPORT.files![0], { ...FULL_REPORT.files![1], start_micros: null, end_micros: null }],
+    }));
+    renderAtStep2();
+    const cov = within(screen.getByTestId('time-coverage'));
+    expect(cov.getAllByTestId('coverage-bar')).toHaveLength(1);
+    expect(cov.getByText('2025-01-01')).toBeTruthy();
+    expect(cov.getByText(/1 file without a readable time range is not shown/)).toBeTruthy();
+  });
+
+  it('P5. hidden entirely when no file has a time range', () => {
+    useDataUploadMock.mockReturnValue(readyTwoFiles({
+      ...FULL_REPORT,
+      files: FULL_REPORT.files!.map((f) => ({ ...f, start_micros: null, end_micros: null, start: null, end: null })),
+    }));
+    renderAtStep2();
+    expect(screen.queryByTestId('time-coverage')).toBeNull();
+  });
+});
+
+describe('Q. Read progress (csv-load-progress)', () => {
+  /** The handler the page registered for the event (subscribe -> listen). */
+  const progressHandler = () => {
+    const calls = mockListen.mock.calls.filter((c) => c[0] === 'csv-load-progress');
+    expect(calls.length).toBeGreaterThan(0);
+    return calls[calls.length - 1][1] as (e: { event: string; id: number; payload: unknown }) => void;
+  };
+  const emit = async (payload: unknown) => {
+    const h = progressHandler();
+    await act(async () => { h({ event: 'csv-load-progress', id: 1, payload }); });
+  };
+  const ev = (over: Record<string, unknown> = {}) => ({
+    file_index: 0, file_count: 2, file_name: 'run-01.csv', stage: 'reading', files_done: 0, ...over,
+  });
+  const loadingUpload = () => makeDataUpload({ selectedFiles: TWO_FILES, isLoading: true });
+  const stateOf = (name: string) =>
+    screen.getByLabelText(`Reading ${name}`).getAttribute('data-state');
+
+  it('Q1. subscribes through the safe subscribe() helper to the csv-load-progress event', () => {
+    renderAtStep2();
+    expect(mockListen.mock.calls.some((c) => c[0] === 'csv-load-progress')).toBe(true);
+  });
+
+  it('Q2. while THIS page parses, files_done drives the rows: finished files read "Read", the current one "Reading…", the rest "Waiting"', async () => {
+    useDataUploadMock.mockReturnValue(loadingUpload());
+    renderAtStep2();
+    // before the first event nothing is claimed
+    expect(screen.getByTestId('read-stage').textContent).toBe('Starting…');
+    expect(stateOf('run-01.csv')).toBe('waiting');
+
+    await emit(ev({ file_index: 0, files_done: 0 }));
+    expect(screen.getByTestId('read-stage').textContent).toBe('Reading…');
+    expect(stateOf('run-01.csv')).toBe('reading');
+    expect(stateOf('run-02.csv')).toBe('waiting');
+
+    await emit(ev({ file_index: 1, file_name: 'run-02.csv', files_done: 1 }));
+    expect(stateOf('run-01.csv')).toBe('done');
+    expect(stateOf('run-02.csv')).toBe('reading');
+    expect(screen.getByText('1 of 2 files')).toBeTruthy();
+    const overall = screen.getByLabelText('Reading files');
+    expect(overall.getAttribute('aria-valuenow')).toBe('1');
+    expect(overall.getAttribute('aria-valuemax')).toBe('2');
+  });
+
+  it('Q3. stage text: Merging… and Done (every file is "Read" while merging)', async () => {
+    useDataUploadMock.mockReturnValue(loadingUpload());
+    renderAtStep2();
+    await emit(ev({ file_index: 2, file_name: '', stage: 'merging', files_done: 2 }));
+    expect(screen.getByTestId('read-stage').textContent).toBe('Merging…');
+    expect(stateOf('run-01.csv')).toBe('done');
+    expect(stateOf('run-02.csv')).toBe('done');
+    expect(screen.getByLabelText('Reading files').getAttribute('aria-valuenow')).toBe('2');
+
+    await emit(ev({ file_index: 2, file_name: '', stage: 'done', files_done: 2 }));
+    expect(screen.getByTestId('read-stage').textContent).toBe('Done');
+  });
+
+  it('Q4. events are IGNORED when this page is not parsing (a recent project being opened emits the same event)', async () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: TWO_FILES }));
+    renderAtStep2();
+    await emit(ev({ file_index: 1, files_done: 1 }));
+    expect(screen.queryByTestId('read-status')).toBeNull();
+    expect(screen.queryByLabelText('Reading run-01.csv')).toBeNull();
+  });
+
+  it('Q5. an event that arrived before the parse started never shows up in it, and the bar is gone when the parse ends', async () => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: TWO_FILES }));
+    const utils = renderAtStep2();
+    await emit(ev({ file_index: 1, files_done: 1 })); // ignored: not parsing
+
+    useDataUploadMock.mockReturnValue(loadingUpload());
+    utils.rerender(<DataUploadPage onDataReady={onDataReady} />);
+    expect(screen.getByTestId('read-stage').textContent).toBe('Starting…');
+    expect(stateOf('run-01.csv')).toBe('waiting');
+
+    await emit(ev({ file_index: 0, files_done: 0 }));
+    expect(stateOf('run-01.csv')).toBe('reading');
+
+    // parse finished -> report arrives, progress UI is gone and the next parse starts clean
+    useDataUploadMock.mockReturnValue(readyTwoFiles());
+    utils.rerender(<DataUploadPage onDataReady={onDataReady} />);
+    expect(screen.queryByTestId('read-status')).toBeNull();
+    expect(screen.getAllByTestId('summary-card').length).toBeGreaterThan(0);
+
+    useDataUploadMock.mockReturnValue(loadingUpload());
+    utils.rerender(<DataUploadPage onDataReady={onDataReady} />);
+    expect(screen.getByTestId('read-stage').textContent).toBe('Starting…');
+  });
+
+  it('Q6. a late, older event cannot move the bar backwards', async () => {
+    useDataUploadMock.mockReturnValue(loadingUpload());
+    renderAtStep2();
+    await emit(ev({ file_index: 1, file_name: 'run-02.csv', files_done: 1 }));
+    await emit(ev({ file_index: 0, files_done: 0 })); // older, arrives late
+    expect(stateOf('run-01.csv')).toBe('done');
+    expect(stateOf('run-02.csv')).toBe('reading');
+  });
+
+  it('Q7. a malformed payload is ignored instead of rendered', async () => {
+    useDataUploadMock.mockReturnValue(loadingUpload());
+    const { container } = renderAtStep2();
+    await emit({ stage: 'reading' });
+    await emit(null);
+    await emit({ ...ev(), files_done: 'three' });
+    expect(screen.getByTestId('read-stage').textContent).toBe('Starting…');
+    expect(container.textContent).not.toMatch(/NaN|undefined/);
+  });
+
+  it('Q8. unmounting the page removes the listener (no leaked handler)', async () => {
+    const unlisten = vi.fn();
+    mockListen.mockImplementation(async () => unlisten);
+    const { unmount } = renderAtStep2();
+    await act(async () => { await Promise.resolve(); });
+    unmount();
+    expect(unlisten).toHaveBeenCalled();
+  });
+});
+
+describe('R. Tag names panel (step 2, right)', () => {
+  const readyUpload = () => makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT });
+
+  const RICH_MAPPING_DATA: MappingData = {
+    headers: ['tag', 'description', 'unit', 'component', 'alarm_h'],
+    rows: [
+      ['sensor_a', 'Pressure A', 'bar', 'Pump', '80'],
+      ['sensor_b', 'Pressure B', 'bar', 'Pump', ''],
+      ['sensor_d', 'Temp D', '°C', 'Motor', ''],
+      ['sensor_z', 'Unused', '', '', ''],
+    ],
+  };
+  const RICH_RESULT: MappingResult = {
+    matched: ['sensor_a', 'sensor_b', 'sensor_d'],
+    not_in_dataset: ['sensor_z'],
+    not_in_mapping: ['sensor_x', 'sensor_y'],
+  };
+  const RICH_META: SensorMetadata[] = [
+    { tag: 'sensor_a', description: 'Pressure A', unit: 'bar', component: 'Pump', alarmH: 80, alarmHH: 95 },
+    { tag: 'sensor_b', description: 'Pressure B', unit: 'bar', component: 'Pump' },
+    { tag: 'sensor_d', description: 'Temp D', unit: '°C', component: 'Motor' },
+  ];
+  const richMapping = (over: Partial<UseMappingDataReturn> = {}) =>
+    makeMapping({
+      mappingFilePath: '/lookup/tags.csv', mappingData: RICH_MAPPING_DATA, keyColumn: 'tag',
+      mappingResult: RICH_RESULT, sensorMetadata: RICH_META, ...over,
+    });
+
+  it('R1. locked (greyed, with explanation) until the dataset has been read; the header is "Tag names" with no "Sensor mapping" anywhere', () => {
+    renderAtStep2();
+    expect(screen.getByText('Tag names')).toBeTruthy();
+    expect(screen.queryByText(/Sensor mapping/i)).toBeNull();
+    const locked = screen.getByTestId('tag-names-locked');
+    expect(within(locked).getByText('Add sensor data first')).toBeTruthy();
+    expect(within(locked).getByText(/available once the files have been read/)).toBeTruthy();
+    // greyed out: the whole card is dimmed
+    expect((locked.closest('[style*="opacity"]') as HTMLElement).style.opacity).toBe('0.6');
+  });
+
+  it('R2. unlocked once the dataset is read: the explanation, expected columns and a dropzone', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    renderAtStep2();
+    expect(screen.queryByTestId('tag-names-locked')).toBeNull();
+    expect(screen.getByText(/human-readable sensor names/)).toBeTruthy();
+    expect(screen.getByText(/alarm_ll \/ alarm_l \/ alarm_h \/ alarm_hh/)).toBeTruthy();
+    expect(screen.getByText('Select tag-name CSV')).toBeTruthy();
+    expect(screen.getByText(/Optional/)).toBeTruthy();
+  });
+
+  it('R3. no result yet: no ring, chips or table', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(makeMapping({ mappingFilePath: '/lookup/tags.csv', mappingData: RICH_MAPPING_DATA, keyColumn: 'tag' }));
+    renderAtStep2();
+    expect(screen.queryByTestId('match-summary')).toBeNull();
+    expect(screen.queryByTestId('tag-table')).toBeNull();
+    expect(screen.getByText('4 rows')).toBeTruthy();
+  });
+
+  it('R4. after a mapping is applied: ring + matched/total, component chips with counts', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping());
+    renderAtStep2();
+    expect(screen.getByTestId('match-count').textContent).toBe('3 / 5');
+    expect(screen.getByText('2 columns have no name yet')).toBeTruthy();
+    expect(screen.getByTestId('match-ring')).toBeTruthy();
+    const chips = within(screen.getByTestId('component-chips'));
+    expect(chips.getByText('Pump').textContent).toBe('Pump2');
+    expect(chips.getByText('Motor').textContent).toBe('Motor1');
+    // the file row summarises matches
+    expect(screen.getByText('4 rows · 3 matched')).toBeTruthy();
+  });
+
+  it('R5. every column named: "every column has a name" and no No-name tab', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({ mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] } }));
+    renderAtStep2();
+    expect(screen.getByTestId('match-count').textContent).toBe('1 / 1');
+    expect(screen.getByText('every column has a name')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: /No name/ })).toBeNull();
+    expect(screen.queryByTestId('not-in-dataset')).toBeNull();
+  });
+
+  it('R6. Matched tab: tag, name, unit and alarm limits (dots lit only for limits that exist, values in the tooltip)', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping());
+    renderAtStep2();
+    const tab = screen.getByRole('tab', { name: /Matched/ });
+    expect(tab.getAttribute('aria-selected')).toBe('true');
+    const table = within(screen.getByTestId('tag-table'));
+    expect(table.getByText('sensor_a')).toBeTruthy();
+    expect(table.getByText('Pressure A')).toBeTruthy();
+    expect(table.getAllByText('bar')).toHaveLength(2);
+    expect(table.getByText('°C')).toBeTruthy();
+    const dots = screen.getByLabelText('H 80 · HH 95');
+    expect(dots.querySelector('[data-alarm="H"]')!.getAttribute('data-on')).toBe('true');
+    expect(dots.querySelector('[data-alarm="HH"]')!.getAttribute('data-on')).toBe('true');
+    expect(dots.querySelector('[data-alarm="LL"]')!.getAttribute('data-on')).toBe('false');
+    expect(dots.querySelector('[data-alarm="L"]')!.getAttribute('data-on')).toBe('false');
+    expect(screen.getAllByLabelText('No alarm limits')).toHaveLength(2);
+  });
+
+  it('R7. columns that do not exist in the mapping are skipped (no unit / alarm column when nothing has them)', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({
+      sensorMetadata: [{ tag: 'sensor_a', description: 'Pressure A', unit: '', component: '' }],
+      mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] },
+    }));
+    renderAtStep2();
+    const row = screen.getByTestId('tag-table').querySelector('tr') as HTMLElement;
+    expect(row.querySelectorAll('td')).toHaveLength(2); // tag + name only
+    expect(screen.queryByTestId('component-chips')).toBeNull();
+  });
+
+  it('R8. No name tab lists the dataset columns that got no name', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping());
+    renderAtStep2();
+    fireEvent.click(screen.getByRole('tab', { name: /No name/ }));
+    const table = within(screen.getByTestId('tag-table'));
+    expect(table.getByText('sensor_x')).toBeTruthy();
+    expect(table.getByText('sensor_y')).toBeTruthy();
+    expect(table.queryByText('sensor_a')).toBeNull();
+    expect(table.getAllByText('no name — tag code is shown')).toHaveLength(2);
+  });
+
+  it('R9. search filters the table by tag or name, on either tab, and says when nothing matches', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping());
+    renderAtStep2();
+    const find = screen.getByLabelText('Find tag');
+    fireEvent.change(find, { target: { value: 'temp' } });
+    expect(screen.queryByText('Pressure A')).toBeNull();
+    expect(screen.getByText('Temp D')).toBeTruthy();
+
+    fireEvent.change(find, { target: { value: 'zzz' } });
+    expect(screen.getByText(/No tags match/)).toBeTruthy();
+
+    fireEvent.change(find, { target: { value: 'SENSOR_X' } });
+    fireEvent.click(screen.getByRole('tab', { name: /No name/ }));
+    expect(screen.getByText('sensor_x')).toBeTruthy();
+    expect(screen.queryByText('sensor_y')).toBeNull();
+  });
+
+  it('R10. tags in the mapping file that are not in the dataset are mentioned', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping());
+    renderAtStep2();
+    expect(screen.getByTestId('not-in-dataset').textContent).toMatch(/1 tag in the tag-name file is not in the dataset/);
+  });
+
+  it('R11. without sensor metadata the matched tab still lists the matched tags', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({ sensorMetadata: null }));
+    renderAtStep2();
+    const table = within(screen.getByTestId('tag-table'));
+    expect(table.getByText('sensor_a')).toBeTruthy();
+    expect(table.getByText('sensor_d')).toBeTruthy();
+  });
+
+  it('R12. a very long list is capped with a hint to use search', () => {
+    const matched = Array.from({ length: 250 }, (_, i) => `t${i}`);
+    useDataUploadMock.mockReturnValue(readyUpload());
+    useMappingDataMock.mockReturnValue(richMapping({
+      sensorMetadata: matched.map((tag) => ({ tag, description: tag, unit: '', component: '' })),
+      mappingResult: { matched, not_in_dataset: [], not_in_mapping: [] },
+    }));
+    renderAtStep2();
+    expect(screen.getByTestId('tag-table').querySelectorAll('tr')).toHaveLength(200);
+    expect(screen.getByText(/Showing the first 200 of 250/)).toBeTruthy();
+  });
+
+  it('R13. Open Dashboard stays enabled when no tag names were added (the panel is optional)', () => {
+    useDataUploadMock.mockReturnValue(readyUpload());
+    renderAtStep2();
+    expect(openDashboardButton().disabled).toBe(false);
   });
 });

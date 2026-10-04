@@ -1108,7 +1108,7 @@ describe('5. "New project" right after working in A', () => {
         await flush();
         await act(async () => { fireEvent.click(A().getByText('Parse files').closest('button')!); });
         await flush(20);
-        await act(async () => { fireEvent.click(A().getByText('Continue').closest('button')!); });
+        await act(async () => { fireEvent.click(A().getByText('Open Dashboard').closest('button')!); });
         await tick(600);
         await flush(20);
         await tick(400);

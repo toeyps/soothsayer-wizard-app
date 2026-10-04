@@ -233,7 +233,7 @@ async function renderApp() {
 
 const onDashboard = () => !!document.querySelector('button[title="Back to Import"]');
 
-/** Import page: New project -> name -> browse -> Parse files -> Continue. */
+/** Import page: New project -> name -> Continue -> browse -> Parse files -> Open Dashboard. */
 async function importProject(name: string, path: string) {
     await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
@@ -245,7 +245,7 @@ async function importProject(name: string, path: string) {
     await settle(20);
     await act(async () => { fireEvent.click(app().getByText('Parse files')); });
     await settle(50);
-    await act(async () => { fireEvent.click(app().getByText('Continue')); });
+    await act(async () => { fireEvent.click(app().getByText('Open Dashboard')); });
     await settle(700);
     await waitFor(() => expect(onDashboard()).toBe(true), { timeout: 5000 });
     await settle(400);
