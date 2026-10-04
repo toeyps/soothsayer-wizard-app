@@ -236,12 +236,111 @@ pub struct ColumnInfo {
     pub valid_count: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Per-file facts shown on the Prepare-dataset step (one entry per file given
+/// to `load_csv`, in the order given). Every time is read with the SAME
+/// parser as `ts_parsed` and AFTER Buddhist-Era -> CE normalisation; a value
+/// that cannot be computed (no parseable timestamp in the file) is `None`,
+/// never a placeholder.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct CsvFileInfo {
+    /// File name only (no directory).
+    pub name: String,
+    pub size_bytes: u64,
+    /// Data rows read from THIS file (before the cross-file merge drops
+    /// rows without a timestamp / folds duplicate timestamps).
+    pub rows: usize,
+    /// Earliest / latest timestamp in this file, `"YYYY-MM-DD HH:MM:SS"`.
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+    /// The same instants as epoch-microseconds (for drawing a coverage bar).
+    #[serde(default)]
+    pub start_micros: Option<i64>,
+    #[serde(default)]
+    pub end_micros: Option<i64>,
+}
+
+/// Stage of a `csv-load-progress` event.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CsvLoadStage {
+    Reading,
+    Merging,
+    Done,
+}
+
+/// Payload of the `csv-load-progress` event `load_csv` emits.
+///
+/// `reading` is sent twice per file: when it starts (`files_done == file_index`)
+/// and when it has finished (`files_done == file_index + 1`). `merging` and
+/// `done` carry `file_index == file_count`, `files_done == file_count`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct CsvLoadProgress {
+    /// 0-based index of the file this event is about (`file_count` for
+    /// `merging` / `done`).
+    pub file_index: usize,
+    pub file_count: usize,
+    /// File name only (empty for `merging` / `done`).
+    pub file_name: String,
+    pub stage: CsvLoadStage,
+    /// How many files have been completely read when this event was sent.
+    pub files_done: usize,
+}
+
+impl CsvLoadProgress {
+    fn reading(file_index: usize, file_count: usize, file_name: &str, finished: bool) -> Self {
+        CsvLoadProgress {
+            file_index,
+            file_count,
+            file_name: file_name.to_string(),
+            stage: CsvLoadStage::Reading,
+            files_done: if finished { file_index + 1 } else { file_index },
+        }
+    }
+
+    /// The `merging` event (`done == false`) or the final `done` event.
+    pub fn after_reading(file_count: usize, done: bool) -> Self {
+        CsvLoadProgress {
+            file_index: file_count,
+            file_count,
+            file_name: String::new(),
+            stage: if done { CsvLoadStage::Done } else { CsvLoadStage::Merging },
+            files_done: file_count,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CsvLoadReport {
     pub headers: Vec<String>,
     pub total_rows: usize,
     pub columns: Vec<ColumnInfo>,
     pub warnings: Vec<String>,
+    /// Per-file info, in the order the files were given (JSON `files`).
+    #[serde(default)]
+    pub files: Vec<CsvFileInfo>,
+    /// Earliest / latest valid timestamp of the MERGED dataset
+    /// (`"YYYY-MM-DD HH:MM:SS"`, plus the same instants as epoch-microseconds).
+    /// `None` when no row has a parseable timestamp.
+    #[serde(default)]
+    pub period_start: Option<String>,
+    #[serde(default)]
+    pub period_end: Option<String>,
+    #[serde(default)]
+    pub period_start_micros: Option<i64>,
+    #[serde(default)]
+    pub period_end_micros: Option<i64>,
+    /// Typical sampling interval in seconds: the median of the positive
+    /// consecutive differences of the merged, sorted timestamps (deterministic
+    /// stride sample when there are millions of rows). `None` with < 2 valid
+    /// timestamps or no positive difference.
+    #[serde(default)]
+    pub interval_seconds: Option<f64>,
+    /// Empty (NaN) cells / (rows x sensor columns, timestamp column excluded)
+    /// x 100, in 0..=100. `None` when there are no rows or no sensor column.
+    #[serde(default)]
+    pub missing_percent: Option<f64>,
     /// Session generation created by the `load_csv` call that returned this
     /// report (JSON field `generation`). `build_load_report` leaves it 0;
     /// `load_csv` stamps the real value once the dataset is installed. A caller
@@ -279,6 +378,8 @@ pub struct ReadCsvResult {
     /// Per-column count of non-empty fields that failed to parse as f64.
     /// Indexed by column position in headers (includes timestamp column position).
     pub parse_fail_counts: Vec<usize>,
+    /// File size in bytes, as checked against [`MAX_CSV_BYTES`].
+    pub size_bytes: u64,
 }
 
 pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
@@ -421,6 +522,7 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
             columns,
         },
         parse_fail_counts,
+        size_bytes: size,
     })
 }
 
@@ -430,24 +532,112 @@ pub struct MergeResult {
     pub warnings: Vec<String>,
     /// Per-column (in merged header order) count of non-empty fields that failed f64 parse.
     pub parse_fail_counts: Vec<usize>,
+    /// Per-file info in the order the files were given. Filled by
+    /// [`read_merge_csvs_with_progress`]; empty for a hand-built result.
+    pub files: Vec<CsvFileInfo>,
+}
+
+/// Parse one raw timestamp exactly as `ColumnarData::from_parts` does
+/// (Buddhist-Era year corrected first), without allocating in the common
+/// non-BE case.
+fn parse_micros_normalized(s: &str) -> Option<i64> {
+    if is_buddhist_era_year(s) {
+        parse_timestamp(&normalize_buddhist_era(s.to_string())).map(ts_to_micros)
+    } else {
+        parse_timestamp(s).map(ts_to_micros)
+    }
+}
+
+/// Min / max parsed instant (epoch micros) of a file's raw timestamps,
+/// ignoring missing / unparseable ones. Parallel; used only for multi-file
+/// loads (a single file's range is read off the merged `ts_parsed` instead).
+fn raw_timestamp_range(timestamps: &[Option<String>]) -> Option<(i64, i64)> {
+    timestamps
+        .par_iter()
+        .filter_map(|t| t.as_deref().and_then(parse_micros_normalized))
+        .fold(
+            || None::<(i64, i64)>,
+            |acc, us| match acc {
+                None => Some((us, us)),
+                Some((lo, hi)) => Some((lo.min(us), hi.max(us))),
+            },
+        )
+        .reduce(
+            || None,
+            |a, b| match (a, b) {
+                (None, x) | (x, None) => x,
+                (Some((l1, h1)), Some((l2, h2))) => Some((l1.min(l2), h1.max(h2))),
+            },
+        )
+}
+
+/// `"YYYY-MM-DD HH:MM:SS"` for an epoch-microsecond instant.
+fn format_micros(us: i64) -> Option<String> {
+    micros_to_naive(us).map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+fn file_info(name: String, size_bytes: u64, rows: usize, range: Option<(i64, i64)>) -> CsvFileInfo {
+    CsvFileInfo {
+        name,
+        size_bytes,
+        rows,
+        start: range.and_then(|(lo, _)| format_micros(lo)),
+        end: range.and_then(|(_, hi)| format_micros(hi)),
+        start_micros: range.map(|(lo, _)| lo),
+        end_micros: range.map(|(_, hi)| hi),
+    }
+}
+
+fn file_name_only(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
 }
 
 pub fn read_merge_csvs_with_report(paths: Vec<String>) -> Result<MergeResult, String> {
+    read_merge_csvs_with_progress(paths, &|_| {})
+}
+
+/// [`read_merge_csvs_with_report`] that also reports progress through
+/// `on_progress` (`reading` start/finish per file, then `merging`; the final
+/// `done` is sent by the caller once the dataset is installed). The callback
+/// must never be able to fail the load, so it returns nothing.
+pub fn read_merge_csvs_with_progress(
+    paths: Vec<String>,
+    on_progress: &dyn Fn(CsvLoadProgress),
+) -> Result<MergeResult, String> {
     if paths.is_empty() {
         return Err("No file paths provided".to_string());
     }
 
     let mut warnings: Vec<String> = Vec::new();
+    let file_count = paths.len();
 
     // 1. Read all files individually (with stats)
     let mut results = Vec::new();
-    for path in &paths {
-        results.push(read_csv_with_stats(path)?);
+    let mut files: Vec<CsvFileInfo> = Vec::with_capacity(file_count);
+    for (i, path) in paths.iter().enumerate() {
+        let name = file_name_only(path);
+        on_progress(CsvLoadProgress::reading(i, file_count, &name, false));
+        let r = read_csv_with_stats(path)?;
+        // Several files: each file's own range needs its own parse (the
+        // merged `ts_parsed` no longer knows which file a row came from).
+        // One file: filled from the merged `ts_parsed` below, no extra pass.
+        let range = if file_count > 1 {
+            raw_timestamp_range(&r.data.timestamps)
+        } else {
+            None
+        };
+        files.push(file_info(name.clone(), r.size_bytes, r.data.n_rows(), range));
+        results.push(r);
+        on_progress(CsvLoadProgress::reading(i, file_count, &name, true));
     }
 
     if results.is_empty() {
         return Err("No data loaded".to_string());
     }
+    on_progress(CsvLoadProgress::after_reading(file_count, false));
 
     // Single file → skip the cross-file timestamp merge entirely. That merge
     // rebuilds every row through a single-threaded BTreeMap (cloning the
@@ -457,7 +647,20 @@ pub fn read_merge_csvs_with_report(paths: Vec<String>) -> Result<MergeResult, St
     // merged) but works on indices + per-column gathers — and does its own
     // Buddhist-Era detection, so skip the one below entirely on this path.
     if results.len() == 1 {
-        return Ok(merge_single_file(results.pop().unwrap()));
+        let mut merged = merge_single_file(results.pop().unwrap());
+        // The merged dataset IS this one file (rows without a timestamp are
+        // not parseable anyway), so its range is the dataset's range.
+        let (lo, hi) = ts_min_max(&merged.data.ts_parsed).unzip();
+        if let Some(f) = files.first_mut() {
+            *f = file_info(
+                std::mem::take(&mut f.name),
+                f.size_bytes,
+                f.rows,
+                lo.zip(hi),
+            );
+        }
+        merged.files = files;
+        return Ok(merged);
     }
 
     // Buddhist-Era detection across every file's raw timestamps, before any
@@ -634,6 +837,7 @@ pub fn read_merge_csvs_with_report(paths: Vec<String>) -> Result<MergeResult, St
         data: ColumnarData::from_parts(global_headers, out_timestamps, out_columns),
         warnings,
         parse_fail_counts: global_fail_counts,
+        files,
     })
 }
 
@@ -653,6 +857,7 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
     let ReadCsvResult {
         data: ds,
         parse_fail_counts,
+        ..
     } = result;
 
     // Computed before anything below partially moves `ds` — see
@@ -735,6 +940,7 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
             data: ColumnarData::from_parts(global_headers, ds.timestamps, ds.columns),
             warnings: be_warning.clone().into_iter().collect(),
             parse_fail_counts: global_fail_counts,
+            files: Vec::new(),
         };
     }
 
@@ -794,7 +1000,81 @@ fn merge_single_file(result: ReadCsvResult) -> MergeResult {
         data: ColumnarData::from_parts(global_headers, out_timestamps, out_columns),
         warnings: be_warning.into_iter().collect(),
         parse_fail_counts: global_fail_counts,
+        files: Vec::new(),
     }
+}
+
+/// Min / max of the valid (non-[`TS_MISSING`]) values; `None` if none.
+fn ts_min_max(ts: &[i64]) -> Option<(i64, i64)> {
+    let mut it = ts.iter().copied().filter(|&t| t != TS_MISSING);
+    let first = it.next()?;
+    Some(it.fold((first, first), |(lo, hi), t| (lo.min(t), hi.max(t))))
+}
+
+/// Cap on how many consecutive-difference samples feed the median interval.
+const MAX_INTERVAL_SAMPLES: usize = 2_000_000;
+
+/// Median positive gap, in seconds, between consecutive valid timestamps of
+/// the merged dataset. The merge orders rows by timestamp TEXT, which equals
+/// chronological order for a uniform format — but mixed formats could differ,
+/// so an out-of-order `ts` is sorted first (a copy; the common case is already
+/// sorted and costs no allocation beyond the difference samples). With more
+/// than [`MAX_INTERVAL_SAMPLES`] gaps a deterministic stride sample is used.
+/// Equal neighbours (gap 0) are ignored. Even sample count: mean of the two
+/// middle gaps. `None` if fewer than 2 valid timestamps / no positive gap.
+fn median_interval_seconds(ts: &[i64]) -> Option<f64> {
+    let mut valid = 0usize;
+    let mut sorted = true;
+    let mut prev: Option<i64> = None;
+    for &t in ts {
+        if t == TS_MISSING {
+            continue;
+        }
+        valid += 1;
+        if prev.is_some_and(|p| t < p) {
+            sorted = false;
+        }
+        prev = Some(t);
+    }
+    if valid < 2 {
+        return None;
+    }
+
+    fn sampled_gaps(it: impl Iterator<Item = i64>, n_gaps: usize) -> Vec<i64> {
+        let stride = n_gaps.div_ceil(MAX_INTERVAL_SAMPLES).max(1);
+        let mut out = Vec::with_capacity(n_gaps.min(MAX_INTERVAL_SAMPLES));
+        let mut prev: Option<i64> = None;
+        let mut k = 0usize;
+        for t in it {
+            if let Some(p) = prev {
+                if k % stride == 0 && t > p {
+                    out.push(t - p);
+                }
+                k += 1;
+            }
+            prev = Some(t);
+        }
+        out
+    }
+
+    let mut gaps = if sorted {
+        sampled_gaps(ts.iter().copied().filter(|&t| t != TS_MISSING), valid - 1)
+    } else {
+        let mut v: Vec<i64> = ts.iter().copied().filter(|&t| t != TS_MISSING).collect();
+        v.par_sort_unstable();
+        sampled_gaps(v.into_iter(), valid - 1)
+    };
+    if gaps.is_empty() {
+        return None;
+    }
+    gaps.sort_unstable();
+    let n = gaps.len();
+    let micros = if n % 2 == 1 {
+        gaps[n / 2] as f64
+    } else {
+        (gaps[n / 2 - 1] as f64 + gaps[n / 2] as f64) / 2.0
+    };
+    Some(micros / 1_000_000.0)
 }
 
 /// Build a CsvLoadReport from merge results and the final ColumnarData.
@@ -856,12 +1136,38 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
         }
     }
 
+    // Period / interval come off the already-parsed `ts_parsed`; the empty-cell
+    // share reuses the per-column valid counts computed above — no new pass
+    // over the sensor columns.
+    let range = ts_min_max(&data.ts_parsed);
+    let mut sensor_cols = 0usize;
+    let mut missing_cells = 0usize;
+    for (col_idx, name) in data.headers.iter().enumerate() {
+        if is_timestamp(name) {
+            continue;
+        }
+        sensor_cols += 1;
+        missing_cells += total_rows - valid_counts.get(col_idx).copied().unwrap_or(0);
+    }
+    let missing_percent = if total_rows > 0 && sensor_cols > 0 {
+        Some((missing_cells as f64 / (total_rows as f64 * sensor_cols as f64) * 100.0).clamp(0.0, 100.0))
+    } else {
+        None
+    };
+
     CsvLoadReport {
         headers: data.headers.clone(),
         total_rows,
         columns,
         warnings,
         generation: 0,
+        files: merge_result.files.clone(),
+        period_start: range.and_then(|(lo, _)| format_micros(lo)),
+        period_end: range.and_then(|(_, hi)| format_micros(hi)),
+        period_start_micros: range.map(|(lo, _)| lo),
+        period_end_micros: range.map(|(_, hi)| hi),
+        interval_seconds: median_interval_seconds(&data.ts_parsed),
+        missing_percent,
     }
 }
 
@@ -1034,6 +1340,7 @@ mod tests {
         merge_single_file(ReadCsvResult {
             data: columnar(headers, rows),
             parse_fail_counts: fails,
+            size_bytes: 0,
         })
     }
 
@@ -1121,6 +1428,7 @@ mod tests {
             ),
             warnings: vec![],
             parse_fail_counts: vec![0, 0, 0],
+            files: vec![],
         };
         let rep = build_load_report(&mr);
         assert_eq!(rep.total_rows, 3);
@@ -1269,5 +1577,389 @@ mod tests {
             vec![0, 0],
         );
         assert!(m.warnings.is_empty());
+    }
+
+    // ── Prepare-dataset report data (files / period / interval / missing) ───
+
+    use std::io::Write as _;
+    use std::sync::Mutex;
+
+    fn write_csv(dir: &tempfile::TempDir, name: &str, body: &str) -> String {
+        let p = dir.path().join(name);
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    fn load(paths: Vec<String>) -> (MergeResult, CsvLoadReport) {
+        let m = read_merge_csvs_with_report(paths).unwrap();
+        let r = build_load_report(&m);
+        (m, r)
+    }
+
+    fn micros(s: &str) -> i64 {
+        ts_to_micros(parse_timestamp(s).unwrap())
+    }
+
+    #[test]
+    fn two_overlapping_files_report_their_own_ranges_and_the_merged_period() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(
+            &dir,
+            "a.csv",
+            "timestamp,S1\n2024-01-01 00:00:00,1\n2024-01-01 00:05:00,2\n2024-01-01 00:10:00,3\n",
+        );
+        // Starts inside a's range, ends later; deliberately listed out of order.
+        let b = write_csv(
+            &dir,
+            "b.csv",
+            "timestamp,S2\n2024-01-01 00:15:00,9\n2024-01-01 00:05:00,7\n",
+        );
+        let (_, rep) = load(vec![a, b]);
+        assert_eq!(rep.files.len(), 2);
+        assert_eq!(rep.files[0].name, "a.csv");
+        assert_eq!(rep.files[0].rows, 3);
+        assert_eq!(rep.files[0].start.as_deref(), Some("2024-01-01 00:00:00"));
+        assert_eq!(rep.files[0].end.as_deref(), Some("2024-01-01 00:10:00"));
+        assert_eq!(rep.files[0].start_micros, Some(micros("2024-01-01 00:00:00")));
+        assert_eq!(rep.files[0].end_micros, Some(micros("2024-01-01 00:10:00")));
+        assert_eq!(rep.files[1].name, "b.csv");
+        assert_eq!(rep.files[1].rows, 2);
+        assert_eq!(rep.files[1].start.as_deref(), Some("2024-01-01 00:05:00"));
+        assert_eq!(rep.files[1].end.as_deref(), Some("2024-01-01 00:15:00"));
+        assert!(rep.files[0].size_bytes > 0 && rep.files[1].size_bytes > 0);
+        assert_eq!(rep.period_start.as_deref(), Some("2024-01-01 00:00:00"));
+        assert_eq!(rep.period_end.as_deref(), Some("2024-01-01 00:15:00"));
+        assert_eq!(rep.period_start_micros, Some(micros("2024-01-01 00:00:00")));
+        assert_eq!(rep.period_end_micros, Some(micros("2024-01-01 00:15:00")));
+        // Merged rows: 00:00, 00:05, 00:10, 00:15 -> 4 (00:05 shared).
+        assert_eq!(rep.total_rows, 4);
+    }
+
+    #[test]
+    fn single_file_reports_one_entry_whose_range_equals_the_period() {
+        let dir = tempfile::tempdir().unwrap();
+        // Unsorted on purpose: the range must be min/max, not first/last.
+        let a = write_csv(
+            &dir,
+            "only.csv",
+            "time,S1\n2024-03-01 12:00:00,1\n2024-03-01 10:00:00,2\n2024-03-01 11:00:00,3\n",
+        );
+        let (_, rep) = load(vec![a]);
+        assert_eq!(rep.files.len(), 1);
+        let f = &rep.files[0];
+        assert_eq!(f.name, "only.csv");
+        assert_eq!(f.rows, 3);
+        assert_eq!(f.start.as_deref(), Some("2024-03-01 10:00:00"));
+        assert_eq!(f.end.as_deref(), Some("2024-03-01 12:00:00"));
+        assert_eq!(f.start, rep.period_start);
+        assert_eq!(f.end, rep.period_end);
+        assert_eq!(f.start_micros, rep.period_start_micros);
+        assert_eq!(f.end_micros, rep.period_end_micros);
+    }
+
+    #[test]
+    fn file_name_is_reported_without_its_directory() {
+        assert_eq!(file_name_only("/tmp/x/b.csv"), "b.csv");
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_csv(&dir, "named.csv", "timestamp,A\n2024-01-01 00:00:00,1\n");
+        let (_, rep) = load(vec![p]);
+        assert_eq!(rep.files[0].name, "named.csv");
+    }
+
+    #[test]
+    fn buddhist_era_files_report_gregorian_years_per_file_and_overall() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(
+            &dir,
+            "be1.csv",
+            "timestamp,S1\n2567-02-28 00:00:00,1\n2567-02-29 00:00:00,2\n",
+        );
+        let b = write_csv(&dir, "be2.csv", "timestamp,S2\n2567-03-01 06:30:00,5\n");
+        let (_, rep) = load(vec![a, b]);
+        assert_eq!(rep.files[0].start.as_deref(), Some("2024-02-28 00:00:00"));
+        assert_eq!(rep.files[0].end.as_deref(), Some("2024-02-29 00:00:00"));
+        assert_eq!(rep.files[1].start.as_deref(), Some("2024-03-01 06:30:00"));
+        assert_eq!(rep.period_start.as_deref(), Some("2024-02-28 00:00:00"));
+        assert_eq!(rep.period_end.as_deref(), Some("2024-03-01 06:30:00"));
+
+        // Single-file BE path as well.
+        let c = write_csv(&dir, "be3.csv", "timestamp,S1\n2567-02-29 00:00:00,1\n");
+        let (_, rep1) = load(vec![c]);
+        assert_eq!(rep1.files[0].start.as_deref(), Some("2024-02-29 00:00:00"));
+    }
+
+    #[test]
+    fn missing_and_unparseable_timestamps_are_ignored_in_ranges() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(
+            &dir,
+            "a.csv",
+            "timestamp,S1\n,1\nnot a date,2\n2024-01-01 00:00:00,3\n2024-01-01 00:01:00,4\n",
+        );
+        let b = write_csv(&dir, "b.csv", "timestamp,S2\n,1\ngarbage,2\n");
+        let (_, rep) = load(vec![a, b]);
+        assert_eq!(rep.files[0].rows, 4, "rows READ, including undated ones");
+        assert_eq!(rep.files[0].start.as_deref(), Some("2024-01-01 00:00:00"));
+        assert_eq!(rep.files[0].end.as_deref(), Some("2024-01-01 00:01:00"));
+        // A file with no parseable timestamp has no range - None, not a fake.
+        assert_eq!(rep.files[1].rows, 2);
+        assert_eq!(rep.files[1].start, None);
+        assert_eq!(rep.files[1].end, None);
+        assert_eq!(rep.files[1].start_micros, None);
+        assert_eq!(rep.files[1].end_micros, None);
+
+        let only_bad = write_csv(&dir, "bad.csv", "timestamp,S1\n,1\nzzz,2\n");
+        let (_, rep_bad) = load(vec![only_bad]);
+        assert_eq!(rep_bad.period_start, None);
+        assert_eq!(rep_bad.period_end_micros, None);
+        assert_eq!(rep_bad.interval_seconds, None);
+        assert_eq!(rep_bad.files[0].start, None);
+    }
+
+    #[test]
+    fn interval_of_a_regular_five_minute_series_is_300() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut body = String::from("timestamp,S1\n");
+        for i in 0..20 {
+            body.push_str(&format!(
+                "2024-01-01 {:02}:{:02}:00,{}\n",
+                (i * 5) / 60,
+                (i * 5) % 60,
+                i
+            ));
+        }
+        let (_, rep) = load(vec![write_csv(&dir, "reg.csv", &body)]);
+        assert_eq!(rep.interval_seconds, Some(300.0));
+    }
+
+    #[test]
+    fn interval_of_an_irregular_series_is_the_median_gap() {
+        // gaps (s): 60, 60, 60, 600, 3600 -> median 60 (odd count).
+        let ts = [0i64, 60, 120, 180, 780, 4380].map(|s| s * 1_000_000);
+        assert_eq!(median_interval_seconds(&ts), Some(60.0));
+        // Even count of gaps: 10, 20, 30, 100 -> mean(20, 30) = 25.
+        let ts = [0i64, 10, 30, 60, 160].map(|s| s * 1_000_000);
+        assert_eq!(median_interval_seconds(&ts), Some(25.0));
+    }
+
+    #[test]
+    fn interval_ignores_missing_duplicates_and_unsorted_input() {
+        let s = 1_000_000i64;
+        // Unsorted + duplicate (gap 0) + TS_MISSING: sorted valid = 0,60,60,120
+        // -> positive gaps 60, 60 -> 60.
+        let ts = [120 * s, TS_MISSING, 0, 60 * s, 60 * s];
+        assert_eq!(median_interval_seconds(&ts), Some(60.0));
+        assert_eq!(median_interval_seconds(&[]), None);
+        assert_eq!(median_interval_seconds(&[5 * s]), None);
+        assert_eq!(median_interval_seconds(&[TS_MISSING, 5 * s, TS_MISSING]), None);
+        // All identical: no positive gap.
+        assert_eq!(median_interval_seconds(&[7 * s, 7 * s, 7 * s]), None);
+    }
+
+    #[test]
+    fn interval_stride_sampling_is_deterministic_and_keeps_the_median() {
+        // 4.5M valid timestamps -> 4.5M gaps > MAX_INTERVAL_SAMPLES, so the
+        // stride sampler (stride 3) is exercised. Gaps alternate 1 s / 1 s /
+        // 10 s, so the median stays 1 s whichever third is sampled.
+        let mut ts: Vec<i64> = Vec::with_capacity(4_500_000);
+        let mut t = 0i64;
+        for i in 0..4_500_000usize {
+            ts.push(t);
+            t += if i % 3 == 2 { 10_000_000 } else { 1_000_000 };
+        }
+        let a = median_interval_seconds(&ts);
+        assert_eq!(a, median_interval_seconds(&ts));
+        assert_eq!(a, Some(1.0));
+    }
+
+    #[test]
+    fn missing_percent_is_exact_on_a_small_fixture() {
+        let dir = tempfile::tempdir().unwrap();
+        // 4 rows x 3 sensors = 12 cells. Empty: S1 row 3, S2 rows 1 and 4;
+        // plus a non-numeric cell (-> NaN) in S3 row 2 => 4 empty of 12.
+        let body = "timestamp,S1,S2,S3\n\
+            2024-01-01 00:00:00,1,,1\n\
+            2024-01-01 00:01:00,2,2,abc\n\
+            2024-01-01 00:02:00,,3,3\n\
+            2024-01-01 00:03:00,4,,4\n";
+        let (_, rep) = load(vec![write_csv(&dir, "m.csv", body)]);
+        assert_eq!(rep.total_rows, 4);
+        let pct = rep.missing_percent.unwrap();
+        assert!((pct - 100.0 * 4.0 / 12.0).abs() < 1e-9, "got {pct}");
+    }
+
+    #[test]
+    fn missing_percent_bounds_and_none_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let full = write_csv(
+            &dir,
+            "full.csv",
+            "timestamp,A\n2024-01-01 00:00:00,1\n2024-01-01 00:01:00,2\n",
+        );
+        assert_eq!(load(vec![full]).1.missing_percent, Some(0.0));
+        let empty = write_csv(
+            &dir,
+            "empty.csv",
+            "timestamp,A\n2024-01-01 00:00:00,\n2024-01-01 00:01:00,\n",
+        );
+        assert_eq!(load(vec![empty]).1.missing_percent, Some(100.0));
+        // Timestamp-only file: no sensor column -> None, not 0 or NaN.
+        let ts_only = write_csv(&dir, "tsonly.csv", "timestamp\n2024-01-01 00:00:00\n");
+        assert_eq!(load(vec![ts_only]).1.missing_percent, None);
+        // Header only: no rows -> None.
+        let none = write_csv(&dir, "hdr.csv", "timestamp,A\n");
+        assert_eq!(load(vec![none]).1.missing_percent, None);
+    }
+
+    #[test]
+    fn multi_file_missing_percent_counts_merged_empty_cells() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(
+            &dir,
+            "a.csv",
+            "timestamp,S1\n2024-01-01 00:00:00,1\n2024-01-01 00:01:00,2\n",
+        );
+        let b = write_csv(&dir, "b.csv", "timestamp,S2\n2024-01-01 00:00:00,5\n");
+        // Merged: 2 rows x 2 sensors = 4 cells, S2 empty at 00:01 -> 25%.
+        let (_, rep) = load(vec![a, b]);
+        assert_eq!(rep.missing_percent, Some(25.0));
+    }
+
+    #[test]
+    fn load_behaviour_is_unchanged_by_the_report_additions() {
+        // Duplicate timestamp: later non-null wins, undated row dropped.
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(
+            &dir,
+            "a.csv",
+            "timestamp,S1\n2024-01-01 00:00:00,1\n2024-01-01 00:00:00,\n,9\n2024-01-01 00:01:00,3\n",
+        );
+        let (m, rep) = load(vec![a]);
+        assert_eq!(m.data.n_rows(), 2);
+        assert_eq!(rep.total_rows, 2);
+        assert_eq!(m.data.value(1, 0), Some(1.0));
+        assert_eq!(rep.files[0].rows, 4);
+    }
+
+    #[test]
+    fn old_report_json_without_the_new_fields_still_deserialises() {
+        let rep: CsvLoadReport = serde_json::from_str(
+            r#"{"headers":["timestamp"],"total_rows":0,"columns":[],"warnings":[],"generation":3}"#,
+        )
+        .unwrap();
+        assert!(rep.files.is_empty());
+        assert_eq!(rep.period_start, None);
+        assert_eq!(rep.period_end_micros, None);
+        assert_eq!(rep.interval_seconds, None);
+        assert_eq!(rep.missing_percent, None);
+        assert_eq!(rep.generation, 3);
+        // A file entry saved before start/end existed also loads.
+        let f: CsvFileInfo =
+            serde_json::from_str(r#"{"name":"a.csv","size_bytes":10,"rows":2}"#).unwrap();
+        assert_eq!(f.start, None);
+        assert_eq!(f.end_micros, None);
+    }
+
+    #[test]
+    fn new_report_fields_serialise_with_snake_case_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_csv(
+            &dir,
+            "j.csv",
+            "timestamp,S1\n2024-01-01 00:00:00,1\n2024-01-01 00:05:00,2\n",
+        );
+        let (_, rep) = load(vec![p]);
+        let v = serde_json::to_value(&rep).unwrap();
+        assert_eq!(v["files"][0]["name"], "j.csv");
+        assert!(v["files"][0]["size_bytes"].as_u64().unwrap() > 0);
+        assert_eq!(v["files"][0]["rows"], 2);
+        assert_eq!(v["files"][0]["start"], "2024-01-01 00:00:00");
+        assert_eq!(v["files"][0]["end"], "2024-01-01 00:05:00");
+        assert_eq!(v["files"][0]["start_micros"], micros("2024-01-01 00:00:00"));
+        assert_eq!(v["files"][0]["end_micros"], micros("2024-01-01 00:05:00"));
+        assert_eq!(v["period_start"], "2024-01-01 00:00:00");
+        assert_eq!(v["period_end"], "2024-01-01 00:05:00");
+        assert_eq!(v["period_start_micros"], micros("2024-01-01 00:00:00"));
+        assert_eq!(v["period_end_micros"], micros("2024-01-01 00:05:00"));
+        assert_eq!(v["interval_seconds"], 300.0);
+        assert_eq!(v["missing_percent"], 0.0);
+    }
+
+    // ── csv-load-progress payload / sequence ────────────────────────────────
+
+    #[test]
+    fn progress_payload_json_shape() {
+        let p = CsvLoadProgress::reading(1, 3, "b.csv", false);
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            serde_json::json!({
+                "file_index": 1, "file_count": 3, "file_name": "b.csv",
+                "stage": "reading", "files_done": 1
+            })
+        );
+        let fin = CsvLoadProgress::reading(1, 3, "b.csv", true);
+        assert_eq!(fin.files_done, 2);
+        assert_eq!(
+            serde_json::to_value(CsvLoadProgress::after_reading(3, false)).unwrap(),
+            serde_json::json!({
+                "file_index": 3, "file_count": 3, "file_name": "",
+                "stage": "merging", "files_done": 3
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(CsvLoadProgress::after_reading(3, true)).unwrap()["stage"],
+            "done"
+        );
+    }
+
+    #[test]
+    fn load_emits_reading_per_file_then_merging() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(&dir, "a.csv", "timestamp,S1\n2024-01-01 00:00:00,1\n");
+        let b = write_csv(&dir, "b.csv", "timestamp,S2\n2024-01-01 00:01:00,2\n");
+        let events: Mutex<Vec<CsvLoadProgress>> = Mutex::new(Vec::new());
+        read_merge_csvs_with_progress(vec![a, b], &|p| events.lock().unwrap().push(p)).unwrap();
+        let ev = events.into_inner().unwrap();
+        let seq: Vec<(CsvLoadStage, usize, usize, &str)> = ev
+            .iter()
+            .map(|e| (e.stage, e.file_index, e.files_done, e.file_name.as_str()))
+            .collect();
+        assert_eq!(
+            seq,
+            vec![
+                (CsvLoadStage::Reading, 0, 0, "a.csv"),
+                (CsvLoadStage::Reading, 0, 1, "a.csv"),
+                (CsvLoadStage::Reading, 1, 1, "b.csv"),
+                (CsvLoadStage::Reading, 1, 2, "b.csv"),
+                (CsvLoadStage::Merging, 2, 2, ""),
+            ]
+        );
+        assert!(ev.iter().all(|e| e.file_count == 2));
+    }
+
+    #[test]
+    fn single_file_load_still_emits_reading_and_merging() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_csv(&dir, "a.csv", "timestamp,S1\n2024-01-01 00:00:00,1\n");
+        let events: Mutex<Vec<CsvLoadStage>> = Mutex::new(Vec::new());
+        read_merge_csvs_with_progress(vec![a], &|p| events.lock().unwrap().push(p.stage)).unwrap();
+        assert_eq!(
+            events.into_inner().unwrap(),
+            vec![CsvLoadStage::Reading, CsvLoadStage::Reading, CsvLoadStage::Merging]
+        );
+    }
+
+    #[test]
+    fn a_failing_file_stops_the_load_without_a_merging_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let ok = write_csv(&dir, "ok.csv", "timestamp,S1\n2024-01-01 00:00:00,1\n");
+        let missing = dir.path().join("nope.csv").to_string_lossy().into_owned();
+        let events: Mutex<Vec<CsvLoadStage>> = Mutex::new(Vec::new());
+        let r = read_merge_csvs_with_progress(vec![ok, missing], &|p| {
+            events.lock().unwrap().push(p.stage)
+        });
+        assert!(r.is_err());
+        assert!(!events.into_inner().unwrap().contains(&CsvLoadStage::Merging));
     }
 }

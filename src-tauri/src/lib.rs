@@ -17,7 +17,7 @@ use csv_processor::{
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
-use tauri::State;
+use tauri::{Emitter, State};
 
 // ---------------------------------------------------------------------------
 // Security / path-validation helpers
@@ -449,17 +449,52 @@ static SESSION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 
 struct AppState(RwLock<Option<SessionData>>);
 
-#[tauri::command]
-fn load_csv(paths: Vec<String>, state: State<AppState>) -> Result<CsvLoadReport, String> {
+/// Name of the global event `load_csv` emits while it runs (payload:
+/// [`csv_processor::CsvLoadProgress`]).
+const CSV_LOAD_PROGRESS_EVENT: &str = "csv-load-progress";
+
+/// Serialises `load_csv` calls. While the command was a sync one the main thread
+/// ran them strictly one after another; making it `async` would otherwise let
+/// an older load finish AFTER a newer one and replace its dataset.
+static LOAD_CSV_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+
+/// Parses + merges the CSVs and installs the dataset as the session.
+///
+/// `async` + `spawn_blocking` (2026-10-04): a plain sync command runs on the
+/// main thread, which would also hold back the `csv-load-progress` events
+/// until the load was over. The parse itself is unchanged. Progress events are
+/// a global broadcast (like every Tauri `emit`) and best-effort: a failed emit
+/// is ignored and can never fail the load.
+#[tauri::command(rename_all = "snake_case")]
+async fn load_csv(
+    paths: Vec<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CsvLoadReport, String> {
     // Reject any path with a `..` component, NUL byte, or empty string.
     // File-existence is delegated to `File::open` so the error surface
     // stays familiar.
     for p in &paths {
         validate_read_path(p).map_err(|e| format!("invalid path '{}': {}", p, e))?;
     }
-    let merge_result = csv_processor::read_merge_csvs_with_report(paths.clone())?;
-    let mut report = csv_processor::build_load_report(&merge_result);
-    report.generation = install_session(&state, merge_result.data, paths)?;
+    let _serial = LOAD_CSV_LOCK.lock().await;
+    let file_count = paths.len();
+    let read_paths = paths.clone();
+    let progress_app = app.clone();
+    let (data, mut report) = tauri::async_runtime::spawn_blocking(move || {
+        let merge_result = csv_processor::read_merge_csvs_with_progress(read_paths, &|p| {
+            let _ = progress_app.emit(CSV_LOAD_PROGRESS_EVENT, p);
+        })?;
+        let report = csv_processor::build_load_report(&merge_result);
+        Ok::<_, String>((merge_result.data, report))
+    })
+    .await
+    .map_err(|e| format!("CSV load task failed: {e}"))??;
+    report.generation = install_session(&state, data, paths)?;
+    let _ = app.emit(
+        CSV_LOAD_PROGRESS_EVENT,
+        csv_processor::CsvLoadProgress::after_reading(file_count, true),
+    );
     Ok(report)
 }
 
@@ -4115,6 +4150,7 @@ mod special_sensor_tests {
             columns: vec![],
             warnings: vec![],
             generation: 42,
+            ..Default::default()
         };
         let v = serde_json::to_value(&report).unwrap();
         assert_eq!(v["generation"], 42);
