@@ -16,17 +16,16 @@ the root on purpose — see below.
   `planning/` specifically because `BACKLOG.md` links to it by relative path
   and that file is frozen — moving this would have silently broken that link.
 
-## [`planning/`](planning/) — requirements & task breakdowns for the multi-agent pipeline
+## [`archive/planning/`](archive/planning/) — history only (archived 2026-10-05)
 
-- `requirements.md`, `requirements-failure-group.md`,
-  `requirements-rust-port-hybrid.md`
-- `task.md` — phased task breakdown, written by `pm-agent`
-- `contracts/` — FE↔BE API contracts (`interface.md`,
-  `feature2-calculation-engine.md`)
+- `requirements*.md`, `task.md`, `contracts/` — requirements, phased task
+  breakdowns and FE↔BE contracts from Features 1–4 (the early `pm-agent` era).
+- **Not updated any more.** Work now comes through the chat prompt, and specs
+  and plans are recorded as entries in `PROJECT_HANDOVER.md`.
 
-Read by `.claude/agents/*.md` and `CLAUDE.md`'s Agent Roles section — this is
-the multi-agent pipeline's working area, only used for large contract-clean
-features (see `multi_agent_orchestration_design.md`).
+## [`design/`](design/) — design system
+
+- `DESIGN_SYSTEM.md`, `APP_MAP.md` — owned by `ui-design-lead`
 
 ## [`reference/`](reference/) — stable technical reference
 
