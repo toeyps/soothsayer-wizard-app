@@ -936,7 +936,8 @@ fn predictions_over_the_cache_budget_are_reported_not_stored_and_not_an_error() 
     assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.peek("m1::fp").is_some());
     // The caller turns that into the degraded answer, with its own wording.
     let p = crate::health_preview_with_outcome(&state, &req, Some(TestScoringFailure::OverBudget)).unwrap();
-    let w = p.validation.iter().find(|i| i.code == "test_scoring_failed").unwrap();
+    let w = p.validation.iter().find(|i| i.code == "test_scoring_too_large").unwrap();
+    assert!(p.validation.iter().all(|i| i.code != "test_scoring_failed"), "never both codes");
     assert!(w.message.contains("too many rows to score in memory"), "{}", w.message);
     assert!(!w.message.contains("did not answer"));
     // A fit that is really gone is still NOT_FITTED.

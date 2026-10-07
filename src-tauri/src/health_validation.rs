@@ -331,6 +331,12 @@ pub const TEST_SCORING_FAILED: &str = "test_scoring_failed";
 /// install), so the frontend shows no "Try again" for it.
 pub const TEST_SCORING_OUTDATED: &str = "test_scoring_outdated";
 
+/// Warning code when the test periods have too many rows for the model cache's
+/// memory budget (2026-10-07, code review): retrying the same periods fails the
+/// same way, so it gets its own code and the frontend offers no "Try again" --
+/// the user has to shorten or remove a test period.
+pub const TEST_SCORING_TOO_LARGE: &str = "test_scoring_too_large";
+
 /// Why the test periods of a Relationship preview could not be scored. Picks
 /// the warning's code and user-facing wording; also kept with the cache's
 /// "last attempt failed" marker, so a remembered failure is reported with the
@@ -355,7 +361,7 @@ pub fn test_scoring_issue(kind: TestScoringFailure) -> Issue {
              date - reinstall or update the app. The training results above are not affected.",
         ),
         TestScoringFailure::OverBudget => (
-            TEST_SCORING_FAILED,
+            TEST_SCORING_TOO_LARGE,
             "These test periods have too many rows to score in memory - shorten them or remove one. \
              The training results above are not affected.",
         ),
@@ -763,7 +769,7 @@ mod tests {
         assert_eq!(out.code, TEST_SCORING_OUTDATED, "own code: a retry cannot help");
         assert!(out.message.contains("out of date") && out.message.contains("reinstall"));
         let big = test_scoring_issue(TestScoringFailure::OverBudget);
-        assert_eq!(big.code, TEST_SCORING_FAILED);
+        assert_eq!(big.code, TEST_SCORING_TOO_LARGE, "own code: retrying the same rows cannot help");
         assert!(big.message.contains("too many rows") && big.message.contains("shorten them or remove one"));
         assert!(!big.message.contains("did not answer"));
         let eng = test_scoring_issue(TestScoringFailure::EngineError);

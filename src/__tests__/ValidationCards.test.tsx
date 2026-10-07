@@ -279,10 +279,14 @@ describe('review fixes 2026-10-07: T-numbers of the ORIGINAL list, test scoring 
         expect(screen.queryByTestId('test-result-1')).toBeNull();
     });
 
-    it('over budget: Rust\'s own reason (too many rows) is shown under the headline', () => {
-        const overBudget = { ...failedIssue, message: 'These test periods have too many rows to score in memory - shorten them or remove one.' };
-        render(<TestResultsCard data={{ ...unscored(), validation: [overBudget] }} scoreReady />);
-        expect(screen.getByTestId('test-scoring-failed').textContent).toContain('too many rows to score in memory');
+    it('test_scoring_too_large: Rust\'s reason (too many rows) under a headline WITHOUT "try again", and no Try again button (retrying the same rows fails the same way)', () => {
+        const tooLarge = { code: 'test_scoring_too_large', severity: 'warning' as const, field: 'test_periods', message: 'These test periods have too many rows to score in memory - shorten them or remove one.' };
+        render(<TestResultsCard data={{ ...unscored(), validation: [tooLarge] }} scoreReady onRetry={() => {}} />);
+        const n = screen.getByTestId('test-scoring-failed');
+        expect(n.textContent).toContain('too many rows to score in memory');
+        expect(n.textContent).toContain("Couldn't score the test periods");
+        expect(n.textContent).not.toContain('— try again');
+        expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
     });
 
     it('SlowScoringNotice: the "up to ~15 s" hint only when asked for', () => {

@@ -9,7 +9,7 @@ import {
 import {
     RECOMMENDED_TRAIN_DAYS, isBelowRecommendedTrainDays, trainDaysWarning,
     testsChangedState, testsChangedBannerText, testsChangedNotice, testsChangedNoticeText,
-    testScoringFailure, TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, isTestScoringRetryable,
+    testScoringFailure, TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, TEST_SCORING_TOO_LARGE_CODE, isTestScoringRetryable,
 } from '../utils/trainTestValidation';
 import { mk } from './helpers/failureModelFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
@@ -229,5 +229,8 @@ describe('test periods could not be scored (warning test_scoring_failed, review 
         expect(testScoringFailure({ validation: [outdated] })).toBe(outdated);
         expect(isTestScoringRetryable(outdated)).toBe(false);
         expect(isTestScoringRetryable({ code: TEST_SCORING_FAILED_CODE })).toBe(true);
+        const tooLarge = { code: TEST_SCORING_TOO_LARGE_CODE, severity: 'warning' as const, field: 'test_periods', message: 'x' };
+        expect(testScoringFailure({ validation: [tooLarge] })).toBe(tooLarge);
+        expect(isTestScoringRetryable(tooLarge)).toBe(false);
     });
 });

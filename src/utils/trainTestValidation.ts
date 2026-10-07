@@ -107,15 +107,21 @@ export const TEST_SCORING_FAILED_CODE = 'test_scoring_failed';
  *  app does — so this one gets no "Try again". */
 export const TEST_SCORING_OUTDATED_CODE = 'test_scoring_outdated';
 
-/** Both warning codes that mean "the test periods were not scored". */
-export const TEST_SCORING_ISSUE_CODES: readonly string[] = [TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE];
+/** Same, but the test periods have too many rows to score in memory (2026-10-07,
+ *  code review): retrying the same periods fails the same way, so no "Try
+ *  again" either — the user has to shorten or remove one (Rust's message says so). */
+export const TEST_SCORING_TOO_LARGE_CODE = 'test_scoring_too_large';
+
+/** Every warning code that means "the test periods were not scored". */
+export const TEST_SCORING_ISSUE_CODES: readonly string[] = [TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE, TEST_SCORING_TOO_LARGE_CODE];
 
 /** Headline the test tiles / "Train vs test" card show for `test_scoring_failed`
  *  (amber, information only — never a block). Rust's own `message` is shown under
  *  it (it says why, e.g. too many rows to score in memory). */
 export const TEST_SCORING_FAILED_TEXT = "Couldn't score the test periods — try again";
 
-/** Headline for `test_scoring_outdated` (no retry offered). */
+/** Headline when no retry is offered (`test_scoring_outdated`,
+ *  `test_scoring_too_large`); Rust's message underneath says what to do. */
 export const TEST_SCORING_OUTDATED_TEXT = "Couldn't score the test periods";
 
 /** The test-scoring warning of a preview (`test_scoring_failed` or
@@ -124,7 +130,8 @@ export function testScoringFailure(data: Pick<HealthPreview, 'validation'> | nul
     return data?.validation?.find(i => TEST_SCORING_ISSUE_CODES.includes(i.code)) ?? null;
 }
 
-/** Whether "Try again" can help for this test-scoring warning. */
+/** Whether "Try again" can help for this test-scoring warning — only for an
+ *  engine that did not answer; never for an outdated engine or too many rows. */
 export function isTestScoringRetryable(issue: Pick<HealthIssue, 'code'>): boolean {
     return issue.code === TEST_SCORING_FAILED_CODE;
 }

@@ -5339,12 +5339,15 @@ fn sample_dataset(
 ///
 /// If that prediction step fails (sidecar crash, timeout, outdated sidecar, cache
 /// budget), the preview does NOT fail: it returns the normal train preview with
-/// `test_validation` present but every test unscored and one `warning` issue
-/// `test_scoring_failed` in `validation`. (Export still refuses - files never
-/// claim a validation they could not compute.) The raw reason goes to the
-/// permanent error log. A failure is remembered (see [`score_test_rows`]): later
-/// previews answer with the same warning at once instead of re-running the
-/// sidecar, until a re-train or a request with `retry_test_scoring: true`.
+/// `test_validation` present but every test unscored and one `warning` issue in
+/// `validation`: `test_scoring_outdated`, `test_scoring_too_large` or
+/// `test_scoring_failed` (see [`health_validation::test_scoring_issue`]). (Export
+/// still refuses - files never claim a validation they could not compute.) The
+/// raw reason goes to the permanent error log (truncated). A failure is
+/// remembered per set of missing test rows (see [`score_test_rows`]): later
+/// previews with the SAME rows answer with the same warning at once instead of
+/// re-running the sidecar, until a re-train, a change of the test rows, or a
+/// request with `retry_test_scoring: true`.
 #[tauri::command]
 async fn compute_health_preview(
     request: health_preview::HealthPreviewRequest,
@@ -5568,7 +5571,8 @@ fn clear_rel_extra_failed(state: &AppState, request: &health_preview::HealthPrev
 /// [`health_preview_in`] plus the degraded answer for a failed test-row
 /// prediction step: `scoring_error` = what kind of failure it was (the raw
 /// reason is never shown - the user gets the warning of that kind:
-/// `test_scoring_outdated` for an outdated engine, `test_scoring_failed`
+/// `test_scoring_outdated` for an outdated engine, `test_scoring_too_large` when the
+/// predictions do not fit the cache's memory budget, `test_scoring_failed`
 /// otherwise, see [`health_validation::test_scoring_issue`]). The train part of
 /// the answer is untouched.
 fn health_preview_with_outcome(

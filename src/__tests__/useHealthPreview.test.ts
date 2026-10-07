@@ -336,6 +336,38 @@ describe('useHealthPreview - lastData and retry (QA 2026-10-04)', () => {
         expect(mockInvoke.mock.calls[0][1].request).not.toHaveProperty('retry_test_scoring');
     });
 
+    const relModel = (over: Partial<FailureModel> = {}) => mk({ id: 'r1', kind: 'relationship', targetSensor: 'T', predictorSensors: ['P1'], relStiffness: 100_000, ...over });
+    const relSp = (a: number) => ({ kind: 'relationship' as const, residualAt80Lower: -a, residualAt80Upper: a, residualAt0Lower: -2 * a, residualAt0Upper: 2 * a });
+
+    it('Try again followed by a set-point edit on the SAME model (same fit) within the debounce still sends retry_test_scoring, exactly once', async () => {
+        mockInvoke.mockResolvedValue({ ...preview('a'), kind: 'relationship' });
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts({ model: relModel(), setPoints: relSp(1) }) });
+        await settle();
+        mockInvoke.mockClear();
+        act(() => { result.current.retryTestScoring!(); });
+        rerender(opts({ model: relModel(), setPoints: relSp(2) })); // before the debounce fires
+        await settle();
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(mockInvoke.mock.calls[0][1].request.retry_test_scoring).toBe(true);
+        rerender(opts({ model: relModel(), setPoints: relSp(3) }));
+        await settle();
+        expect(mockInvoke.mock.calls[1][1].request).not.toHaveProperty('retry_test_scoring');
+    });
+
+    it('Try again on the same model whose fit (cache_key) changes before the debounce fires is NOT sent with the new fit\'s request', async () => {
+        mockInvoke.mockResolvedValue({ ...preview('a'), kind: 'relationship' });
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts({ model: relModel(), setPoints: relSp(1) }) });
+        await settle();
+        mockInvoke.mockClear();
+        act(() => { result.current.retryTestScoring!(); });
+        rerender(opts({ model: relModel({ relStiffness: 1_000 }), setPoints: relSp(1) })); // different fingerprint -> different cache_key
+        await settle();
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        const req = mockInvoke.mock.calls[0][1].request;
+        expect(req.cache_key).not.toBe(`r1::${computeTrainFingerprint(relModel(), fg)}`);
+        expect(req).not.toHaveProperty('retry_test_scoring');
+    });
+
     it('retry is stable between renders (safe as a prop)', async () => {
         mockInvoke.mockResolvedValue(preview('a'));
         const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });
