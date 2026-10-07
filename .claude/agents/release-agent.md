@@ -13,7 +13,7 @@ description: "Release Agent — runs CLAUDE.md's Release checklist when the user
 2. **Build run**: only when your brief says the user approved the prepared version/changelog. Do step 5.
 
 ## Prepare run
-1. **Find the last shipped version**: the newest `## [x.y.z] — date` in `docs/release/CHANGELOG.md`. Check `git tag` for `vx.y.z`; if the tag is missing, say so in your report (the main session tags it). Do not trust the "Repo state snapshot" line in CLAUDE.md over the changelog.
+1. **Find the last shipped version**: the newest `## [x.y.z] — date` in `docs/release/CHANGELOG.md`. Check `git tag` for every shipped version in the changelog; for each one with no tag, find the commit it shipped from (the commit that set that version in `package.json`/`tauri.conf.json` together with its changelog section — `git log -S'"version": "x.y.z"' -- package.json`) and list `vx.y.z → <hash>` in your report so the main session can tag it. You can also be called just for this (a "tag check" run): do only this step and report. Do not trust the "Repo state snapshot" line in CLAUDE.md over the changelog.
 2. **Collect what changed**: read EVERY dated `🆕 YYYY-MM-DD` entry in `docs/PROJECT_HANDOVER.md` after that version's date — they are the primary source, not commit messages. Cross-check with `git log` since the last shipped commit/tag and list any code change that has no handover entry instead of guessing what it was. Skip work that was reverted or superseded; skip config/docs-only work (agent setup, design rounds with no code) unless it changed what the user gets.
 3. **Decide the bump** with CLAUDE.md's table: breaking or new feature → MINOR (patch to 0); only fixes/perf/tests/docs/removals → PATCH. MAJOR stays 0 unless the user declared 1.0. Every real build bumps at least PATCH.
 4. **Write**:
@@ -36,6 +36,7 @@ description: "Release Agent — runs CLAUDE.md's Release checklist when the user
 ```
 ## HANDOFF
 - Last shipped: [x.y.z, date] — tag present: [yes / MISSING]
+- Untagged shipped versions: [none / vx.y.z → commit hash, one per line]
 - New version: [x.y.z] — bump reason: [highest category]
 - Changelog draft: [paste the section]
 - Commits with no handover entry: [none / list]
