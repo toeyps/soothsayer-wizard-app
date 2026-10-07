@@ -14,7 +14,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
  *   -> Sensor tab FG sheet: new group (creates an Individual model), assign the
  *      kind under test, un-assign the extra Individual model -> Undo toast
  *   -> "Build Model ->" spawns the REAL Build Model window (own React root)
- *   -> Running condition: Step-1 card -> modal -> condition -> Apply -> strip
+ *   -> Running condition: Step-1 card -> modal -> condition + train period + a
+ *      Known-problem TEST period with its event time -> Apply -> strip / Test chip
  *   -> settings -> Train -> Model fit -> Health score -> set points -> Mark complete
  *   -> the special sensor is now LOCKED in Manage (edit + delete)
  *   -> FG sheet un-assign of the COMPLETE model -> Undo restores it whole
@@ -370,6 +371,25 @@ async function setRunningCondition() {
     await pickInModal('sensor', ['TAG2'], true);
     fireEvent.click(cond.getByRole('button', { name: 'Greater than' }));
     fireEvent.change(cond.getByLabelText('Value'), { target: { value: '10' } });
+    // Train/Test validation (2026-10-07): a train period is required to Train.
+    if (dlg.queryByTestId('periods-empty')) {
+        await act(async () => { fireEvent.click(dlg.getByTestId('period-add')); });
+    }
+    // ...and a TEST period before Mark complete: a Known problem with its event time,
+    // typed through the real Test periods editor (dates commit on blur).
+    if (dlg.queryByTestId('tests-empty')) {
+        await act(async () => { fireEvent.click(dlg.getByTestId('test-add')); });
+        const typeDate = (label: string, value: string) => {
+            const el = dlg.getByLabelText(label);
+            fireEvent.change(el, { target: { value } });
+            fireEvent.blur(el);
+        };
+        typeDate('Test period 1 start', '2026-01-01T00:00');
+        typeDate('Test period 1 end', '2026-01-03T00:00');
+        await act(async () => { fireEvent.click(dlg.getByTestId('test-label-problem-1')); });
+        typeDate('Test period 1 event time', '2026-01-02T12:00');
+        expect(dlg.queryByTestId('test-event-invalid-1')).toBeNull();
+    }
     await settle(30);
     await act(async () => { fireEvent.click(dlg.getByTestId('rc-apply')); });
     await settle(400);
@@ -484,7 +504,11 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         await setRunningCondition();
         const fg = disk(A).failureGroupState;
         expect(fg.runningConditionFilters).toEqual([expect.objectContaining({ sensor: 'TAG2', operation: 'greater_than', value1: '10' })]);
+        expect(fg.runningConditionTestPeriods).toEqual([expect.objectContaining({
+            start: '2026-01-01T00:00', end: '2026-01-03T00:00', label: 'problem', eventTime: '2026-01-02T12:00',
+        })]);
         await waitFor(() => expect(bmw().getByTestId('rc-card-cond').textContent).toMatch(/TAG2/));
+        expect(bmw().getByTestId('rc-card-test-chip').textContent).toMatch(/^T1 Known problem/);
 
         // 5) settings -> Train -> Model fit -> Health score -> set points -> Mark complete.
         selectSensor(plan.sheetTag.toLowerCase());
@@ -501,6 +525,11 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy(), { timeout: 4000 });
         expect(env.files.has(plan.outputFile(A)), `export ${plan.outputFile(A)}`).toBe(true);
         expect(disk(A).failureGroupState.models.find((m: any) => m.id === mid).status).toBe(true);
+        // the export carried the test period (the files' validation block), and the footer says "Tested · 1"
+        expect(be.cmds('export_model_files').slice(-1)[0].args.request.test_periods).toEqual([
+            { start: '2026-01-01T00:00', end: '2026-01-03T00:00', label: 'problem', event_time: '2026-01-02T12:00' },
+        ]);
+        expect(bmw().getByTestId('tested-pill').textContent).toBe('Tested · 1');
 
         // 6) The special sensor is now locked in Manage (a model uses it).
         if (!roots.has('add-sensor')) await openAddSensorWindow();

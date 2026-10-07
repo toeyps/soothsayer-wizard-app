@@ -17,12 +17,21 @@ vi.mock('../workspaceManager', () => ({
     },
 }));
 
-import { commitHealthVerdict, commitSetPoints, persistModelComplete, SETTINGS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
+import { commitHealthVerdict, commitSetPoints, persistModelComplete, SETTINGS_CHANGED_DURING_EXPORT_REASON, TESTS_CHANGED_DURING_EXPORT_REASON } from '../utils/healthPersist';
+import { NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
+import { testPeriodsKey } from '../utils/timePeriods';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import type { TestPeriod } from '../types';
 
+const TEST: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' };
+// Train/Test validation (2026-10-07): a train period is required to train and
+// a test period to Mark complete.
 const baseFg = (models: FailureModel[]): FailureGroupStateSlice => ({
     groups: [], models,
-    runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [], runningConditionNoneConfirmed: true,
+    runningConditionFilters: [], runningConditionCombine: 'and',
+    runningConditionTimePeriods: [{ id: 'tr', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }],
+    runningConditionTestPeriods: [TEST],
+    runningConditionNoneConfirmed: true,
     rcLegacyNotice: null,
 });
 const setDisk = (models: FailureModel[]) => {
@@ -237,5 +246,52 @@ describe('the persisted verdict (healthVerdict)', () => {
         expect(await commitHealthVerdict('ws1', 'i1', 'valid')).toBeNull();
         expect(disk.failureGroupState!.models[0]).not.toHaveProperty('healthVerdict');
         expect(mockEmit).not.toHaveBeenCalled();
+    });
+});
+
+describe('persistModelComplete - Train/Test validation (2026-10-07)', () => {
+    it('refuses without a test period (re-checked against disk), nothing written or broadcast', async () => {
+        setDisk([trained(ind())]);
+        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: [] } };
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null);
+        expect(reason).toBe(NO_TEST_PERIOD_REASON);
+        expect(disk.failureGroupState!.models[0].status).toBe(false);
+        expect(mockEmit).not.toHaveBeenCalled();
+    });
+
+    it('Mark complete clears testsChangedAt in the same write', async () => {
+        setDisk([{ ...trained(ind()), testsChangedAt: '2026-10-07T00:00:00Z' }]);
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null);
+        expect(reason).toBeNull();
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
+        expect(disk.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+    });
+
+    it('test periods edited DURING the export keep the model Incomplete (the files describe the old tests)', async () => {
+        const m = trained(ind());
+        setDisk([m]);
+        const race = { fingerprint: computeTrainFingerprint(m, baseFg([])), setPointsBefore: undefined, testsKey: testPeriodsKey([TEST]) };
+        disk = { ...disk, failureGroupState: { ...disk.failureGroupState!, runningConditionTestPeriods: [{ ...TEST, label: 'problem' }] } };
+        const { reason } = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, race);
+        expect(reason).toBe(TESTS_CHANGED_DURING_EXPORT_REASON);
+        expect(disk.failureGroupState!.models[0].status).toBe(false);
+        // Unchanged tests pass.
+        const ok = await persistModelComplete('ws1', 'i1', sp, null, 'build-model', undefined, { ...race, testsKey: testPeriodsKey([{ ...TEST, label: 'problem' }]) });
+        expect(ok.reason).toBeNull();
+    });
+
+    it('after completing, a tests-only change sets it Incomplete + testsChangedAt but keeps it trained', async () => {
+        setDisk([trained(ind())]);
+        await persistModelComplete('ws1', 'i1', sp, null);
+        expect(disk.failureGroupState!.models[0].status).toBe(true);
+        const { updateWorkspaceData } = await import('../workspaceManager');
+        await updateWorkspaceData('ws1', prev => ({
+            ...prev,
+            failureGroupState: { ...prev.failureGroupState!, runningConditionTestPeriods: [] },
+        }));
+        const after = disk.failureGroupState!.models[0];
+        expect(after.status).toBe(false);
+        expect(typeof after.testsChangedAt).toBe('string');
+        expect(after.trainedFingerprint).toBe(computeTrainFingerprint(after, disk.failureGroupState!));
     });
 });

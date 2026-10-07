@@ -247,3 +247,45 @@ describe('buildModelFilesRequest', () => {
         expect(buildModelFilesRequest({ model: mk({ id: 'a', kind: 'relationship', targetSensor: 'T' }), fg: fg(), headers: HEADERS, workspaceId: 'w' })).toBeNull();
     });
 });
+
+describe('test_periods (Train/Test validation, 2026-10-07)', () => {
+    const wsTests = [
+        { id: 'w1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' as const },
+        { id: 'w2', start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem' as const, eventTime: '2026-03-15T08:00', fromHighlight: 'Bearing' },
+    ];
+    const own = [{ id: 'c1', start: '2026-05-01T00:00', end: '2026-05-31T23:59', label: 'problem' as const }];
+    const ind = mk({ id: 'i', kind: 'individual', targetSensor: 'T' });
+    const rel = mk({ id: 'r', kind: 'relationship', targetSensor: 'T', predictorSensors: ['P1'], relStiffness: 100_000 });
+
+    it('Workspace mode: the preview AND the export carry the workspace list (snake_case, no ids / highlight names)', () => {
+        const f = fg({ runningConditionTestPeriods: wsTests });
+        const wire = [
+            { start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal', event_time: null },
+            { start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem', event_time: '2026-03-15T08:00' },
+        ];
+        expect(buildHealthPreviewRequest({ model: ind, fg: f, headers: HEADERS })!.test_periods).toEqual(wire);
+        expect(buildModelFilesRequest({ model: ind, fg: f, headers: HEADERS, workspaceId: 'ws' })!.test_periods).toEqual(wire);
+    });
+
+    it('Custom mode: the model own customTestPeriods, never the workspace list', () => {
+        const custom = { ...ind, runningConditionMode: 'custom' as const, customTestPeriods: own };
+        const f = fg({ runningConditionTestPeriods: wsTests });
+        const wire = [{ start: '2026-05-01T00:00', end: '2026-05-31T23:59', label: 'problem', event_time: null }];
+        expect(buildHealthPreviewRequest({ model: custom, fg: f, headers: HEADERS })!.test_periods).toEqual(wire);
+        expect(buildModelFilesRequest({ model: custom, fg: f, headers: HEADERS, workspaceId: 'ws' })!.test_periods).toEqual(wire);
+        // A Custom model without its own list sends none (the key is omitted).
+        expect(buildHealthPreviewRequest({ model: { ...ind, runningConditionMode: 'custom' }, fg: f, headers: HEADERS })).not.toHaveProperty('test_periods');
+    });
+
+    it('no test periods -> the key is omitted (old workspaces send exactly what they sent before)', () => {
+        expect(buildHealthPreviewRequest({ model: ind, fg: fg(), headers: HEADERS })).not.toHaveProperty('test_periods');
+        expect(buildModelFilesRequest({ model: ind, fg: fg(), headers: HEADERS, workspaceId: 'ws' })).not.toHaveProperty('test_periods');
+    });
+
+    it('changing ONLY the tests keeps the Relationship cache_key (re-score, no re-train) but changes the request key', () => {
+        const a = buildHealthPreviewRequest({ model: rel, fg: fg(), headers: HEADERS })!;
+        const b = buildHealthPreviewRequest({ model: rel, fg: fg({ runningConditionTestPeriods: wsTests }), headers: HEADERS })!;
+        expect(b.cache_key).toBe(a.cache_key);
+        expect(healthRequestKey(b)).not.toBe(healthRequestKey(a));
+    });
+});

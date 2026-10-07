@@ -175,6 +175,65 @@ export function computeCoverage(periods: TimePeriod[], bounds: DataBounds | null
     return { totalDays, usedDays: Math.round(total / DAY_MS), unlimited: false, segments, axisLeft, axisRight };
 }
 
+export interface TestCoverageSegment {
+    leftPct: number;
+    widthPct: number;
+    /** Known problem (drawn hatched). */
+    problem: boolean;
+    label: string;
+}
+
+/**
+ * Test periods on the dataset timeline (Train/Test validation): one segment per
+ * test period with a parseable range (clamped to the dataset; open ends run to
+ * the edge) and the days of the dataset inside at least one of them (overlap
+ * counted once). Null when the dataset bounds are unknown.
+ */
+export function computeTestCoverage(tests: (TimePeriod & { label?: string })[], bounds: DataBounds | null | undefined): { usedDays: number; segments: TestCoverageSegment[] } | null {
+    const b = boundsMs(bounds);
+    if (!b) return null;
+    const { t0, t1 } = b;
+    const W = t1 - t0;
+    const ivs: [number, number][] = [];
+    const segments: TestCoverageSegment[] = [];
+    tests.forEach((t, i) => {
+        const s = isBlank(t.start) ? t0 : parseLocal(t.start);
+        const e = isBlank(t.end) ? t1 : parseLocal(t.end);
+        if (s === null || e === null || e < s) return;
+        const a = Math.max(t0, s);
+        const z = Math.min(t1, e);
+        if (z < a) return;
+        const problem = t.label === 'problem';
+        segments.push({
+            leftPct: ((a - t0) / W) * 100,
+            widthPct: Math.max(0.6, ((z - a) / W) * 100),
+            problem,
+            label: `T${i + 1} ${problem ? 'Known problem' : 'Normal'} · ${formatPeriod(t)}`,
+        });
+        ivs.push([a, z]);
+    });
+    ivs.sort((x, y) => x[0] - y[0]);
+    let total = 0;
+    let cs: number | null = null;
+    let ce = 0;
+    for (const [s, e] of ivs) {
+        if (cs === null) { cs = s; ce = e; } else if (s <= ce) { ce = Math.max(ce, e); } else { total += ce - cs; cs = s; ce = e; }
+    }
+    if (cs !== null) total += ce - cs;
+    return { usedDays: Math.round(total / DAY_MS), segments };
+}
+
+/** Estimated RUNNING days of the train rows from a row count: the dataset's
+ *  span x the share of its rows that are used (rows are close to evenly spaced
+ *  in time). Null when anything is unknown. Used for the amber "below the
+ *  recommended train time" note before Rust's exact `test_validation.train.days`
+ *  exists (e.g. the Running condition modal's draft). */
+export function estimateRunningDays(used: number | null | undefined, total: number | null | undefined, bounds: DataBounds | null | undefined): number | null {
+    const b = boundsMs(bounds);
+    if (!b || typeof used !== 'number' || typeof total !== 'number' || !(total > 0)) return null;
+    return ((b.t1 - b.t0) / DAY_MS) * Math.min(1, Math.max(0, used / total));
+}
+
 export function conditionSymbol(op: WorkspaceSensorFilter['operation']): string {
     return op === 'greater_than' ? '>' : op === 'less_than' ? '<' : op === 'between' ? 'between' : '=';
 }

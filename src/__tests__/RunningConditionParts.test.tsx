@@ -76,16 +76,23 @@ describe('RuleSentence (settings modal summary)', () => {
 
     it('Match OR joins the conditions with OR', () => {
         const { container } = render(
-            <RuleSentence periods={[]} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', '2')]} combine="or" none={false} getLabel={desc} getUnit={unit} />,
+            <RuleSentence periods={[two[0]]} filters={[f('I_MOT_A', 'greater_than', '12'), f('PT_2041', 'greater_than', '2')]} combine="or" none={false} getLabel={desc} getUnit={unit} />,
         );
         expect(Array.from(container.querySelectorAll('.f4-op')).map(c => c.textContent)).toEqual(['AND', 'OR']);
     });
 
-    it('no periods = "any time"; use-all-rows = "every row (no condition)"; nothing set = "not set yet" (amber)', () => {
-        const { rerender, container } = render(<RuleSentence periods={[]} filters={[]} combine="and" none getLabel={desc} getUnit={unit} />);
-        expect(screen.getByTestId('rule-sentence').textContent).toContain('any time');
+    it('no train period = "No train period — add one" in amber (Train/Test validation: never "any time" / the whole dataset)', () => {
+        render(<RuleSentence periods={[]} filters={[f('I_MOT_A', 'greater_than', '12')]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
+        const box = screen.getByTestId('rule-sentence');
+        expect(box.textContent).toBe('No train period — add one; models learn only from the train periods.');
+        expect(screen.getByTestId('rule-no-train').className).toContain('rcm-sentence-miss');
+        expect(box.textContent).not.toContain('any time');
+    });
+
+    it('use-all-rows = "every row (no condition)"; nothing set = "not set yet" (amber)', () => {
+        const { rerender, container } = render(<RuleSentence periods={[two[0]]} filters={[]} combine="and" none getLabel={desc} getUnit={unit} />);
         expect(screen.getByTestId('rule-sentence').textContent).toContain('every row (no condition)');
-        rerender(<RuleSentence periods={[]} filters={[]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
+        rerender(<RuleSentence periods={[two[0]]} filters={[]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
         expect(screen.getByTestId('rule-sentence').textContent).toContain('not set yet');
         expect(container.querySelector('.rcm-sentence-miss')).not.toBeNull();
     });
@@ -107,7 +114,39 @@ describe('RuleSentence (settings modal summary)', () => {
     });
 
     it('a sensor without a description falls back to its tag; between shows both bounds', () => {
-        render(<RuleSentence periods={[]} filters={[{ ...f('X_TAG', 'between', '1'), value2: '5' }]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
+        render(<RuleSentence periods={[two[0]]} filters={[{ ...f('X_TAG', 'between', '1'), value2: '5' }]} combine="and" none={false} getLabel={desc} getUnit={unit} />);
         expect(screen.getByTestId('rule-sentence').textContent).toContain('X_TAG between 1–5');
+    });
+});
+
+describe('PeriodCoverageBar with test periods (Train/Test validation, two lanes)', () => {
+    const B2 = { min: '2026-01-01 00:00:00', max: '2026-12-31 23:50:00' };
+    const train = [p('a', '2026-01-01T00:00', '2026-03-31T23:59')];
+
+    it('train on the top lane, tests on the bottom lane (Known problem hatched), caption "N d train · M d test"', () => {
+        const { container } = render(<PeriodCoverageBar periods={train} bounds={B2} tests={[
+            { id: 't1', start: '2026-01-01T00:00', end: '2026-12-31T23:50', label: 'normal' },
+            { id: 't2', start: '2026-06-01T00:00', end: '2026-06-10T00:00', label: 'problem', eventTime: '2026-06-05T00:00' },
+        ]} />);
+        const strip = container.querySelector('.f4-strip')!;
+        expect(strip.className).toContain('f4-strip--tt');
+        expect(strip.querySelectorAll('i:not(.te)')).toHaveLength(1);
+        const te = screen.getAllByTestId('period-coverage-test');
+        expect(te.map(x => x.className)).toEqual(['te', 'te pb']);
+        expect(te[0].getAttribute('title')).toContain('T1 Normal');
+        // the tests overlap each other: their days are counted once
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('90 d train · 365 d test');
+    });
+
+    it('no train period: an EMPTY top lane and "0 d train" — never the whole dataset', () => {
+        const { container } = render(<PeriodCoverageBar periods={[]} bounds={B2} tests={[]} />);
+        expect(container.querySelectorAll('.f4-strip i')).toHaveLength(0);
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+    });
+
+    it('without the tests prop it is the old single-lane bar', () => {
+        const { container } = render(<PeriodCoverageBar periods={train} bounds={B2} />);
+        expect(container.querySelector('.f4-strip--tt')).toBeNull();
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('90 of 365 days used');
     });
 });

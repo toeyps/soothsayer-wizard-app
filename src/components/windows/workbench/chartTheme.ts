@@ -38,6 +38,15 @@ export const CHART = {
     /** Histogram bars. */
     bar: 'rgba(120, 160, 230, 0.55)',
     normalCurve: '#e8e8ee',
+    /** Train / Test scopes on every Workbench time chart (DESIGN_SYSTEM §4
+     *  "Train / Test periods"): train = the accent blue (`--train`), test =
+     *  magenta oklch(.74 .16 340) (`--test`), as the canvas draws them. */
+    train: '#5b95f0',
+    trainFill: 'rgba(77, 140, 240, 0.10)',
+    test: '#e866c4',
+    testFill: 'rgba(232, 102, 196, 0.11)',
+    /** Dark pill behind the scope / EVENT labels. */
+    scopePillBg: 'rgba(10, 10, 11, 0.82)',
 } as const;
 
 /** Same palette as PredictiveModelBuild.tsx's `CLUSTER_PALETTE` (cluster 1, 2, ...). */
@@ -48,6 +57,8 @@ export const FONT = 'Inter, system-ui, sans-serif';
 /** Number formatting used by every workbench readout (matches the mockup's `fmt`). */
 export function fmtNum(v: number | null | undefined): string {
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+    // No "-0.000": anything that rounds to zero at 3 decimals is plain 0.
+    if (Math.abs(v) < 0.0005) v = 0;
     const a = Math.abs(v);
     if (a >= 1000) return Math.round(v).toLocaleString();
     if (a >= 100) return v.toFixed(1);

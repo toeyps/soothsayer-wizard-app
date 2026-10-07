@@ -20,7 +20,8 @@ vi.mock('../components/windows/SensorPickers', () => ({
 
 import RunningConditionPanel, { RunningConditionPills } from '../components/windows/RunningConditionPanel';
 import type { RowCountPreview } from '../components/windows/useRowCountPreview';
-import type { WorkspaceSensorFilter } from '../types';
+import type { TestPeriod, TimeHighlight, WorkspaceSensorFilter } from '../types';
+import { RECOMMENDED_TRAIN_DAYS } from '../utils/trainTestValidation';
 
 afterEach(() => { cleanup(); pickerProps.length = 0; });
 
@@ -41,6 +42,7 @@ function setup(over: Partial<React.ComponentProps<typeof RunningConditionPanel>>
     const handlers = {
         onPeriodsChange: vi.fn(), onNoneChange: vi.fn(), onCombineChange: vi.fn(),
         onAddFilter: vi.fn(), onUpdateFilter: vi.fn(), onRemoveFilter: vi.fn(),
+        onTestPeriodsChange: vi.fn(), onHighlightsMenuOpen: vi.fn(),
     };
     render(
         <RunningConditionPanel
@@ -55,6 +57,8 @@ function setup(over: Partial<React.ComponentProps<typeof RunningConditionPanel>>
             getComponent={() => 'Pump'}
             getUnit={t => UNIT[t] ?? ''}
             preview={OK}
+            testPeriods={[]}
+            highlights={[]}
             {...handlers}
             {...over}
         />,
@@ -73,7 +77,7 @@ describe('RunningConditionPanel — two-column layout (mockup 1pp59aydphzaDu2R1S
         expect(steps[0].querySelector('.rcm-num')!.textContent).toBe('1');
         expect(steps[1].textContent).toContain('When the plant is running');
         expect(steps[1].querySelector('.rcm-num')!.textContent).toBe('2');
-        expect(within(screen.getByTestId('rc-preview')).getByText('Data used for training')).toBeTruthy();
+        expect(screen.getByTestId('rc-preview').querySelector('.rcm-pv-h')!.textContent).toBe('Data used for training train periods only');
         expect(screen.getByTestId('rc-preview').className).toContain('rcm-preview');
     });
 
@@ -104,7 +108,9 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         expect(cov.querySelector('.f4-strip')).not.toBeNull();
         expect(cov.textContent).toContain('Jan 2025');
         expect(cov.textContent).toContain('Mar 2026');
-        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 of 455 days used');
+        // two lanes (train on top, test below) with the "N d train · M d test" caption
+        expect(cov.querySelector('.f4-strip--tt')).not.toBeNull();
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 d train · 0 d test');
         const firstRow = within(section).getByTestId('period-row-1');
         // coverage comes before the first card in document order
         expect(cov.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -113,7 +119,7 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
     it('draws one block per period', () => {
         setup({ periods: [p('a', '2025-01-01T00:00', '2025-01-31T23:59'), p('b', '2025-06-01T00:00', '2025-06-30T23:59')] });
         expect(blockStyle()).toHaveLength(2);
-        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('61 of 455 days used');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('61 d train · 0 d test');
     });
 
     it('updates live while a date is being edited (the draft, not the committed list)', () => {
@@ -121,7 +127,7 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         const before = blockStyle()[0].width;
         fireEvent.change(screen.getByLabelText('Period 1 end'), { target: { value: '2025-03-31T23:59' } });
         expect(blockStyle()[0].width).toBeGreaterThan(before);
-        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('90 of 455 days used');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('90 d train · 0 d test');
     });
 
     it('open ends extend to the dataset edge (blank start -> 0%, blank end -> 100%)', () => {
@@ -136,7 +142,7 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
     it('a reversed period is drawn red (bad) and not counted as used days', () => {
         setup({ periods: [p('a', '2025-03-01T00:00', '2025-02-01T00:00')] });
         expect(blockStyle()[0].cls).toContain('bad');
-        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('0 of 455 days used');
+        expect(within(screen.getByTestId('rc-periods')).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
     });
 
     it('an overlapping period is drawn hatched (ovl)', () => {
@@ -152,10 +158,26 @@ describe('RunningConditionPanel — period coverage strip (restored 2026-10-03; 
         expect(screen.getAllByTestId(/^period-row-/)).toHaveLength(1);
     });
 
-    it('no strip when there is no period (the "No period" note covers the whole dataset)', () => {
+    it('no train period: the strip stays (empty top lane, "0 d train") and the amber note asks for one — never "whole dataset"', () => {
         setup({ periods: [] });
-        expect(screen.queryByTestId('period-coverage')).toBeNull();
-        expect(screen.getByTestId('periods-empty')).toBeTruthy();
+        const cov = within(screen.getByTestId('rc-periods')).getByTestId('period-coverage');
+        expect(cov.querySelectorAll('.f4-strip i')).toHaveLength(0);
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+        expect(screen.getByTestId('periods-empty').textContent).toBe('No train period yet — add at least one. Models learn only from the train periods.');
+    });
+
+    it('test periods are drawn on the bottom lane in the test colour, Known problem hatched', () => {
+        const tests: TestPeriod[] = [
+            { id: 't1', start: '2025-02-01T00:00', end: '2025-02-28T23:59', label: 'normal' },
+            { id: 't2', start: '2025-05-01T00:00', end: '2025-05-10T23:59', label: 'problem' },
+        ];
+        setup({ periods: JAN, testPeriods: tests });
+        const cov = within(screen.getByTestId('rc-periods')).getByTestId('period-coverage');
+        const te = cov.querySelectorAll('.f4-strip i.te');
+        expect(te).toHaveLength(2);
+        expect(te[0].className).toBe('te');
+        expect(te[1].className).toBe('te pb');
+        expect(within(cov).getByTestId('period-coverage-days').textContent).toBe('31 d train · 38 d test');
     });
 });
 
@@ -229,16 +251,17 @@ describe('RunningConditionPanel — step 2 choice cards', () => {
         const note = screen.getByTestId('rc-none-note');
         expect(note.className).toContain('rcm-none');
         expect(note.textContent).toContain('Every row inside the training periods is used, idle time included.');
-        expect(note.textContent).toContain('The 2 periods above still limit the time.');
+        expect(note.textContent).toContain('The 2 train periods above still limit the time.');
         expect(note.textContent).toContain('Your saved conditions are kept but not applied.');
         expect(screen.queryByTestId('rc-add-condition')).toBeNull();
         expect(screen.queryByTestId('rc-cond-1')).toBeNull();
         expect(screen.getByTestId('rule-sentence').textContent).toContain('every row (no condition)');
     });
 
-    it('"Use all rows" with no periods says it means the full dataset', () => {
+    it('"Use all rows" with no train period asks for one (it no longer means the full dataset)', () => {
         setup({ noneConfirmed: true, periods: [], filters: [] });
-        expect(screen.getByTestId('rc-none-note').textContent).toContain('No periods are set, so that means the full dataset.');
+        expect(screen.getByTestId('rc-none-note').textContent).toContain('There is no train period yet — add one above.');
+        expect(screen.getByTestId('rc-none-note').textContent).not.toContain('full dataset');
     });
 });
 
@@ -407,5 +430,80 @@ describe('RunningConditionPanel — Data used for training', () => {
         setup();
         expect(screen.queryByTestId('rc-unset-warning')).toBeNull();
         expect(screen.queryByTestId('rc-invalid-reason')).toBeNull();
+    });
+});
+describe('RunningConditionPanel — Train / Test periods (Train/Test validation, 2026-10-07)', () => {
+    const HL: TimeHighlight[] = [{ id: 'h1', start: '2026-02-01 00:00:00', end: '2026-02-05 00:00:00', label: 'Bearing trip', color: '#f43f5e', enabled: true }];
+
+    it('"Which time" has a Train sub-section (required, healthy-periods-only callout) and a Test sub-section', () => {
+        setup();
+        const s1 = screen.getByTestId('rc-periods');
+        expect(within(s1).getByTestId('rc-train-head').textContent).toContain('Train periods');
+        expect(within(s1).getByTestId('rc-train-head').textContent).toContain('required');
+        expect(within(s1).getByTestId('rc-train-callout').textContent).toContain('Pick only times when the machine was healthy and running normally.');
+        expect(within(s1).getByTestId('rc-test-head').textContent).toContain('Test periods');
+        expect(within(s1).getByTestId('test-periods-editor')).toBeTruthy();
+        expect(s1.textContent).not.toContain('whole dataset');
+        expect(within(s1).getByTestId('period-add').textContent).toBe('Add train period');
+    });
+
+    it('test edits are reported through onTestPeriodsChange; "From Highlights" asks the host to refresh', () => {
+        const h = setup({ highlights: HL });
+        fireEvent.click(screen.getByTestId('test-add'));
+        expect(h.onTestPeriodsChange).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByTestId('test-from-hl'));
+        expect(h.onHighlightsMenuOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('a train period overlapping a Dashboard highlight: amber warning only, "Remove the overlap" splits the train period', () => {
+        const h = setup({ highlights: HL });
+        const warn = screen.getByTestId('train-hl-warning');
+        expect(warn.className).toContain('tpe-hlwarn');
+        expect(warn.textContent).toContain('Train P1 overlaps the highlight “Bearing trip”');
+        fireEvent.click(screen.getByTestId('train-hl-split'));
+        const next = h.onPeriodsChange.mock.calls[0][0];
+        expect(next.map((x: { start: string; end: string }) => [x.start, x.end])).toEqual([
+            ['2026-01-01T00:00', '2026-01-31T23:59'],
+            ['2026-02-05T00:01', '2026-03-31T23:59'],
+            ['2026-04-15T00:00', ''],
+        ]);
+    });
+
+    it('a disabled highlight raises no warning', () => {
+        setup({ highlights: [{ ...HL[0], enabled: false }] });
+        expect(screen.queryByTestId('train-hl-warning')).toBeNull();
+    });
+
+    it('no train period: the preview shows 0 rows, "add a train period", and the sentence says so', () => {
+        setup({ periods: [] });
+        expect(screen.getByTestId('rc-preview-no-train').textContent).toBe('rows — add a train period');
+        expect(screen.getByTestId('rc-preview-count').querySelector('b')!.textContent).toBe('0');
+        expect(screen.getByTestId('rule-no-train').textContent).toBe('No train period');
+    });
+
+    it('preview column: the test summary (count, Normal / Known problem), or an amber "none yet" note', () => {
+        setup({ testPeriods: [
+            { id: 't1', start: '2026-01-01T00:00', end: '2026-01-10T00:00', label: 'normal' },
+            { id: 't2', start: '2026-02-01T00:00', end: '2026-02-10T00:00', label: 'problem' },
+            { id: 't3', start: '2026-03-01T00:00', end: '2026-03-10T00:00', label: 'normal' },
+        ] });
+        expect(screen.getByTestId('rc-preview-tests').textContent).toBe('Test3periods · 2 Normal · 1 Known problem');
+        cleanup();
+        setup();
+        expect(screen.getByTestId('rc-preview-tests').className).toContain('tpe-pvtest--none');
+        expect(screen.getByTestId('rc-preview-tests').textContent).toContain('Mark complete needs one');
+    });
+
+    it(`recommended train time: amber below ${RECOMMENDED_TRAIN_DAYS} d (estimated from the row count), a faint hint otherwise — never a block`, () => {
+        // bounds span 455 days; 2% of the rows ≈ 9 running days
+        setup({ preview: { status: 'ok', used: 2, total: 100 } });
+        const low = screen.getByTestId('rc-min-data');
+        expect(low.className).toContain('tpe-min--warn');
+        expect(low.textContent).toContain('Only 9 d of train running time');
+        cleanup();
+        setup({ preview: { status: 'ok', used: 50, total: 100 } });
+        const ok = screen.getByTestId('rc-min-data');
+        expect(ok.className).not.toContain('tpe-min--warn');
+        expect(ok.textContent).toBe(`At least ${RECOMMENDED_TRAIN_DAYS} d of train running time is recommended (about 227 d now).`);
     });
 });

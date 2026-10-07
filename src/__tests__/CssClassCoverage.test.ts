@@ -46,6 +46,7 @@ const STYLED_PREFIXES = [
     'sensor-picker', 'predictor-picker', 'sensor-autocomplete',
     'kind-badge', 'model-kind-icon', 'model-status-pill', 'pair-regl', 'scatter-regl',
     'special-sensor', 'highlights', 'timebar', 'line-chart',
+    'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
 ];
 
 /**

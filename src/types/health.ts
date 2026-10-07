@@ -89,6 +89,73 @@ export interface HealthPreviewRequest {
     include_out_of_scope?: boolean;
     /** Refuse with `STALE_SESSION` when the loaded dataset's generation differs. */
     expected_generation?: number;
+    /** Train/Test validation (2026-10-07): the model's EFFECTIVE test periods.
+     *  Omitted when there are none; when present the response carries
+     *  `test_validation`. Built by `toTestPeriodsWire`. */
+    test_periods?: TestPeriodWire[];
+}
+
+/** One test period on the wire (snake_case, `''` → `null`; `event_time` only
+ *  for a Known problem with a valid event time). */
+export interface TestPeriodWire {
+    start: string | null;
+    end: string | null;
+    label: 'normal' | 'problem';
+    event_time?: string | null;
+}
+
+/** Train-only summary inside `ValidationResult` — the kind's own metrics are
+ *  present (Relationship: r2/rmse/residual_*; Individual: mean/sd/within_3sd_pct;
+ *  Clustering: inside_3sd_ring_pct). `days` = running days of train rows. */
+export interface ValidationTrainSummary {
+    rows: number;
+    days: number;
+    r2?: number;
+    rmse?: number;
+    residual_mean?: number;
+    residual_sd?: number;
+    mean?: number;
+    sd?: number;
+    within_3sd_pct?: number;
+    inside_3sd_ring_pct?: number;
+}
+
+/** Results for one test period, scored with the TRAIN-only model. "Below 80"
+ *  means sustained for 1 h of running time (Rust rule). */
+export interface TestPeriodResult {
+    /** 1-based position in the request's `test_periods` (T1 = index 1) — Rust
+     *  sends `i + 1`. The UI numbers tests by list position; don't mix the two. */
+    index: number;
+    label: 'normal' | 'problem';
+    start: string | null;
+    end: string | null;
+    event_time: string | null;
+    days: number;
+    rows: number;
+    r2?: number;
+    rmse?: number;
+    residual_mean?: number;
+    residual_sd?: number;
+    within_3sd_pct?: number;
+    mean_shift_sd?: number;
+    inside_3sd_ring_pct?: number;
+    /** Rows (and running days) of this test period that are also train rows. */
+    train_rows?: number;
+    train_days?: number;
+    scored: number;
+    pct_below_80: number | null;
+    first_below_80: string | null;
+    lowest: number | null;
+    lowest_at: string | null;
+    lead_days: number | null;
+}
+
+/** `compute_health_preview`'s train-vs-test comparison (named
+ *  `test_validation` because `validation` is already the issue list). */
+export interface ValidationResult {
+    train: ValidationTrainSummary;
+    train_ranges: { start: string | null; end: string | null }[];
+    tests: TestPeriodResult[];
 }
 
 export type IssueSeverity = 'error' | 'warning';
@@ -265,6 +332,8 @@ export interface HealthPreview {
     fit_scatter: HealthFitScatter | null;
     /** Clustering only. */
     cluster_scatter: HealthClusterScatter | null;
+    /** Present when the request carried `test_periods` (`null`/absent otherwise). */
+    test_validation?: ValidationResult | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +359,11 @@ export interface ModelFilesRequest {
     /** Relationship: the fit's cache key (lets Rust validate before the ~15 s sidecar run). */
     cache_key?: string | null;
     expected_generation?: number;
+    /** Train/Test validation (2026-10-07): written into the `*_INFO_*.json`
+     *  `validation` block. Mark complete requires at least one
+     *  (`markCompleteBlockReason`); the model itself is trained on the train
+     *  periods only. Same wire shape as the preview's. */
+    test_periods?: TestPeriodWire[];
 }
 
 export interface WrittenFile {
@@ -319,5 +393,7 @@ export interface ModelFilesResult {
  *  dataset reloaded, special sensor recomputed, evicted): re-train.
  *  `NO_DATA` — no rows in scope. `BAD_REQUEST` — sensor missing / field missing.
  *  `STALE_SESSION` — `expected_generation` did not match the loaded dataset.
- *  `VALIDATION` — only from the direct `train_*` commands. */
-export type HealthErrorCode = 'NOT_FITTED' | 'NO_DATA' | 'BAD_REQUEST' | 'STALE_SESSION' | 'VALIDATION';
+ *  `VALIDATION` — only from the direct `train_*` commands.
+ *  `SIDECAR_OUTDATED` — the bundled Relation model engine is too old for the
+ *  request (e.g. it cannot predict test rows): reinstall / update the app. */
+export type HealthErrorCode = 'NOT_FITTED' | 'NO_DATA' | 'BAD_REQUEST' | 'STALE_SESSION' | 'VALIDATION' | 'SIDECAR_OUTDATED';

@@ -8,12 +8,18 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-import { completeModel, getModelOutputDir, parseHealthError } from '../utils/completeModel';
+import { completeModel, getModelOutputDir, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
 
+// Train/Test validation (2026-10-07): an open-ended train period (= no time
+// filter on the wire) and one test period, which Mark complete requires.
 const fg: FailureGroupStateSlice = {
     groups: [], models: [],
-    runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [], runningConditionNoneConfirmed: true,
+    runningConditionFilters: [], runningConditionCombine: 'and',
+    runningConditionTimePeriods: [{ id: 'all', start: '', end: '' }],
+    runningConditionTestPeriods: [{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'problem', eventTime: '2026-01-20T06:00' }],
+    runningConditionNoneConfirmed: true,
 };
+const TESTS_WIRE = [{ start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'problem', event_time: '2026-01-20T06:00' }];
 const HEADERS = ['T', 'P1'];
 const sp: HealthSetPoints = { kind: 'individual', lower: 1, upper: 9 };
 const model = mk({ id: 'i1', name: 'Pump', kind: 'individual', targetSensor: 'T' });
@@ -44,11 +50,30 @@ describe('completeModel', () => {
         // Both calls carry { request } and the same set points / scope / generation.
         const [, previewArgs] = mockInvoke.mock.calls[0];
         const [, exportArgs] = mockInvoke.mock.calls[1];
-        expect(previewArgs.request).toMatchObject({ kind: 'individual', target: 'T', set_points: { lower: 1, upper: 9 }, expected_generation: 2 });
+        expect(previewArgs.request).toMatchObject({ kind: 'individual', target: 'T', set_points: { lower: 1, upper: 9 }, expected_generation: 2, test_periods: TESTS_WIRE });
         expect(exportArgs.request).toEqual({
             kind: 'individual', workspace_id: 'ws1', model_name: 'Pump', target: 'T', filter: null,
-            set_points: { lower: 1, upper: 9 }, expected_generation: 2,
+            set_points: { lower: 1, upper: 9 }, expected_generation: 2, test_periods: TESTS_WIRE,
         });
+    });
+
+    it('Train/Test SPEC rule 2: no test period -> refused as inputs with the reason, NO Rust call', async () => {
+        const res = await completeModel({ model, fg: { ...fg, runningConditionTestPeriods: [] }, headers: HEADERS, workspaceId: 'ws1', setPoints: sp });
+        expect(res).toMatchObject({ ok: false, reason: 'inputs' });
+        expect(res.ok === false && res.error).toMatch(/Add a test period/);
+        expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    it('a Custom model exports ITS OWN test periods', async () => {
+        mockInvoke.mockImplementation(async (cmd: string) => (cmd === 'compute_health_preview' ? previewOk : filesOk));
+        const custom = mk({
+            id: 'i1', name: 'Pump', kind: 'individual', targetSensor: 'T', runningConditionMode: 'custom',
+            customRunningConditionNoneConfirmed: true, filterTimePeriods: [{ id: 'o', start: '', end: '' }],
+            customTestPeriods: [{ id: 'c', start: '2026-02-01T00:00', end: '2026-02-10T00:00', label: 'normal' }],
+        });
+        const res = await run(custom);
+        expect(res.ok).toBe(true);
+        expect(calls('export_model_files')[0][1].request.test_periods).toEqual([{ start: '2026-02-01T00:00', end: '2026-02-10T00:00', label: 'normal', event_time: null }]);
     });
 
     it('invalid set points: refuses with the issues and makes NO export call', async () => {
@@ -112,6 +137,13 @@ describe('parseHealthError', () => {
         expect(parseHealthError('NOT_FITTED: train first')).toEqual({ code: 'NOT_FITTED', message: 'train first' });
         expect(parseHealthError(new Error('NO_DATA: nothing in scope'))).toEqual({ code: 'NO_DATA', message: 'nothing in scope' });
         expect(parseHealthError('VALIDATION: a; b')).toEqual({ code: 'VALIDATION', message: 'a; b' });
+    });
+    it('SIDECAR_OUTDATED (review fix 2026-10-07): known code, the app\'s own user-facing wording', () => {
+        const r = parseHealthError('SIDECAR_OUTDATED: The Relation model engine in this build is out of date - please reinstall or update the app.');
+        expect(r.code).toBe('SIDECAR_OUTDATED');
+        expect(r.message).toBe(HEALTH_ERROR_TEXT.SIDECAR_OUTDATED);
+        expect(r.message).toContain('reinstall or update the app');
+        expect(r.message).not.toContain('SIDECAR_OUTDATED');
     });
     it('leaves unknown prefixes and plain text alone', () => {
         expect(parseHealthError('SOMETHING_ELSE: x')).toEqual({ code: null, message: 'SOMETHING_ELSE: x' });

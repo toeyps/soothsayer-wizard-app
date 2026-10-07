@@ -5,7 +5,8 @@ import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from './failureGroupState';
 import { patchModelHealthSetPoints } from './healthSetPoints';
 import { NOT_TRAINED_BLOCK_REASON } from './modelStatus';
-import { getBuildBlockReason } from './runningCondition';
+import { effectiveRunningCondition, getBuildBlockReason, markCompleteBlockReason } from './runningCondition';
+import { testPeriodsKey } from './timePeriods';
 import { computeTrainFingerprint, isModelTrainedFresh } from './trainFingerprint';
 
 /**
@@ -30,6 +31,13 @@ async function broadcast(state: WorkspaceState | null, workspaceId: string, orig
 /** A copy of `m` without its saved verdict (it no longer describes the model). */
 function withoutVerdict(m: FailureModel): FailureModel {
     const { healthVerdict: dropped, ...rest } = m;
+    void dropped;
+    return rest;
+}
+
+/** A copy of `m` without `testsChangedAt` (Mark complete answered it). */
+function withoutTestsChanged(m: FailureModel): FailureModel {
+    const { testsChangedAt: dropped, ...rest } = m;
     void dropped;
     return rest;
 }
@@ -119,7 +127,15 @@ export interface MarkCompleteRace {
      *  exported set points may differ from these (typed but not committed): only a
      *  change of what is on disk AFTER the click counts as an edit during the export. */
     setPointsBefore: HealthSetPoints | undefined;
+    /** `testPeriodsKey` of the model's EFFECTIVE test periods at click time
+     *  (Train/Test validation, 2026-10-07). Optional: when given, test periods
+     *  edited during the export (the files' `validation` block would describe
+     *  the old ones) keep the model Incomplete (`TESTS_CHANGED_DURING_EXPORT_REASON`). */
+    testsKey?: string;
 }
+
+export const TESTS_CHANGED_DURING_EXPORT_REASON =
+    'the test periods changed while the files were being written — mark it complete again.';
 
 export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
     "the model's settings changed while its files were being written — re-train, then mark it complete again.";
@@ -165,10 +181,16 @@ export async function persistModelComplete(
             return prev;
         }
         res.reason = getBuildBlockReason(target, fg, headers);
+        // Train/Test validation (SPEC rule 2): at least one valid test period.
+        if (res.reason === null) res.reason = markCompleteBlockReason(target, fg);
         if (res.reason === null && !isModelTrainedFresh(target, fg)) res.reason = NOT_TRAINED_BLOCK_REASON;
         if (res.reason === null && race
             && (computeTrainFingerprint(target, fg) !== race.fingerprint || target.trainedFingerprint !== race.fingerprint)) {
             res.reason = SETTINGS_CHANGED_DURING_EXPORT_REASON;
+        }
+        if (res.reason === null && race?.testsKey !== undefined
+            && testPeriodsKey(effectiveRunningCondition(target, fg).testPeriods) !== race.testsKey) {
+            res.reason = TESTS_CHANGED_DURING_EXPORT_REASON;
         }
         if (res.reason !== null) return prev;
         // Set points committed during the export keep their newer values.
@@ -179,7 +201,8 @@ export async function persistModelComplete(
             models: (fg?.models ?? []).map(m => {
                 if (m.id !== modelId) return m;
                 return {
-                    ...withoutVerdict(m),
+                    // Mark complete answers a "test periods changed" stamp.
+                    ...withoutTestsChanged(withoutVerdict(m)),
                     status: true,
                     healthSetPoints: keepDisk ? target.healthSetPoints : setPoints,
                     ...(keepDisk ? {} : { healthVerdict: 'valid' as const }),

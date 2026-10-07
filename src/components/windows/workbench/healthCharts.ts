@@ -6,7 +6,10 @@ import type {
     IndividualSeries,
     IndividualStats,
     RelationshipSeries,
+    ValidationResult,
 } from '../../../types/health';
+import { testNumberFor } from '../../../utils/timePeriods';
+import { parseLocal } from '../periodDisplay';
 import { CHART, CLUSTER_COLORS, FONT, fmtNum } from './chartTheme';
 
 /*
@@ -89,6 +92,198 @@ export interface HBand {
     color: string;
 }
 
+// ---------------------------------------------------------------------------
+// Train / Test time scopes (Train/Test validation, 2026-10-07)
+// ---------------------------------------------------------------------------
+
+/** One scope band on a time chart. `start`/`end` `null` = open (runs to the
+ *  edge of the data). */
+export interface TimeScope {
+    kind: 'train' | 'normal' | 'problem';
+    start: string | null;
+    end: string | null;
+    /** Pill text: "TRAIN", "TRAIN P2", "T1 NORMAL", "T2 KNOWN PROBLEM". */
+    label: string;
+    /** Shorter pill for half-width charts: "P2", "T1 NORMAL", "T2 PROBLEM". */
+    short: string;
+}
+
+/** What every Workbench time chart draws on top of its data (SPEC "Screens and
+ *  UI" → time scopes). Built from `HealthPreview.test_validation` by `scopesOf`
+ *  and passed in explicitly through `TimeSeriesSpec.scopes`. */
+export interface TimeScopes {
+    ranges: TimeScope[];
+    /** Known-problem event times (red dashed vertical line labelled EVENT). */
+    events: string[];
+    /** Use the short pill labels (half-width charts). */
+    compact?: boolean;
+}
+
+/**
+ * The scopes of one health preview: every train range (none sent = the train
+ * period is open at both ends, i.e. the whole time axis) and every test period
+ * with its T-number, plus the Known-problem event times. `null` when the
+ * preview carried no test periods: the chart is then drawn exactly as before.
+ *
+ * T-numbers are the period's POSITION in the user's full list (invalid periods
+ * included — they are not sent): `numbers` is `testPeriodsWirePlan(...).numbers`
+ * of the list that was sent, looked up with each result's 1-based wire `index`
+ * (`testNumberFor`). Without `numbers` the result's position is used (T1, T2 …).
+ */
+export function scopesOf(v: ValidationResult | null | undefined, numbers?: readonly number[] | null): TimeScopes | null {
+    if (!v) return null;
+    const tn = (t: ValidationResult['tests'][number], i: number) => testNumberFor(numbers, t.index, i);
+    const train = v.train_ranges.length > 0 ? v.train_ranges : [{ start: null, end: null }];
+    const many = train.length > 1;
+    const ranges: TimeScope[] = [
+        ...train.map((r, i) => ({
+            kind: 'train' as const,
+            start: r.start,
+            end: r.end,
+            label: many ? `TRAIN P${i + 1}` : 'TRAIN',
+            short: many ? `P${i + 1}` : 'TRAIN',
+        })),
+        ...v.tests.map((t, i) => ({
+            kind: t.label,
+            start: t.start,
+            end: t.end,
+            label: `T${tn(t, i)} ${t.label === 'problem' ? 'KNOWN PROBLEM' : 'NORMAL'}`,
+            short: `T${tn(t, i)} ${t.label === 'problem' ? 'PROBLEM' : 'NORMAL'}`,
+        })),
+    ];
+    const events = v.tests.filter(t => t.label === 'problem' && t.event_time).map(t => t.event_time as string);
+    return { ranges, events };
+}
+
+/** The same scopes with the short pill labels (half-width charts). */
+export function compactScopes(s: TimeScopes | null | undefined): TimeScopes | null {
+    return s ? { ...s, compact: true } : null;
+}
+
+/** Height kept free above the plot for the train scope pills. */
+const SCOPE_STRIP = 18;
+
+/** 135° hatch of a Known-problem band: an 8 px SVG tile (a data URI, so this
+ *  stays a pure option builder — zrender loads it as an image pattern). */
+export const PROBLEM_HATCH = {
+    image: `data:image/svg+xml;utf8,${encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">'
+        + '<rect width="8" height="8" fill="rgba(232,102,196,0.07)"/>'
+        + '<path d="M0 8L8 0M-2 2L2 -2M6 10L10 6" stroke="rgba(232,102,196,0.32)" stroke-width="1.2"/>'
+        + '</svg>',
+    )}`,
+    repeat: 'repeat',
+} as const;
+
+const scopeMs = (s: string | null | undefined): number | null => parseLocal(s);
+
+/** The union of every scope range, merged, as sorted [start, end] intervals
+ *  (open ends = ±Infinity). A point outside all of them is "outside every
+ *  period". */
+export function scopeIslands(scopes: TimeScopes): [number, number][] {
+    const ivs: [number, number][] = [];
+    for (const r of scopes.ranges) {
+        const a = r.start ? scopeMs(r.start) : -Infinity;
+        const b = r.end ? scopeMs(r.end) : Infinity;
+        if (a === null || b === null || b < a) continue;
+        ivs.push([a, b]);
+    }
+    ivs.sort((x, y) => x[0] - y[0]);
+    const out: [number, number][] = [];
+    for (const iv of ivs) {
+        const last = out[out.length - 1];
+        if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
+        else out.push([iv[0], iv[1]]);
+    }
+    return out;
+}
+
+/** `[ms, value]` pairs with a `null` inserted wherever the line would cross
+ *  time outside every period (between two islands, or into / out of
+ *  unscored time), so the chart shows a gap there instead of a bridge. */
+export function withScopeGaps(points: [number, number | null][], islands: [number, number][]): [number, number | null][] {
+    const islandOf = (x: number) => islands.findIndex(([a, b]) => x >= a && x <= b);
+    const out: [number, number | null][] = [];
+    let prev = -2;
+    for (let k = 0; k < points.length; k++) {
+        const isl = islandOf(points[k][0]);
+        if (k > 0 && (isl < 0 || prev < 0 || isl !== prev)) {
+            out.push([(points[k - 1][0] + points[k][0]) / 2, null]);
+        }
+        out.push(points[k]);
+        prev = isl;
+    }
+    return out;
+}
+
+/** The carrier series of the scope bands / event lines (no data of its own,
+ *  drawn under the data). */
+function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number, yTop: number): Record<string, unknown> {
+    const pill = {
+        color: CHART.textPrimary,
+        fontSize: 9,
+        fontWeight: 700,
+        fontFamily: 'JetBrains Mono, monospace',
+        backgroundColor: CHART.scopePillBg,
+        padding: [2, 5],
+        borderRadius: 4,
+    };
+    const area = scopes.ranges.flatMap(r => {
+        const a = Math.max(xMin, r.start ? (scopeMs(r.start) ?? xMin) : xMin);
+        const b = Math.min(xMax, r.end ? (scopeMs(r.end) ?? xMax) : xMax);
+        if (!(b >= a)) return [];
+        const train = r.kind === 'train';
+        const line = train ? CHART.train : CHART.test;
+        return [[
+            {
+                name: r.label,
+                xAxis: a,
+                // Train and test may overlap: train = blue fill, test = magenta fill +
+                // dashed outline (Known problem hatched), so a test over train stays readable.
+                itemStyle: train
+                    ? { color: CHART.trainFill, borderWidth: 0 }
+                    : { color: r.kind === 'problem' ? PROBLEM_HATCH : CHART.testFill, borderColor: line, borderWidth: 1, borderType: 'dashed' },
+                // Two pill lanes: train pills in the strip ABOVE the plot, test pills
+                // on the first row inside it.
+                label: { ...pill, show: true, color: line, position: train ? 'top' : 'insideTop', distance: 3, formatter: scopes.compact ? r.short : r.label },
+            },
+            { xAxis: b },
+        ]];
+    });
+    const evMs = scopes.events.map(scopeMs).filter((x): x is number => x !== null && x >= xMin && x <= xMax);
+    const carrier: Record<string, unknown> = {
+        type: 'line',
+        name: '__scopes',
+        data: [],
+        silent: true,
+        z: 0,
+        symbol: 'none',
+        tooltip: { show: false },
+        markArea: { silent: true, animation: false, data: area },
+    };
+    if (evMs.length) {
+        carrier.markLine = {
+            silent: true,
+            symbol: 'none',
+            animation: false,
+            data: evMs.map(x => ({ xAxis: x, lineStyle: { color: CHART.danger, width: 1.5, type: 'dashed' }, label: { show: false } })),
+        };
+        // "EVENT" sits one row below the test pills, just inside the plot.
+        carrier.markPoint = {
+            silent: true,
+            animation: false,
+            symbol: 'circle',
+            symbolSize: 0,
+            data: evMs.map(x => ({
+                name: 'EVENT',
+                coord: [x, yTop],
+                label: { ...pill, show: true, color: CHART.danger, formatter: 'EVENT', position: 'bottom', distance: 24 },
+            })),
+        };
+    }
+    return carrier;
+}
+
 export interface TimeSeriesSpec {
     timestamps: string[];
     lines: TimeLine[];
@@ -98,14 +293,21 @@ export interface TimeSeriesSpec {
     /** Fixed Y range (the Health score chart is always 0-100); overrides the
      *  data-driven one. */
     yRange?: [number, number];
+    /** Train / test scope bands + event lines (`scopesOf`). Absent / null = no
+     *  scopes (the chart is drawn as before). Only drawn on a time axis. */
+    scopes?: TimeScopes | null;
 }
 
 /** Value(s) over time with horizontal reference lines and shaded bands. The
  *  Y range always includes every `hLine` / `band`, so a ±3SD line outside the
- *  data is still on screen. */
+ *  data is still on screen. With `scopes`, the train / test periods are drawn
+ *  as bands with pills, time outside every period is a gap in the line, and
+ *  the reference-line labels move to the left end (clear of the pills). */
 export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     const { timestamps, lines, hLines = [], bands = [], yName } = spec;
     const ms = parseTimestamps(timestamps);
+    const scopes = ms && ms.length > 0 && spec.scopes ? spec.scopes : null;
+    const islands = scopes ? scopeIslands(scopes) : null;
     let lo = Infinity;
     let hi = -Infinity;
     const take = (v: number | null | undefined) => {
@@ -118,10 +320,9 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 1;
     const [yMin, yMax] = spec.yRange ?? niceExtent(lo - pad, hi + pad);
 
-    const series = lines.map((l, i) => {
-        const data = ms
-            ? l.values.map((v, k) => [ms[k], v] as [number, number | null])
-            : l.values;
+    const series: Record<string, unknown>[] = lines.map((l, i) => {
+        const pairs = ms ? l.values.map((v, k) => [ms[k], v] as [number, number | null]) : null;
+        const data = pairs ? (islands ? withScopeGaps(pairs, islands) : pairs) : l.values;
         const base: Record<string, unknown> = {
             type: 'line',
             name: l.name,
@@ -142,7 +343,8 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
                         yAxis: h.y,
                         lineStyle: { color: h.color, width: 1.5, type: h.dashed ? 'dashed' : 'solid' },
                         label: h.label
-                            ? { show: true, formatter: h.label, position: 'insideEndTop', color: h.color, fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }
+                            // With scopes the pills own the top-right; reference labels go left.
+                            ? { show: true, formatter: h.label, position: scopes ? 'insideStartTop' : 'insideEndTop', color: h.color, fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }
                             : { show: false },
                     })),
                 };
@@ -157,6 +359,11 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         }
         return base;
     });
+    if (scopes && ms && series.length > 0) {
+        // Its own (empty) carrier series, so the scope bands sit under the data and
+        // never mix with the Y bands / reference lines of the first series.
+        series.push(scopeSeries(scopes, ms[0], ms[ms.length - 1], yMax));
+    }
 
     return {
         backgroundColor: 'transparent',
@@ -164,7 +371,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         animation: false,
         tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: 'rgba(255,255,255,.35)', type: 'dashed' } } },
         legend: { show: false },
-        grid: { left: 58, right: 18, top: 14, bottom: 28, containLabel: false },
+        grid: { left: 58, right: 18, top: scopes ? 14 + SCOPE_STRIP : 14, bottom: 28, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }],
         xAxis: ms
             ? { type: 'time', ...axisCommon, splitLine: { show: false } }
@@ -189,11 +396,12 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
 // ---------------------------------------------------------------------------
 
 /** "Sensor value over time" with ±1SD (green) and ±3SD (amber) lines + zones. */
-export function buildValueOverTimeOption(series: IndividualSeries, stats: IndividualStats, unit: string) {
+export function buildValueOverTimeOption(series: IndividualSeries, stats: IndividualStats, unit: string, scopes: TimeScopes | null = null) {
     const [l1, u1] = stats.boundary_1sd;
     const [l3, u3] = stats.boundary_3sd;
     return buildTimeSeriesOption({
         timestamps: series.timestamps,
+        scopes,
         yName: unit || undefined,
         lines: [{ name: 'Value', values: series.value, color: CHART.series }],
         bands: [
@@ -360,9 +568,10 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
 }
 
 /** "Target vs predicted" over time. */
-export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: string) {
+export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: string, scopes: TimeScopes | null = null) {
     return buildTimeSeriesOption({
         timestamps: series.timestamps,
+        scopes,
         yName: unit || undefined,
         lines: [
             { name: 'Actual', values: series.actual, color: CHART.actual },
@@ -373,9 +582,10 @@ export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: s
 
 /** "Residual over time" (actual − predicted) with the ±2RMSE band (green) and
  *  a zero line. No set-point lines here — those belong to the Health score page. */
-export function buildResidualOption(series: RelationshipSeries, twoRmse: number, unit: string) {
+export function buildResidualOption(series: RelationshipSeries, twoRmse: number, unit: string, scopes: TimeScopes | null = null) {
     return buildTimeSeriesOption({
         timestamps: series.timestamps,
+        scopes,
         yName: unit || undefined,
         lines: [{ name: 'Residual', values: series.residual, color: CHART.series }],
         bands: [{ from: -twoRmse, to: twoRmse, color: CHART.okFill }],

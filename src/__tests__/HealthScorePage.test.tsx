@@ -14,6 +14,7 @@ import type { HealthScorePageProps, SaveInfo } from '../components/windows/workb
 import type { HealthSetPoints } from '../types';
 import type { HealthIssue, HealthPreview } from '../types/health';
 import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { makeTestResult, makeValidation } from './helpers/validationFixture';
 
 const IND_VALID = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 } as const;
 const REL_VALID = { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 } as const;
@@ -537,12 +538,12 @@ describe('saved files: progress, result and "changed after saving"', () => {
         expect(screen.queryByTestId('save-error')).toBeNull();
     });
 
-    it('running: "Saving results…"; a Relationship adds that it can take about 15 seconds', () => {
+    it('running: "Saving results…"; a Relationship adds that it can take longer than 15 seconds the first time', () => {
         save({ phase: 'running', slow: false });
         expect(screen.getByTestId('save-running').textContent).toBe('Saving results…');
         cleanup();
         save({ phase: 'running', slow: true });
-        expect(screen.getByTestId('save-running').textContent).toMatch(/Saving results….*15 seconds/);
+        expect(screen.getByTestId('save-running').textContent).toMatch(/Saving results….*longer than 15 seconds, especially the first time/);
     });
 
     it('ok: "Saved N files to <path>" in plain text, with the file names in an expandable row', () => {
@@ -712,5 +713,84 @@ describe('warning issues are shown as non-blocking notes (coordinator 2026-10-04
         const data = { ...previewFor('individual', { kind: 'individual', lower: null, upper: null }), validation: [{ code: 'required', severity: 'error' as const, message: 'L required', field: 'lower' }, warn] };
         mount({ sp: { kind: 'individual', lower: null, upper: null }, data });
         expect(screen.getByTestId('hs-verdict').textContent).toBe('Incomplete');
+    });
+});
+
+describe('Train / Test validation (2026-10-07)', () => {
+    const withTests = (kind: 'individual' | 'relationship', sp: HealthSetPoints): HealthPreview => ({
+        ...previewFor(kind, sp),
+        test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7 }), makeTestResult({ label: 'problem', first_below_80: null, event_time: '2026-01-01T03:30' })] }),
+    });
+
+    it('the set-point chart and the score chart both draw the train / test scopes', () => {
+        mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
+        const names = (c: any) => c.option.series.map((x: any) => x.name);
+        expect(names(scoreChart())).toContain('__scopes');
+        expect(names(setChart())).toContain('__scopes');
+        const ev = scoreChart().option.series.find((x: any) => x.name === '__scopes').markLine.data;
+        expect(ev).toHaveLength(1); // the Known problem's event
+    });
+
+    it('no scopes without test periods', () => {
+        mount({ sp: IND_VALID });
+        expect(scoreChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
+    });
+
+    it('"Test results" tiles under the score: Normal amber at >= 5 %, Known problem "Not detected" amber (never red)', () => {
+        mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
+        const card = screen.getByTestId('test-results');
+        expect(within(card).getByTestId('test-result-1').getAttribute('data-tone')).toBe('warn');
+        expect(within(card).getByTestId('test-result-2-big').textContent).toBe('Not detected');
+        expect(card.innerHTML).not.toMatch(/danger|--bad/);
+    });
+
+    it('while the set points are not valid every tile reads "Not scored yet"', () => {
+        const data = { ...withTests('relationship', REL_EMPTY) };
+        mount({ kind: 'relationship', sp: REL_EMPTY, data });
+        expect(screen.getByTestId('test-result-1-big').textContent).toBe('Not scored yet');
+    });
+
+    it('review fix 2026-10-07: testNumbers name the tiles and the chart pills by the ORIGINAL list position', () => {
+        const data: HealthPreview = { ...previewFor('individual', IND_VALID), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
+        mount({ sp: IND_VALID, data, testNumbers: [2] });
+        expect(screen.getByTestId('test-result-2').textContent).toContain('T2 Normal');
+        expect(screen.queryByTestId('test-result-1')).toBeNull();
+        const carrier = scoreChart().option.series.find((x: any) => x.name === '__scopes');
+        expect(JSON.stringify(carrier)).toContain('T2 NORMAL');
+        expect(JSON.stringify(carrier)).not.toContain('T1 NORMAL');
+    });
+
+    it('review fix 2026-10-07: test_scoring_failed -> amber notice with "Try again" (the preview Retry) instead of tiles; the score chart still draws', () => {
+        const onRetryPreview = vi.fn();
+        const data: HealthPreview = {
+            ...previewFor('relationship', REL_VALID),
+            validation: [{ code: 'test_scoring_failed', severity: 'warning', field: 'test_periods', message: 'The Relation model engine did not answer.' }],
+            test_validation: makeValidation({ tests: [makeTestResult({ scored: 0, pct_below_80: null, lowest: null })] }),
+        };
+        mount({ kind: 'relationship', sp: REL_VALID, data, onRetryPreview });
+        expect(screen.getByTestId('test-scoring-failed').textContent).toContain("Couldn't score the test periods — try again");
+        expect(screen.queryByTestId('test-result-1')).toBeNull();
+        expect(scoreChart()).toBeTruthy();
+        fireEvent.click(screen.getByTestId('test-scoring-retry'));
+        expect(onRetryPreview).toHaveBeenCalledTimes(1);
+    });
+
+    it('review fix 2026-10-07: the "Scoring test periods … ~15 s" hint shows when the container says so', () => {
+        mount({ sp: IND_VALID, slowScoring: true });
+        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods with the Relation model');
+        cleanup();
+        mount({ sp: IND_VALID });
+        expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
+    });
+
+    it('banner when only the test periods changed since Mark complete ("changed" / "removed")', () => {
+        mount({ sp: IND_VALID, testsChanged: 'changed' });
+        expect(screen.getByTestId('tests-changed-banner').textContent).toContain('Mark complete again');
+        cleanup();
+        mount({ sp: IND_VALID, testsChanged: 'removed' });
+        expect(screen.getByTestId('tests-changed-banner').textContent).toContain('Test periods removed');
+        cleanup();
+        mount({ sp: IND_VALID });
+        expect(screen.queryByTestId('tests-changed-banner')).toBeNull();
     });
 });

@@ -1071,6 +1071,65 @@ impl RelFit {
     }
 }
 
+/// Predictions of a cached fit's TRAIN-ONLY model for rows outside the training
+/// scope (the test periods of the Train/Test validation). The model is fitted
+/// once on the training rows; test rows are only ever PREDICTED, never fitted
+/// on. They are filled in lazily (the sidecar's `predict_relationship`) the
+/// first time a test period needs them and then re-used by every later
+/// set-point edit, so only a test period that brings NEW rows costs a sidecar
+/// run. Lives and dies with its fit's cache entry.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct RelExtra {
+    /// Dataset rows, ascending and unique.
+    pub rows: Vec<u32>,
+    /// Aligned predictions (`NaN` = the sidecar returned none).
+    pub predicted: Vec<f64>,
+}
+
+impl RelExtra {
+    /// The prediction for `row` (finite only).
+    pub fn get(&self, row: u32) -> Option<f64> {
+        let i = self.rows.binary_search(&row).ok()?;
+        Some(self.predicted[i]).filter(|v| v.is_finite())
+    }
+
+    /// Does it hold an entry (finite or not) for `row`?
+    pub fn has(&self, row: u32) -> bool {
+        self.rows.binary_search(&row).is_ok()
+    }
+
+    fn approx_bytes(&self) -> usize {
+        self.rows.len() * (4 + 8)
+    }
+
+    /// This set plus the given rows (the new value wins on a duplicate row).
+    pub fn merged(&self, rows: &[u32], predicted: &[f64]) -> RelExtra {
+        let mut pairs: Vec<(u32, f64)> = self
+            .rows
+            .iter()
+            .copied()
+            .zip(self.predicted.iter().copied())
+            .collect();
+        pairs.extend(rows.iter().copied().zip(predicted.iter().copied()));
+        // Stable sort: for equal rows the later (new) pair stays last.
+        pairs.sort_by_key(|&(r, _)| r);
+        let mut out_rows: Vec<u32> = Vec::with_capacity(pairs.len());
+        let mut out_pred: Vec<f64> = Vec::with_capacity(pairs.len());
+        for (r, p) in pairs {
+            if out_rows.last() == Some(&r) {
+                *out_pred.last_mut().expect("aligned") = p;
+            } else {
+                out_rows.push(r);
+                out_pred.push(p);
+            }
+        }
+        RelExtra {
+            rows: out_rows,
+            predicted: out_pred,
+        }
+    }
+}
+
 /// Most-recent-first bounded cache of [`RelFit`]s. Lives INSIDE the session
 /// (`SessionData`), so a new `load_csv` drops it with the dataset it
 /// described; the caller-supplied key is `modelId + fingerprint`.
@@ -1078,6 +1137,8 @@ impl RelFit {
 pub struct RelCache {
     /// Most recently used LAST.
     entries: Vec<(String, Arc<RelFit>)>,
+    /// Test-row predictions of the entries above (same key), see [`RelExtra`].
+    extras: Vec<(String, Arc<RelExtra>)>,
     max_entries: usize,
     max_bytes: usize,
     /// "Derived epoch": bumped by every [`RelCache::clear`] — i.e. by every
@@ -1102,6 +1163,7 @@ impl RelCache {
     pub fn new(max_entries: usize, max_bytes: usize) -> Self {
         RelCache {
             entries: Vec::new(),
+            extras: Vec::new(),
             max_entries: max_entries.max(1),
             max_bytes,
             epoch: 0,
@@ -1126,11 +1188,25 @@ impl RelCache {
     /// recomputed or removed.
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.extras.clear();
         self.epoch += 1;
     }
 
     fn total_bytes(&self) -> usize {
-        self.entries.iter().map(|(_, f)| f.approx_bytes()).sum()
+        self.entries.iter().map(|(_, f)| f.approx_bytes()).sum::<usize>()
+            + self.extras.iter().map(|(_, e)| e.approx_bytes()).sum::<usize>()
+    }
+
+    /// Evict the least recently used entries (and their extras) until both
+    /// bounds hold. The newest entry is always kept.
+    fn enforce_bounds(&mut self) {
+        while self.entries.len() > 1
+            && (self.entries.len() > self.max_entries || self.total_bytes() > self.max_bytes)
+        {
+            self.entries.remove(0);
+        }
+        let live: Vec<&String> = self.entries.iter().map(|(k, _)| k).collect();
+        self.extras.retain(|(k, _)| live.contains(&k));
     }
 
     /// Insert (replacing the same key), then evict the least recently used
@@ -1138,12 +1214,63 @@ impl RelCache {
     /// if it alone exceeds the byte budget.
     pub fn insert(&mut self, key: String, fit: RelFit) {
         self.entries.retain(|(k, _)| k != &key);
+        // A new fit under the same key invalidates the old fit's test predictions.
+        self.extras.retain(|(k, _)| k != &key);
         self.entries.push((key, Arc::new(fit)));
-        while self.entries.len() > 1
-            && (self.entries.len() > self.max_entries || self.total_bytes() > self.max_bytes)
-        {
+        self.enforce_bounds();
+    }
+
+    /// The test-row predictions stored for `key` (usable under a read lock).
+    pub fn peek_extra(&self, key: &str) -> Option<Arc<RelExtra>> {
+        self.extras.iter().find(|(k, _)| k == key).map(|(_, e)| e.clone())
+    }
+
+    /// Add predictions of the cached fit `key` for `rows`. `false` (nothing
+    /// stored, the previous predictions of that key kept) when there is no such
+    /// fit - e.g. it was evicted meanwhile - or when the fit plus ALL its
+    /// predictions cannot fit the byte budget even with every other entry
+    /// evicted.
+    ///
+    /// The fit being merged is marked most recently used FIRST: the budget is
+    /// then paid by the OTHER (older) fits, so a fit can never evict itself
+    /// together with the predictions it was just given.
+    pub fn merge_extra(&mut self, key: &str, rows: &[u32], predicted: &[f64]) -> bool {
+        let Some(pos) = self.entries.iter().position(|(k, _)| k == key) else {
+            return false;
+        };
+        if rows.len() != predicted.len() {
+            return false;
+        }
+        // Touch (most recently used = last), so eviction below never picks it.
+        let touched = self.entries.remove(pos);
+        let fit_bytes = touched.1.approx_bytes();
+        self.entries.push(touched);
+
+        let old = self
+            .extras
+            .iter()
+            .position(|(k, _)| k == key)
+            .map(|i| self.extras.remove(i).1);
+        let merged = match &old {
+            Some(e) => e.merged(rows, predicted),
+            None => RelExtra::default().merged(rows, predicted),
+        };
+        if fit_bytes + merged.approx_bytes() > self.max_bytes {
+            // Does not fit even alone: keep what was there, say so honestly.
+            if let Some(o) = old {
+                self.extras.push((key.to_string(), o));
+            }
+            return false;
+        }
+        self.extras.push((key.to_string(), Arc::new(merged)));
+        // Evict the least recently used OTHER fits until the budget holds (the
+        // merged key is last, so it is never removed; the check above
+        // guarantees it fits once it is alone).
+        while self.entries.len() > 1 && self.total_bytes() > self.max_bytes {
             self.entries.remove(0);
         }
+        self.enforce_bounds();
+        true
     }
 
     /// Look up and mark as most recently used.
@@ -1818,6 +1945,104 @@ mod tests {
             r2_per_step: vec![0.9],
             rmse2_per_step: vec![0.1],
         }
+    }
+
+    // ---------- test-row predictions (Train/Test validation) ----------
+
+    #[test]
+    fn extra_predictions_merge_sorted_new_values_win_and_only_for_a_cached_fit() {
+        let mut c = RelCache::default();
+        assert!(!c.merge_extra("a", &[5], &[1.0]), "no fit under that key");
+        c.insert("a".into(), fit(10, "T"));
+        assert!(c.peek_extra("a").is_none());
+        assert!(c.merge_extra("a", &[30, 10, 20], &[3.0, 1.0, 2.0]));
+        assert!(c.merge_extra("a", &[20, 40], &[2.5, f64::NAN]));
+        let e = c.peek_extra("a").unwrap();
+        assert_eq!(e.rows, vec![10, 20, 30, 40]);
+        assert_eq!(e.get(10), Some(1.0));
+        assert_eq!(e.get(20), Some(2.5), "the newer prediction replaces the older");
+        assert_eq!(e.get(30), Some(3.0));
+        assert_eq!(e.get(40), None, "a NaN prediction is not a prediction ...");
+        assert!(e.has(40), "... but the row is known (never asked for again)");
+        assert!(!e.has(11) && e.get(11).is_none());
+        // Length mismatch is refused.
+        assert!(!c.merge_extra("a", &[1, 2], &[1.0]));
+    }
+
+    #[test]
+    fn extra_predictions_die_with_their_fit() {
+        let mut c = RelCache::default();
+        c.insert("a".into(), fit(10, "T"));
+        c.insert("b".into(), fit(10, "T"));
+        assert!(c.merge_extra("a", &[1], &[1.0]) && c.merge_extra("b", &[2], &[2.0]));
+        // A new fit under the same key invalidates the old predictions.
+        c.insert("a".into(), fit(10, "T2"));
+        assert!(c.peek_extra("a").is_none());
+        assert!(c.peek_extra("b").is_some());
+        // clear() (special sensor changed) drops everything and bumps the epoch.
+        let epoch = c.epoch();
+        c.clear();
+        assert!(c.peek_extra("b").is_none());
+        assert_eq!(c.epoch(), epoch + 1);
+    }
+
+    #[test]
+    fn extra_predictions_are_evicted_with_the_least_recently_used_fit() {
+        let mut c = RelCache::new(2, usize::MAX);
+        c.insert("a".into(), fit(10, "T"));
+        c.insert("b".into(), fit(10, "T"));
+        assert!(c.merge_extra("a", &[1], &[1.0])); // also marks "a" most recently used
+        assert!(c.get("b").is_some()); // so touch "b": "a" is the LRU again
+        c.insert("c".into(), fit(10, "T")); // evicts "a"
+        assert!(c.peek("a").is_none());
+        assert!(c.peek_extra("a").is_none(), "no orphaned predictions");
+    }
+
+    #[test]
+    fn extra_predictions_count_towards_the_byte_budget() {
+        // Budget fits one 10-row fit (10 * 20 + 80 = 280 bytes) but not the extras too.
+        let mut c = RelCache::new(8, 400);
+        c.insert("a".into(), fit(10, "T"));
+        c.insert("b".into(), fit(10, "T")); // evicts "a" (2 x 280 > 400)
+        assert!(c.peek("a").is_none() && c.peek("b").is_some());
+        let rows: Vec<u32> = (0..100).collect();
+        let preds = vec![0.0; 100];
+        // Fit + 1200 bytes of predictions cannot fit 400 bytes even alone: refused
+        // honestly, the fit itself is untouched.
+        assert!(!c.merge_extra("b", &rows, &preds));
+        assert!(c.peek("b").is_some());
+        assert!(c.peek_extra("b").is_none());
+        // A small one still fits (280 + 12 * 5 = 340 <= 400)...
+        assert!(c.merge_extra("b", &[1, 2, 3, 4, 5], &[0.0; 5]));
+        // ...and a later oversized merge keeps what was already stored.
+        assert!(!c.merge_extra("b", &rows, &preds));
+        assert_eq!(c.peek_extra("b").unwrap().rows, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn merging_extras_into_the_oldest_fit_evicts_the_others_never_itself() {
+        // Two 5-row fits (5 * 20 + 40 = 140 bytes each) fit a 300-byte budget;
+        // the extras of the OLDEST one push the total over it.
+        let mut c = RelCache::new(8, 300);
+        c.insert("a".into(), fit(5, "T"));
+        c.insert("b".into(), fit(5, "T"));
+        assert!(c.peek("a").is_some() && c.peek("b").is_some());
+        // "a" is the least recently used entry: the old code evicted IT (and the
+        // predictions it had just been given) instead of "b".
+        assert!(c.merge_extra("a", &[1, 2, 3], &[1.0, 2.0, 3.0]));
+        assert!(c.peek("a").is_some(), "the merged fit survives");
+        assert_eq!(c.peek_extra("a").unwrap().rows, vec![1, 2, 3]);
+        assert!(c.peek("b").is_none(), "the other fit paid the budget");
+        assert!(c.peek_extra("b").is_none());
+        // Merging marked "a" most recently used: with a third fit "a" is not the next victim.
+        let mut c = RelCache::new(8, 440);
+        c.insert("a".into(), fit(5, "T"));
+        c.insert("b".into(), fit(5, "T"));
+        c.insert("c".into(), fit(5, "T"));
+        assert!(c.merge_extra("a", &[1], &[1.0])); // 3 * 140 + 12 = 432 <= 440
+        c.insert("d".into(), fit(5, "T")); // over budget: evicts the LRU = "b", not "a"
+        assert!(c.peek("a").is_some() && c.peek("b").is_none());
+        assert!(c.peek_extra("a").is_some());
     }
 
     #[test]

@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../../utils/tauriEvents";
 import { X, Check, ChevronRight, Lock, CircleAlert, TriangleAlert, Search, Loader2 } from "lucide-react";
-import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue } from "../../types";
+import { FailureGroup, FailureModel, ModelKind, ModelCategory, SensorMetadata, CsvMetadata, WorkspaceSensorFilter, CategoryChange, TimePeriod, TestPeriod, TimeHighlight, FailureGroupStateSlice, FailureGroupStateChangedPayload, HealthSetPoints, HealthVerdictValue } from "../../types";
 import type { HealthIssue } from "../../types/health";
 import type { RelationshipPreviewResult, ClusteringPreview } from "../../types/commands";
 import { loadWorkspaceData, updateWorkspaceData } from "../../workspaceManager";
@@ -12,25 +12,29 @@ import { withFailureGroupState } from "../../utils/failureGroupState";
 import { modelSensorKey, groupModelsBySensor, sensorCategory, setSensorCategory, type SensorModelGroup } from "../../utils/modelGrouping";
 import { normalizeCategories, flagLegacyGate, migratePeriods } from "../../utils/workspaceMigrations";
 import { findSameSensorNameConflict, suggestDistinctModelName } from "../../utils/modelNames";
-import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, type RunningConditionFg } from "../../utils/runningCondition";
+import { CATEGORY_BLOCK_REASON, getBuildBlockReason, isRunningConditionConfigured, isWorkspaceRunningConditionConfigured, effectiveRunningCondition, markCompleteBlockReason, runningConditionApplyBlock, seedCustomFromWorkspace, type RunningConditionFg } from "../../utils/runningCondition";
 import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from "../../utils/trainFingerprint";
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
 import { isModelStale as isModelStaleFor, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON, type ModelDotState, type SetPointFlag } from "../../utils/modelStatus";
-import { HEALTH_DEFAULT_MAX_POINTS, relationshipLambda } from "../../utils/healthRequest";
+import { HEALTH_DEFAULT_MAX_POINTS, relationshipLambda, testPeriodsWireFor } from "../../utils/healthRequest";
 import { ensureHealthSetPoints } from "../../utils/healthSetPoints";
-import { completeModel } from "../../utils/completeModel";
+import { completeModel, parseHealthError } from "../../utils/completeModel";
 import { commitHealthVerdict, commitSetPoints, MARK_COMPLETE_CLOSE_WAIT, persistModelComplete } from "../../utils/healthPersist";
 import { useSensorMetaMap, normalizeSensorTag } from "../../hooks/useSensorMetaMap";
 import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useHealthPreview } from "../../hooks/useHealthPreview";
-import { validatePeriods, newPeriodId } from "../../utils/timePeriods";
+import { validatePeriods, testPeriodsKey, testPeriodsError, testPeriodsWirePlan, toTestPeriodsWire } from "../../utils/timePeriods";
+import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeText, testsChangedState } from "../../utils/trainTestValidation";
 import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { useRowCountPreview } from "./useRowCountPreview";
 import { SensorPickerModal } from "./SensorPickers";
 import TimePeriodsEditor from "./TimePeriodsEditor";
+import TestPeriodsEditor from "./TestPeriodsEditor";
+import { TrainHighlightWarnings } from "./RunningConditionParts";
+import { estimateRunningDays } from "./periodDisplay";
 import SubModelsModal from "./SubModelsModal";
 import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
@@ -40,6 +44,25 @@ import WorkbenchStepBar, { workbenchStepLooks, type StepKey } from "./workbench/
 import { PageSwitch, SaveErrorNotice, StaleBanner } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
+import { TestedPill } from "./workbench/ValidationCards";
+
+/** How long a test-scoring Relation-model preview must have been loading before
+ *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
+const SLOW_SCORING_HINT_DELAY_MS = 1200;
+
+/** `flag`, but only once it has stayed true for `delayMs` (false at once). */
+function useDelayedFlag(flag: boolean, delayMs: number): boolean {
+    const [on, setOn] = useState(false);
+    useEffect(() => {
+        if (!flag) {
+            setOn(false);
+            return;
+        }
+        const t = setTimeout(() => setOn(true), delayMs);
+        return () => clearTimeout(t);
+    }, [flag, delayMs]);
+    return flag && on;
+}
 
 interface BuildModelData {
     workspaceId: string;
@@ -142,6 +165,9 @@ interface ModelDraft {
     customCombine: 'and' | 'or';
     customNoneConfirmed: boolean;
     customPeriods: TimePeriod[];
+    /** Train/Test validation (2026-10-07): this model's own TEST periods (Custom
+     *  mode) — staged in the draft like the other Custom lists. */
+    customTestPeriods: TestPeriod[];
 }
 
 const draftFromModel = (m: FailureModel): ModelDraft => ({
@@ -157,6 +183,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
     customCombine: m.customRunningConditionCombine ?? 'and',
     customNoneConfirmed: m.customRunningConditionNoneConfirmed ?? false,
     customPeriods: m.filterTimePeriods ?? [],
+    customTestPeriods: m.customTestPeriods ?? [],
 });
 
 // Fixed order (not alphabetical) -- I/R/C is a small, natural taxonomy, not
@@ -259,6 +286,8 @@ interface RcDraft {
     combine: 'and' | 'or';
     periods: TimePeriod[];
     noneConfirmed: boolean;
+    /** Train/Test validation (2026-10-07): the workspace TEST periods. */
+    testPeriods: TestPeriod[];
 }
 
 /** Draft vs. persisted comparison. JSON is enough: every draft object is built
@@ -268,7 +297,8 @@ function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
     return a.combine === b.combine
         && a.noneConfirmed === b.noneConfirmed
         && JSON.stringify(a.filters) === JSON.stringify(b.filters)
-        && JSON.stringify(a.periods) === JSON.stringify(b.periods);
+        && JSON.stringify(a.periods) === JSON.stringify(b.periods)
+        && JSON.stringify(a.testPeriods) === JSON.stringify(b.testPeriods);
 }
 
 /** Footer's "Last trained <date>" (Complete state) — locale-formatted, not a
@@ -330,10 +360,20 @@ export default function BuildModelWindow() {
     const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
     // How the conditions above combine — 'and' (default) or 'or' (2026-09-23).
     const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>('and');
-    // Workspace-default training PERIODS (Feature 4-C). Empty = no time limit.
+    // Workspace-default TRAIN periods (Feature 4-C; "train" since the Train/Test
+    // validation change, 2026-10-07). At least one is REQUIRED to train — an
+    // empty list no longer means "whole dataset" (`getBuildBlockReason`).
     // A model in Workspace mode uses THIS list; Custom mode uses its own
     // `filterTimePeriods`.
     const [runningConditionTimePeriods, setRunningConditionTimePeriods] = useState<TimePeriod[]>([]);
+    // Workspace-default TEST periods (Train/Test validation): where the score is
+    // checked; at least one is needed before Mark complete. Custom mode uses the
+    // model's own `customTestPeriods`.
+    const [runningConditionTestPeriods, setRunningConditionTestPeriods] = useState<TestPeriod[]>([]);
+    // The workspace's Dashboard time highlights — only feed "From Highlights" and
+    // the amber train-overlap warning (never drawn on Workbench charts). Read from
+    // the workspace file at hydration and again whenever they are about to be used.
+    const [dashHighlights, setDashHighlights] = useState<TimeHighlight[]>([]);
     const { bounds: datasetBounds } = useDatasetTimeBounds();
     // Drives the Workbench's Running condition settings modal (opened from the
     // Step-1 card's Edit / Set running condition / Fix period button; was an inline
@@ -467,7 +507,7 @@ export default function BuildModelWindow() {
      *  PredictiveModelBuild.tsx's own `seedNote`, session-only (never
      *  persisted), shown once per model per switch-to-Custom that actually
      *  copied something. */
-    const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number } | null>>({});
+    const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number; tests: number } | null>>({});
     /** Clustering's criteria-sensor stats (drives the cluster-range slider's
      *  [min, max] bounds) — scoped to whichever model is currently active,
      *  refetched whenever its (draft-aware) criteria sensor or effective
@@ -542,9 +582,25 @@ export default function BuildModelWindow() {
         setRunningConditionFilters(fg?.runningConditionFilters ?? []);
         setRunningConditionCombine(fg?.runningConditionCombine ?? 'and');
         setRunningConditionTimePeriods(fg?.runningConditionTimePeriods ?? []);
+        setRunningConditionTestPeriods(fg?.runningConditionTestPeriods ?? []);
         setRunningConditionNoneConfirmed(fg?.runningConditionNoneConfirmed ?? false);
         setRcLegacyNotice(fg?.rcLegacyNotice ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
+    }, []);
+
+    /** Re-reads the workspace's Dashboard time highlights from disk (the Dashboard
+     *  may have changed them since this window opened). Never touches anything
+     *  else; a failure keeps the last list. */
+    const refreshHighlights = useCallback(async (): Promise<void> => {
+        const ws = workspaceIdRef.current;
+        if (!ws) return;
+        try {
+            const data = await loadWorkspaceData(ws);
+            if (workspaceIdRef.current !== ws) return;
+            setDashHighlights(data?.timeHighlights ?? []);
+        } catch {
+            // keep the last list
+        }
     }, []);
 
     /** Persists every set-point draft that is not on disk yet (health score
@@ -705,6 +761,8 @@ export default function BuildModelWindow() {
                 setRunningConditionFilters([]);
                 setRunningConditionCombine('and');
                 setRunningConditionTimePeriods([]);
+                setRunningConditionTestPeriods([]);
+                setDashHighlights([]);
                 setRunningConditionNoneConfirmed(false);
                 setRcLegacyNotice(null);
                 setLegacyRemindLater(false);
@@ -739,6 +797,7 @@ export default function BuildModelWindow() {
             try {
                 const ws = await loadWorkspaceData(d.workspaceId);
                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
+                setDashHighlights(ws?.timeHighlights ?? []);
                 // One-time legacy cleanup (Feature 4-A): a sensor whose models
                 // disagree on category is made consistent. When that changed
                 // something, the result + notice are WRITTEN BACK here so the
@@ -823,14 +882,15 @@ export default function BuildModelWindow() {
 
     // The one path that actually changes the workspace-wide running
     // condition — edited entirely from the "Running Condition Filter" modal
-    // (see the JSX below), never per-model. One function for all four
-    // sub-fields (filters/combine/time start/time end) rather than a
+    // (see the JSX below), never per-model. One function for every
+    // sub-field (filters/combine/train periods/none/test periods) rather than a
     // near-duplicate persist-function per field.
     const persistRunningCondition = useCallback((patch: {
         filters?: WorkspaceSensorFilter[];
         combine?: 'and' | 'or';
         periods?: TimePeriod[];
         noneConfirmed?: boolean;
+        testPeriods?: TestPeriod[];
     }): Promise<void> => {
         if (!workspaceId) return Promise.resolve();
         return trackPending((async () => {
@@ -840,6 +900,7 @@ export default function BuildModelWindow() {
                     ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
                     ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
                     ...(patch.noneConfirmed !== undefined ? { runningConditionNoneConfirmed: patch.noneConfirmed } : {}),
+                    ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: patch.testPeriods } : {}),
                 });
                 // Any edit made through this panel settles the legacy notice.
                 const fg = applied.failureGroupState;
@@ -847,6 +908,9 @@ export default function BuildModelWindow() {
                 // Applying a different workspace running condition changes what every
                 // Workspace-mode model trains on: those that were Complete go back to
                 // Incomplete in this same write (Custom-mode models are unaffected).
+                // A change of ONLY the test periods keeps them trained but still needs
+                // Mark complete again (`testsChangedAt`) — `applyIncompleteRule` does
+                // both, never this window by hand.
                 return applyIncompleteRule(prev, withFailureGroupState(applied, { rcLegacyNotice: stillPending ? 'pending' : null }));
             });
             if (next?.failureGroupState) {
@@ -872,6 +936,7 @@ export default function BuildModelWindow() {
         combine: runningConditionCombine,
         periods: runningConditionTimePeriods,
         noneConfirmed: runningConditionNoneConfirmed,
+        testPeriods: runningConditionTestPeriods,
     };
     const rcPersistedRef = useRef<RcDraft>(rcPersisted);
     rcPersistedRef.current = rcPersisted;
@@ -914,6 +979,10 @@ export default function BuildModelWindow() {
     const updateRunningConditionPeriods = useCallback((periods: TimePeriod[]) => {
         patchRcDraft({ periods });
     }, [patchRcDraft]);
+    // Test periods are committed by `TestPeriodsEditor` on blur / Enter / a discrete action.
+    const updateRunningConditionTestPeriods = useCallback((testPeriods: TestPeriod[]) => {
+        patchRcDraft({ testPeriods });
+    }, [patchRcDraft]);
 
     /** Discards the draft and closes the modal — the single exit every close
      *  path (Cancel, Discard, successful Apply) goes through. */
@@ -944,7 +1013,9 @@ export default function BuildModelWindow() {
         flushFocusedInput();
         const d = rcDraftRef.current;
         if (!d || rcDraftEqual(d, rcPersistedRef.current)) { closeRc(); return; }
-        if (validatePeriods(d.periods).some(s => s.invalid)) return;
+        // Invalid train period, NO train period (rule 1), or an invalid test period /
+        // event time (rule 5) keeps the modal open; the footer says why.
+        if (runningConditionApplyBlock(d.periods, d.testPeriods) !== null) return;
         // Optimistic local mirror (the persisted state vars) so the Step-1 card and
         // the gate are right the moment the modal closes; the write's own
         // `applyFg` then confirms it from disk.
@@ -952,7 +1023,8 @@ export default function BuildModelWindow() {
         setRunningConditionCombine(d.combine);
         setRunningConditionTimePeriods(d.periods);
         setRunningConditionNoneConfirmed(d.noneConfirmed);
-        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed });
+        setRunningConditionTestPeriods(d.testPeriods);
+        void persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, noneConfirmed: d.noneConfirmed, testPeriods: d.testPeriods });
         closeRc();
     }, [closeRc, persistRunningCondition]);
 
@@ -976,7 +1048,7 @@ export default function BuildModelWindow() {
     //      path below asks it; Save is deliberately NOT gated by it. ----
     const gateFg: RunningConditionFg = {
         models: allModels, runningConditionFilters, runningConditionCombine,
-        runningConditionTimePeriods, runningConditionNoneConfirmed,
+        runningConditionTimePeriods, runningConditionNoneConfirmed, runningConditionTestPeriods,
     };
     const gateHeaders = allSensors.length ? allSensors : null;
     // 🆕 2026-09-30 QA fix (bug 3): judge the DRAFT-merged model
@@ -1004,7 +1076,8 @@ export default function BuildModelWindow() {
     const gateBadge = (m: FailureModel): string | null => {
         if (gateReasonOf(m) === null) return null;
         if (needsCondition(m)) return m.status ? LEGACY_BADGE : 'Needs condition';
-        return categoryOf(m) === null ? 'Needs category' : 'Fix periods';
+        if (categoryOf(m) === null) return 'Needs category';
+        return effectiveRunningCondition(effectiveModelFor(m), gateFg).periods.length === 0 ? 'Needs train period' : 'Fix periods';
     };
 
     /** Another model of the same sensor already using the name being saved.
@@ -1027,6 +1100,13 @@ export default function BuildModelWindow() {
             (m.xSensor ?? '') !== '' && d.y !== '' && (!d.criteria || d.ranges.every(r => r.min !== null && r.max !== null))
         );
         if (!ok) return 'Fill in the required fields above first';
+        // A Custom model's own test periods are saved with Save changes: an invalid
+        // one (dates, or an event time outside its period) blocks the save, exactly
+        // like it blocks the workspace Apply (SPEC rule 5).
+        if (d.runningConditionMode === 'custom') {
+            const badTest = testPeriodsError(d.customTestPeriods);
+            if (badTest) return badTest;
+        }
         return nameConflictOf(m) ? DUPLICATE_NAME_BLOCK_REASON : null;
     };
 
@@ -1047,6 +1127,10 @@ export default function BuildModelWindow() {
             if (!d.y) items.push('Pick a Y sensor');
             if (d.criteria && !d.ranges.every(r => r.min !== null && r.max !== null)) items.push('Fill in the cluster ranges');
         }
+        if (d.runningConditionMode === 'custom') {
+            const badTest = testPeriodsError(d.customTestPeriods);
+            if (badTest) items.push(badTest);
+        }
         if (nameConflictOf(m)) items.push('Fix the duplicate model name');
         return items;
     };
@@ -1066,7 +1150,7 @@ export default function BuildModelWindow() {
         // instead of a flat "Custom data" that never changed.
         if (d.runningConditionMode === 'custom') {
             const condLabel = d.customNoneConfirmed ? 'no cond' : `${d.customFilters.length} cond`;
-            parts.push(`Custom · ${condLabel} · ${d.customPeriods.length} period${d.customPeriods.length === 1 ? '' : 's'}`);
+            parts.push(`Custom · ${condLabel} · ${d.customPeriods.length} train · ${d.customTestPeriods.length} test`);
         } else {
             parts.push('Workspace data');
         }
@@ -1090,6 +1174,7 @@ export default function BuildModelWindow() {
             customRunningConditionCombine: d.customCombine,
             customRunningConditionNoneConfirmed: d.customNoneConfirmed,
             filterTimePeriods: d.customPeriods,
+            customTestPeriods: d.customTestPeriods,
         };
         if (m.kind === 'individual') return base;
         if (m.kind === 'relationship') return { ...base, predictorSensors: d.predictors, relStiffness: d.stiffness };
@@ -1131,21 +1216,15 @@ export default function BuildModelWindow() {
             return;
         }
         const d = draftOf(m);
-        const patch: Partial<ModelDraft> = { runningConditionMode: 'custom' };
-        let copiedConditions = 0;
-        let copiedPeriods = 0;
-        if (d.customFilters.length === 0 && runningConditionFilters.length > 0) {
-            copiedConditions = runningConditionFilters.length;
-            patch.customFilters = runningConditionFilters.map(f => ({ ...f, id: `rcf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }));
-            patch.customCombine = runningConditionCombine;
-        }
-        if (d.customPeriods.length === 0 && runningConditionTimePeriods.length > 0) {
-            copiedPeriods = runningConditionTimePeriods.length;
-            patch.customPeriods = runningConditionTimePeriods.map(p => ({ ...p, id: newPeriodId() }));
-        }
-        patchDraft(m, patch);
-        if (copiedConditions > 0 || copiedPeriods > 0) {
-            setSeedNoteFor(prev => ({ ...prev, [m.id]: { periods: copiedPeriods, conditions: copiedConditions } }));
+        // Each of the model's own lists (conditions, train periods, test periods) is
+        // copied from the workspace ONCE — only while it is still empty.
+        const { patch: seed, copied } = seedCustomFromWorkspace(
+            { customFilters: d.customFilters, customPeriods: d.customPeriods, customTestPeriods: d.customTestPeriods },
+            { filters: runningConditionFilters, combine: runningConditionCombine, periods: runningConditionTimePeriods, testPeriods: runningConditionTestPeriods },
+        );
+        patchDraft(m, { runningConditionMode: 'custom', ...seed });
+        if (copied.conditions > 0 || copied.periods > 0 || copied.tests > 0) {
+            setSeedNoteFor(prev => ({ ...prev, [m.id]: copied }));
         }
     };
 
@@ -1328,6 +1407,7 @@ export default function BuildModelWindow() {
                 // stiffness would serve stale data. (`fingerprint` is the same value that
                 // is persisted as `trainedFingerprint`.)
                 const cacheKey = `${merged.id}::${fingerprint}`;
+                const trainTestPeriods = testPeriodsWireFor(merged, gateFg);
                 const r = await invoke<RelationshipPreviewResult>('preview_relationship_model', {
                     predictors: merged.predictorSensors,
                     target: merged.targetSensor,
@@ -1335,6 +1415,11 @@ export default function BuildModelWindow() {
                     filter,
                     cache_key: cacheKey,
                     max_points: HEALTH_DEFAULT_MAX_POINTS,
+                    // Train/Test validation: the active test periods ride along, so this
+                    // one sidecar run also predicts the test rows and the health preview
+                    // that follows scores them at once (no second ~15 s run). Same wire
+                    // as `compute_health_preview`; omitted when there is none.
+                    ...(trainTestPeriods ? { test_periods: trainTestPeriods } : {}),
                 });
                 if (r.error) throw new Error(r.error);
                 result = { kind: 'relationship', result: r, predictorsAtApply: [...merged.predictorSensors], cacheKey };
@@ -1386,7 +1471,10 @@ export default function BuildModelWindow() {
                 delete rest[id];
                 return rest;
             });
-            setTrainError(prev => ({ ...prev, [id]: e instanceof Error ? e.message : String(e) }));
+            // The bundled Relation model engine is too old: show the app's own wording.
+            const parsed = parseHealthError(e);
+            const message = parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : (e instanceof Error ? e.message : String(e));
+            setTrainError(prev => ({ ...prev, [id]: message }));
         }
     };
 
@@ -1477,17 +1565,37 @@ export default function BuildModelWindow() {
         // the gate, and "trained and still fresh" (the same rules `persistModelComplete`
         // re-checks against the disk inside its write).
         const notAllowed = getBuildBlockReason(model, fg, gateHeaders)
+            // At least one valid test period (SPEC rule 2).
+            ?? markCompleteBlockReason(model, fg)
             ?? (trainedFreshFor(model, fg) ? null : (isModelStaleFor(model, fg) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
         if (notAllowed !== null) return fail(notAllowed);
+        // Unsaved Model-settings edits (e.g. a Custom model's test periods) are SAVED
+        // first, like Train does (`runTrainClick`): the files describe `model` (the
+        // draft-merged one) and the save below re-checks the test periods and the
+        // fingerprint against the DISK, so exporting a draft that never reached the
+        // disk would write the files and then refuse the save on every retry. A
+        // draft that cannot be saved (invalid) stops here, before anything is written.
+        const hasDraft = m.id in drafts;
+        if (hasDraft) {
+            const draftBlock = modelBlockReason(m);
+            if (draftBlock !== null) return fail(draftBlock);
+        }
         completeRunningRef.current.add(m.id);
         setSaveInfo(prev => ({ ...prev, [id]: { phase: 'running', slow: m.kind === 'relationship' } }));
         setAttemptIssues(prev => ({ ...prev, [id]: null }));
         // The model's fingerprint at CLICK time: the files carry exactly this model, so the
         // save below is refused when the model on disk no longer has it (re-configured and
         // re-trained during the export).
-        const race = { fingerprint: computeTrainFingerprint(model, fg), setPointsBefore: m.healthSetPoints };
+        // The test periods at click time too: the files' `validation` block describes
+        // exactly these, so a test-period edit during the export keeps it Incomplete.
+        const race = {
+            fingerprint: computeTrainFingerprint(model, fg),
+            setPointsBefore: m.healthSetPoints,
+            testsKey: testPeriodsKey(effectiveRunningCondition(model, fg).testPeriods),
+        };
         const exec = async (): Promise<string | null> => {
             try {
+                if (hasDraft) await commitModel(m);
                 const sp = setPointsOf(m);
                 const res = await completeModel({
                     model,
@@ -1660,6 +1768,14 @@ export default function BuildModelWindow() {
         expectedGeneration: generation,
         revision: healthRevision,
     });
+    // Train/Test validation: a Relation-model preview that scores test periods may
+    // have to run the sidecar for the test rows (~15 s, e.g. right after the test
+    // periods changed) — say so, but only once it has been loading for a moment:
+    // set-point typing re-scores from Rust's cache in well under a second and must
+    // not flash the hint.
+    const scoringTestsNow = !!activeEffective && activeEffective.kind === 'relationship' && healthPreview.loading
+        && testPeriodsWireFor(activeEffective, gateFg) !== undefined;
+    const slowScoring = useDelayedFlag(scoringTestsNow, SLOW_SCORING_HINT_DELAY_MS);
 
     // The last validate verdict Rust gave for the active model. A stale model's old data
     // does not count. It drives the step bar live; the "Set points needed" / "Fix set point"
@@ -1861,13 +1977,35 @@ export default function BuildModelWindow() {
     const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
     const draftPeriodsInvalid = validatePeriods((rcDraft ?? { periods: runningConditionTimePeriods }).periods).some(st => st.invalid);
     const persistedRows = useRowCountPreview({
-        enabled: !loading && rcConfigured && !persistedPeriodsInvalid,
+        // No train period = nothing is trained on (rule 1): no whole-dataset count.
+        enabled: !loading && rcConfigured && !persistedPeriodsInvalid && runningConditionTimePeriods.length > 0,
         workspaceId, sensor: rcCountSensor, filter: persistedCountFilter, cache: rowCountCache,
     });
     const draftRows = useRowCountPreview({
-        enabled: !loading && rcFilterOpen && !draftPeriodsInvalid,
+        enabled: !loading && rcFilterOpen && !draftPeriodsInvalid && (rcDraft ?? { periods: runningConditionTimePeriods }).periods.length > 0,
         workspaceId, sensor: rcCountSensor, filter: draftCountFilter, cache: rowCountCache, debounceMs: 300,
     });
+    // Train running time of the ACTIVE Custom model (its own condition + train
+    // periods, draft included) for the amber "below the recommended train time"
+    // note (`trainDaysEstimateFor`) — the Step-1 counts above are the workspace's.
+    // Only asked while the model could train (nothing blocks it).
+    const activeCustomScope = activeEffective && activeEffective.runningConditionMode === 'custom'
+        && getBuildBlockReason(activeEffective, gateFg, gateHeaders) === null
+        ? effectiveRunningCondition(activeEffective, gateFg) : null;
+    const customRows = useRowCountPreview({
+        enabled: !loading && activeCustomScope !== null,
+        workspaceId,
+        sensor: rcCountSensor,
+        filter: activeCustomScope ? buildPreviewFilterPayload(activeCustomScope, gateHeaders) : null,
+        cache: rowCountCache,
+        debounceMs: 300,
+    });
+
+    // The Dashboard may have changed its highlights since this window opened:
+    // re-read them whenever the Running condition settings open.
+    useEffect(() => {
+        if (rcFilterOpen) void refreshHighlights();
+    }, [rcFilterOpen, refreshHighlights]);
 
     // Esc closes the Running condition modal — through the same dirty-draft
     // guard as X / backdrop. Registered in the CAPTURE phase and ignored while a
@@ -2362,7 +2500,7 @@ export default function BuildModelWindow() {
                     {seedNoteFor[m.id] && (
                         <div data-testid="pm-seed-note" className="f4-seed">
                             <span>
-                                Copied <b>{seedNoteFor[m.id]!.periods} period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
+                                Copied <b>{seedNoteFor[m.id]!.periods} train period{seedNoteFor[m.id]!.periods === 1 ? '' : 's'}</b>, <b>{seedNoteFor[m.id]!.tests} test period{seedNoteFor[m.id]!.tests === 1 ? '' : 's'}</b> and {seedNoteFor[m.id]!.conditions} condition{seedNoteFor[m.id]!.conditions === 1 ? '' : 's'} from Workspace. Edits here affect only this model.
                             </span>
                             <button type="button" className="f4-x" aria-label="Dismiss" onClick={() => setSeedNoteFor(prev => ({ ...prev, [m.id]: null }))}><X size={12} /></button>
                         </div>
@@ -2370,11 +2508,30 @@ export default function BuildModelWindow() {
 
                     <div className="f4-side-blk" data-testid="custom-periods">
                         <div className="f4-slabel">
-                            <span>Training periods <span className="f4-count">{d.customPeriods.length}</span></span>
+                            <span><i className="tpe-sw tpe-sw--tr" aria-hidden="true" /> Train periods <span className="f4-count">{d.customPeriods.length}</span></span>
+                            <span className="f4-note f4-note--faint">required · healthy running time only</span>
                         </div>
                         <div className="rc-scroll">
-                            <TimePeriodsEditor compact periods={d.customPeriods} onChange={periods => patchDraft(m, { customPeriods: periods })} bounds={datasetBounds} />
+                            <TimePeriodsEditor compact periods={d.customPeriods} onChange={periods => patchDraft(m, { customPeriods: periods })} bounds={datasetBounds} tests={d.customTestPeriods} />
                         </div>
+                        <TrainHighlightWarnings periods={d.customPeriods} highlights={dashHighlights} onPeriodsChange={periods => patchDraft(m, { customPeriods: periods })} />
+                    </div>
+
+                    <div className="f4-side-blk" data-testid="custom-test-periods">
+                        <div className="f4-slabel">
+                            <span><i className="tpe-sw tpe-sw--te" aria-hidden="true" /> Test periods <span className="f4-count">{d.customTestPeriods.length}</span></span>
+                            <span className="f4-note f4-note--faint">when the score is checked · needed before Mark complete · may include train time</span>
+                        </div>
+                        <TestPeriodsEditor
+                            compact
+                            blocks="save"
+                            tests={d.customTestPeriods}
+                            train={d.customPeriods}
+                            onChange={tests => patchDraft(m, { customTestPeriods: tests })}
+                            highlights={dashHighlights}
+                            bounds={datasetBounds}
+                            onHighlightsMenuOpen={() => { void refreshHighlights(); }}
+                        />
                     </div>
 
                     <div className="f4-side-blk">
@@ -2547,6 +2704,9 @@ export default function BuildModelWindow() {
             unit: unitTag ? getUnit(unitTag) : '',
             sensorLabel,
             getDesc,
+            // Results carry their WIRE index; the user numbers the full list.
+            testNumbers: testPeriodsWirePlan(effectiveRunningCondition(eff, gateFg).testPeriods).numbers,
+            slowScoring: activeModel?.id === m.id && slowScoring,
         };
     };
 
@@ -2660,7 +2820,7 @@ export default function BuildModelWindow() {
             // The last charts of this session (if any) stay up under "Out of date".
             return healthPreview.data ? (
                 <div data-testid="results-chart" data-stale="true">
-                    <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} />
+                    <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} trainDaysEstimate={trainDaysEstimateFor(m)} />
                 </div>
             ) : (
                 <div className="bmw-stage">
@@ -2700,15 +2860,30 @@ export default function BuildModelWindow() {
                 <div className="bmw-stage">
                     <div className="bmw-stage-empty" data-testid="results-loading">
                         <Loader2 size={20} className="pm-spin" aria-hidden="true" /> Loading the last result…
+                        {slowScoring && <span data-testid="slow-test-scoring"> {SLOW_TEST_SCORING_TEXT}</span>}
                     </div>
                 </div>
             );
         }
         return (
             <div data-testid="results-chart">
-                <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} />
+                <ModelFitPage {...props} data={healthPreview.data} onXPredictorChange={xSensor => changeScatterX(m.id, xSensor)} onCompare={openCompare} trainDaysEstimate={trainDaysEstimateFor(m)} />
             </div>
         );
+    };
+
+    /** Train running days of a model, estimated from a row count: the Step-1 count
+     *  for a Workspace-mode model, the active Custom model's own count
+     *  (`customRows`) for a Custom one. Only feeds the amber "below the
+     *  recommended train time" note until Rust's exact figure exists (it does once
+     *  a test period is scored). */
+    const trainDaysEstimateFor = (m: FailureModel): number | null => {
+        if (effectiveModelFor(m).runningConditionMode === 'custom') {
+            return activeModel?.id === m.id && customRows.status === 'ok'
+                ? estimateRunningDays(customRows.used, customRows.total, datasetBounds)
+                : null;
+        }
+        return persistedRows.status !== 'ok' ? null : estimateRunningDays(persistedRows.used, persistedRows.total, datasetBounds);
     };
 
     /** Why Mark complete is not possible right now (the FIRST blocking reason), or
@@ -2716,8 +2891,14 @@ export default function BuildModelWindow() {
      *  model. Rust's validation is the source of "set points not valid". */
     const markCompleteBlock = (m: FailureModel): string | null => {
         if (isModelStale(m)) return 'Settings changed — re-train first.';
+        // Unsaved settings are saved by Mark complete first; ones that cannot be saved block it.
+        const draftBlock = m.id in drafts ? modelBlockReason(m) : null;
+        if (draftBlock !== null) return draftBlock;
         const gate = gateReasonOf(m);
         if (gate !== null) return gate;
+        // At least one valid test period (SPEC rule 2) — Train does not need one.
+        const noTest = markCompleteBlockReason(effectiveModelFor(m), gateFg);
+        if (noTest !== null) return noTest;
         if (!trainedFreshFor(effectiveModelFor(m), gateFg)) return NOT_TRAINED_BLOCK_REASON;
         if (trainError[m.id]) return "Couldn't refresh the result — fix the problem, then re-train.";
         if (healthPreview.notFitted) return 'Re-train first — the fitted Relation model is no longer in memory.';
@@ -2736,7 +2917,10 @@ export default function BuildModelWindow() {
 
     /** What the Health score page says about the model's saved files. */
     const saveInfoFor = (m: FailureModel): SaveInfo =>
-        saveInfo[m.id] ?? (m.healthExport && isModelDone(m)
+        // "Saved N files" only while the model is still Complete: a change of only its
+        // test periods (Train/Test validation) makes it Incomplete without touching
+        // this session's record, and the old message would then be misleading.
+        (saveInfo[m.id]?.phase === 'ok' && !isModelDone(m) ? undefined : saveInfo[m.id]) ?? (m.healthExport && isModelDone(m)
             ? { phase: 'ok', outputDir: m.healthExport.outputDir, files: null, at: m.healthExport.at }
             : { phase: 'idle' });
     /** Complete, but the set points on screen differ from the ones the files were written with. */
@@ -2772,6 +2956,7 @@ export default function BuildModelWindow() {
         const markBlock = page === 'health' ? markCompleteBlock(m) : null;
         const saving = saveInfo[m.id]?.phase === 'running';
         const outOfDate = page === 'health' && filesOutOfDateFor(m);
+        const testedCount = toTestPeriodsWire(effectiveRunningCondition(effectiveModelFor(m), gateFg).testPeriods).length;
         return (
             <div className="f4-foot">
                 {page === 'health' && (
@@ -2782,6 +2967,9 @@ export default function BuildModelWindow() {
                 <span className={`model-status-pill model-status-pill--${pillState}`} style={{ cursor: 'default' }}>
                     {pillLabel}
                 </span>
+                {/* "Tested · N" (information only, footer only): the trained model is
+                    scored on N valid test periods. */}
+                {pillState !== 'incomplete' && testedCount > 0 && <TestedPill n={testedCount} />}
                 {page === 'health' && saving ? (
                     <span data-testid="footer-status" className="f4-foot-reason">
                         <Loader2 size={11} className="pm-spin" aria-hidden="true" /> Saving results…
@@ -3049,6 +3237,7 @@ export default function BuildModelWindow() {
                                 filesOutOfDate={filesOutOfDateFor(activeModel)}
                                 onRetrain={() => runTrainClick(activeModel)}
                                 onRetryPreview={healthPreview.retry}
+                                testsChanged={testsChangedState(activeModel, gateFg)}
                             />
                         )}
                     </div>
@@ -3095,7 +3284,12 @@ export default function BuildModelWindow() {
     const rcView = rcDraft ?? rcPersisted;
     const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
     const rcViewInvalid = validatePeriods(rcView.periods).some(s => s.invalid);
-    const rcApplyEnabled = !rcViewInvalid && (rcDirty || rcPeriodTyping);
+    // Apply gate (Train/Test validation): an invalid train period, NO train period,
+    // or an invalid test period / event time. Test periods overlapping train time
+    // and train periods overlapping a highlight never block.
+    const rcApplyBlock = runningConditionApplyBlock(rcView.periods, rcView.testPeriods);
+    const rcApplyEnabled = rcApplyBlock === null && (rcDirty || rcPeriodTyping);
+    const rcTestsNotice = testsChangedNotice(allModels, gateFg);
     const rcViewConfigured = isWorkspaceRunningConditionConfigured(
         { runningConditionFilters: rcView.filters, runningConditionNoneConfirmed: rcView.noneConfirmed },
         gateHeaders,
@@ -3146,7 +3340,15 @@ export default function BuildModelWindow() {
                     rows={persistedRows}
                     bounds={datasetBounds}
                     onOpen={() => setRcFilterOpen(true)}
+                    testPeriods={runningConditionTestPeriods}
                 />
+                {rcTestsNotice && (
+                    <div className="wb2-stale vt-rcnotice" role="status" data-testid="tests-changed-notice">
+                        <span>
+                            <b>{testsChangedNoticeText(rcTestsNotice)}</b>. {rcTestsNotice.count === 1 ? 'It was' : 'They were'} not re-trained.
+                        </span>
+                    </div>
+                )}
 
                 {rcLegacyNotice === 'pending' && !rcConfigured && !legacyRemindLater && (
                     <div
@@ -3308,8 +3510,8 @@ export default function BuildModelWindow() {
                             being typed into (change) / committed (blur) — see rcPeriodTyping. */}
                         <div
                             style={{ display: 'contents' }}
-                            onChange={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"]')) setRcPeriodTyping(true); }}
-                            onBlur={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"]')) setRcPeriodTyping(false); }}
+                            onChange={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"], [data-testid="test-periods-editor"]')) setRcPeriodTyping(true); }}
+                            onBlur={e => { if ((e.target as HTMLElement).closest('[data-testid="time-periods-editor"], [data-testid="test-periods-editor"]')) setRcPeriodTyping(false); }}
                         >
                             <RunningConditionPanel
                                 configured={rcViewConfigured}
@@ -3329,6 +3531,10 @@ export default function BuildModelWindow() {
                                 getComponent={getComponent}
                                 getUnit={getUnit}
                                 preview={draftRows}
+                                testPeriods={rcView.testPeriods}
+                                onTestPeriodsChange={updateRunningConditionTestPeriods}
+                                highlights={dashHighlights}
+                                onHighlightsMenuOpen={() => { void refreshHighlights(); }}
                             />
                         </div>
                         <div className="bmw-modal-foot" data-testid="rc-modal-foot">
@@ -3348,14 +3554,18 @@ export default function BuildModelWindow() {
                                         data-testid="rc-apply"
                                         className="filter-apply-btn"
                                         disabled={!rcApplyEnabled}
-                                        title={rcViewInvalid ? 'Fix the invalid training period first.' : undefined}
+                                        title={rcApplyBlock?.reason}
                                         onClick={applyRcDraft}
                                     >
                                         <Check size={12} /> Apply
                                     </button>
                                     <button type="button" data-testid="rc-cancel" className="f4-btn f4-btn--plain" onClick={closeRc}>Cancel</button>
                                     <span className="filter-panel-spacer" />
-                                    {(rcDirty || rcPeriodTyping) && (
+                                    {rcApplyBlock?.kind === 'no-train' ? (
+                                        <span data-testid="rc-apply-block" data-kind="no-train" className="filter-dirty-hint tpe-block-hint">{rcApplyBlock.reason}</span>
+                                    ) : rcApplyBlock?.kind === 'invalid-test' ? (
+                                        <span data-testid="rc-apply-block" data-kind="invalid-test" className="filter-dirty-hint tpe-block-hint tpe-block-hint--bad">{rcApplyBlock.reason}</span>
+                                    ) : (rcDirty || rcPeriodTyping) && (
                                         <span data-testid="rc-dirty-hint" className="filter-dirty-hint">Changes not applied yet</span>
                                     )}
                                 </>

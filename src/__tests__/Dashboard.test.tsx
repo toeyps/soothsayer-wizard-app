@@ -397,6 +397,35 @@ describe('Dashboard', () => {
         expect(saved.failureGroupState.someFutureField).toBe('keep-me');
     });
 
+    it('the autosave keeps the Train/Test validation fields another window wrote: workspace runningConditionTestPeriods and a model\'s customTestPeriods / testsChangedAt (2026-10-07 test gap)', async () => {
+        vi.useFakeTimers();
+        renderDashboard({
+            initialState: makeInitialState({ failureGroupState: { groups: [{ no: 1, name: 'Group A' }], models: [] } }),
+        });
+        await act(async () => { vi.advanceTimersByTime(300); });
+        mockSaveWorkspaceData.mockClear();
+
+        const wsTests = [{ id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' }];
+        const ownTests = [{ id: 'c1', start: '2026-03-01T00:00', end: '2026-03-10T00:00', label: 'problem', eventTime: '2026-03-05T12:00' }];
+        mockLoadWorkspaceData.mockResolvedValue({
+            failureGroupState: {
+                groups: [{ no: 1, name: 'Group A' }],
+                models: [{ id: 'm1', groupNos: [1], runningConditionMode: 'custom', customTestPeriods: ownTests, testsChangedAt: '2026-10-07T01:00:00.000Z' }],
+                runningConditionFilters: [], runningConditionCombine: 'and',
+                runningConditionTimePeriods: [{ id: 'p1', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }],
+                runningConditionTestPeriods: wsTests,
+            },
+        });
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+        await act(async () => { vi.advanceTimersByTime(300); });
+
+        expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+        const saved = last(mockSaveWorkspaceData.mock.calls)[0];
+        expect(saved.failureGroupState.runningConditionTestPeriods).toEqual(wsTests);
+        expect(saved.failureGroupState.models[0].customTestPeriods).toEqual(ownTests);
+        expect(saved.failureGroupState.models[0].testsChangedAt).toBe('2026-10-07T01:00:00.000Z');
+    });
+
     it('still autosaves normally when the state actually changed after a failure-group write', async () => {
         vi.useFakeTimers();
         renderDashboard({

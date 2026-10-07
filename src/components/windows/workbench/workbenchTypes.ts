@@ -1,6 +1,7 @@
 import type { FailureModel, HealthSetPoints } from '../../../types';
 import type { HealthIssue } from '../../../types/health';
 import type { UseHealthPreviewResult } from '../../../hooks/useHealthPreview';
+import type { TestsChangedState } from '../../../utils/trainTestValidation';
 
 /*
  * Contract of the Build Model Workbench's two per-model pages (health score
@@ -34,6 +35,15 @@ export interface WorkbenchPageProps {
     sensorLabel: (tag: string) => string;
     /** Raw description of a tag ('' when unknown). */
     getDesc: (tag: string) => string;
+    /** Train/Test validation: the T-number (1-based position in the user's full
+     *  test list) of each test period that was SENT — `testPeriodsWirePlan(...)
+     *  .numbers`. Results carry their wire `index`; this maps it back so an
+     *  invalid (unsent) T1 does not make the valid T2 read "T1". Absent = the
+     *  wire index is shown. */
+    testNumbers?: readonly number[] | null;
+    /** A Relation-model preview that scores test periods has been loading for a
+     *  while: show "Scoring test periods … up to ~15 s". */
+    slowScoring?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +53,7 @@ export interface WorkbenchPageProps {
 /** What the page tells about the model's saved files ("Mark complete" writes them). */
 export type SaveInfo =
     | { phase: 'idle' }
-    /** `slow`: Relationship re-runs the sidecar (about 15 s). */
+    /** `slow`: Relationship re-runs the sidecar and scores the test periods (15 s or more, longer the first time). */
     | { phase: 'running'; slow: boolean }
     /** `files` is `null` when only the persisted record is known (the model was
      *  completed in an earlier session): the folder and time, not the file list. */
@@ -67,4 +77,8 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     onRetrain: () => void;
     /** The error banner's Retry: ask `compute_health_preview` again. */
     onRetryPreview?: () => void;
+    /** Train/Test validation (rule 8): only the model's test periods changed since
+     *  it was Complete — `'changed'` / `'removed'` shows the "Mark complete again"
+     *  banner (`testsChangedState`); null/absent = nothing to say. */
+    testsChanged?: TestsChangedState | null;
 }

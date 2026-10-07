@@ -6,6 +6,7 @@ import type { WorkspaceState } from '../../types';
 import { computeTrainFingerprint } from '../../utils/trainFingerprint';
 import { env } from './healthEnv';
 import { PLANT_META, plantDataset, createFakeHealthRust, type HealthDataset } from './fakeHealthRust';
+import { ALL_TIME_TRAIN, ONE_TEST } from './trainTestFixture';
 
 /**
  * Drivers for the health-score integration tests (QA, 2026-10-04): mount the
@@ -23,7 +24,10 @@ export const COND = { id: 'rc1', sensor: 'TAG2', operation: 'greater_than', valu
 export const BASE_FG = {
     groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }, { no: 2, name: 'FG-B' }],
     runningConditionCombine: 'and',
-    runningConditionTimePeriods: [],
+    // Train/Test validation (2026-10-07): a train period is required to Train,
+    // a test period to Mark complete.
+    runningConditionTimePeriods: ALL_TIME_TRAIN,
+    runningConditionTestPeriods: ONE_TEST,
     runningConditionFilters: [COND],
     runningConditionNoneConfirmed: false,
     rcLegacyNotice: null,

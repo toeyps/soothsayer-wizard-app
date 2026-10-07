@@ -1,4 +1,5 @@
-import type { TimePeriod } from '../types';
+import type { TestPeriod, TimeHighlight, TimePeriod } from '../types';
+import type { TestPeriodWire } from '../types/health';
 
 export interface PeriodStatus {
     /** Unparseable bound, end before start, or an open end where none is allowed. */
@@ -169,4 +170,287 @@ export function toFilterRanges(list: TimePeriod[]): FilterRange[] {
             start: (p.start ?? '').trim() ? p.start : null,
             end: (p.end ?? '').trim() ? p.end : null,
         }));
+}
+
+// ---------------------------------------------------------------------------
+// Train/Test validation (2026-10-07, SPEC "Train/Test model validation").
+// `runningConditionTimePeriods` / a model's `filterTimePeriods` are the TRAIN
+// periods; `TestPeriod`s are where the score is checked. Everything below is
+// pure and works on `datetime-local` strings read as LOCAL time (like `toMs`).
+// ---------------------------------------------------------------------------
+
+const DAY = 86_400_000;
+
+/** Validity of one test period (list order = T1, T2 …). */
+export interface TestPeriodStatus {
+    /** Start/end missing or unparseable, or end before start. Blocks Apply. */
+    invalid: boolean;
+    reason?: string;
+    /** The event time is set but unparseable or outside the period. Blocks Apply. */
+    eventInvalid: boolean;
+    eventReason?: string;
+}
+
+/**
+ * Event time of a test period (SPEC rule 5): optional, only read for a Known
+ * problem; when set it must parse and lie INSIDE the period (bounds inclusive).
+ * Returns the user-facing reason, or null when fine. `n` is the 1-based number
+ * used in the text ("T2").
+ */
+export function eventTimeError(t: TestPeriod, n = 1): string | null {
+    if (t.label !== 'problem') return null;
+    const raw = (t.eventTime ?? '').trim();
+    if (!raw) return null;
+    const ev = toMs(raw);
+    if (ev === null) return `T${n} has an invalid event time.`;
+    const s = toMs(t.start);
+    const e = toMs(t.end);
+    if ((s !== null && ev < s) || (e !== null && ev > e)) return `The event time must be inside T${n}.`;
+    return null;
+}
+
+/**
+ * Per-test-period validity. DECISION (2026-10-07): unlike train periods, a test
+ * period needs BOTH a start and an end — its day count, "% of running time
+ * below 80" and the event lead time are only meaningful on a closed range, and
+ * both ways of adding one (Add test period, From Highlights) produce closed
+ * ranges. Test periods may overlap each other and train periods (never invalid
+ * for that).
+ */
+export function validateTestPeriods(list: TestPeriod[]): TestPeriodStatus[] {
+    return list.map((t, i) => {
+        const n = i + 1;
+        const startBlank = !(t.start ?? '').trim();
+        const endBlank = !(t.end ?? '').trim();
+        const s = toMs(t.start);
+        const e = toMs(t.end);
+        let reason: string | undefined;
+        if (startBlank) reason = `T${n} needs a start date.`;
+        else if (endBlank) reason = `T${n} needs an end date.`;
+        else if (s === null) reason = `T${n} has an invalid start date.`;
+        else if (e === null) reason = `T${n} has an invalid end date.`;
+        else if (e < s) reason = `T${n} ends before it starts.`;
+        const eventReason = eventTimeError(t, n) ?? undefined;
+        return { invalid: !!reason, reason, eventInvalid: !!eventReason, eventReason };
+    });
+}
+
+/** First problem in a test-period list (a period first, then its event time), or null. */
+export function testPeriodsError(list: TestPeriod[]): string | null {
+    for (const st of validateTestPeriods(list)) {
+        if (st.invalid) return st.reason ?? 'Fix the test periods.';
+        if (st.eventInvalid) return st.eventReason ?? 'Fix the event time.';
+    }
+    return null;
+}
+
+/** `test_periods` wire list plus, for each entry, the T-number (1-based
+ *  POSITION in the full list) of the period it came from. */
+export interface TestPeriodsWirePlan {
+    wire: TestPeriodWire[];
+    /** `numbers[k]` = T-number of `wire[k]` — e.g. `[2]` for a list whose T1 is
+     *  invalid (dropped) and T2 valid. */
+    numbers: number[];
+}
+
+/** Wire shape for `test_periods` (invalid periods are dropped, `''` → null,
+ *  `event_time` only for a Known problem with a valid event time) together with
+ *  the T-number of every entry sent. Results come back with the 1-based WIRE
+ *  `index`; `testNumberFor` maps that back to the T-number the editor and the
+ *  Step-1 chips show (they number the full list, invalid periods included). */
+export function testPeriodsWirePlan(list: TestPeriod[]): TestPeriodsWirePlan {
+    const status = validateTestPeriods(list);
+    const wire: TestPeriodWire[] = [];
+    const numbers: number[] = [];
+    list.forEach((t, i) => {
+        if (status[i].invalid) return;
+        const ev = (t.eventTime ?? '').trim();
+        wire.push({
+            start: (t.start ?? '').trim() ? t.start : null,
+            end: (t.end ?? '').trim() ? t.end : null,
+            label: t.label,
+            event_time: t.label === 'problem' && ev && !status[i].eventInvalid ? ev : null,
+        });
+        numbers.push(i + 1);
+    });
+    return { wire, numbers };
+}
+
+/** Wire shape for `test_periods` — `testPeriodsWirePlan(list).wire`. */
+export function toTestPeriodsWire(list: TestPeriod[]): TestPeriodWire[] {
+    return testPeriodsWirePlan(list).wire;
+}
+
+/**
+ * The T-number to show for a test result. `numbers` is
+ * `testPeriodsWirePlan(...).numbers` of the list that was sent; `wireIndex` is
+ * the result's 1-based `index` (its position in the `test_periods` sent) and
+ * `position` its 0-based position in the results. Looks the T-number up by the
+ * wire index, then by position; with no mapping at all (or none covering it)
+ * the result's position is the number (T1, T2 … in result order).
+ */
+export function testNumberFor(
+    numbers: readonly number[] | null | undefined,
+    wireIndex: number | null | undefined,
+    position: number,
+): number {
+    const valid = (n: number | undefined): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;
+    if (numbers && typeof wireIndex === 'number' && valid(numbers[wireIndex - 1])) return numbers[wireIndex - 1];
+    if (numbers && valid(numbers[position])) return numbers[position];
+    return position + 1;
+}
+
+/** What of a test-period list can change its RESULTS (no id, no
+ *  `fromHighlight`; the event time only counts for a Known problem). Used to
+ *  detect a "tests only" change (`applyIncompleteRule`) and export races. */
+export function testPeriodsKey(list: TestPeriod[] | null | undefined): string {
+    return JSON.stringify((list ?? []).map(t => ({
+        start: t.start ?? '',
+        end: t.end ?? '',
+        label: t.label,
+        eventTime: t.label === 'problem' ? (t.eventTime ?? '').trim() : '',
+    })));
+}
+
+type Interval = { s: number; e: number };
+
+/** A period as an interval; open ends are unbounded; null when a set bound is
+ *  unparseable or the period is reversed. */
+function interval(p: { start: string; end: string }): Interval | null {
+    const sBlank = !(p.start ?? '').trim();
+    const eBlank = !(p.end ?? '').trim();
+    const s = sBlank ? -Infinity : toMs(p.start);
+    const e = eBlank ? Infinity : toMs(p.end);
+    if (s === null || e === null || e < s) return null;
+    return { s, e };
+}
+
+/** Do two periods share any time? Open ends are unbounded; bounds are
+ *  inclusive (touching counts); an unparseable period never overlaps. */
+export function periodsOverlap(a: { start: string; end: string }, b: { start: string; end: string }): boolean {
+    const x = interval(a);
+    const y = interval(b);
+    if (!x || !y) return false;
+    return x.s <= y.e && y.s <= x.e;
+}
+
+/** Per test period, the 1-based numbers of the train periods it overlaps (P1 …). */
+export function testTrainOverlaps(train: TimePeriod[], tests: TimePeriod[]): number[][] {
+    return tests.map(t => train.flatMap((p, j) => (periodsOverlap(p, t) ? [j + 1] : [])));
+}
+
+/**
+ * CALENDAR days of `test` that are also inside a train period (train periods
+ * merged first, so overlapping train periods are not counted twice), rounded
+ * to whole days; 0 when none. Information only (SPEC rule 3 — never blocks).
+ * Open train ends are clipped to `bounds` when given. Before a preview exists
+ * the UI uses this; once Rust answered, `TestPeriodResult.train_days`
+ * (RUNNING days) is the better number.
+ */
+export function trainOverlapDays(train: TimePeriod[], test: TimePeriod, bounds?: { min: string; max: string } | null): number {
+    const t = interval(test);
+    if (!t || !Number.isFinite(t.s) || !Number.isFinite(t.e)) return 0;
+    const bMin = bounds ? toMs(bounds.min) : null;
+    const bMax = bounds ? toMs(bounds.max) : null;
+    const pieces: Interval[] = [];
+    for (const p of train) {
+        const iv = interval(p);
+        if (!iv) continue;
+        const s = Math.max(t.s, iv.s, bMin ?? -Infinity);
+        const e = Math.min(t.e, iv.e, bMax ?? Infinity);
+        if (e > s) pieces.push({ s, e });
+    }
+    pieces.sort((a, b) => a.s - b.s);
+    let ms = 0;
+    let cur: Interval | null = null;
+    for (const p of pieces) {
+        if (cur && p.s <= cur.e) cur.e = Math.max(cur.e, p.e);
+        else {
+            if (cur) ms += cur.e - cur.s;
+            cur = { ...p };
+        }
+    }
+    if (cur) ms += cur.e - cur.s;
+    return Math.round(ms / DAY);
+}
+
+/** The neutral note on a test row / table row / result tile that includes
+ *  train time (SPEC rule 3). `index` is 0-based (T1 = 0). */
+export function testIncludesTrainNote(index: number, days: number): string {
+    return `T${index + 1} includes ${days} d of train running time — results include rows the model was trained on`;
+}
+
+/** One train period that overlaps an enabled Dashboard time highlight. */
+export interface TrainHighlightOverlap {
+    /** 0-based index into the train list (P1 = 0). */
+    periodIndex: number;
+    highlight: TimeHighlight;
+}
+
+/** A highlight's time range in order (one saved with start > end is read the
+ *  other way round, like `timeHighlights.ts`); null when unparseable. */
+function highlightRange(h: TimeHighlight): { start: string; end: string } | null {
+    const a = toMs(h.start);
+    const b = toMs(h.end);
+    if (a === null || b === null) return null;
+    return a <= b ? { start: h.start, end: h.end } : { start: h.end, end: h.start };
+}
+
+/**
+ * Train periods that overlap a Dashboard highlight (SPEC rule 4 — an amber
+ * warning only, never a block). Disabled / unparseable highlights are ignored.
+ */
+export function trainHighlightOverlaps(train: TimePeriod[], highlights: TimeHighlight[]): TrainHighlightOverlap[] {
+    const out: TrainHighlightOverlap[] = [];
+    train.forEach((p, periodIndex) => {
+        for (const h of highlights) {
+            if (h.enabled === false) continue;
+            const r = highlightRange(h);
+            if (r && periodsOverlap(p, r)) out.push({ periodIndex, highlight: h });
+        }
+    });
+    return out;
+}
+
+const floorMinute = (ms: number) => Math.floor(ms / MINUTE) * MINUTE;
+
+/**
+ * "Remove the overlap" (SPEC rule 4): every train period that overlaps
+ * `range` is split so none of it lies inside `range` — the part before ends on
+ * the last whole minute before the range starts, the part after starts on the
+ * first whole minute after it ends (minute resolution, like the period inputs;
+ * bounds are inclusive, so merely touching would still count as overlap). A
+ * period entirely inside the range disappears. The first piece keeps the
+ * original `id`; a second piece gets a new one. Periods that do not overlap
+ * (or are invalid) are kept unchanged. Returns the list sorted (`sortPeriods`).
+ */
+export function removeRangeFromPeriods(train: TimePeriod[], range: { start: string; end: string }): TimePeriod[] {
+    const r = interval(range);
+    if (!r) return train;
+    const out: TimePeriod[] = [];
+    for (const p of train) {
+        const iv = interval(p);
+        if (!iv || !(iv.s <= r.e && r.s <= iv.e)) {
+            out.push(p);
+            continue;
+        }
+        const pieces: TimePeriod[] = [];
+        if (Number.isFinite(r.s) && iv.s < r.s) {
+            const endMs = floorMinute(r.s - 1);
+            if (endMs >= iv.s) pieces.push({ ...p, end: fmt(endMs) });
+        }
+        if (Number.isFinite(r.e) && iv.e > r.e) {
+            const startMs = floorMinute(r.e) + MINUTE;
+            if (startMs <= iv.e) pieces.push({ ...p, id: pieces.length ? newPeriodId() : p.id, start: fmt(startMs) });
+        }
+        out.push(...pieces);
+    }
+    return sortPeriods(out);
+}
+
+/** `removeRangeFromPeriods` for a Dashboard highlight (no-op for an
+ *  unparseable one). */
+export function removeHighlightOverlap(train: TimePeriod[], highlight: TimeHighlight): TimePeriod[] {
+    const r = highlightRange(highlight);
+    return r ? removeRangeFromPeriods(train, r) : train;
 }

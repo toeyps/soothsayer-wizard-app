@@ -22,7 +22,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::csv_processor::ColumnarData;
-use crate::health_score::{Issue, SetPointsArg};
+use crate::health_preview::HealthPreviewRequest;
+use crate::health_score::{has_errors, Issue, SetPointsArg};
+use crate::health_validation::{self, TestPeriodArg, TestPlan, TestValidation};
 use crate::{ClusterRange, PreviewFilter};
 
 // ---------------------------------------------------------------------------
@@ -107,6 +109,111 @@ pub struct ModelFilesRequest {
     pub cache_key: Option<String>,
     #[serde(default, alias = "expectedGeneration")]
     pub expected_generation: Option<u64>,
+    /// Train/Test validation. When non-empty the model is validated on these
+    /// periods (train-only model, the same code as `compute_health_preview`) and
+    /// a `validation` block is added to the `*_INFO_*.json`. Empty / absent = no
+    /// `validation` block.
+    #[serde(default)]
+    pub test_periods: Option<Vec<TestPeriodArg>>,
+}
+
+impl ModelFilesRequest {
+    pub fn tests_requested(&self) -> bool {
+        self.test_periods.as_ref().is_some_and(|t| !t.is_empty())
+    }
+}
+
+/// Refusal of an export whose test periods are malformed (bad dates, an event
+/// outside its period, ...): `ok: false` with the structured issues, nothing
+/// written. `None` when there are no test periods or they are fine.
+pub fn refuse_bad_test_periods(
+    req: &ModelFilesRequest,
+    data: &ColumnarData,
+    app_data: &Path,
+) -> Result<Option<ModelFilesResult>, String> {
+    let Some(periods) = req.test_periods.as_deref().filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    let plan = TestPlan::resolve(periods, req.filter.as_ref(), &data.headers);
+    if !has_errors(&plan.issues) {
+        return Ok(None);
+    }
+    Ok(Some(ModelFilesResult {
+        ok: false,
+        files: Vec::new(),
+        output_dir: output_dir_path(app_data, &req.workspace_id)?
+            .to_string_lossy()
+            .into_owned(),
+        validation: plan.issues,
+        warnings: Vec::new(),
+    }))
+}
+
+/// The `validation` block of an Individual / Clustering export: the SAME
+/// preview code as `compute_health_preview` (train-only model, test rows
+/// scored), serialized with [`health_validation::export_block`].
+fn individual_or_clustering_block(
+    data: &ColumnarData,
+    req: &ModelFilesRequest,
+) -> Result<serde_json::Value, String> {
+    let pv = HealthPreviewRequest {
+        kind: req.kind.clone(),
+        target: req.target.clone(),
+        first_sensor: req.first_sensor.clone(),
+        second_sensor: req.second_sensor.clone(),
+        n_clusters: req.n_clusters,
+        criteria_sensor: req.criteria_sensor.clone(),
+        cluster_ranges: req.cluster_ranges.clone(),
+        filter: req.filter.clone(),
+        set_points: req.set_points.clone(),
+        test_periods: req.test_periods.clone(),
+        // The series is not used; keep it as small as the preview allows.
+        max_points: Some(8),
+        max_scatter_points: Some(1),
+        ..Default::default()
+    };
+    let preview = if req.kind == "individual" {
+        crate::health_preview::individual_preview(data, &pv)?
+    } else {
+        crate::health_preview::clustering_preview(data, &pv)?
+    };
+    let tv: TestValidation = preview
+        .test_validation
+        .ok_or_else(|| "internal: the validation was not computed".to_string())?;
+    Ok(health_validation::export_block(&tv, &now_iso()))
+}
+
+/// The `validation` block of a Relationship export: the SAME preview code as
+/// `compute_health_preview`, over the fit the export just trained (`fit`, the
+/// training rows) and the train-only model's predictions for the test rows
+/// (`extra`). Nothing is refitted.
+pub fn relationship_block(
+    data: &ColumnarData,
+    fit: &crate::health_score::RelFit,
+    extra: &crate::health_score::RelExtra,
+    req: &ModelFilesRequest,
+) -> Result<serde_json::Value, String> {
+    let pv = HealthPreviewRequest {
+        kind: "relationship".into(),
+        target: Some(fit.target.clone()),
+        predictors: fit.predictors.clone(),
+        filter: req.filter.clone(),
+        set_points: req.set_points.clone(),
+        test_periods: req.test_periods.clone(),
+        max_points: Some(8),
+        max_scatter_points: Some(1),
+        ..Default::default()
+    };
+    let tv: TestValidation =
+        crate::health_preview::relationship_preview_ex(data, fit, Some(extra), &pv)?
+            .test_validation
+            .ok_or_else(|| "internal: the validation was not computed".to_string())?;
+    Ok(health_validation::export_block(&tv, &now_iso()))
+}
+
+/// `validated_at`: RFC 3339 UTC, like `model_update_record[].updated_timestamp`.
+pub fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -738,6 +845,10 @@ pub fn export_sync(
             req.filter.as_ref(),
         )?,
     }
+    // Malformed test periods are refused here, before anything is created.
+    if let Some(refused) = refuse_bad_test_periods(req, data, app_data)? {
+        return Ok(refused);
+    }
     let dirs = prepare_workspace(app_data, &req.workspace_id)?;
     let staging = Staging::create(&dirs.ws_dir)?;
     let save_path = staging.root().to_string_lossy().into_owned();
@@ -746,7 +857,7 @@ pub fn export_sync(
     let empty = SetPointsArg::default();
     let sp = Some(req.set_points.as_ref().unwrap_or(&empty));
 
-    let outcome: Result<(), CoreError> = match req.kind.as_str() {
+    let written: Result<String, CoreError> = match req.kind.as_str() {
         "individual" => crate::write_individual_info(
             data,
             need(&req.target, "target")?.to_string(),
@@ -755,7 +866,7 @@ pub fn export_sync(
             req.filter.clone(),
             sp,
         )
-        .map(|_| ()),
+        .map(|i| i.saved_path),
         _ => crate::write_clustering_info(
             data,
             need(&req.first_sensor, "first_sensor")?.to_string(),
@@ -768,8 +879,18 @@ pub fn export_sync(
             req.filter.clone(),
             sp,
         )
-        .map(|_| ()),
+        .map(|i| i.saved_path),
     };
+    // Train/Test validation: added to the staged INFO file, so it is committed
+    // (or discarded) together with it.
+    let outcome: Result<(), CoreError> = written.and_then(|info_path| {
+        if !req.tests_requested() {
+            return Ok(());
+        }
+        let block = individual_or_clustering_block(data, req)?;
+        health_validation::inject_validation(Path::new(&info_path), block)?;
+        Ok(())
+    });
     let warnings = overwrite_warnings(req, &dirs.output_dir);
     finalize_with(staging, &dirs.output_dir, outcome, warnings)
 }

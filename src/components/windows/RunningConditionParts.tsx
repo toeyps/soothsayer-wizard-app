@@ -1,8 +1,8 @@
 import { Fragment } from 'react';
-import type { TimePeriod } from '../../types';
+import type { TestPeriod, TimeHighlight, TimePeriod } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
-import { validatePeriods } from '../../utils/timePeriods';
-import { computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds, type RuleInput } from './periodDisplay';
+import { removeHighlightOverlap, trainHighlightOverlaps, validatePeriods } from '../../utils/timePeriods';
+import { computeCoverage, computeTestCoverage, conditionChipParts, formatPeriodChip, type DataBounds, type RuleInput } from './periodDisplay';
 
 /*
  * Small presentational pieces of the Running Condition UI (approved mockup
@@ -13,25 +13,51 @@ import { computeCoverage, conditionChipParts, formatPeriodChip, type DataBounds,
 
 /** Dataset timeline with one block per period and "N of M days used".
  *  `className` lets a host (the settings modal) restyle the wrapper;
- *  `mini` is the Step-1 card variant: thinner strip, shorter day caption. */
-export function PeriodCoverageBar({ periods, bounds, className, mini = false }: {
+ *  `mini` is the Step-1 card variant: thinner strip, shorter day caption.
+ *
+ *  With `tests` (Train/Test validation, 2026-10-07 -- every Build Model use
+ *  passes it) the strip has two lanes: TRAIN periods on the top half, TEST
+ *  periods on the bottom half in the test colour (Known problem hatched), so a
+ *  test that overlaps train time stays readable; the caption reads
+ *  "117 d train · 59 d test". A train period is required then, so an empty
+ *  train list draws an empty top lane (not "all data"). */
+export function PeriodCoverageBar({ periods, bounds, className, mini = false, tests }: {
     periods: TimePeriod[];
     bounds: DataBounds | null | undefined;
     className?: string;
     mini?: boolean;
+    tests?: TestPeriod[];
 }) {
+    const validation = tests !== undefined;
     const cov = computeCoverage(periods, bounds);
     if (!cov) return null;
-    const days = cov.unlimited
-        ? `all ${cov.totalDays} days`
-        : mini ? `${cov.usedDays} / ${cov.totalDays} d` : `${cov.usedDays} of ${cov.totalDays} days used`;
+    const trainSegs = validation && periods.length === 0 ? [] : cov.segments;
+    const testCov = validation ? computeTestCoverage(tests, bounds) : null;
+    const days = validation
+        ? `${periods.length === 0 ? 0 : cov.usedDays} d train · ${testCov?.usedDays ?? 0} d test`
+        : cov.unlimited
+            ? `all ${cov.totalDays} days`
+            : mini ? `${cov.usedDays} / ${cov.totalDays} d` : `${cov.usedDays} of ${cov.totalDays} days used`;
     return (
         <div data-testid="period-coverage" className={[className, mini ? 'f4-cov--mini' : ''].filter(Boolean).join(' ') || undefined}>
-            <div className="f4-strip" role="img" aria-label="Periods on the dataset timeline">
-                {cov.segments.map((s, i) => (
+            <div
+                className={`f4-strip${validation ? ' f4-strip--tt' : ''}`}
+                role="img"
+                aria-label={validation ? 'Train periods (top lane) and test periods (bottom lane) on the dataset timeline' : 'Periods on the dataset timeline'}
+            >
+                {trainSegs.map((s, i) => (
                     <i
                         key={i}
                         className={s.kind === 'ok' ? undefined : s.kind}
+                        title={s.label}
+                        style={{ left: `${s.leftPct.toFixed(2)}%`, width: `${s.widthPct.toFixed(2)}%` }}
+                    />
+                ))}
+                {testCov?.segments.map((s, i) => (
+                    <i
+                        key={`t${i}`}
+                        className={s.problem ? 'te pb' : 'te'}
+                        data-testid="period-coverage-test"
                         title={s.label}
                         style={{ left: `${s.leftPct.toFixed(2)}%`, width: `${s.widthPct.toFixed(2)}%` }}
                     />
@@ -61,6 +87,15 @@ export function RuleSentence({ periods, filters, combine, none, headers, getLabe
     const status = validatePeriods(periods);
     const valid = periods.filter((_, i) => !status[i].invalid);
     const conds = filters.filter(f => isCompleteCondition(f, headers));
+    // Train/Test validation (rule 1): no train period means nothing to train on —
+    // never "any time" any more.
+    if (periods.length === 0) {
+        return (
+            <div data-testid="rule-sentence" className="rcm-sentence">
+                <b className="rcm-sentence-miss" data-testid="rule-no-train">No train period</b> — add one; models learn only from the train periods.
+            </div>
+        );
+    }
     return (
         <div data-testid="rule-sentence" className="rcm-sentence">
             Train on rows inside{' '}
@@ -83,5 +118,40 @@ export function RuleSentence({ periods, filters, combine, none, headers, getLabe
                     );
                 })}
         </div>
+    );
+}
+
+/**
+ * Train periods that overlap an (enabled) Dashboard time highlight (SPEC rule
+ * 4): an amber warning per overlap with a "Remove the overlap" action that cuts
+ * the highlight's time out of the train periods. Never a block -- the user may
+ * keep the overlap.
+ */
+export function TrainHighlightWarnings({ periods, highlights, onPeriodsChange }: {
+    periods: TimePeriod[];
+    highlights: TimeHighlight[];
+    onPeriodsChange: (next: TimePeriod[]) => void;
+}) {
+    const overlaps = trainHighlightOverlaps(periods, highlights);
+    if (overlaps.length === 0) return null;
+    return (
+        <>
+            {overlaps.map(({ periodIndex, highlight: h }) => (
+                <div key={`${periods[periodIndex].id}-${h.id}`} className="tpe-hlwarn" role="status" data-testid="train-hl-warning">
+                    <i style={{ background: h.color }} aria-hidden="true" />
+                    <span>
+                        Train P{periodIndex + 1} overlaps the highlight <b>“{h.label || 'Highlight'}”</b>. If something was wrong at that time, leave it out of the train periods.
+                    </span>
+                    <button
+                        type="button"
+                        className="rcx-btn rcx-btn--sm"
+                        data-testid="train-hl-split"
+                        onClick={() => onPeriodsChange(removeHighlightOverlap(periods, h))}
+                    >
+                        Remove the overlap
+                    </button>
+                </div>
+            ))}
+        </>
     );
 }

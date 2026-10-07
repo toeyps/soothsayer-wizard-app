@@ -120,9 +120,14 @@ describe('workspace Running condition triggers (Apply in the modal)', () => {
         },
         { name: 'condition removed', edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove condition' })); } },
         {
-            name: 'training period removed',
-            fg: { runningConditionTimePeriods: [{ id: 'p1', start: '2026-01-01T05:00', end: '2026-01-03T00:00' }] },
-            edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove period 1' })); },
+            // Train/Test validation (2026-10-07): at least one train period is required, so
+            // removing the ONLY one cannot be applied any more — remove one of two instead.
+            name: 'a training period removed',
+            fg: { runningConditionTimePeriods: [
+                { id: 'p1', start: '2026-01-01T05:00', end: '2026-01-03T00:00' },
+                { id: 'p2', start: '2026-01-03T00:01', end: '2026-01-05T00:00' },
+            ] },
+            edit: m => { fireEvent.click(m.getByRole('button', { name: 'Remove period 2' })); },
         },
     ];
     for (const c of cases) {

@@ -96,6 +96,8 @@ import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { getBuildBlockReason } from '../utils/runningCondition';
+// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -149,7 +151,7 @@ function wsState(fg: Record<string, unknown>) {
 /** A current-shape workspace that raises no migration write-back. */
 function currentFg(models: unknown[], extra: Record<string, unknown> = {}) {
     return {
-        models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [],
+        models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
         runningConditionNoneConfirmed: false, rcLegacyNotice: null, categoryNormalisationNotice: null, ...extra,
     };
 }
@@ -360,7 +362,7 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
     }
 
     it('a Custom model with its own configured list can Train and be marked Complete (through the Health score page) while the workspace is unset', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], healthSetPoints: VALID_SP })])));
+        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: ALL_TIME_TRAIN, customTestPeriods: ONE_TEST, healthSetPoints: VALID_SP })])));
         await mountBuildModel();
         // workspace itself is unset: the bar says Required, and the auto-opened modal's panel too
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
@@ -373,12 +375,12 @@ describe('(2) the Workbench footer reason and the Train button agree with the sh
     });
 
     it('a broadcast that empties a Custom model\'s own list re-blocks Train (workspace None does not rescue Custom)', async () => {
-        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND] })], { runningConditionNoneConfirmed: true })));
+        writeDisk(wsState(currentFg([model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [COND], filterTimePeriods: ALL_TIME_TRAIN })], { runningConditionNoneConfirmed: true })));
         await mountBuildModel();
         closeRcModal();
         selectSensorRow(0);
         expect(trainBtn().disabled).toBe(false);
-        await otherWindowWrites({ models: [model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [] })] });
+        await otherWindowWrites({ models: [model({ id: 'i1', runningConditionMode: 'custom', customRunningConditionFilters: [], filterTimePeriods: ALL_TIME_TRAIN })] });
         expect(screen.getByTestId('build-block-reason').textContent).toBe(GATE_REASON);
         expect(trainBtn().disabled).toBe(true);
     });

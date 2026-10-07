@@ -147,6 +147,8 @@ import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { WorkspaceState } from '../types';
+// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -189,7 +191,7 @@ function wsState(models: unknown[], extra: Record<string, unknown> = {}): Worksp
         selectedSensors: [], visibleSensors: [], operationConfig: null,
         failureGroupState: {
             groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }],
-            models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [],
+            models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
             runningConditionNoneConfirmed: true, rcLegacyNotice: null, categoryNormalisationNotice: null,
             ...extra,
         } as any,
@@ -414,6 +416,8 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
             // the reopened model must NOT re-seed on top of its own saved list.
             runningConditionNoneConfirmed: false,
             runningConditionFilters: [{ id: 'ws-c', sensor: 'TAG3', operation: 'less_than', value1: '7', value2: '' }],
+            // No workspace train period: the Custom model gets its own below.
+            runningConditionTimePeriods: [],
         }));
         await mountBuildModel();
         openSettings();
@@ -451,7 +455,10 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         expect((bmw().getByPlaceholderText('val') as HTMLInputElement).value).toBe('42');
 
         await clickTrain();
-        const call = statsCalls('TAG1').slice(-1)[0]; // Train's query is the last (the first ones are the Step-1 card's row count)
+        // Train's query is the last FILTERED one: the row counts (Step-1 card, and since
+        // 2026-10-07 the active Custom model's own count for the train-days note) also
+        // query this sensor, the unfiltered "total" possibly after Train (debounced).
+        const call = statsCalls('TAG1').filter(c => c.args?.filter).slice(-1)[0];
         expect(call?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG3', operation: 'greater_than', value1: 42, value2: null }]);
         expect(call?.args?.filter?.timestamp_ranges).toHaveLength(1);
         expect(call?.args?.filter?.timestamp_ranges[0].end).toBe('2026-03-15T12:00');
@@ -701,7 +708,8 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
     });
 
     it('FIXED (2026-09-30, same root cause, mirror case): a persisted-but-unconfigured Custom model unblocks as soon as the user fills in a condition in the Workbench, without needing Save first', async () => {
-        writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom' })]));
+        // Train/Test (2026-10-07): it has its own train period; only the condition is missing.
+        writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom', filterTimePeriods: ALL_TIME_TRAIN })]));
         await mountBuildModel();
         openSettings();
         fireEvent.click(bmw().getByText('+ Add condition'));

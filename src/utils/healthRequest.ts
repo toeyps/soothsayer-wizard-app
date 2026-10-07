@@ -4,9 +4,11 @@ import type {
     HealthPreviewRequest,
     HealthSetPointsWire,
     ModelFilesRequest,
+    TestPeriodWire,
 } from '../types/health';
 import { STIFFNESS_DEFAULT } from '../components/reports/pmReportTypes';
-import type { RunningConditionFg } from './runningCondition';
+import { effectiveRunningCondition, type RunningConditionFg } from './runningCondition';
+import { toTestPeriodsWire } from './timePeriods';
 import { computeTrainFingerprint } from './trainFingerprint';
 import { trainingScopeFilter } from './trainingScope';
 
@@ -99,6 +101,16 @@ export function healthInputsMissing(model: FailureModel): string | null {
     return nonEmpty(model.ySensor) ? null : 'Pick the Y sensor.';
 }
 
+/** The model's EFFECTIVE test periods (workspace list in Workspace mode, its
+ *  own `customTestPeriods` in Custom mode) as the `test_periods` wire list, or
+ *  `undefined` when there is none to send (invalid ones are dropped). Test
+ *  periods are NOT part of the train fingerprint / Relationship cache key —
+ *  changing them re-scores against the same cached fit, no re-train. */
+export function testPeriodsWireFor(model: FailureModel, fg: RunningConditionFg): TestPeriodWire[] | undefined {
+    const wire = toTestPeriodsWire(effectiveRunningCondition(model, fg).testPeriods);
+    return wire.length > 0 ? wire : undefined;
+}
+
 export interface HealthRequestOptions {
     /** The model to preview/export (draft-merged when previewing unsaved edits). */
     model: FailureModel;
@@ -146,6 +158,8 @@ export function buildHealthPreviewRequest(opts: HealthPreviewRequestOptions): He
     } else {
         Object.assign(req, clusteringFields(model));
     }
+    const tests = testPeriodsWireFor(model, fg);
+    if (tests) req.test_periods = tests;
     if (opts.maxScatterPoints !== undefined) req.max_scatter_points = opts.maxScatterPoints;
     if (opts.expectedGeneration !== undefined) req.expected_generation = opts.expectedGeneration;
     return req;
@@ -185,6 +199,8 @@ export function buildModelFilesRequest(opts: ModelFilesRequestOptions): ModelFil
     } else {
         Object.assign(req, clusteringFields(model));
     }
+    const tests = testPeriodsWireFor(model, fg);
+    if (tests) req.test_periods = tests;
     if (opts.expectedGeneration !== undefined) req.expected_generation = opts.expectedGeneration;
     return req;
 }

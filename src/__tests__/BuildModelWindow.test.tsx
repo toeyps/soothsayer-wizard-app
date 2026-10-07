@@ -110,8 +110,11 @@ vi.mock('../components/windows/SensorPickers', () => ({
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { makeHealthPreview, makeSetPointAwarePreview } from './helpers/healthPreviewFixture';
+import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
+import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 
@@ -152,7 +155,7 @@ function makeModel(overrides: Record<string, any> = {}) {
  *  combine, no filters/periods, "No condition" confirmed). */
 function withTrained(model: Record<string, any>, fg: Record<string, any> = {
     models: [model], runningConditionFilters: [], runningConditionCombine: 'and',
-    runningConditionTimePeriods: [], runningConditionNoneConfirmed: true,
+    runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionNoneConfirmed: true,
 }) {
     return {
         ...model,
@@ -177,7 +180,8 @@ function statefulUpdateMock(models: any[], extra: Record<string, any> = {}) {
         id: 'ws1',
         failureGroupState: {
             groups: [makeGroup()], models,
-            runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [],
+            runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN,
+            runningConditionTestPeriods: ONE_TEST,
             ...extra,
         },
     };
@@ -215,7 +219,10 @@ async function deliverData(overrides: Record<string, any> = {}, payloadOver: Rec
             ...(!('rcLegacyNotice' in fg) ? { rcLegacyNotice: null } : {}),
             // Feature 4-C: already-migrated periods, so the periods migration's
             // write-back doesn't fire in tests about something else.
-            ...(!('runningConditionTimePeriods' in fg) ? { runningConditionTimePeriods: [] } : {}),
+            // Train/Test validation (2026-10-07): a train period is required to
+            // Train and a test period to Mark complete — default to having both.
+            ...(!('runningConditionTimePeriods' in fg) ? { runningConditionTimePeriods: ALL_TIME_TRAIN } : {}),
+            ...(!('runningConditionTestPeriods' in fg) ? { runningConditionTestPeriods: ONE_TEST } : {}),
             ...fg,
         };
     }
@@ -295,7 +302,7 @@ beforeEach(() => {
     mockEmit.mockClear().mockResolvedValue(undefined);
     mockClose.mockClear().mockResolvedValue(undefined);
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
-        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] } };
+        const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } };
         return patch(prev);
     });
     mockLoadWorkspaceData.mockReset();
@@ -1370,7 +1377,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
 
             mockLoadWorkspaceData.mockResolvedValue({
                 id: 'ws2',
-                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] },
+                failureGroupState: { groups: [makeGroup({ no: 1, name: 'Other Group' })], models: [makeModel({ id: 'other', name: 'Other Project Model', targetSensor: 'OTHER1' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST },
             });
             await fire('build-model-data', {
                 workspaceId: 'ws2',
@@ -1389,7 +1396,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             mockLoadWorkspaceData.mockReturnValueOnce(new Promise(res => { resolveFirst = res; }));
             mockLoadWorkspaceData.mockResolvedValueOnce({
                 id: 'ws1',
-                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] },
+                failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'new', name: 'Fresh Model', targetSensor: 'TAG2' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST },
             });
             const payload = {
                 workspaceId: 'ws1', sensorHeaders: ['TAG1'], sensorMetadata: [],
@@ -1400,7 +1407,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getAllByText('TAG2').length).toBeGreaterThan(0);
 
             await act(async () => {
-                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] } });
+                resolveFirst({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel({ id: 'old', name: 'Stale Model', targetSensor: 'TAG3' })], runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } });
                 await Promise.resolve();
                 await Promise.resolve();
             });
@@ -1443,7 +1450,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     id: 'ws1',
                     failureGroupState: {
                         groups: [makeGroup()], models: [makeModel({ name: 'Renamed Model' })],
-                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [],
+                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                     },
                 });
                 await closePromise;
@@ -1488,7 +1495,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     failureGroupState: {
                         groups: [makeGroup()], models: [makeModel()],
                         runningConditionFilters: [{ id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '1', value2: '' }],
-                        runningConditionCombine: 'and', runningConditionNoneConfirmed: false, rcLegacyNotice: null, runningConditionTimePeriods: [],
+                        runningConditionCombine: 'and', runningConditionNoneConfirmed: false, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                     },
                 });
                 await closePromise;
@@ -1606,7 +1613,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                     id: 'ws1',
                     failureGroupState: {
                         groups: [makeGroup()], models: [makeModel({ status: true })],
-                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [],
+                        runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                     },
                 });
             });
@@ -1666,8 +1673,10 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         openSettings();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
-        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied.*1 period.*1 condition/);
+        // Train/Test validation: the workspace TEST periods are copied too (seedCustomFromWorkspace).
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/Copied 1 train period, 1 test period and 1 condition from Workspace/);
         expect((screen.getByPlaceholderText('val') as HTMLInputElement).value).toBe('5');
+        expect(within(screen.getByTestId('custom-test-periods')).getByTestId('test-row-1')).toBeTruthy();
 
         fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '9' } });
         await act(async () => {
@@ -1679,6 +1688,10 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(saved.runningConditionMode).toBe('custom');
         expect(saved.customRunningConditionFilters[0].value1).toBe('9');
         expect(saved.filterTimePeriods[0].start).toBe('2026-01-01T00:00');
+        // the copied test period is saved as the model's own (fresh id, same range / label)
+        expect(saved.customTestPeriods).toHaveLength(1);
+        expect(saved.customTestPeriods[0]).toMatchObject({ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'normal' });
+        expect(saved.customTestPeriods[0].id).not.toBe(ONE_TEST[0].id);
     });
 
     it('switching back to Workspace and forward to Custom again does not re-seed once the custom list is non-empty', async () => {
@@ -1701,7 +1714,8 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
     it('"No condition — use all rows", the AND/OR toggle, and the collapsed summary line ("Custom · N cond · M periods")', async () => {
         render(<BuildModelWindow />);
-        await deliverData(); // no workspace conditions/periods set — nothing to seed
+        // no workspace conditions/periods (train or test) set — nothing to seed
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionTimePeriods: [], runningConditionTestPeriods: [] } });
         openSettings();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.queryByTestId('pm-seed-note')).toBeNull();
@@ -1717,7 +1731,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
 
         // Collapse "Model settings" back and check the summary line.
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        expect(screen.getByText(/Custom · no cond · 0 periods/)).toBeTruthy();
+        expect(screen.getByText(/Custom · no cond · 0 train · 0 test/)).toBeTruthy();
     });
 });
 
@@ -2221,7 +2235,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     });
 
     it('the draft never leaks into the build gate or the Step-1 card until Apply', async () => {
-        const fg = { ...fgSeed(), runningConditionFilters: [], runningConditionTimePeriods: [] };
+        const fg = { ...fgSeed(), runningConditionFilters: [], runningConditionTimePeriods: ALL_TIME_TRAIN };
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: fg });
         statefulUpdateMock(fg.models, fg);
@@ -2274,7 +2288,8 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
         });
 
         it('follows the PERSISTED condition: a draft in the modal does not move the step bar until Apply', async () => {
-            const fg = unsetFg();
+            // A train period is required to train (2026-10-07); periods alone never make the condition "set".
+            const fg = unsetFg({ runningConditionTimePeriods: ALL_TIME_TRAIN });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
             statefulUpdateMock(fg.models, fg);
@@ -2300,7 +2315,9 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             await deliverData({ failureGroupState: setFg() });
             expect(state()).toBe('set');
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
-            expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['1 Jan 2026 → 31 Mar 2026', '15 Apr 2026 → End']);
+            expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', 'P2 · 15 Apr 2026 → End']);
+            // Train/Test validation: the persisted test periods sit on their own "Test" row
+            expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['T1 Normal · 1 Jan 2024 → 31 Jan 2024']);
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump Pressure > 5 bar'); // description + unit come from the sensor metadata
             await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('100')); // mocked compute_sensor_stats count
             expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 100%');
@@ -2322,7 +2339,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             expect(cardCov().textContent).toContain('Jul 2026');
             const cardDays = () => within(cardCov()).getByTestId('period-coverage-days').textContent;
             const persisted = cardDays();
-            expect(persisted).toMatch(/^\d+ \/ 577 d$/);
+            expect(persisted).toMatch(/^\d+ d train · \d+ d test$/);
 
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
@@ -2350,10 +2367,20 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
 
         it('Set with "Use all rows": "All rows — no condition" and a single unfiltered count query', async () => {
             render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] }) });
+            // one train period open at both ends = the whole time range, chosen explicitly
+            await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN }) });
             expect(within(screen.getByTestId('rc-card-cond')).getByText('All rows — no condition')).toBeTruthy();
             await waitFor(() => expect(screen.getByTestId('rc-card-rows')).toBeTruthy());
             expect(statsCalls()).toEqual([{ sensor: 'TAG1', filter: null }]);
+        });
+
+        it('Train/Test validation: NO train period = "0 rows — add a train period" on the card and no count query at all (never a whole-dataset count)', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: setFg({ runningConditionNoneConfirmed: true, runningConditionTimePeriods: [] }) });
+            await flush();
+            expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('No train period — add one');
+            expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+            expect(statsCalls()).toEqual([]);
         });
 
         it('Set: the count queries use the SAME filter payload as training (periods + value conditions + combine), plus the unfiltered total', async () => {
@@ -2772,7 +2799,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
 
     it('applying a different WORKSPACE running condition sets a Complete Workspace-mode model Incomplete and leaves a Custom-mode one Complete', async () => {
         const COND = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
-        const fgOver = { runningConditionNoneConfirmed: false, runningConditionFilters: [COND], runningConditionCombine: 'and' as const, runningConditionTimePeriods: [], rcLegacyNotice: null };
+        const fgOver = { runningConditionNoneConfirmed: false, runningConditionFilters: [COND], runningConditionCombine: 'and' as const, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST, rcLegacyNotice: null };
         const fgForStamp = { models: [], ...fgOver };
         const wsMode = withTrained(makeModel({ id: 'ws-mode', status: true }), fgForStamp);
         const customMode = withTrained(makeModel({
@@ -3025,7 +3052,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
                 for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
                     cb({ payload: {
                         groups: [makeGroup()], models: [ind, { ...rel, relStiffness: 1_000_000 }],
-                        runningConditionNoneConfirmed: true, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [],
+                        runningConditionNoneConfirmed: true, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                         workspaceId: 'ws1', origin: 'dashboard',
                     } });
                 }
@@ -3362,7 +3389,7 @@ const hsSetPointWrites = async (before: unknown) => {
 const hsMarkBtn = () => screen.getByTestId('mark-complete') as HTMLButtonElement;
 const hsClickMark = async () => { await act(async () => { fireEvent.click(hsMarkBtn()); await Promise.resolve(); }); };
 const hsBlur = async (id: string) => { await act(async () => { fireEvent.blur(hsInput(id)); await Promise.resolve(); await Promise.resolve(); }); await flush(); };
-const EMPTY_WS_FG = { runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: [] };
+const EMPTY_WS_FG = { runningConditionNoneConfirmed: true, rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST };
 
 describe('Health score page - draft set points and when they are persisted (health score 3b-2)', () => {
     describe('draft: charts, score and Checks react to typing; nothing is written until the user is done', () => {
@@ -3402,7 +3429,7 @@ describe('Health score page - draft set points and when they are persisted (heal
                 for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) {
                     cb({ payload: {
                         groups: [makeGroup()], models: [{ ...model, name: 'Renamed elsewhere' }],
-                        runningConditionNoneConfirmed: true, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [],
+                        runningConditionNoneConfirmed: true, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
                         workspaceId: 'ws1', origin: 'dashboard',
                     } });
                 }
@@ -3728,7 +3755,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(exportCalls()).toHaveLength(1);
     });
 
-    it('Relationship: the progress note says it can take about 15 seconds, and the page stays usable meanwhile', async () => {
+    it('Relationship: the progress note says it can take longer than 15 seconds (especially the first time), and the page stays usable meanwhile', async () => {
         let release!: () => void;
         const rel = HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 } });
         mockInvoke.mockImplementation((cmd: string, args?: any) => cmd === 'export_model_files'
@@ -4182,6 +4209,420 @@ describe('Health score - QA fixes 2026-10-04', () => {
             fireEvent.click(screen.getByTestId('health-retry'));
             await waitFor(() => expect(screen.getByTestId('check-valid')).toBeTruthy());
             expect(screen.queryByTestId('health-error')).toBeNull();
+        });
+    });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Train/Test model validation (SPEC FINAL 2026-10-07): the Running condition
+// modal's Apply gate, the workspace test periods + "From Highlights", Mark
+// complete needing a test period, the "Tested · N" footer pill and the
+// "Test periods changed" notice under the Step-1 card.
+// ─────────────────────────────────────────────────────────────────────────
+describe('Train / Test validation in the Build Model window (2026-10-07)', () => {
+    const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
+    const fgBase = (over: Record<string, any> = {}) => ({
+        groups: [makeGroup()], models: [makeModel()],
+        runningConditionNoneConfirmed: false,
+        runningConditionFilters: [seededFilter],
+        runningConditionCombine: 'and' as const,
+        runningConditionTimePeriods: [{ id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' }],
+        runningConditionTestPeriods: ONE_TEST,
+        rcLegacyNotice: null,
+        ...over,
+    });
+    const apply = () => screen.getByTestId('rc-apply') as HTMLButtonElement;
+    const lastWrittenFg = async () =>
+        (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+
+    async function openModal(fg: Record<string, any>, wsExtra: Record<string, any> = {}) {
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: fg, ...wsExtra });
+        statefulUpdateMock(fg.models, fg);
+        mockUpdateWorkspaceData.mockClear();
+        fireEvent.click(screen.getByTestId('rc-card-open'));
+        await flush();
+    }
+
+    describe('Running condition modal — Apply gate', () => {
+        it('no train period: Apply stays disabled with the hint "Add a train period", even with other edits', async () => {
+            await openModal(fgBase({ runningConditionTimePeriods: [] }));
+            fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
+            expect(apply().disabled).toBe(true);
+            const hint = screen.getByTestId('rc-apply-block');
+            expect(hint.getAttribute('data-kind')).toBe('no-train');
+            expect(hint.textContent).toBe(ADD_TRAIN_PERIOD_HINT);
+            expect(apply().title).toBe(ADD_TRAIN_PERIOD_HINT);
+            fireEvent.click(apply());
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            // Adding a train period lifts the block
+            fireEvent.click(screen.getByTestId('period-add'));
+            expect(apply().disabled).toBe(false);
+            expect(screen.queryByTestId('rc-apply-block')).toBeNull();
+        });
+
+        it('a Known-problem event time outside its test period is red and blocks Apply; moving it inside unblocks, Apply saves the test periods', async () => {
+            await openModal(fgBase());
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            fireEvent.click(dlg.getByTestId('test-label-problem-1'));
+            const ev = dlg.getByLabelText('Test period 1 event time');
+            fireEvent.change(ev, { target: { value: '2025-05-01T00:00' } });
+            fireEvent.blur(ev);
+            expect(dlg.getByTestId('test-event-invalid-1').textContent).toContain('The event time must be inside T1.');
+            expect(apply().disabled).toBe(true);
+            expect(screen.getByTestId('rc-apply-block').getAttribute('data-kind')).toBe('invalid-test');
+            expect(screen.getByTestId('rc-apply-block').textContent).toBe('The event time must be inside T1.');
+
+            fireEvent.change(dlg.getByLabelText('Test period 1 event time'), { target: { value: '2024-01-20T06:00' } });
+            fireEvent.blur(dlg.getByLabelText('Test period 1 event time'));
+            expect(dlg.queryByTestId('test-event-invalid-1')).toBeNull();
+            expect(apply().disabled).toBe(false);
+            fireEvent.click(apply());
+            await flush();
+            const fg = await lastWrittenFg();
+            expect(fg.runningConditionTestPeriods).toEqual([{ ...ONE_TEST[0], label: 'problem', eventTime: '2024-01-20T06:00' }]);
+            expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+            // the Step-1 card shows the persisted Known problem with its event
+            expect(screen.getByTestId('rc-card-test-chip').textContent).toContain('T1 Known problem');
+            expect(screen.getByTestId('rc-card-test-event').textContent).toBe(' · event 20 Jan 2024 06:00');
+        });
+
+        it('a test period overlapping the train period is information only: a grey note, Apply still allowed', async () => {
+            await openModal(fgBase());
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            // ONE_TEST (Jan 2024) lies inside the train period (Jan 2024)
+            expect(dlg.getByTestId('test-overlap-1').textContent).toContain('T1 includes 31 d of train running time');
+            fireEvent.click(dlg.getByTestId('test-add'));
+            expect(apply().disabled).toBe(false);
+            expect(screen.queryByTestId('rc-apply-block')).toBeNull();
+        });
+
+        it('"From Highlights" offers the workspace\'s Dashboard highlights (re-read when the modal opens); the label stays on the test period', async () => {
+            const hl = { id: 'h1', start: '2024-03-01 00:00:00', end: '2024-03-05 00:00:00', label: 'Seal leak', color: '#f43f5e', enabled: true };
+            await openModal(fgBase(), { timeHighlights: [hl] });
+            fireEvent.click(screen.getByTestId('test-from-hl'));
+            fireEvent.click(screen.getByTestId('test-hl-problem-h1'));
+            fireEvent.click(apply());
+            await flush();
+            const written = (await mockUpdateWorkspaceData.mock.results[0].value);
+            expect(written.failureGroupState.runningConditionTestPeriods[1]).toMatchObject({
+                start: '2024-03-01T00:00', end: '2024-03-05T00:00', label: 'problem', fromHighlight: 'Seal leak',
+            });
+            // nothing is written onto the highlight itself
+            expect(written.timeHighlights ?? [hl]).toEqual([hl]);
+        });
+
+        it('a train period overlapping a highlight shows the amber warning; "Remove the overlap" splits it in the draft', async () => {
+            const hl = { id: 'h1', start: '2024-01-10 00:00:00', end: '2024-01-12 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
+            await openModal(fgBase(), { timeHighlights: [hl] });
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            expect(dlg.getByTestId('train-hl-warning').textContent).toContain('Train P1 overlaps the highlight “Trip”');
+            fireEvent.click(dlg.getByTestId('train-hl-split'));
+            expect(dlg.getAllByTestId(/^period-row-/)).toHaveLength(2);
+            expect(dlg.queryByTestId('train-hl-warning')).toBeNull();
+            expect(apply().disabled).toBe(false);
+        });
+    });
+
+    describe('Mark complete needs a test period; "Tested · N" in the footer only', () => {
+        it('no test period: Mark complete is disabled with the reason, and clicking exports nothing', async () => {
+            await hsMount([HS_IND()], {}, { runningConditionTestPeriods: [] });
+            await openHealthPage();
+            await waitFor(() => expect(screen.getByTestId('mark-block-reason').textContent).toBe(NO_TEST_PERIOD_REASON));
+            expect(hsMarkBtn().disabled).toBe(true);
+            expect(hsMarkBtn().title).toBe(NO_TEST_PERIOD_REASON);
+            await hsClickMark();
+            expect(exportCalls()).toHaveLength(0);
+            expect(screen.queryByTestId('tested-pill')).toBeNull();
+        });
+
+        it('with a test period: Mark complete is enabled, the export carries test_periods, and the footer shows "Tested · 1"', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            expect(screen.getByTestId('tested-pill').textContent).toBe('Tested · 1');
+            expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'normal', event_time: null }]);
+            await hsClickMark();
+            await waitFor(() => expect(exportCalls()).toHaveLength(1));
+            expect(exportCalls()[0].test_periods).toHaveLength(1);
+            // the pill also sits in the Model fit footer, never anywhere else
+            fireEvent.click(screen.getByTestId('footer-back-to-fit'));
+            expect(screen.getAllByTestId('tested-pill')).toHaveLength(1);
+            expect(screen.getByTestId('tested-pill').closest('.f4-foot')).not.toBeNull();
+        });
+
+        it('an untrained model shows no "Tested" pill', async () => {
+            await hsMount([makeModel()]);
+            expect(screen.queryByTestId('tested-pill')).toBeNull();
+        });
+    });
+
+    describe('"Test periods changed" (rule 8)', () => {
+        it('a notice under the Step-1 card counts the models that need Mark complete again', async () => {
+            await hsMount([HS_IND({ status: false, testsChangedAt: '2026-10-07T01:00:00.000Z' })]);
+            expect(screen.getByTestId('tests-changed-notice').textContent)
+                .toBe('Test periods changed — 1 complete model needs Mark complete again. It was not re-trained.');
+        });
+
+        it('the Health score page shows the banner; "removed" when no test period is left', async () => {
+            await hsMount([HS_IND({ status: false, testsChangedAt: '2026-10-07T01:00:00.000Z' })], {}, { runningConditionTestPeriods: [] });
+            expect(screen.getByTestId('tests-changed-notice').textContent).toContain('Test periods removed');
+            await openHealthPage();
+            expect(screen.getByTestId('tests-changed-banner').getAttribute('data-state')).toBe('removed');
+        });
+
+        it('"Saved N files" is not left on screen once the model is no longer Complete (a tests-only change / Mark incomplete)', async () => {
+            await hsMount([HS_IND()]);
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            await hsClickMark();
+            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); });
+            await flush();
+            expect(screen.queryByTestId('save-ok')).toBeNull();
+        });
+
+        it('no notice without the stamp, or once the model is Complete again', async () => {
+            await hsMount([HS_IND({ status: true, testsChangedAt: '2026-10-07T01:00:00.000Z' })]);
+            expect(screen.queryByTestId('tests-changed-notice')).toBeNull();
+        });
+    });
+
+    describe('Custom mode: the model\'s own test periods live in Model settings', () => {
+        it('switching to Custom shows the test periods editor next to the train periods; edits stay in the draft until Save', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: fgBase({ runningConditionNoneConfirmed: true }) });
+            statefulUpdateMock([makeModel()], fgBase({ runningConditionNoneConfirmed: true }));
+            openSettings();
+            fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+            const tests = within(screen.getByTestId('custom-test-periods'));
+            expect(tests.getByTestId('test-periods-editor').className).toContain('tpe-periods--compact');
+            fireEvent.click(tests.getByLabelText('Remove test period 1'));
+            expect(tests.getByTestId('tests-empty')).toBeTruthy();
+            await act(async () => {
+                fireEvent.click(screen.getByText('Save changes'));
+                await Promise.resolve(); await Promise.resolve();
+            });
+            const fg = await lastWrittenFg();
+            expect(fg.models[0].runningConditionMode).toBe('custom');
+            expect(fg.models[0].customTestPeriods).toEqual([]);
+            // the workspace list is untouched
+            expect(fg.runningConditionTestPeriods).toEqual(ONE_TEST);
+        });
+    });
+});
+
+// 🆕 2026-10-07 code-review fixes on Train/Test validation (fe-ui-agent).
+describe('Train / Test validation — review fixes (2026-10-07)', () => {
+    const CUSTOM_TRAIN = [{ id: 'ct', start: '2024-01-01T00:00', end: '2024-01-11T00:00' }];
+    const customInd = (over: Record<string, any> = {}) => withTrained(makeModel({
+        healthSetPoints: HS_SNAP,
+        runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true,
+        filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: ONE_TEST,
+        ...over,
+    }));
+    const customTests = () => within(screen.getByTestId('custom-test-periods'));
+    const lastFg = async () =>
+        (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+
+    describe('Mark complete saves unsaved Model settings first (must-fix 1)', () => {
+        it('a Custom model with an UNSAVED test-period edit: Mark complete succeeds once, files written once, disk has the edited tests', async () => {
+            await hsMount([customInd()]);
+            openSettings();
+            fireEvent.click(customTests().getByTestId('test-label-problem-1'));
+            await openHealthPage();
+            await waitFor(() => expect(hsMarkBtn().disabled).toBe(false));
+            await hsClickMark();
+            await waitFor(() => expect(screen.getByTestId('save-ok')).toBeTruthy());
+            expect(screen.queryByTestId('save-error')).toBeNull();
+            // the files describe the edited tests, and were written exactly once
+            expect(exportCalls()).toHaveLength(1);
+            expect(exportCalls()[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'problem', event_time: null }]);
+            // what is on disk: Complete, with the edited tests, no "changed" stamp left
+            const fg = await lastFg();
+            expect(fg.models[0].status).toBe(true);
+            expect(fg.models[0].customTestPeriods).toEqual([{ ...ONE_TEST[0], label: 'problem' }]);
+            expect(fg.models[0].testsChangedAt).toBeUndefined();
+            expect(fg.models[0].healthExport).toBeTruthy();
+        });
+
+    });
+
+    describe('Custom test periods are validated on Save (should-fix 2a)', () => {
+        it('an event time outside its test period blocks Save changes (and Train) with the reason; the editor says "to save"', async () => {
+            await hsMount([customInd()]);
+            openSettings();
+            fireEvent.click(customTests().getByTestId('test-label-problem-1'));
+            const ev = customTests().getByLabelText('Test period 1 event time');
+            fireEvent.change(ev, { target: { value: '2025-05-01T00:00' } });
+            fireEvent.blur(ev);
+            expect(customTests().getByTestId('test-event-invalid-1').textContent).toContain('Fix it, or clear it, to save.');
+            const save = screen.getByText('Save changes') as HTMLButtonElement;
+            expect(save.disabled).toBe(true);
+            expect(screen.getByTestId('build-block-reason').textContent).toContain('The event time must be inside T1.');
+            mockUpdateWorkspaceData.mockClear();
+            fireEvent.click(save);
+            await flush();
+            expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            // moving it inside lifts the block
+            fireEvent.change(customTests().getByLabelText('Test period 1 event time'), { target: { value: '2024-01-20T06:00' } });
+            fireEvent.blur(customTests().getByLabelText('Test period 1 event time'));
+            expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
+        });
+
+        it('a Workspace-mode model is never blocked by its (unused) custom test list', async () => {
+            await hsMount([withTrained(makeModel({ healthSetPoints: HS_SNAP, customTestPeriods: [{ ...ONE_TEST[0], end: '' }] }))]);
+            expect(screen.queryByTestId('build-block-reason')).toBeNull();
+        });
+    });
+
+    describe('test results are numbered by their ORIGINAL list position (should-fix 2b)', () => {
+        it('[T1 invalid, T2 valid]: only T2 is sent, and the table row, tile and overlap note all say "T2"', async () => {
+            const tests = [
+                { id: 'bad', start: '2024-02-10T00:00', end: '2024-02-01T00:00', label: 'normal' },
+                { ...ONE_TEST[0], id: 'good' },
+            ];
+            mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                if (cmd === 'compute_health_preview') {
+                    const req = args?.request;
+                    return Promise.resolve(makeSetPointAwarePreview(req, {
+                        test_validation: makeValidation({
+                            tests: (req?.test_periods ?? []).map((t: any, i: number) => makeTestResult({ index: i + 1, start: t.start, end: t.end, label: t.label, train_rows: 10, train_days: 2 })),
+                        }),
+                    }));
+                }
+                return healthInvoke(cmd, args);
+            });
+            const model = HS_IND();
+            statefulUpdateMock([model], { runningConditionTestPeriods: tests });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], runningConditionTestPeriods: tests } });
+            await waitFor(() => expect(screen.getByTestId('train-test-row-2')).toBeTruthy());
+            expect(healthCalls().slice(-1)[0].test_periods).toHaveLength(1);
+            expect(screen.queryByTestId('train-test-row-1')).toBeNull();
+            expect(screen.getByTestId('train-test-row-2').textContent).toContain('T2 Normal');
+            expect(screen.getByTestId('train-test-overlap-2').textContent).toContain('T2 includes 2 d of train running time');
+            await openHealthPage();
+            expect(screen.getByTestId('test-result-2').textContent).toContain('T2 Normal');
+            expect(screen.getByTestId('test-result-overlap-2').textContent).toContain('T2 includes');
+            expect(screen.queryByTestId('test-result-1')).toBeNull();
+        });
+    });
+
+    describe('Relation model: Train also predicts the test rows; slow scoring says so (should-fix 3)', () => {
+        const relModel = (over: Record<string, any> = {}) => makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2'], relStiffness: 10_000, ...over });
+        const trainArgs = async (model: any, fgOver: Record<string, any> = {}) => {
+            cleanup();
+            mockInvoke.mockClear();
+            statefulUpdateMock([model], fgOver);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], ...fgOver } });
+            await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            return mockInvoke.mock.calls.find(c => c[0] === 'preview_relationship_model')![1] as any;
+        };
+
+        it('Workspace mode sends the workspace test periods; Custom its own; none = no test_periods key', async () => {
+            const ws = await trainArgs(relModel());
+            expect(ws.test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end, label: 'normal', event_time: null }]);
+            expect(ws.cache_key).toMatch(/^r1::/);
+
+            const own = [{ id: 'o1', start: '2024-03-01T00:00', end: '2024-03-10T00:00', label: 'problem', eventTime: '2024-03-05T12:00' }];
+            const custom = await trainArgs(relModel({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: CUSTOM_TRAIN, customTestPeriods: own }));
+            expect(custom.test_periods).toEqual([{ start: '2024-03-01T00:00', end: '2024-03-10T00:00', label: 'problem', event_time: '2024-03-05T12:00' }]);
+
+            const none = await trainArgs(relModel(), { runningConditionTestPeriods: [] });
+            expect(none).not.toHaveProperty('test_periods');
+        });
+
+        it('a test-scoring health preview that takes a while shows the "Scoring test periods" hint; none without test periods', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'compute_health_preview' ? new Promise(() => {}) : healthInvoke(cmd, args));
+            const rel = HS_REL();
+            statefulUpdateMock([rel]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            await waitFor(() => expect(healthCalls().length).toBeGreaterThan(0));
+            // not at once (a cached re-score finishes well before) ...
+            expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
+            // ... but once it has been loading for a moment
+            await waitFor(() => expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods with the Relation model'), { timeout: 3000 });
+
+            cleanup();
+            mockInvoke.mockClear();
+            statefulUpdateMock([rel], { runningConditionTestPeriods: [] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel], runningConditionTestPeriods: [] } });
+            await waitFor(() => expect(healthCalls().length).toBeGreaterThan(0));
+            await act(async () => { await new Promise(r => setTimeout(r, 1600)); });
+            expect(screen.queryByTestId('slow-test-scoring')).toBeNull();
+        });
+
+        it('SIDECAR_OUTDATED on Train shows the app wording, not the raw code', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) =>
+                cmd === 'preview_relationship_model'
+                    ? Promise.reject('SIDECAR_OUTDATED: The Relation model engine in this build is out of date - please reinstall or update the app.')
+                    : healthInvoke(cmd, args));
+            const rel = relModel();
+            statefulUpdateMock([rel]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
+            await act(async () => { fireEvent.click(screen.getByText('▶ Train model')); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(screen.getByTestId('results-error').textContent).toContain('reinstall or update the app'));
+            expect(screen.getByTestId('results-error').textContent).not.toContain('SIDECAR_OUTDATED');
+        });
+    });
+
+    describe('recommended train days: an estimate for a Custom model too (nit 7)', () => {
+        it('a Custom model with no test period gets the amber "Only N d" note from its own row count', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                if (cmd === 'get_dataset_time_bounds') return Promise.resolve({ min: '2024-01-01 00:00:00', max: '2024-04-10 00:00:00' }); // 100 days
+                if (cmd === 'compute_sensor_stats') {
+                    // 10 % of the rows pass the model's own filter; 100 % with no filter
+                    return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: args?.filter ? 10 : 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+                }
+                return healthInvoke(cmd, args);
+            });
+            const model = customInd({ customTestPeriods: [] });
+            statefulUpdateMock([model]);
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model] } });
+            await waitFor(() => expect(screen.getByTestId('train-days-warning').textContent).toContain('Only 10 d of train running time'));
+            expect(screen.getByTestId('train-days-warning').textContent).toContain('You can still train.');
+        });
+    });
+
+    describe('re-pointing the window at another workspace (test gap)', () => {
+        it('drops the old workspace test periods and Dashboard highlights at once (before the new one has loaded)', async () => {
+            const hl = { id: 'h1', start: '2024-03-01 00:00:00', end: '2024-03-05 00:00:00', label: 'Seal leak', color: '#f43f5e', enabled: true };
+            render(<BuildModelWindow />);
+            await deliverData({ timeHighlights: [hl] });
+            expect(screen.getAllByTestId('rc-card-test-chip')[0].textContent).toContain('T1 Normal');
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await flush();
+            expect((screen.getByTestId('test-from-hl') as HTMLButtonElement).disabled).toBe(false);
+
+            // workspace B never finishes loading: anything still on screen would be A's
+            mockLoadWorkspaceData.mockReturnValue(new Promise(() => {}));
+            await act(async () => {
+                for (const cb of listenCallbacks['build-model-data'] ?? []) cb({ payload: {
+                    workspaceId: 'ws2', sensorHeaders: ['TAG1'], sensorMetadata: [],
+                    metadata: { headers: ['timestamp', 'TAG1'], total_rows: 1 },
+                } });
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            // the re-point also closed the modal
+            expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
+            // B has nothing configured yet (its load is pending): no trace of A's T1 anywhere
+            expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
+            expect(screen.queryByText(/T1 Normal/)).toBeNull();
+            fireEvent.click(screen.getByTestId('rc-card-open'));
+            await flush();
+            const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
+            expect(dlg.queryByTestId('test-row-1')).toBeNull();
+            expect((dlg.getByTestId('test-from-hl') as HTMLButtonElement).disabled).toBe(true);
         });
     });
 });

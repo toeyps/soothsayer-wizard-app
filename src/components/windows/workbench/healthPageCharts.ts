@@ -11,7 +11,7 @@ import type {
     RelationshipHealthSetPoints,
 } from '../../../types';
 import { CHART, CLUSTER_COLORS, FONT } from './chartTheme';
-import { buildTimeSeriesOption, ellipseSeries, niceExtent, type HLine } from './healthCharts';
+import { buildTimeSeriesOption, ellipseSeries, niceExtent, type HLine, type TimeScopes } from './healthCharts';
 
 /*
  * Pure ECharts option builders of the Health score page (health score phase
@@ -62,6 +62,7 @@ export function buildIndividualSetPointOption(
     stats: IndividualStats,
     sp: IndividualHealthSetPoints | null,
     unit: string,
+    scopes: TimeScopes | null = null,
 ) {
     const [l1, u1] = stats.boundary_1sd;
     const [l3, u3] = stats.boundary_3sd;
@@ -76,6 +77,7 @@ export function buildIndividualSetPointOption(
     return {
         ...buildTimeSeriesOption({
             timestamps: series.timestamps,
+            scopes,
             yName: unit || undefined,
             lines: [{ name: 'Value', values: series.value, color: CHART.series }],
             bands: [
@@ -99,6 +101,7 @@ export function buildRelationshipSetPointOption(
     twoRmse: number,
     sp: RelationshipHealthSetPoints | null,
     unit: string,
+    scopes: TimeScopes | null = null,
 ) {
     const hLines: HLine[] = [
         { y: twoRmse, color: CHART.ok, label: '+2RMSE' },
@@ -114,6 +117,7 @@ export function buildRelationshipSetPointOption(
     return {
         ...buildTimeSeriesOption({
             timestamps: series.timestamps,
+            scopes,
             yName: unit || undefined,
             lines: [{ name: 'Residual', values: series.residual, color: CHART.series }],
             bands: [{ from: -twoRmse, to: twoRmse, color: CHART.okFill }],
@@ -265,9 +269,10 @@ export function buildClusterSetPointOption(
 /** Health score (0-100) over time: a dashed line at 80, the line coloured by the
  *  score band (green 80-100, amber 40-80, red below 40), gaps where a row has no
  *  score (`null`, never 0). */
-export function buildScoreOption(timestamps: string[], score: (number | null)[]) {
+export function buildScoreOption(timestamps: string[], score: (number | null)[], scopes: TimeScopes | null = null) {
     const base = buildTimeSeriesOption({
         timestamps,
+        scopes,
         yName: 'Score',
         lines: [{ name: 'Health score', values: score, color: CHART.ok, width: 1.6 }],
         hLines: [{ y: 80, color: CHART.warn, dashed: true, label: '80' }],

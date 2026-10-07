@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { mk } from './helpers/failureModelFixture';
-import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { applyIncompleteRule, modelsWithChangedInputs } from '../utils/incompleteRule';
+import type { FailureGroupStateSlice, FailureModel, TestPeriod, WorkspaceState } from '../types';
+import { applyIncompleteRule, modelsWithChangedInputs, modelsWithChangedTests } from '../utils/incompleteRule';
 import { isModelComplete, isModelStale, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON } from '../utils/modelStatus';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
 const slice = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}): FailureGroupStateSlice => ({
     groups: [], models,
     runningConditionFilters: [], runningConditionCombine: 'and',
-    runningConditionTimePeriods: [], runningConditionNoneConfirmed: true,
+    // A train period is required to train since the Train/Test change (2026-10-07).
+    runningConditionTimePeriods: [{ id: 'w-train', start: '2025-01-01T00:00', end: '2025-12-31T23:59' }], runningConditionNoneConfirmed: true,
     rcLegacyNotice: null,
     ...over,
 });
@@ -302,5 +303,143 @@ describe('modelSetPointFlag - what the saved verdict says about a TRAINED model'
     it('a caller that overrides the dot state (a failed run of this session) can say so', () => {
         expect(modelSetPointFlag(trainedModel({ healthVerdict: 'invalid' }), fg, null, 'stale')).toBeNull();
         expect(modelDotState(trainedModel(), fg)).toBe('trained');
+    });
+});
+
+describe('applyIncompleteRule - Train/Test validation: changing ONLY test periods (SPEC rules 8 & 9)', () => {
+    const NOW = '2026-10-07T10:00:00.000Z';
+    const t1: TestPeriod = { id: 't1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' };
+    const t2: TestPeriod = { id: 't2', start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem', eventTime: '2026-03-20T08:00' };
+    const fgBase = slice([]);
+    const trainedComplete = (over: Partial<FailureModel> = {}): FailureModel => {
+        const m = { ...individual(), ...over };
+        return { ...m, lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: computeTrainFingerprint(m, fgBase), healthVerdict: 'valid' };
+    };
+
+    it('test periods are NOT part of the train fingerprint (workspace list and a Custom model own list)', () => {
+        const m = individual();
+        expect(computeTrainFingerprint(m, slice([], { runningConditionTestPeriods: [t1, t2] }))).toBe(computeTrainFingerprint(m, fgBase));
+        const c = { ...m, runningConditionMode: 'custom' as const, customRunningConditionNoneConfirmed: true };
+        expect(computeTrainFingerprint({ ...c, customTestPeriods: [t1] }, fgBase)).toBe(computeTrainFingerprint(c, fgBase));
+    });
+
+    it('workspace test list changed -> a Complete Workspace-mode model goes Incomplete + testsChangedAt in the SAME write, still trained (fresh)', () => {
+        const m = trainedComplete();
+        const prev = ws(slice([m]));
+        const next = ws(slice([m], { runningConditionTestPeriods: [t1] }));
+        const out = applyIncompleteRule(prev, next, { now: NOW });
+        const after = out.failureGroupState!.models[0];
+        expect(after.status).toBe(false);
+        expect(after.testsChangedAt).toBe(NOW);
+        // Stays trained: train record kept, fingerprint still matches, verdict kept.
+        expect(after.lastTrainedAt).toBe(m.lastTrainedAt);
+        expect(after.trainedFingerprint).toBe(computeTrainFingerprint(after, out.failureGroupState!));
+        expect(isModelStale(after, out.failureGroupState!)).toBe(false);
+        expect(after.healthVerdict).toBe('valid');
+        expect(modelDotState(after, out.failureGroupState!)).toBe('trained');
+        // Other slice fields survive (written through withFailureGroupState).
+        expect(out.failureGroupState!.runningConditionTestPeriods).toEqual([t1]);
+    });
+
+    it('is idempotent: a second pass changes nothing (same reference)', () => {
+        const m = trainedComplete();
+        const prev = ws(slice([m]));
+        const once = applyIncompleteRule(prev, ws(slice([m], { runningConditionTestPeriods: [t1] })), { now: NOW });
+        expect(applyIncompleteRule(prev, once, { now: '2099-01-01T00:00:00Z' })).toBe(once);
+        expect(applyIncompleteRule(once, once)).toBe(once);
+    });
+
+    it('a Custom model: its OWN customTestPeriods count, the workspace list does not', () => {
+        const c = trainedComplete({ runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true, filterTimePeriods: [period('2025-01-01T00:00', '2025-06-30T23:59')] });
+        const fixed = { ...c, trainedFingerprint: computeTrainFingerprint(c, fgBase) };
+        // Workspace tests changed: the Custom model is untouched.
+        const a = applyIncompleteRule(ws(slice([fixed])), ws(slice([fixed], { runningConditionTestPeriods: [t1] })), { now: NOW });
+        expect(a.failureGroupState!.models[0].status).toBe(true);
+        expect(a.failureGroupState!.models[0].testsChangedAt).toBeUndefined();
+        // Its own tests changed: demoted with the stamp.
+        const b = applyIncompleteRule(ws(slice([fixed])), ws(slice([{ ...fixed, customTestPeriods: [t2] }])), { now: NOW });
+        expect(b.failureGroupState!.models[0]).toMatchObject({ status: false, testsChangedAt: NOW });
+    });
+
+    it('label, event time, start/end and removing every test all count; ids and fromHighlight do not', () => {
+        const m = trainedComplete();
+        const run = (before: TestPeriod[], after: TestPeriod[]) =>
+            applyIncompleteRule(ws(slice([m], { runningConditionTestPeriods: before })), ws(slice([m], { runningConditionTestPeriods: after })), { now: NOW })
+                .failureGroupState!.models[0].status;
+        expect(run([t1], [{ ...t1, label: 'problem' }])).toBe(false);
+        expect(run([t2], [{ ...t2, eventTime: '2026-03-21T08:00' }])).toBe(false);
+        expect(run([t1], [{ ...t1, end: '2026-02-15T00:00' }])).toBe(false);
+        expect(run([t1, t2], [])).toBe(false);
+        expect(run([t1], [{ ...t1, id: 'other', fromHighlight: 'Overhaul' }])).toBe(true);
+        // An event time on a Normal period is not read, so it is not a change.
+        expect(run([t1], [{ ...t1, eventTime: '2026-01-05T00:00' }])).toBe(true);
+    });
+
+    it('a model that is not Complete gets no stamp and stays the same object', () => {
+        const m = { ...trainedComplete(), status: false };
+        const prev = ws(slice([m]));
+        const next = ws(slice([m], { runningConditionTestPeriods: [t1] }));
+        expect(applyIncompleteRule(prev, next, { now: NOW })).toBe(next);
+    });
+
+    it('a TRAIN change behaves as before (Incomplete + stale, verdict dropped) and gets no testsChangedAt, even if tests changed too', () => {
+        const m = trainedComplete();
+        const prev = ws(slice([m]));
+        const next = ws(slice([m], {
+            runningConditionTimePeriods: [period('2025-02-01T00:00', '2025-12-31T23:59')],
+            runningConditionTestPeriods: [t1],
+        }));
+        const out = applyIncompleteRule(prev, next, { now: NOW });
+        const after = out.failureGroupState!.models[0];
+        expect(after.status).toBe(false);
+        expect(after.testsChangedAt).toBeUndefined();
+        expect(after).not.toHaveProperty('healthVerdict');
+        expect(isModelStale(after, out.failureGroupState!)).toBe(true);
+    });
+
+    it('review fix 2026-10-07: a TRAIN change drops a testsChangedAt stamp left by an EARLIER tests-only change (the train rule wins)', () => {
+        // Step 1: tests only -> Incomplete + stamp, still trained.
+        const m = trainedComplete();
+        const afterTests = applyIncompleteRule(ws(slice([m])), ws(slice([m], { runningConditionTestPeriods: [t1] })), { now: NOW });
+        const stamped = afterTests.failureGroupState!.models[0];
+        expect(stamped).toMatchObject({ status: false, testsChangedAt: NOW });
+        // Step 2: a training input changes -> the stamp goes (a re-train is needed, not "Mark complete again").
+        const next = ws(slice([stamped], {
+            runningConditionTestPeriods: [t1],
+            runningConditionTimePeriods: [period('2025-02-01T00:00', '2025-12-31T23:59')],
+        }));
+        const out = applyIncompleteRule(afterTests, next, { now: '2026-10-08T00:00:00.000Z' });
+        const after = out.failureGroupState!.models[0];
+        expect(after).not.toHaveProperty('testsChangedAt');
+        expect(after.status).toBe(false);
+        expect(isModelStale(after, out.failureGroupState!)).toBe(true);
+        // idempotent
+        expect(applyIncompleteRule(afterTests, out)).toBe(out);
+    });
+
+    it('review fix 2026-10-07: a stamped model with no verdict and status false still loses the stamp on a train change', () => {
+        const { healthVerdict: _v, ...noVerdict } = trainedComplete({ status: false });
+        void _v;
+        const m: FailureModel = { ...noVerdict, testsChangedAt: NOW };
+        const next = ws(slice([m], { runningConditionTimePeriods: [period('2025-03-01T00:00', '2025-12-31T23:59')] }));
+        const out = applyIncompleteRule(ws(slice([m])), next, { now: NOW });
+        expect(out).not.toBe(next);
+        expect(out.failureGroupState!.models[0]).not.toHaveProperty('testsChangedAt');
+    });
+
+    it('modelsWithChangedTests reports exactly the models whose EFFECTIVE tests changed', () => {
+        const a = individual();
+        const c = { ...individual(), id: 'c', runningConditionMode: 'custom' as const };
+        const prev = ws(slice([a, c]));
+        const next = ws(slice([a, c], { runningConditionTestPeriods: [t1] }));
+        expect(modelsWithChangedTests(prev, next)).toEqual(['i']);
+        expect(modelsWithChangedInputs(prev, next)).toEqual([]);
+    });
+
+    it('old workspaces without any test field compare equal (undefined vs [])', () => {
+        const m = trainedComplete();
+        const prev = ws(slice([m]));
+        const next = ws(slice([{ ...m, customTestPeriods: [] }], { runningConditionTestPeriods: [] }));
+        expect(applyIncompleteRule(prev, next)).toBe(next);
     });
 });

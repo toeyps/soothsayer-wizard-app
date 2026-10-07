@@ -10,9 +10,12 @@ import {
     buildResidualOption,
     buildTargetVsPredictedOption,
     buildValueOverTimeOption,
+    compactScopes,
     estimateRowsOutside3sd,
     individualVLines,
+    scopesOf,
 } from './healthCharts';
+import { SlowScoringNotice, TrainDaysNotice, TrainTestCard } from './ValidationCards';
 import type { WorkbenchPageProps } from './workbenchTypes';
 
 /*
@@ -27,6 +30,12 @@ import type { WorkbenchPageProps } from './workbenchTypes';
  *                (no residual distribution, no side histogram — by design)
  *   Clustering   scatter + 1×/3× SD ellipses · cluster summary card
  *
+ * Train/Test validation (2026-10-07): when the preview carries
+ * `test_validation`, every time chart draws the train / test scopes
+ * (`scopesOf` → `TimeSeriesSpec.scopes`) and a "Train vs test" card is added
+ * (side column for Individual / Clustering, a capped full row for
+ * Relationship), plus an amber note below the recommended train time.
+ *
  * The "Model settings" section and the footer are NOT here: they sit around this
  * body in `BuildModelWindow` (they share the draft/Apply state with the rest of
  * the window).
@@ -40,6 +49,10 @@ export interface ModelFitPageProps extends WorkbenchPageProps {
     onXPredictorChange: (tag: string) => void;
     /** Relationship: open the Sub-models comparison modal. */
     onCompare: () => void;
+    /** Train running days known before Rust answers with `test_validation`
+     *  (estimated from the Step-1 row count); `null`/absent = unknown. Drives
+     *  only the amber "below the recommended train time" note — never a block. */
+    trainDaysEstimate?: number | null;
 }
 
 const Stat = ({ label, value, testId }: { label: string; value: string; testId?: string }) => (
@@ -49,12 +62,23 @@ const Stat = ({ label, value, testId }: { label: string; value: string; testId?:
 export default function ModelFitPage(props: ModelFitPageProps) {
     const { data, model, stale, unit, sensorLabel, getDesc } = props;
     const stats = data.stats;
+    // Train / test scopes on every time chart (null = the preview carried no test periods).
+    const scopes = scopesOf(data.test_validation, props.testNumbers);
+    const custom = model.runningConditionMode === 'custom';
+    const daysNotice = (
+        <>
+            <SlowScoringNotice show={props.slowScoring} />
+            <TrainDaysNotice days={data.test_validation?.train.days ?? props.trainDaysEstimate ?? null} />
+        </>
+    );
+    const vt = { testNumbers: props.testNumbers, onRetry: props.preview.retry };
 
     if (stats.kind === 'individual' && data.series.kind === 'individual') {
         const series = data.series;
         const outside = estimateRowsOutside3sd(data.histogram, stats);
         return (
             <div className="wb2-board wb2-g2" data-testid="model-fit-individual">
+                {daysNotice}
                 <ChartCard
                     id="ts"
                     title="Sensor value over time"
@@ -62,7 +86,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                     full
                     size="tall"
                     stale={stale}
-                    option={buildValueOverTimeOption(series, stats, unit)}
+                    option={buildValueOverTimeOption(series, stats, unit, scopes)}
                     legend={<>
                         <LegendItem color={CHART.series} label="Value" />
                         <LegendItem color={CHART.ok} label="±1SD" />
@@ -83,24 +107,27 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                         <LegendItem color={CHART.warn} label="±3SD" />
                     </>}
                 />
-                <section className="wb2-statc" data-testid="stats-card">
-                    <div className="wb2-card-h"><b>Statistics</b><span className="wb2-card-s">from the training rows</span></div>
-                    <table>
-                        <tbody>
-                            <tr><td>Rows</td><td className="n" data-testid="stat-rows">{stats.rows.toLocaleString()}</td></tr>
-                            <tr><td>Mean</td><td className="n">{fmtNum(stats.mean)}{unit ? ` ${unit}` : ''}</td></tr>
-                            <tr><td>SD</td><td className="n">{fmtNum(stats.sd)}{unit ? ` ${unit}` : ''}</td></tr>
-                            <tr><td>±1SD</td><td className="n">{fmtNum(stats.boundary_1sd[0])} – {fmtNum(stats.boundary_1sd[1])}</td></tr>
-                            <tr><td>±3SD</td><td className="n">{fmtNum(stats.boundary_3sd[0])} – {fmtNum(stats.boundary_3sd[1])}</td></tr>
-                            <tr>
-                                <td title="Estimated from the distribution bins">Rows outside ±3SD</td>
-                                <td className="n" data-testid="stat-outside3">
-                                    {outside === null ? '—' : `≈ ${outside.toLocaleString()} (${stats.rows ? ((outside / stats.rows) * 100).toFixed(2) : '0.00'}%)`}
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </section>
+                <div className="vt-stack" data-testid="fit-side">
+                    <section className="wb2-statc" data-testid="stats-card">
+                        <div className="wb2-card-h"><b>Statistics</b><span className="wb2-card-s">from the training rows</span></div>
+                        <table>
+                            <tbody>
+                                <tr><td>Rows</td><td className="n" data-testid="stat-rows">{stats.rows.toLocaleString()}</td></tr>
+                                <tr><td>Mean</td><td className="n">{fmtNum(stats.mean)}{unit ? ` ${unit}` : ''}</td></tr>
+                                <tr><td>SD</td><td className="n">{fmtNum(stats.sd)}{unit ? ` ${unit}` : ''}</td></tr>
+                                <tr><td>±1SD</td><td className="n">{fmtNum(stats.boundary_1sd[0])} – {fmtNum(stats.boundary_1sd[1])}</td></tr>
+                                <tr><td>±3SD</td><td className="n">{fmtNum(stats.boundary_3sd[0])} – {fmtNum(stats.boundary_3sd[1])}</td></tr>
+                                <tr>
+                                    <td title="Estimated from the distribution bins">Rows outside ±3SD</td>
+                                    <td className="n" data-testid="stat-outside3">
+                                        {outside === null ? '—' : `≈ ${outside.toLocaleString()} (${stats.rows ? ((outside / stats.rows) * 100).toFixed(2) : '0.00'}%)`}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </section>
+                    <TrainTestCard data={data} unit={unit} side custom={custom} {...vt} />
+                </div>
             </div>
         );
     }
@@ -110,6 +137,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
         const fit = data.fit_scatter;
         return (
             <div className="wb2-board wb2-g2" data-testid="model-fit-relationship">
+                {daysNotice}
                 <div className="wb2-stats wb2-full" data-testid="rel-stats">
                     <Stat label="R²" value={fmtNum(stats.r2)} testId="stat-r2" />
                     <Stat label="RMSE" value={`${fmtNum(stats.rmse)}${unit ? ` ${unit}` : ''}`} testId="stat-rmse" />
@@ -154,7 +182,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                     title="Target vs predicted"
                     sub={`${unit ? `${unit} ` : ''}over time`}
                     stale={stale}
-                    option={buildTargetVsPredictedOption(series, unit)}
+                    option={buildTargetVsPredictedOption(series, unit, compactScopes(scopes))}
                     legend={<>
                         <LegendItem color={CHART.actual} label="Actual" />
                         <LegendItem color={CHART.predicted} label="Predicted" />
@@ -166,12 +194,13 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                     sub={`actual − predicted${unit ? ` (${unit})` : ''}`}
                     full
                     stale={stale}
-                    option={buildResidualOption(series, stats.two_rmse, unit)}
+                    option={buildResidualOption(series, stats.two_rmse, unit, scopes)}
                     legend={<>
                         <LegendItem color={CHART.series} label="Residual" />
                         <LegendItem color={CHART.ok} label="±2RMSE" />
                     </>}
                 />
+                <TrainTestCard data={data} unit={unit} custom={custom} {...vt} />
             </div>
         );
     }
@@ -182,6 +211,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
         const yTag = model.ySensor ?? '';
         return (
             <div className="wb2-board wb2-hs" data-testid="model-fit-clustering">
+                {daysNotice}
                 <ChartCard
                     id="cl"
                     title="Clusters"
@@ -195,22 +225,25 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                         <LegendItem color={CHART.warn} label="3× SD" dashed />
                     </>}
                 />
-                <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">
-                    <div className="wb2-card-h">
-                        <b>Clusters</b>
-                        {stats.criteria_sensor && <span className="wb2-card-s">split by {sensorLabel(stats.criteria_sensor)}</span>}
-                    </div>
-                    <table>
-                        <tbody>
-                            {stats.clusters.map(c => (
-                                <ClusterRows key={c.cluster_id} c={c} />
-                            ))}
-                            {stats.unassigned_rows > 0 && (
-                                <tr><td>In no range</td><td className="n">{stats.unassigned_rows.toLocaleString()} rows</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </section>
+                <div className="vt-stack" data-testid="fit-side">
+                    <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">
+                        <div className="wb2-card-h">
+                            <b>Clusters</b>
+                            {stats.criteria_sensor && <span className="wb2-card-s">split by {sensorLabel(stats.criteria_sensor)}</span>}
+                        </div>
+                        <table>
+                            <tbody>
+                                {stats.clusters.map(c => (
+                                    <ClusterRows key={c.cluster_id} c={c} />
+                                ))}
+                                {stats.unassigned_rows > 0 && (
+                                    <tr><td>In no range</td><td className="n">{stats.unassigned_rows.toLocaleString()} rows</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </section>
+                    <TrainTestCard data={data} unit={unit} side custom={custom} {...vt} />
+                </div>
             </div>
         );
     }

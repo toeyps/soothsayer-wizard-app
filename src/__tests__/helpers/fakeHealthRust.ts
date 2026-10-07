@@ -307,7 +307,7 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
     compute_health_preview: { required: ['request'] },
     export_model_files: { required: ['request'] },
     get_model_output_dir: { required: ['workspace_id'] }, // rename_all = snake_case
-    preview_relationship_model: { required: ['predictors', 'target', 'lambda'], optional: ['filter', 'cache_key', 'max_points'] },
+    preview_relationship_model: { required: ['predictors', 'target', 'lambda'], optional: ['filter', 'cache_key', 'max_points', 'test_periods'] },
     compute_clustering_preview: { required: ['first_sensor', 'second_sensor', 'n_clusters'], optional: ['criteria_sensor', 'cluster_ranges', 'filter'] },
     compute_sensor_stats: { required: ['sensor'], optional: ['filter'] },
     get_dataset_time_bounds: { required: [], optional: ['filter'] },

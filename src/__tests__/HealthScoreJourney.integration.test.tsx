@@ -236,7 +236,7 @@ describe('Relationship: the whole journey', () => {
         const gate = env.backend!.gate('sidecar:export_model_files');
         await act(async () => { fireEvent.click(markBtn()); });
         await settle(30);
-        expect(bmw().getByTestId('save-running').textContent).toMatch(/about 15 seconds/);
+        expect(bmw().getByTestId('save-running').textContent).toMatch(/longer than 15 seconds, especially the first time/);
         expect(markBtn().disabled).toBe(true);
         expect(markBtn().textContent).toBe('Saving…');
         gate.release();

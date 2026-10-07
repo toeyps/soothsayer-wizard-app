@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import { RunningConditionCard } from '../components/windows/RunningConditionCard';
 import type { RowCountPreview } from '../components/windows/useRowCountPreview';
-import type { WorkspaceSensorFilter } from '../types';
+import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
 afterEach(cleanup);
 
@@ -42,7 +42,7 @@ describe('RunningConditionCard — Not set', () => {
         expect(c.querySelector('.rcc-num')!.textContent).toBe('1');
         expect(c.textContent).toContain('Step 1 · Required before training');
         expect(within(c).getByRole('heading', { name: 'Set the running condition' })).toBeTruthy();
-        expect(c.textContent).toContain('Tell Wizard when the plant is running');
+        expect(c.textContent).toContain('Tell Wizard which healthy time to learn from (train periods) and when the plant is running');
         const btn = screen.getByTestId('rc-card-open');
         expect(btn.textContent).toBe('Set running condition →');
         expect(btn.className).toContain('rcx-btn--pri');
@@ -68,7 +68,7 @@ describe('RunningConditionCard — Invalid period', () => {
         expect(screen.getByTestId('rc-card-title').textContent).toBe('Period 2 needs fixing');
         expect(screen.getByTestId('rc-card-reason').textContent).toBe("Period 2 ends before it starts. Models can't be trained until it's fixed.");
         const chips = screen.getAllByTestId('rc-card-period-chip');
-        expect(chips.map(x => x.textContent)).toEqual(['1 Jan 2026 → 31 Mar 2026', '⚠ 30 May 2026 → 10 Apr 2026']);
+        expect(chips.map(x => x.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', '⚠ P2 · 30 May 2026 → 10 Apr 2026']);
         expect(chips[1].className).toContain('rcc-chip--bad');
         expect(chips[0].className).not.toContain('rcc-chip--bad');
         const btn = screen.getByTestId('rc-card-open');
@@ -96,18 +96,26 @@ describe('RunningConditionCard — Set', () => {
         expect(screen.getByTestId('rc-card-pill').textContent).toBe('Set');
     });
 
-    it('"Which time" shows readable date-range chips with open ends as Start / End', () => {
+    it('"Train" shows readable date-range chips (P1, P2 … when there are several) with open ends as Start / End', () => {
         card();
-        expect(within(screen.getByTestId('rc-card-time')).getByText('Which time')).toBeTruthy();
-        expect(screen.getAllByTestId('rc-card-period-chip').map(x => x.textContent)).toEqual(['1 Jan 2026 → 31 Mar 2026', '15 Apr 2026 → End']);
+        expect(within(screen.getByTestId('rc-card-time')).getByText('Train')).toBeTruthy();
+        expect(screen.getAllByTestId('rc-card-period-chip').map(x => x.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', 'P2 · 15 Apr 2026 → End']);
+        expect(screen.getAllByTestId('rc-card-period-chip')[0].querySelector('.tpe-sw--tr')).not.toBeNull();
         cleanup();
         card({ periods: [p('a', '', '2026-03-31T23:59')] });
         expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('Start → 31 Mar 2026');
     });
 
-    it('no periods = a single "Whole dataset" chip', () => {
+    it('no train period = an AMBER "No train period — add one" chip and "0 rows" (never "Whole dataset"; red is only for invalid input)', () => {
         card({ periods: [] });
-        expect(screen.getByTestId('rc-card-period-chip').textContent).toBe('Whole dataset');
+        const chip = screen.getByTestId('rc-card-period-chip');
+        expect(chip.textContent).toBe('No train period — add one');
+        expect(chip.className).toContain('rcc-chip--warn');
+        expect(chip.className).not.toContain('rcc-chip--bad');
+        expect(screen.getByTestId('rc-card-rows').textContent).toBe('0');
+        expect(screen.getByTestId('rc-card-no-train').textContent).toBe('rows — add a train period');
+        expect(screen.getByTestId('rc-card-no-train').className).toBe('rcc-use-none');
+        expect(screen.getByTestId('rc-card').textContent).not.toContain('Whole dataset');
     });
 
     it('"When running": condition chips with sensor name + operator + value + unit, joined by AND / OR', () => {
@@ -162,7 +170,7 @@ describe('RunningConditionCard — Set', () => {
             expect(cov().className).toContain('f4-cov--mini');
             expect(cov().textContent).toContain('Jan 2025');
             expect(cov().textContent).toContain('Jul 2026');
-            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 / 577 d'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 d train · 0 d test'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
             expect(screen.getByTestId('rc-card-use').contains(cov())).toBe(true);
             // the rows-used count, % and bar are all still there
             expect(screen.getByTestId('rc-card-rows').textContent).toBe('11,066');
@@ -175,7 +183,7 @@ describe('RunningConditionCard — Set', () => {
                     getDesc={() => ''} getUnit={() => ''} rows={OK} bounds={B} onOpen={vi.fn()} />,
             );
             const first = within(cov()).getByTestId('period-coverage-days').textContent;
-            expect(first).toBe('31 / 577 d');
+            expect(first).toBe('31 d train · 0 d test');
             rerender(
                 <RunningConditionCard state="set" periods={[p('a', '2025-01-01T00:00', '2025-01-31T23:59')]} filters={[]} combine="and" noneConfirmed headers={[]}
                     getDesc={() => ''} getUnit={() => ''} rows={{ status: 'ok', used: 1, total: 2 }} bounds={B} onOpen={vi.fn()} />,
@@ -183,9 +191,20 @@ describe('RunningConditionCard — Set', () => {
             expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe(first);
         });
 
-        it('no periods = a full strip ("all N days")', () => {
+        it('no train period = an EMPTY train lane ("0 d train"), not a full strip', () => {
             card({ periods: [], bounds: B });
-            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('all 577 days');
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('0 d train · 0 d test');
+            expect(cov().querySelectorAll('.f4-strip i')).toHaveLength(0);
+        });
+
+        it('two lanes: train on top, test below (Known problem hatched); caption "N d train · M d test"', () => {
+            card({ bounds: B, periods: [p('a', '2026-01-01T00:00', '2026-03-31T23:59')], testPeriods: [
+                { id: 't1', start: '2026-01-01T00:00', end: '2026-06-30T23:59', label: 'normal' },
+                { id: 't2', start: '2026-07-01T00:00', end: '2026-07-10T00:00', label: 'problem' },
+            ] });
+            expect(cov().querySelector('.f4-strip--tt')).not.toBeNull();
+            expect(Array.from(cov().querySelectorAll('.f4-strip i.te')).map(x => x.className)).toEqual(['te', 'te pb']);
+            expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('90 d train · 190 d test');
         });
 
         it('open ends reach the edge of the strip', () => {
@@ -232,5 +251,49 @@ describe('RunningConditionCard — Set', () => {
         card({ rows: { status: 'ok', used: 0, total: 10_000 } });
         expect(screen.getByTestId('rc-card-rows').textContent).toBe('0');
         expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 0%');
+    });
+});
+
+describe('RunningConditionCard — Test chips (Train/Test validation, 2026-10-07)', () => {
+    const T = (over: Partial<TestPeriod>): TestPeriod => ({ id: 't', start: '2026-05-01T00:00', end: '2026-05-31T23:59', label: 'normal', ...over });
+
+    it('no test period: an amber chip "needed before Mark complete" (Train does not need one)', () => {
+        card();
+        const row = screen.getByTestId('rc-card-test');
+        expect(within(row).getByText('Test')).toBeTruthy();
+        const chip = screen.getByTestId('rc-card-test-chip');
+        expect(chip.textContent).toBe('No test period — needed before Mark complete');
+        expect(chip.className).toContain('rcc-chip--warn');
+    });
+
+    it('one chip per test: "T1 Normal · dates"; a Known problem is hatched and shows its event time', () => {
+        card({ testPeriods: [
+            T({ id: 'a' }),
+            T({ id: 'b', start: '2026-06-01T00:00', end: '2026-06-30T23:59', label: 'problem', eventTime: '2026-06-20T14:30' }),
+        ] });
+        const chips = screen.getAllByTestId('rc-card-test-chip');
+        expect(chips.map(c => c.textContent)).toEqual([
+            'T1 Normal · 1 May 2026 → 31 May 2026',
+            'T2 Known problem · 1 Jun 2026 → 30 Jun 2026 · event 20 Jun 2026 14:30',
+        ]);
+        expect(chips[0].querySelector('.tpe-sw--te')).not.toBeNull();
+        expect(chips[1].className).toContain('rcc-chip--pb');
+        expect(chips[1].querySelector('.tpe-sw--pb')).not.toBeNull();
+        expect(within(chips[1]).getByTestId('rc-card-test-event').className).toContain('rcc-ev');
+    });
+
+    it('a test that includes train time is only a hover note on its chip, never an error', () => {
+        card({ testPeriods: [T({ start: '2026-03-01T00:00', end: '2026-03-31T23:59' })] });
+        const chip = screen.getByTestId('rc-card-test-chip');
+        expect(chip.getAttribute('title')).toBe('Includes train time (P1) — information only');
+        expect(chip.className).not.toContain('rcc-chip--bad');
+    });
+
+    it('a broken test period (e.g. event outside it) is flagged red on the card', () => {
+        card({ testPeriods: [T({ label: 'problem', eventTime: '2027-01-01T00:00' })] });
+        const chip = screen.getByTestId('rc-card-test-chip');
+        expect(chip.className).toContain('rcc-chip--bad');
+        expect(chip.textContent!.startsWith('⚠ ')).toBe(true);
+        expect(within(chip).queryByTestId('rc-card-test-event')).toBeNull();
     });
 });

@@ -21,6 +21,7 @@ vi.mock('../components/windows/SensorPickers', () => ({
 
 import ModelFitPage from '../components/windows/workbench/ModelFitPage';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
+import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import type { UseHealthPreviewResult } from '../hooks/useHealthPreview';
 import type { FailureModel } from '../types';
 
@@ -48,7 +49,9 @@ describe('ModelFitPage — Individual', () => {
     it('has the full-width value chart, the Distribution chart and the statistics card, in that order', () => {
         page(model(), { target: 'T1' });
         const board = screen.getByTestId('model-fit-individual');
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'stats-card']);
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-ts', 'chart-card-dist', 'fit-side']);
+        // the side column stacks the statistics (and, with test periods, the Train vs test card)
+        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['stats-card']);
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-full/);
         expect(screen.getByTestId('chart-card-ts').className).toMatch(/wb2-card--tall/);
         expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value');
@@ -141,7 +144,8 @@ describe('ModelFitPage — Clustering', () => {
     it('the cluster scatter with its rings and a summary card with every cluster\'s rows and centre', () => {
         page(clu(), { n_clusters: 2, criteria_sensor: 'LOAD' });
         const board = screen.getByTestId('model-fit-clustering');
-        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl', 'cluster-summary']);
+        expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl', 'fit-side']);
+        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['cluster-summary']);
         const series = within(screen.getByTestId('chart-card-cl')).getByTestId('echarts-mock').getAttribute('data-series')!;
         expect(series).toMatch(/Cluster 1/);
         expect(series).toMatch(/Cluster 2 3× SD/);
@@ -160,5 +164,63 @@ describe('ModelFitPage — Clustering', () => {
     it('the card subtitle names both sensors by their labels', () => {
         page(clu(), { n_clusters: 1 });
         expect(screen.getByTestId('chart-card-cl').textContent).toMatch(/Label of X1 vs Label of Y1/);
+    });
+});
+
+describe('ModelFitPage — Train / Test validation (2026-10-07)', () => {
+    const withTests = (kind: 'individual' | 'relationship' | 'clustering') => ({
+        test_validation: makeValidation({ tests: [makeTestResult(), makeTestResult({ label: 'problem', event_time: '2026-01-01T03:30' })] }),
+        kind,
+    });
+    const mount = (m: FailureModel, req: Record<string, any>, extra: Record<string, any> = {}) => {
+        const base = makeHealthPreview({ kind: m.kind, ...req });
+        const data = { ...base, ...extra };
+        render(<ModelFitPage model={m} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
+            sensorLabel={t => t} getDesc={t => t} onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
+    };
+
+    it('without test periods: no scope bands, no Train vs test card', () => {
+        page(model(), { target: 'T1' });
+        expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value');
+        expect(screen.queryByTestId('train-test-card')).toBeNull();
+    });
+
+    it('Individual: the value chart draws the scopes; the Train vs test card sits under the statistics', () => {
+        mount(model(), { target: 'T1' }, withTests('individual'));
+        expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Value|__scopes');
+        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['stats-card', 'train-test-card']);
+    });
+
+    it('Relationship: both time charts draw the scopes; the card is a capped full-width row', () => {
+        mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, withTests('relationship'));
+        expect(within(screen.getByTestId('chart-card-tvp')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Actual|Predicted|__scopes');
+        expect(within(screen.getByTestId('chart-card-res')).getByTestId('echarts-mock').getAttribute('data-series')).toBe('Residual|__scopes');
+        expect(screen.getByTestId('train-test-card').className).toContain('vt-card--cap');
+    });
+
+    it('Clustering (no time chart): the card stacks under the cluster summary', () => {
+        mount(model({ kind: 'clustering', targetSensor: '', xSensor: 'X1', ySensor: 'Y1' }), { n_clusters: 2 }, withTests('clustering'));
+        expect([...screen.getByTestId('fit-side').children].map(c => c.getAttribute('data-testid'))).toEqual(['cluster-summary', 'train-test-card']);
+    });
+
+    it('review fix 2026-10-07: testNumbers name the Train vs test row by the ORIGINAL list position; slowScoring shows the hint', () => {
+        const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
+        render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}
+            sensorLabel={t => t} getDesc={t => t} onXPredictorChange={vi.fn()} onCompare={vi.fn()} testNumbers={[2]} slowScoring />);
+        expect(screen.getByTestId('train-test-row-2').textContent).toContain('T2 Normal');
+        expect(screen.queryByTestId('train-test-row-1')).toBeNull();
+        expect(within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock')).toBeTruthy();
+        expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods');
+    });
+
+    it('amber "below the recommended train time" note from Rust\'s train days (never a block); the estimate is used only without them', () => {
+        mount(model(), { target: 'T1' }, { test_validation: makeValidation({ train: { ...makeValidation().train, days: 8 } }) });
+        expect(screen.getByTestId('train-days-warning').textContent).toContain('Only 8 d of train running time');
+        cleanup();
+        mount(model(), { target: 'T1' }, { estimate: 3 });
+        expect(screen.getByTestId('train-days-warning').textContent).toContain('Only 3 d');
+        cleanup();
+        mount(model(), { target: 'T1' }, { test_validation: makeValidation(), estimate: 3 });
+        expect(screen.queryByTestId('train-days-warning')).toBeNull(); // Rust says 40.2 d
     });
 });

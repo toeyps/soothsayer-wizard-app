@@ -1,19 +1,24 @@
 import { Fragment } from 'react';
 import { Plus, X } from 'lucide-react';
-import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
+import type { TestPeriod, TimeHighlight, TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { isCompleteCondition } from '../../utils/runningCondition';
 import { validatePeriods } from '../../utils/timePeriods';
+import { RECOMMENDED_TRAIN_DAYS, trainDaysWarning } from '../../utils/trainTestValidation';
+import { estimateRunningDays } from './periodDisplay';
 import { SensorPickerModal } from './SensorPickers';
-import { RuleSentence } from './RunningConditionParts';
+import { RuleSentence, TrainHighlightWarnings } from './RunningConditionParts';
+import TestPeriodsEditor from './TestPeriodsEditor';
 import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
 import { formatPercent, type RowCountPreview } from './useRowCountPreview';
 
 /*
  * Body of BuildModelWindow's "Running condition" settings modal — the
  * 2026-10-03 redesign (approved mockup 1pp59aydphzaDu2R1SvKGh): two columns.
- *   left   "1 Which time"  (period cards)  and  "2 When the plant is running"
+ *   left   "1 Which time"  (TRAIN period cards + TEST period rows, Train/Test
+ *          validation 2026-10-07)  and  "2 When the plant is running"
  *          (two choice cards, condition rows, AND/OR pill between rows)
- *   right  "Data used for training": row count + bar, summary sentence, warnings
+ *   right  "Data used for training": row count + bar, summary sentence, the test
+ *          summary, the recommended-train-days note, warnings
  * Presentation only: every value and handler arrives through props from
  * BuildModelWindow, which feeds it the modal's local DRAFT (nothing here
  * writes anything — Apply lives in the modal footer).
@@ -67,12 +72,19 @@ interface RunningConditionPanelProps {
     getUnit: (tag: string) => string;
     /** Row count of what Apply would commit (the draft). */
     preview: RowCountPreview;
+    /** Test periods (draft) — where the score is checked; never trained on. */
+    testPeriods: TestPeriod[];
+    onTestPeriodsChange: (next: TestPeriod[]) => void;
+    /** The workspace's Dashboard time highlights ("From Highlights", train-overlap warning). */
+    highlights: TimeHighlight[];
+    /** The "From Highlights" menu opened (the host may re-read the highlights). */
+    onHighlightsMenuOpen?: () => void;
 }
 
 export default function RunningConditionPanel({
     configured, periods, onPeriodsChange, bounds, filters, combine, noneConfirmed,
     onNoneChange, onCombineChange, onAddFilter, onUpdateFilter, onRemoveFilter, sensors, getDesc, getComponent, getUnit,
-    preview,
+    preview, testPeriods, onTestPeriodsChange, highlights, onHighlightsMenuOpen,
 }: RunningConditionPanelProps) {
     const status = validatePeriods(periods);
     const firstBad = status.findIndex(s => s.invalid);
@@ -80,8 +92,16 @@ export default function RunningConditionPanel({
     const headers = sensors.length ? sensors : null;
     const label = (tag: string) => getDesc(tag) || tag;
 
-    const hasCount = preview.used !== null && preview.total !== null && (preview.status === 'ok' || preview.status === 'loading');
+    // No train period = nothing to train on (rule 1): never show a whole-dataset count.
+    const noTrain = periods.length === 0;
+    const hasCount = !noTrain && preview.used !== null && preview.total !== null && (preview.status === 'ok' || preview.status === 'loading');
     const pct = hasCount && preview.total ? Math.min(100, ((preview.used ?? 0) / preview.total) * 100) : 0;
+    // Recommended train running time (rule 12 — amber only, never a block),
+    // estimated from the draft's row count until Rust has the exact figure.
+    const trainDays = hasCount && preview.status === 'ok' ? estimateRunningDays(preview.used, preview.total, bounds) : null;
+    const daysWarning = trainDaysWarning(trainDays);
+    const nNormal = testPeriods.filter(t => t.label === 'normal').length;
+    const nProblem = testPeriods.length - nNormal;
 
     return (
         <div data-testid="rc-panel" className="rcm-body">
@@ -90,9 +110,31 @@ export default function RunningConditionPanel({
                     <div className="rcm-step-h">
                         <span className="rcm-num">1</span>
                         <b>Which time</b>
-                        <span className="rcm-q">Training periods · optional — a row inside any period is used · none = whole dataset</span>
+                        <span className="rcm-q">Train periods teach the model what normal looks like · test periods are when the score is checked</span>
                     </div>
-                    <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} />
+                    <div className="tpe-sub" data-testid="rc-train-head">
+                        <i className="tpe-sw tpe-sw--tr" aria-hidden="true" /><b>Train periods</b><span>required · at least one · a row inside any period is used</span>
+                    </div>
+                    <div className="tpe-callout" data-testid="rc-train-callout">
+                        <b>Pick only times when the machine was healthy and running normally.</b> The model learns these rows as “normal” — a period with a problem in it teaches the model that the problem is normal, and the health score will miss it later.
+                    </div>
+                    <TimePeriodsEditor periods={periods} onChange={onPeriodsChange} bounds={bounds} tests={testPeriods} />
+                    <TrainHighlightWarnings periods={periods} highlights={highlights} onPeriodsChange={onPeriodsChange} />
+
+                    <div className="tpe-sub tpe-sub--te" data-testid="rc-test-head">
+                        <i className="tpe-sw tpe-sw--te" aria-hidden="true" /><b>Test periods</b><span>when the score is checked · needed before Mark complete · may include train time</span>
+                    </div>
+                    <div className="tpe-callout tpe-callout--te">
+                        Label each one. <b>Normal</b>: the score should stay high (shows false alarms). <b>Known problem</b>: the score should drop (shows the problem is caught) — add the event time to get the lead time.
+                    </div>
+                    <TestPeriodsEditor
+                        tests={testPeriods}
+                        train={periods}
+                        onChange={onTestPeriodsChange}
+                        highlights={highlights}
+                        bounds={bounds}
+                        onHighlightsMenuOpen={onHighlightsMenuOpen}
+                    />
                 </section>
 
                 <section className="rcm-step" data-testid="rc-condition">
@@ -133,8 +175,8 @@ export default function RunningConditionPanel({
                             <span>
                                 <b>Every row inside the training periods is used</b>, idle time included.{' '}
                                 {validCount > 0
-                                    ? `The ${validCount} period${validCount > 1 ? 's' : ''} above still limit${validCount > 1 ? '' : 's'} the time.`
-                                    : 'No periods are set, so that means the full dataset.'}
+                                    ? `The ${validCount} train period${validCount > 1 ? 's' : ''} above still limit${validCount > 1 ? '' : 's'} the time.`
+                                    : 'There is no train period yet — add one above.'}
                                 {filters.length > 0 && ' Your saved conditions are kept but not applied.'}
                             </span>
                         </div>
@@ -239,9 +281,11 @@ export default function RunningConditionPanel({
             </div>
 
             <aside className="rcm-preview" data-testid="rc-preview" aria-label="Data used for training">
-                <div className="rcm-pv-h">Data used for training</div>
+                <div className="rcm-pv-h">Data used for training <span className="tpe-pvsub">train periods only</span></div>
                 <div className="rcm-big" data-testid="rc-preview-count" aria-live="polite">
-                    {hasCount ? (
+                    {noTrain ? (
+                        <><b>0</b><span data-testid="rc-preview-no-train">rows — add a train period</span></>
+                    ) : hasCount ? (
                         <>
                             <b className={preview.status === 'loading' ? 'rcm-stale' : undefined}>{(preview.used ?? 0).toLocaleString()}</b>
                             <span>of {(preview.total ?? 0).toLocaleString()} rows · {formatPercent(preview.used, preview.total)}</span>
@@ -264,6 +308,20 @@ export default function RunningConditionPanel({
                     getLabel={label}
                     getUnit={getUnit}
                 />
+                {testPeriods.length > 0 ? (
+                    <div className="tpe-pvtest" data-testid="rc-preview-tests">
+                        <span className="tpe-pvtest-l"><i className="tpe-sw tpe-sw--te" aria-hidden="true" />Test</span>
+                        <b>{testPeriods.length}</b>
+                        <span>period{testPeriods.length === 1 ? '' : 's'} · {nNormal} Normal · {nProblem} Known problem</span>
+                    </div>
+                ) : (
+                    <div className="tpe-pvtest tpe-pvtest--none" data-testid="rc-preview-tests">
+                        No test period yet — you can train, but Mark complete needs one.
+                    </div>
+                )}
+                <div className={`tpe-min${daysWarning ? ' tpe-min--warn' : ''}`} data-testid="rc-min-data">
+                    {daysWarning ?? `At least ${RECOMMENDED_TRAIN_DAYS} d of train running time is recommended${trainDays !== null ? ` (about ${Math.round(trainDays)} d now)` : ''}.`}
+                </div>
                 {firstBad >= 0 && (
                     <div data-testid="rc-invalid-reason" className="rcm-warn rcm-warn--bad">
                         ⚠ {status[firstBad].reason ?? `Period ${firstBad + 1} is invalid.`} Models that follow this setting can't be built until it's fixed.

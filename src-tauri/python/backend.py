@@ -6,6 +6,8 @@ Writes a single JSON line to stdout with the result (or {"error": ...}).
 
 Currently supported actions:
     - preview_relationship  → LinearGAM cumulative-feature preview
+    - predict_relationship  → LinearGAM full-feature fit on the TRAIN rows,
+                              predictions for extra (test) rows only
     - train_relationship    → LinearGAM full-feature fit + pickle save
     - train_clustering      → Per-cluster 2D Gaussian (GMM n_components=1)
                               fit + optional CLUS_INFO_*.json save.
@@ -105,6 +107,24 @@ def _round_metric_array(values):
     return out
 
 
+def _extra_matrix(payload, n_features):
+    """Optional `X_extra` (rows to PREDICT with the train-only model, e.g. the
+    test periods of the Train/Test validation) as an n_extra x n_features
+    float matrix, or None when absent/empty. The model is NEVER refitted on
+    these rows."""
+    raw = payload.get("X_extra")
+    if raw is None or len(raw) == 0:
+        return None
+    xe = np.asarray(raw, dtype=float)
+    if xe.ndim == 1:
+        xe = xe.reshape(-1, 1)
+    if xe.shape[1] != n_features:
+        raise ValueError(
+            f"X_extra has {xe.shape[1]} columns but the model has {n_features} predictors"
+        )
+    return xe
+
+
 # ── action handlers ─────────────────────────────────────────────────────
 def preview_relationship(payload):
     """Cumulative LinearGAM preview.
@@ -115,9 +135,14 @@ def preview_relationship(payload):
         X                 : list[list]  n_rows × n_predictors, no NaN
         y                 : list[float] n_rows, no NaN
         linearGAM_lambda  : float       optional, default 10000
+        X_extra           : optional    rows to PREDICT with the final (full-feature)
+                                        train-only model - the Train/Test validation's
+                                        test periods, so no second fit is needed
+                                        later. Never fitted on.
 
     Returns:
         request, r2_per_step, rmse2_per_step, predicted, residual
+        (+ predicted_extra when X_extra was given)
     """
     features = payload["predictors"]
     lamb = payload.get("linearGAM_lambda", 10000)
@@ -134,12 +159,14 @@ def preview_relationship(payload):
         raise ValueError(
             f"X has {X.shape[1]} columns but {len(features)} predictors named"
         )
+    X_extra = _extra_matrix(payload, X.shape[1])
 
     n_rows = X.shape[0]
     r2_per_step = []
     rmse2_per_step = []
 
     last_predicted = None
+    last_model = None
     for i in range(len(features)):
         Xi = X[:, : i + 1]
         model = pygam.LinearGAM(lam=lamb).fit(Xi, y)
@@ -151,17 +178,56 @@ def preview_relationship(payload):
         rmse2_per_step.append(rmse2)
 
         last_predicted = pred
+        last_model = model
 
     # Full-model predicted/residual = the LAST cumulative step (uses all features).
     predicted_full = last_predicted if last_predicted is not None else np.zeros(n_rows)
     residual_full = y - predicted_full
 
-    return {
+    out = {
         "request": "PreviewModel/relationship",
         "r2_per_step": r2_per_step,
         "rmse2_per_step": rmse2_per_step,
         "predicted": [_finite_or_none(v) for v in predicted_full.tolist()],
         "residual": [_finite_or_none(v) for v in residual_full.tolist()],
+    }
+    # Train/Test validation pre-warm: the SAME full-feature model (identical to
+    # `predict_relationship`'s fit) predicts the test rows - RAW, like `predicted`.
+    if X_extra is not None and last_model is not None:
+        extra = np.asarray(last_model.predict(X_extra), dtype=float)
+        out["predicted_extra"] = [_finite_or_none(v) for v in extra.tolist()]
+    return out
+
+
+def predict_relationship(payload):
+    """Full-feature LinearGAM fitted on the TRAIN rows (X, y) — the same fit as
+    `preview_relationship`'s last step / `train_relationship` — then used to
+    predict `X_extra` only (the test periods of the Train/Test validation). No
+    refit on the extra rows, nothing is saved.
+
+    Expected payload keys:
+        X, y              : the train rows (n_rows x n_predictors, n_rows)
+        X_extra           : rows to predict (n_extra x n_predictors)
+        linearGAM_lambda  : float       optional, default 10000
+
+    Returns:
+        request, predicted_extra  (raw predictions, None where non-finite)
+    """
+    lamb = payload.get("linearGAM_lambda", 10000)
+    X = np.asarray(payload["X"], dtype=float)
+    y = np.asarray(payload["y"], dtype=float)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    if X.shape[0] != y.shape[0]:
+        raise ValueError(f"X has {X.shape[0]} rows but y has {y.shape[0]}")
+    X_extra = _extra_matrix(payload, X.shape[1])
+    if X_extra is None:
+        return {"request": "predict_relationship", "predicted_extra": []}
+    model = pygam.LinearGAM(lam=lamb).fit(X, y)
+    extra = np.asarray(model.predict(X_extra), dtype=float)
+    return {
+        "request": "predict_relationship",
+        "predicted_extra": [_finite_or_none(v) for v in extra.tolist()],
     }
 
 
@@ -208,7 +274,7 @@ def train_relationship(payload):
     with open(model_path, "wb") as f:
         pickle.dump(model, f)
 
-    return {
+    out = {
         "request": "SaveThisSensor/relationship",
         "r2": r2,
         "rmse2": rmse2,
@@ -216,6 +282,14 @@ def train_relationship(payload):
         "residual": [_finite_or_none(v) for v in residual.tolist()],
         "model_path": model_path,
     }
+    # Train/Test validation: predictions of the SAME (train-only) model for the
+    # test-period rows. RAW (unrounded) like `preview_relationship`; Rust applies
+    # the file rounding. The exported model / REL_DATASET never include them.
+    X_extra = _extra_matrix(payload, X.shape[1])
+    if X_extra is not None:
+        extra = np.asarray(model.predict(X_extra), dtype=float)
+        out["predicted_extra"] = [_finite_or_none(v) for v in extra.tolist()]
+    return out
 
 
 def _finite_or_none(v):
@@ -514,6 +588,7 @@ def train_clustering(payload):
 
 DISPATCH = {
     "preview_relationship": preview_relationship,
+    "predict_relationship": predict_relationship,
     "train_relationship": train_relationship,
     "train_clustering": train_clustering,
 }

@@ -1022,7 +1022,7 @@ const MAX_INTERVAL_SAMPLES: usize = 2_000_000;
 /// than [`MAX_INTERVAL_SAMPLES`] gaps a deterministic stride sample is used.
 /// Equal neighbours (gap 0) are ignored. Even sample count: mean of the two
 /// middle gaps. `None` if fewer than 2 valid timestamps / no positive gap.
-fn median_interval_seconds(ts: &[i64]) -> Option<f64> {
+pub(crate) fn median_interval_seconds(ts: &[i64]) -> Option<f64> {
     let mut valid = 0usize;
     let mut sorted = true;
     let mut prev: Option<i64> = None;

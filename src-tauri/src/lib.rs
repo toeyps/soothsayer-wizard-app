@@ -3,6 +3,7 @@ pub mod clustering;
 pub mod csv_processor;
 pub mod health_score;
 mod health_preview;
+mod health_validation;
 pub mod metrics;
 mod model_export;
 pub mod operation_registry;
@@ -10,6 +11,10 @@ pub mod operation_registry;
 #[cfg(test)]
 #[path = "../tests/internal/qa_health_internal.rs"]
 mod qa_health_internal;
+// Train/Test validation scenarios (private surface, same arrangement).
+#[cfg(test)]
+#[path = "../tests/internal/train_test_validation_internal.rs"]
+mod train_test_validation_internal;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
     CsvRecord, MappingData, MappingResult, SensorMetadata, TS_MISSING,
@@ -1455,6 +1460,17 @@ mod resolved_filter_tests {
 /// sample of at most `max_points` rows (extremes kept), `residual` is dropped and
 /// `n_rows` is the real row count - see [`finish_relationship_response`]. The
 /// session cache still gets the FULL arrays.
+///
+/// **Train/Test pre-warm (2026-10-07):** `test_periods` (same wire as
+/// `compute_health_preview`: `[{start,end,label,event_time?}]`; only used
+/// together with `cache_key`) makes the SAME sidecar run also predict the test
+/// rows with the train-only model it just fitted (`X_extra`, no refit on them)
+/// and seeds the fit's cached test-row predictions, so the `compute_health_preview`
+/// that follows needs no second ~15 s sidecar run. The rows are chosen by the
+/// same function as that preview's (`health_validation::extra_test_rows`).
+/// Absent / empty = identical to before; the response never carries the
+/// predictions. Best effort: an old sidecar that ignores `X_extra` just means the
+/// preview computes them lazily as before.
 #[tauri::command(rename_all = "snake_case")]
 async fn preview_relationship_model(
     predictors: Vec<String>,
@@ -1463,6 +1479,7 @@ async fn preview_relationship_model(
     filter: Option<PreviewFilter>,
     cache_key: Option<String>,
     max_points: Option<usize>,
+    test_periods: Option<Vec<health_validation::TestPeriodArg>>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
@@ -1477,7 +1494,7 @@ async fn preview_relationship_model(
     // Phase 1 contract: the sidecar receives pre-cleaned arrays. Rust owns
     // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
     // `y` is n_rows.  We collect into owned data and drop the lock before any await.
-    let (x_matrix, y_vector, row_idx, stamp) = {
+    let (x_matrix, y_vector, row_idx, stamp, extra_rows, x_extra) = {
         let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
@@ -1548,10 +1565,29 @@ async fn preview_relationship_model(
             return Err("No rows remain after dropping nulls.".into());
         }
 
-        (x_matrix, y_vector, row_idx, stamp)
+        // Train/Test pre-warm: the test rows to predict in this same run (only
+        // when there is a cache key to store them under).
+        let periods = test_periods.as_deref().filter(|t| !t.is_empty());
+        let (extra_rows, x_extra) = match periods {
+            Some(periods) if cache_key.as_deref().is_some_and(|k| !k.is_empty()) => {
+                let plan = health_validation::TestPlan::resolve(periods, filter.as_ref(), &data.headers);
+                let rows = health_validation::extra_test_rows(
+                    &plan,
+                    data,
+                    target_idx,
+                    &predictor_indices,
+                    &row_idx,
+                );
+                let x_extra = health_validation::x_rows(data, &predictor_indices, &rows);
+                (rows, x_extra)
+            }
+            _ => (Vec::new(), Vec::new()),
+        };
+
+        (x_matrix, y_vector, row_idx, stamp, extra_rows, x_extra)
     };
 
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "action": "preview_relationship",
         "payload": {
             "predictors": predictors,
@@ -1561,6 +1597,10 @@ async fn preview_relationship_model(
             "linearGAM_lambda": lambda,
         }
     });
+    if !x_extra.is_empty() {
+        payload["payload"]["X_extra"] = serde_json::json!(x_extra);
+    }
+    drop(x_extra);
 
     let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     payload_line.push('\n');
@@ -1596,9 +1636,9 @@ async fn preview_relationship_model(
     let parsed = serde_json::from_str::<serde_json::Value>(stdout_buf.trim())
         .map_err(|e| format!("Failed to parse sidecar output: {} (raw: {})", e, stdout_buf))?;
 
-    finish_relationship_response(
+    finish_relationship_response_ex(
         &state, stamp, parsed, &predictors, &target, lambda, &row_idx, &y_vector, &x_matrix, cache_key,
-        max_points,
+        max_points, &extra_rows,
     )
 }
 
@@ -1617,8 +1657,35 @@ async fn preview_relationship_model(
 /// `rmse2_per_step`, `error`, `cache_key`, `cached`, `health_preview` are never
 /// touched. The cache always holds the FULL arrays (built from the unshaped
 /// response), so the health preview keeps scoring every row.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn finish_relationship_response(
+    state: &AppState,
+    stamp: SessionStamp,
+    parsed: serde_json::Value,
+    predictors: &[String],
+    target: &str,
+    lambda: f64,
+    row_idx: &[u32],
+    y_vector: &[f64],
+    x_matrix: &[Vec<f64>],
+    cache_key: Option<String>,
+    max_points: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    finish_relationship_response_ex(
+        state, stamp, parsed, predictors, target, lambda, row_idx, y_vector, x_matrix, cache_key,
+        max_points, &[],
+    )
+}
+
+/// [`finish_relationship_response`] plus the Train/Test pre-warm: `extra_rows`
+/// are the test rows this Train asked the sidecar to predict (`X_extra`); its
+/// `predicted_extra` answer is removed from the response (never shipped - it
+/// is unbounded) and, when the fit was cached, stored as that fit's test-row
+/// predictions. A missing / wrong-length answer (old sidecar) stores nothing:
+/// `compute_health_preview` then predicts lazily as before.
+#[allow(clippy::too_many_arguments)]
+fn finish_relationship_response_ex(
     state: &AppState,
     stamp: SessionStamp,
     mut parsed: serde_json::Value,
@@ -1630,7 +1697,19 @@ fn finish_relationship_response(
     x_matrix: &[Vec<f64>],
     cache_key: Option<String>,
     max_points: Option<usize>,
+    extra_rows: &[u32],
 ) -> Result<serde_json::Value, String> {
+    let predicted_extra: Option<Vec<f64>> = parsed
+        .as_object_mut()
+        .and_then(|o| o.remove("predicted_extra"))
+        .and_then(|v| {
+            let a = v.as_array()?;
+            (!extra_rows.is_empty() && a.len() == extra_rows.len()).then(|| {
+                a.iter()
+                    .map(|x| x.as_f64().filter(|x| x.is_finite()).unwrap_or(f64::NAN))
+                    .collect()
+            })
+        });
     // ── Health score: cache the full-resolution fit + attach bounded data. ──
     let cache_key = cache_key.filter(|k| !k.is_empty());
     if let Some(key) = cache_key {
@@ -1654,6 +1733,11 @@ fn finish_relationship_response(
                         })
                 };
                 let cached = store_rel_fit(state, stamp, key.clone(), fit);
+                // Pre-warm: the test-row predictions of this very fit. Over the
+                // cache budget / session changed = not stored (lazy fallback).
+                if let (true, Some(preds)) = (cached, predicted_extra.as_deref()) {
+                    merge_rel_extra(state, stamp, &key, extra_rows, preds);
+                }
                 if let Some(obj) = parsed.as_object_mut() {
                     obj.insert("cache_key".into(), serde_json::Value::String(key));
                     obj.insert("cached".into(), serde_json::Value::Bool(cached));
@@ -2659,6 +2743,7 @@ async fn train_relationship_model(
         model_name,
         filter,
         set_points.as_ref(),
+        &[],
         &app,
         &state,
     )
@@ -2667,6 +2752,11 @@ async fn train_relationship_model(
 }
 
 /// Core of [`train_relationship_model`] (also used by `export_model_files`).
+///
+/// `test_periods` (Train/Test validation; empty = none): the sidecar also
+/// PREDICTS the test rows with the train-only model it just fitted (`X_extra`,
+/// no refit on them) and the same preview code as `compute_health_preview`
+/// turns that into a `validation` block added to `REL_INFO_*.json`.
 #[allow(clippy::too_many_arguments)]
 async fn write_relationship_files(
     predictors: &[String],
@@ -2676,6 +2766,7 @@ async fn write_relationship_files(
     model_name: Option<String>,
     filter: Option<PreviewFilter>,
     set_points: Option<&health_score::SetPointsArg>,
+    test_periods: &[health_validation::TestPeriodArg],
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> Result<RelationshipTrainResult, model_export::CoreError> {
@@ -2708,10 +2799,11 @@ async fn write_relationship_files(
     // the REL_DATASET file aligns with `wizard.py::SaveThisSensor`'s
     // `training_set.to_csv(...)` (which writes the DataFrame's DatetimeIndex
     // as the unnamed first column).
-    let (x_matrix, y_vector, row_timestamps, time_bounds) = {
+    let (x_matrix, y_vector, row_timestamps, time_bounds, row_idx, extra_rows, x_extra, stamp) = {
         let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
         let data = &session.data;
+        let stamp = session.stamp();
 
         let mut predictor_indices: Vec<usize> = Vec::with_capacity(predictors.len());
         for p in &predictors {
@@ -2739,6 +2831,8 @@ async fn write_relationship_files(
         let mut x_matrix: Vec<Vec<f64>> = Vec::with_capacity(data.n_rows());
         let mut y_vector: Vec<f64> = Vec::with_capacity(data.n_rows());
         let mut row_timestamps: Vec<Option<String>> = Vec::with_capacity(data.n_rows());
+        // Dataset row of each surviving row (ascending).
+        let mut row_idx: Vec<u32> = Vec::with_capacity(data.n_rows());
         let mut min_us: Option<i64> = None;
         let mut max_us: Option<i64> = None;
         for r in 0..data.n_rows() {
@@ -2763,6 +2857,7 @@ async fn write_relationship_files(
             }
             x_matrix.push(x_row);
             y_vector.push(y_val);
+            row_idx.push(r as u32);
             row_timestamps.push(data.timestamps[r].clone());
             let us = data.ts_parsed[r];
             if us != TS_MISSING {
@@ -2783,12 +2878,40 @@ async fn write_relationship_files(
             ),
             _ => (String::new(), String::new()),
         };
-        (x_matrix, y_vector, row_timestamps, bounds)
+        // Train/Test validation: the test rows the model has to PREDICT (rows of
+        // a test period with all inputs that are not training rows).
+        let (extra_rows, x_extra) = if test_periods.is_empty() {
+            (Vec::new(), Vec::new())
+        } else {
+            let plan = health_validation::TestPlan::resolve(test_periods, filter.as_ref(), &data.headers);
+            if health_score::has_errors(&plan.issues) {
+                return Err(model_export::CoreError::Validation(plan.issues));
+            }
+            let ex = health_validation::extra_test_rows(
+                &plan,
+                data,
+                target_idx,
+                &predictor_indices,
+                &row_idx,
+            );
+            let xe = health_validation::x_rows(data, &predictor_indices, &ex);
+            (ex, xe)
+        };
+        (
+            x_matrix,
+            y_vector,
+            row_timestamps,
+            bounds,
+            row_idx,
+            extra_rows,
+            x_extra,
+            stamp,
+        )
     };
 
     let n_rows = x_matrix.len();
 
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "action": "train_relationship",
         "payload": {
             "predictors": predictors,
@@ -2799,6 +2922,9 @@ async fn write_relationship_files(
             "saved_path": save_path,
         }
     });
+    if !x_extra.is_empty() {
+        payload["payload"]["X_extra"] = serde_json::json!(x_extra);
+    }
 
     let mut payload_line = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     payload_line.push('\n');
@@ -2842,6 +2968,9 @@ async fn write_relationship_files(
         predicted: Option<Vec<Option<f64>>>,
         /// Per-row residuals (`y - predicted`), same shape as `predicted`.
         residual: Option<Vec<Option<f64>>>,
+        /// Train/Test validation: the train-only model's (raw) predictions for
+        /// `X_extra`, same order.
+        predicted_extra: Option<Vec<Option<f64>>>,
         error: Option<String>,
         #[allow(dead_code)]
         trace: Option<String>,
@@ -2872,6 +3001,10 @@ async fn write_relationship_files(
         .into());
     }
 
+    // Test-row predictions (an old sidecar ignores `X_extra`: refuse rather than
+    // export a validation block without its numbers).
+    let extra_pred = export_extra_predictions(resp.predicted_extra.as_deref(), extra_rows.len())?;
+
     let info_path = write_relationship_outputs(
         save_path,
         &RelationshipOutputs {
@@ -2891,6 +3024,44 @@ async fn write_relationship_files(
         },
     )?;
 
+    // Train/Test validation block: the SAME preview code as
+    // `compute_health_preview`, over this fresh train-only fit.
+    if !test_periods.is_empty() {
+        let predicted_all: Vec<f64> = predicted.iter().map(|p| p.unwrap_or(f64::NAN)).collect();
+        let fit = health_score::RelFit {
+            target: target.clone(),
+            predictors: predictors.clone(),
+            lambda,
+            rows: row_idx,
+            actual: y_vector.clone(),
+            predicted: predicted_all,
+            x_cols: (0..predictors.len())
+                .map(|k| x_matrix.iter().map(|row| row[k]).collect())
+                .collect(),
+            r2_per_step: Vec::new(),
+            rmse2_per_step: Vec::new(),
+        };
+        let extra = health_score::RelExtra {
+            rows: extra_rows,
+            predicted: extra_pred,
+        };
+        let block_req = model_export::ModelFilesRequest {
+            filter: filter.clone(),
+            set_points: set_points.cloned(),
+            test_periods: Some(test_periods.to_vec()),
+            ..Default::default()
+        };
+        let block = {
+            let lock = state.0.read().map_err(|e| e.to_string())?;
+            let session = lock.as_ref().ok_or("No data loaded")?;
+            if session.stamp() != stamp {
+                return Err(STALE_SESSION_ERROR.to_string().into());
+            }
+            model_export::relationship_block(&session.data, &fit, &extra, &block_req)?
+        };
+        health_validation::inject_validation(&info_path, block)?;
+    }
+
     Ok(RelationshipTrainResult {
         model_path,
         r2,
@@ -2898,6 +3069,30 @@ async fn write_relationship_files(
         n_rows,
         info_path: info_path.to_string_lossy().into_owned(),
     })
+}
+
+/// The train-only model's predictions for the `want` test rows of an EXPORT
+/// (`train_relationship`'s `predicted_extra`). An export never claims a
+/// validation it could not compute: a missing array (an outdated sidecar ignores
+/// `X_extra`) or a wrong length is an error and nothing is written.
+fn export_extra_predictions(
+    predicted_extra: Option<&[Option<f64>]>,
+    want: usize,
+) -> Result<Vec<f64>, String> {
+    if want == 0 {
+        return Ok(Vec::new());
+    }
+    let arr = predicted_extra.ok_or_else(|| SIDECAR_OUTDATED.to_string())?;
+    if arr.len() != want {
+        return Err(format!(
+            "Sidecar predicted_extra length mismatch (got {} expected {want})",
+            arr.len()
+        ));
+    }
+    Ok(arr
+        .iter()
+        .map(|v| v.filter(|x| x.is_finite()).unwrap_or(f64::NAN))
+        .collect())
 }
 
 /// Everything `write_relationship_outputs` needs from a finished sidecar fit.
@@ -5119,12 +5314,280 @@ fn sample_dataset(
 /// `NO_DATA`, `STALE_SESSION`.
 ///
 /// `async` so the O(rows) pass never runs on the main thread.
+///
+/// **Train/Test validation (2026-10-07):** with `test_periods` the response also
+/// carries `test_validation` (see `health_validation`). Individual / Clustering
+/// need nothing more. A Relationship test row outside the training scope needs
+/// the fit's prediction for it: the cache holds only the training rows'
+/// predictions. `preview_relationship_model` (the Train call) pre-warms them
+/// when it is given the same `test_periods`; otherwise (or for periods added
+/// later) the FIRST preview that brings new test rows runs the sidecar's
+/// `predict_relationship` once (a refit on the TRAIN rows only, the test rows are
+/// only predicted - same model, same lambda) and caches the predictions under the
+/// fit's key; set-point edits and repeated calls never run it again.
+///
+/// If that prediction step fails (sidecar crash, outdated sidecar, cache budget),
+/// the preview does NOT fail: it returns the normal train preview with
+/// `test_validation` present but every test unscored and one `warning` issue
+/// `test_scoring_failed` in `validation`. (Export still refuses - files never
+/// claim a validation they could not compute.)
 #[tauri::command]
 async fn compute_health_preview(
     request: health_preview::HealthPreviewRequest,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<health_preview::HealthPreview, String> {
-    health_preview_in(&state, &request)
+    let mut scoring_error: Option<String> = None;
+    if request.kind == "relationship" && request.has_test_periods() {
+        // One prediction run at a time: a second caller waits and then finds the
+        // rows already cached.
+        let _serial = REL_EXTRA_LOCK.lock().await;
+        if let Some(job) = plan_rel_extra(&state, &request)? {
+            scoring_error = match run_predict_relationship(&app, &job).await {
+                Ok(predicted) => match apply_rel_extra(&state, &job, &predicted)? {
+                    true => None,
+                    false => Some("the predictions do not fit the model cache".to_string()),
+                },
+                Err(e) => Some(e),
+            };
+        }
+    }
+    health_preview_with_outcome(&state, &request, scoring_error.as_deref())
+}
+
+/// [`health_preview_in`] plus the degraded answer for a failed test-row
+/// prediction step: `scoring_error` = why it failed (never shown verbatim - the
+/// user gets the `test_scoring_failed` warning; only the `SIDECAR_OUTDATED`
+/// prefix changes its wording). The train part of the answer is untouched.
+fn health_preview_with_outcome(
+    state: &AppState,
+    request: &health_preview::HealthPreviewRequest,
+    scoring_error: Option<&str>,
+) -> Result<health_preview::HealthPreview, String> {
+    let mut preview = health_preview_in(state, request)?;
+    if let Some(err) = scoring_error {
+        if let Some(tv) = preview.test_validation.as_mut() {
+            health_validation::mark_unscored(tv);
+        }
+        preview.validation.push(health_validation::test_scoring_failed_issue(
+            err.starts_with("SIDECAR_OUTDATED"),
+        ));
+    }
+    Ok(preview)
+}
+
+/// Serialises the sidecar runs that fill the Relationship test-row predictions.
+static REL_EXTRA_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
+
+/// What one `predict_relationship` run needs (copied out of the session so no
+/// lock is held across the sidecar).
+#[derive(Debug)]
+struct RelExtraJob {
+    key: String,
+    /// The dataset / special-sensor state the rows were read from; the result is
+    /// only stored if it is still current.
+    stamp: SessionStamp,
+    predictors: Vec<String>,
+    target: String,
+    lambda: f64,
+    /// Test rows to predict (ascending, unique, not training rows).
+    rows: Vec<u32>,
+    /// The TRAIN rows the model is fitted on (row-major) and their target.
+    x: Vec<Vec<f64>>,
+    y: Vec<f64>,
+    x_extra: Vec<Vec<f64>>,
+}
+
+/// The test rows of `request` that have no cached prediction yet, with
+/// everything needed to predict them. `Ok(None)` = nothing to do (all cached,
+/// or the request is one `health_preview_in` itself will refuse with the right
+/// code: no cache key, unknown fit, other target / predictors, bad columns).
+fn plan_rel_extra(
+    state: &AppState,
+    request: &health_preview::HealthPreviewRequest,
+) -> Result<Option<RelExtraJob>, String> {
+    let lock = state.0.read().map_err(|e| e.to_string())?;
+    let session = lock
+        .as_ref()
+        .ok_or_else(|| missing_session_error(request.expected_generation))?;
+    check_expected_generation(request.expected_generation, session.generation)?;
+    let Some(key) = request.cache_key.as_deref().filter(|k| !k.is_empty()) else {
+        return Ok(None);
+    };
+    let Some(fit) = session.rel_cache.peek(key) else {
+        return Ok(None);
+    };
+    if request.target.as_deref().is_some_and(|t| t != fit.target)
+        || (!request.predictors.is_empty() && request.predictors != fit.predictors)
+    {
+        return Ok(None);
+    }
+    let data = &session.data;
+    let Some(plan) = request.test_plan(data) else {
+        return Ok(None);
+    };
+    let Some(tcol) = data.col_index(&fit.target) else {
+        return Ok(None);
+    };
+    let Some(pcols) = fit
+        .predictors
+        .iter()
+        .map(|p| data.col_index(p))
+        .collect::<Option<Vec<usize>>>()
+    else {
+        return Ok(None);
+    };
+    // The same rows the Train pre-warm and the export predict (one function).
+    let known = session.rel_cache.peek_extra(key);
+    let mut rows = health_validation::extra_test_rows(&plan, data, tcol, &pcols, &fit.rows);
+    rows.retain(|r| !known.as_ref().is_some_and(|e| e.has(*r)));
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let x: Vec<Vec<f64>> = (0..fit.rows.len())
+        .map(|i| fit.x_cols.iter().map(|c| c[i]).collect())
+        .collect();
+    let x_extra = health_validation::x_rows(data, &pcols, &rows);
+    Ok(Some(RelExtraJob {
+        key: key.to_string(),
+        stamp: session.stamp(),
+        predictors: fit.predictors.clone(),
+        target: fit.target.clone(),
+        lambda: fit.lambda,
+        rows,
+        x,
+        y: fit.actual.clone(),
+        x_extra,
+    }))
+}
+
+/// Outcome of [`merge_rel_extra`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExtraStored {
+    Stored,
+    /// The dataset / special sensors changed, or the fit left the cache.
+    FitGone,
+    /// The fit is still cached but fit + predictions exceed the cache budget.
+    OverBudget,
+}
+
+/// Store test-row predictions under `key` - only into the same fit of the same
+/// data (`stamp`).
+fn merge_rel_extra(
+    state: &AppState,
+    stamp: SessionStamp,
+    key: &str,
+    rows: &[u32],
+    predicted: &[f64],
+) -> ExtraStored {
+    let Ok(mut lock) = state.0.write() else {
+        return ExtraStored::FitGone;
+    };
+    match lock.as_mut() {
+        Some(s) if s.stamp() == stamp => {
+            if s.rel_cache.merge_extra(key, rows, predicted) {
+                ExtraStored::Stored
+            } else if s.rel_cache.peek(key).is_some() {
+                ExtraStored::OverBudget
+            } else {
+                ExtraStored::FitGone
+            }
+        }
+        _ => ExtraStored::FitGone,
+    }
+}
+
+/// Store the predictions - only into the same fit of the same data.
+/// `Ok(true)` = stored; `Ok(false)` = the fit is still there but its
+/// predictions do not fit the cache budget (the caller degrades to "test
+/// periods could not be scored"); `Err(NOT_FITTED)` = the data or the model
+/// changed meanwhile.
+fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Result<bool, String> {
+    match merge_rel_extra(state, job.stamp, &job.key, &job.rows, predicted) {
+        ExtraStored::Stored => Ok(true),
+        ExtraStored::OverBudget => Ok(false),
+        ExtraStored::FitGone => Err(health_preview::not_fitted(
+            "the data or the model changed while the test periods were being predicted - train the model again",
+        )),
+    }
+}
+
+/// Run one request through the sidecar and return its JSON answer.
+async fn run_sidecar_json(
+    app: &tauri::AppHandle,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut line = serde_json::to_string(payload).map_err(|e| e.to_string())?;
+    line.push('\n');
+    let (mut rx, mut child) = spawn_sidecar(app)?;
+    child.write(line.as_bytes()).map_err(|e| e.to_string())?;
+    let mut stdout_buf = String::new();
+    let mut stderr_buf = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(l) => stdout_buf.push_str(&String::from_utf8_lossy(&l)),
+            CommandEvent::Stderr(l) => stderr_buf.push_str(&String::from_utf8_lossy(&l)),
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+    if stdout_buf.trim().is_empty() {
+        return Err(format!("Sidecar returned no output. Stderr: {}", stderr_buf.trim()));
+    }
+    serde_json::from_str(stdout_buf.trim())
+        .map_err(|e| format!("Failed to parse sidecar output: {e} (raw: {stdout_buf})"))
+}
+
+/// Message when the bundled sidecar predates `predict_relationship` /
+/// `X_extra` (the app keeps running the OLD binary until it is rebuilt).
+/// The text is shown to the user as-is (the frontend maps the stable
+/// `SIDECAR_OUTDATED:` prefix): no developer paths or build instructions.
+const SIDECAR_OUTDATED: &str = "SIDECAR_OUTDATED: The Relation model engine in this build is out \
+    of date - please reinstall or update the app.";
+
+/// `predicted_extra` of a sidecar answer: `want` entries, `NaN` for a missing
+/// one; the outdated-sidecar / error cases as errors.
+fn parse_predicted_extra(resp: &serde_json::Value, want: usize) -> Result<Vec<f64>, String> {
+    if let Some(err) = resp.get("error").and_then(|e| e.as_str()) {
+        return Err(if err.contains("Unknown action") {
+            SIDECAR_OUTDATED.to_string()
+        } else {
+            format!("Sidecar error: {err}")
+        });
+    }
+    let arr = resp
+        .get("predicted_extra")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| SIDECAR_OUTDATED.to_string())?;
+    if arr.len() != want {
+        return Err(format!(
+            "Sidecar predicted_extra length mismatch (got {} expected {want})",
+            arr.len()
+        ));
+    }
+    Ok(arr
+        .iter()
+        .map(|v| v.as_f64().filter(|x| x.is_finite()).unwrap_or(f64::NAN))
+        .collect())
+}
+
+async fn run_predict_relationship(
+    app: &tauri::AppHandle,
+    job: &RelExtraJob,
+) -> Result<Vec<f64>, String> {
+    let payload = serde_json::json!({
+        "action": "predict_relationship",
+        "payload": {
+            "predictors": job.predictors,
+            "target": job.target,
+            "X": job.x,
+            "y": job.y,
+            "X_extra": job.x_extra,
+            "linearGAM_lambda": job.lambda,
+        }
+    });
+    let resp = run_sidecar_json(app, &payload).await?;
+    parse_predicted_extra(&resp, job.rows.len())
 }
 
 /// Session-level core of [`compute_health_preview`] (no Tauri state type).
@@ -5151,7 +5614,9 @@ fn health_preview_in(
                     "this Relationship model has no fit in memory (not trained yet, or the data changed) - train it first",
                 )
             })?;
-            health_preview::relationship_preview(&session.data, &fit, request)
+            // Test-row predictions (Train/Test validation), when cached.
+            let extra = session.rel_cache.peek_extra(key);
+            health_preview::relationship_preview_ex(&session.data, &fit, extra.as_deref(), request)
         }
         other => Err(format!("BAD_REQUEST: unknown kind '{other}'")),
     }
@@ -5251,6 +5716,12 @@ fn plan_export(
             &request.predictors,
             request.filter.as_ref(),
         )?;
+        // Malformed test periods: refused (nothing written) before the sidecar.
+        if let Some(refused) =
+            model_export::refuse_bad_test_periods(request, &session.data, app_data)?
+        {
+            return Ok(ExportPlan::Finished(refused));
+        }
         request.cache_key.as_deref().and_then(|k| session.rel_cache.peek(k))
     };
 
@@ -5317,6 +5788,7 @@ async fn export_model_files_in(
         request.model_name.clone(),
         request.filter.clone(),
         Some(sp),
+        request.test_periods.as_deref().unwrap_or_default(),
         app,
         state,
     )

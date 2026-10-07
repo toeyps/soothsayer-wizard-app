@@ -118,6 +118,8 @@ import { emit } from '@tauri-apps/api/event';
 import { updateWorkspaceData, saveWorkspaceData, loadWorkspaceData, duplicateWorkspace } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
+// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -166,7 +168,7 @@ function wsState(fg: Record<string, unknown>, id = 'ws1') {
  *  raises no migration write-back. */
 function currentFg(models: unknown[], extra: Record<string, unknown> = {}) {
     return {
-        models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: [],
+        models, runningConditionFilters: [], runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
         runningConditionNoneConfirmed: true, rcLegacyNotice: null, categoryNormalisationNotice: null, ...extra,
     };
 }
@@ -619,9 +621,11 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
         expect(screen.getByTestId('custom-rc-editor')).toBeTruthy();
-        // Nothing to seed from (the workspace has no conditions of its own,
-        // only "No condition" confirmed), so no seed note and an empty list.
-        expect(screen.queryByTestId('pm-seed-note')).toBeNull();
+        // The workspace has no conditions of its own (only "No condition"
+        // confirmed), so the condition list starts empty — but its train
+        // period (required since 2026-10-07) is copied, so the seed note says so.
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/1 train period/);
+        expect(screen.getByTestId('pm-seed-note').textContent).toMatch(/0 conditions/);
 
         fireEvent.click(screen.getByText('+ Add condition'));
         fireEvent.change(screen.getByPlaceholderText('val'), { target: { value: '42' } });
@@ -656,6 +660,8 @@ describe('(6) a Custom running-condition edited live in the Workbench (not pre-s
         fireEvent.click(screen.getByText('+ Add condition'));
         fireEvent.click(screen.getByText('No condition — use all rows'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' })); // collapse
-        expect(screen.getByText(/Custom · no cond · 0 periods/)).toBeTruthy();
+        // 1 train period: the workspace train period was copied on the switch (2026-10-07),
+        // and the workspace test periods with it.
+        expect(screen.getByText(/Custom · no cond · 1 train · \d+ test$/)).toBeTruthy();
     });
 });

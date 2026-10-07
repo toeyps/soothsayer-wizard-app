@@ -7,7 +7,7 @@ afterEach(cleanup);
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-03-15 12:00:00' };
 
 describe('TimePeriodsEditor', () => {
-    it('empty list: shows "no time limit"; Add seeds the first period from the data start to that month end', () => {
+    it('empty list: asks for a train period; Add seeds the first period from the data start to that month end', () => {
         const onChange = vi.fn();
         render(<TimePeriodsEditor periods={[]} onChange={onChange} bounds={bounds} />);
         expect(screen.getByTestId('periods-empty')).toBeTruthy();
@@ -109,14 +109,26 @@ describe('TimePeriodsEditor - wide period cards (Running condition modal, mockup
         expect(screen.queryByTestId('period-coverage')).toBeNull();
     });
 
-    it('empty state: "No period — the whole dataset (N days) is used." plus the dashed "Add period" button', () => {
+    it('empty state (Train/Test validation): an amber "No train period yet" note — never "the whole dataset" — plus the dashed "Add train period" button', () => {
         render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} />);
         const box = screen.getByTestId('periods-empty');
-        expect(box.className).toContain('rcm-none');
-        expect(box.textContent).toBe('No period — the whole dataset (74 days) is used.');
+        expect(box.className).toContain('rcm-none--warn');
+        expect(box.textContent).toBe('No train period yet — add at least one. Models learn only from the train periods.');
+        expect(box.textContent).not.toContain('whole dataset');
         const add = screen.getByTestId('period-add');
         expect(add.className).toContain('rcm-add');
-        expect(add.textContent).toBe('Add period');
+        expect(add.textContent).toBe('Add train period');
+    });
+
+    it('with test periods, the strip is shown even before the first train period (test lane only)', () => {
+        render(<TimePeriodsEditor periods={[]} onChange={vi.fn()} bounds={bounds} tests={[{ id: 't', start: '2026-02-01T00:00', end: '2026-02-11T00:00', label: 'normal' }]} />);
+        expect(screen.getByTestId('period-coverage-days').textContent).toBe('0 d train · 10 d test');
+        expect(screen.getAllByTestId('period-coverage-test')).toHaveLength(1);
+    });
+
+    it('compact empty state reads "No train period — add one to train" (not "No limit — full dataset")', () => {
+        render(<TimePeriodsEditor compact periods={[]} onChange={vi.fn()} bounds={bounds} />);
+        expect(screen.getByTestId('periods-empty').textContent).toBe('No train period — add one to train+ Add train period');
     });
 
     it('the first period start / last period end have an x that makes that side open-ended', () => {

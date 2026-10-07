@@ -114,6 +114,8 @@ import Dashboard from '../components/dashboard/Dashboard';
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { WorkspaceState } from '../types';
+// Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
+import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
 const WS_FILE = 'workspaces/ws1.json';
 const sensorMetadata = [
@@ -142,7 +144,7 @@ function wsState(fg: Record<string, unknown>): WorkspaceState {
         selectedSensors: [], visibleSensors: [], operationConfig: null,
         failureGroupState: {
             groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }],
-            runningConditionCombine: 'and', runningConditionTimePeriods: [],
+            runningConditionCombine: 'and', runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST,
             rcLegacyNotice: null, categoryNormalisationNotice: null,
             ...fg,
         } as any,

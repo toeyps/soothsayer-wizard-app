@@ -133,7 +133,8 @@ const sensorMetadata: SensorMetadata[] = [
 
 /** FG panel props with one sensor per dot state: TAG1 untrained (I), TAG2 trained (R), TAG3 complete (C). */
 function fgPanelProps(overrides: Partial<React.ComponentProps<typeof FailureGroupsPanel>> = {}) {
-    const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true };
+    // A train period is required for a trained (not blocked) dot since 2026-10-07.
+    const runningConditionFg: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: [{ id: 'all-time', start: '', end: '' }] };
     const untrained = makeModel({ id: 'u', targetSensor: 'TAG1' });
     const toTrain = makeModel({ id: 't', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] });
     const fg = { ...runningConditionFg, models: [untrained, toTrain] };

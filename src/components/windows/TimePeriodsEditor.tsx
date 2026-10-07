@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Calendar, Plus, Trash2, X } from 'lucide-react';
-import type { TimePeriod } from '../../types';
+import type { TestPeriod, TimePeriod } from '../../types';
 import {
     isRangeFullyCovered,
     mergeOverlapping,
@@ -9,7 +9,7 @@ import {
     sortPeriods,
     validatePeriods,
 } from '../../utils/timePeriods';
-import { boundsMs, DAY_MS, formatDate, formatPeriod, overlapDays, periodDays } from './periodDisplay';
+import { formatDate, formatPeriod, overlapDays, periodDays } from './periodDisplay';
 import { PeriodCoverageBar } from './RunningConditionParts';
 
 /*
@@ -17,8 +17,9 @@ import { PeriodCoverageBar } from './RunningConditionParts';
  * Running Condition panel (workspace default) and the Workbench's Custom
  * running-condition editor.
  *
- * Semantics: empty list = no time limit; a row is kept if it falls in ANY
- * period. A blank start is only allowed on the first period ("Start of data"),
+ * Semantics: these are the TRAIN periods (Train/Test validation, 2026-10-07):
+ * at least one is required to train -- an empty list no longer means "no time
+ * limit" (`getBuildBlockReason`); a row is kept if it falls in ANY period. A blank start is only allowed on the first period ("Start of data"),
  * a blank end only on the last ("End of data"). Overlap is a warning with a
  * "Merge into one" fix, NOT a block; a reversed/unparseable period is invalid
  * and blocks Build (see `getBuildBlockReason`).
@@ -141,9 +142,13 @@ interface TimePeriodsEditorProps {
     /** True dataset extent (`useDatasetTimeBounds`); drives defaults and min/max. */
     bounds?: PeriodBounds | null;
     compact?: boolean;
+    /** The test periods next to these train periods (Train/Test validation): drawn
+     *  on the bottom lane of the coverage strip, which is then shown even while
+     *  there is no train period yet. */
+    tests?: TestPeriod[];
 }
 
-export default function TimePeriodsEditor({ periods, onChange, bounds, compact = false }: TimePeriodsEditorProps) {
+export default function TimePeriodsEditor({ periods, onChange, bounds, compact = false, tests }: TimePeriodsEditorProps) {
     const [draft, setDraft] = useState<TimePeriod[]>(periods);
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [flashId, setFlashId] = useState<string | null>(null);
@@ -166,15 +171,13 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
     const minAttr = toInputValue(bounds?.min);
     const maxAttr = toInputValue(bounds?.max);
     const boundsForCover = minAttr && maxAttr ? { min: minAttr, max: maxAttr } : null;
-    const bms = boundsMs(boundsForCover);
-    const totalDays = bms ? Math.round((bms.t1 - bms.t0) / DAY_MS) : null;
 
     const next = draft.length === 0 ? firstDefaultPeriod(bounds) : nextDefaultPeriod(draft, maxAttr ?? null);
     const covered = isRangeFullyCovered(draft, boundsForCover);
     const addDisabled = !next || covered;
     const addTitle = covered
         ? 'The periods already cover the whole dataset'
-        : !next ? 'Set an end date on the last period first' : 'Add another training period';
+        : !next ? 'Set an end date on the last period first' : 'Add another train period';
 
     const patch = (i: number, p: Partial<TimePeriod>) =>
         setDraft(prev => prev.map((x, j) => (j === i ? { ...x, ...p } : x)));
@@ -281,14 +284,16 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
         };
         return (
             <div data-testid="time-periods-editor" className="rcm-periods">
-                {draft.length === 0 ? (
-                    <div data-testid="periods-empty" className="rcm-none">
-                        <span><b>No period</b> — the whole dataset{totalDays !== null ? ` (${totalDays} days)` : ''} is used.</span>
+                {/* Coverage strip (restored 2026-10-03 — it was removed by mistake in
+                    011675b): draws the editor's own draft, so it follows every edit.
+                    With test periods it is shown even before the first train period. */}
+                {(draft.length > 0 || tests !== undefined) && (
+                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" tests={tests} />
+                )}
+                {draft.length === 0 && (
+                    <div data-testid="periods-empty" className="rcm-none rcm-none--warn">
+                        <span><b>No train period yet</b> — add at least one. Models learn only from the train periods.</span>
                     </div>
-                ) : (
-                    // Coverage strip (restored 2026-10-03 — it was removed by mistake in
-                    // 011675b): draws the editor's own draft, so it follows every edit.
-                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} className="rcm-cov" />
                 )}
                 {draft.map((p, i) => {
                     const st = statuses[i];
@@ -308,7 +313,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
                     );
                 })}
                 <button type="button" className="rcm-add" data-testid="period-add" disabled={addDisabled} title={addTitle} onClick={addPeriod}>
-                    <Plus size={13} aria-hidden="true" />Add period
+                    <Plus size={13} aria-hidden="true" />Add train period
                 </button>
                 {draft.length > 0 && (
                     <span className="rcm-add-note">
@@ -324,15 +329,15 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
             {draft.length === 0 ? (
                 <div data-testid="periods-empty" className="f4-empty" style={{ padding: '8px 9px' }}>
                     <span>
-                        <b>No limit</b> — full dataset
+                        <b>No train period</b> — add one to train
                     </span>
                     <button type="button" className="f4-btn f4-btn--small" data-testid="period-add" disabled={addDisabled} title={addTitle} onClick={addPeriod}>
-                        + Add period
+                        + Add train period
                     </button>
                 </div>
             ) : (
                 <>
-                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} />
+                    <PeriodCoverageBar periods={draft} bounds={boundsForCover} tests={tests} />
                     <div className="f4-plist" style={{ gap: '4px' }}>
                         {draft.map((p, i) => {
                             const st = statuses[i];
@@ -364,7 +369,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, compact =
                     </div>
                     <div className="f4-acts">
                         <button type="button" className="f4-btn f4-btn--small" data-testid="period-add" disabled={addDisabled} title={addTitle} onClick={addPeriod}>
-                            + Add period
+                            + Add train period
                         </button>
                         <span className="f4-note f4-note--faint">
                             {covered ? 'Periods already cover all data' : 'new period starts after the last one'}

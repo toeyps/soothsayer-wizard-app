@@ -10,12 +10,14 @@ import type {
     WrittenFile,
 } from '../types/health';
 import { buildHealthPreviewRequest, buildModelFilesRequest, type HealthRequestOptions } from './healthRequest';
+import { markCompleteBlockReason } from './runningCondition';
 
 /**
  * "Mark complete" orchestration for the health-score flow (phase 3a, 2026-10-03).
  * Pure async (no React, no workspace writes): check the set points, write the
  * model's files, and tell the caller what to persist.
  *
+ *   0. At least one valid test period (`markCompleteBlockReason`), else `inputs`.
  *   1. `compute_health_preview` with the set points the user typed — if the
  *      preview is not valid, STOP: return the issues, export nothing.
  *   2. `export_model_files` (re-validates against freshly computed statistics
@@ -25,7 +27,13 @@ import { buildHealthPreviewRequest, buildModelFilesRequest, type HealthRequestOp
  *      against what is on disk). Anything else leaves the model Incomplete.
  */
 
-const ERROR_CODES: readonly HealthErrorCode[] = ['NOT_FITTED', 'NO_DATA', 'BAD_REQUEST', 'STALE_SESSION', 'VALIDATION'];
+const ERROR_CODES: readonly HealthErrorCode[] = ['NOT_FITTED', 'NO_DATA', 'BAD_REQUEST', 'STALE_SESSION', 'VALIDATION', 'SIDECAR_OUTDATED'];
+
+/** User-facing text for codes whose wording the UI owns (the Rust text after the
+ *  prefix is used for every other code). */
+export const HEALTH_ERROR_TEXT: Partial<Record<HealthErrorCode, string>> = {
+    SIDECAR_OUTDATED: 'The Relation model engine in this build is out of date — reinstall or update the app, then try again.',
+};
 
 /** Split a Rust error (`"CODE: message"`, rejected as a plain string) into its
  *  stable code and the readable rest. `code` is `null` for an error with no
@@ -34,7 +42,8 @@ export function parseHealthError(err: unknown): { code: HealthErrorCode | null; 
     const text = err instanceof Error ? err.message : String(err ?? '');
     const m = /^([A-Z_]+):\s*([\s\S]*)$/.exec(text);
     if (m && (ERROR_CODES as readonly string[]).includes(m[1])) {
-        return { code: m[1] as HealthErrorCode, message: m[2] || text };
+        const code = m[1] as HealthErrorCode;
+        return { code, message: HEALTH_ERROR_TEXT[code] ?? (m[2] || text) };
     }
     return { code: null, message: text };
 }
@@ -78,6 +87,10 @@ export interface CompleteModelOptions extends HealthRequestOptions {
  * Workbench only enables Mark complete for a fresh-trained model).
  */
 export async function completeModel(opts: CompleteModelOptions): Promise<CompleteModelResult> {
+    // Train/Test validation (SPEC rule 2): no export without a valid test period
+    // — the files' `validation` block always has `tested = true`.
+    const noTest = markCompleteBlockReason(opts.model, opts.fg);
+    if (noTest !== null) return fail('inputs', { error: noTest });
     const previewReq: HealthPreviewRequest | null = buildHealthPreviewRequest({
         ...opts,
         // Validation only needs the statistics + issues; keep the series tiny.

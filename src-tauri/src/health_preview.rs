@@ -19,13 +19,17 @@
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 use crate::csv_processor::ColumnarData;
 use crate::health_score::{
     has_errors, histogram, select_indices, stride_indices, summarize, validate_clustering,
     validate_individual, validate_relationship, ClusterGeom, ClusteringParams, Histogram, Issue,
-    IndividualBand, IndividualParams, RelFit, RelationshipParams, ScoreSummary, SetPointsArg,
-    MAX_SERIES_POINTS,
+    IndividualBand, IndividualParams, RelExtra, RelFit, RelationshipParams, ScoreSummary,
+    SetPointsArg, MAX_SERIES_POINTS,
+};
+use crate::health_validation::{
+    self, KindMetrics, TestPeriodArg, TestPlan, TestValidation, Universe,
 };
 use crate::metrics::{self, round_metric, round_metric_scaled};
 use crate::model_export::unsafe_name_warnings;
@@ -107,9 +111,24 @@ pub struct HealthPreviewRequest {
     /// Refuse (`STALE_SESSION`) when the loaded dataset's generation differs.
     #[serde(default, alias = "expectedGeneration")]
     pub expected_generation: Option<u64>,
+    /// Train/Test validation: time ranges to score with the TRAIN-only model
+    /// and compare with the training rows (see `health_validation`). Absent /
+    /// empty = no change at all and `test_validation: null`.
+    #[serde(default)]
+    pub test_periods: Option<Vec<TestPeriodArg>>,
 }
 
 impl HealthPreviewRequest {
+    /// The parsed test periods, `None` when the request has none.
+    pub fn test_plan(&self, data: &ColumnarData) -> Option<TestPlan> {
+        let periods = self.test_periods.as_deref().filter(|t| !t.is_empty())?;
+        Some(TestPlan::resolve(periods, self.filter.as_ref(), &data.headers))
+    }
+
+    pub fn has_test_periods(&self) -> bool {
+        self.test_periods.as_ref().is_some_and(|t| !t.is_empty())
+    }
+
     fn max_points(&self) -> usize {
         self.max_points
             .unwrap_or(DEFAULT_MAX_POINTS)
@@ -295,11 +314,43 @@ pub struct HealthPreview {
     pub fit_scatter: Option<FitScatter>,
     /// Clustering only.
     pub cluster_scatter: Option<ClusterScatter>,
+    /// `null` unless the request carried `test_periods`: the train-vs-test
+    /// comparison (named so because `validation` is already the issue list).
+    pub test_validation: Option<TestValidation>,
 }
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/// One flag per dataset row: is it in ANY of the test row lists? Empty `Vec`
+/// (not `n` falses) when no test has a row, so callers can skip the lookup.
+fn mark_rows(n: usize, lists: &[Vec<u32>]) -> Vec<bool> {
+    if lists.iter().all(|l| l.is_empty()) {
+        return Vec::new();
+    }
+    let mut flags = vec![false; n];
+    for l in lists {
+        for &r in l {
+            flags[r as usize] = true;
+        }
+    }
+    flags
+}
+
+/// `summarize` over the TRAINING rows only (a masked copy): adding test periods
+/// never changes the training score summary.
+fn masked_scores(scores: &[f64], is_train: &[bool]) -> Vec<f64> {
+    scores
+        .iter()
+        .zip(is_train)
+        .map(|(&s, &t)| if t { s } else { f64::NAN })
+        .collect()
+}
+
+fn share_pct(hits: usize, total: usize) -> Option<f64> {
+    (total > 0).then(|| health_validation::r1(hits as f64 * 100.0 / total as f64))
+}
 
 fn ts_text(data: &ColumnarData, row: u32) -> String {
     data.timestamps[row as usize].clone().unwrap_or_default()
@@ -427,24 +478,52 @@ pub fn individual_preview(
     let noop = resolved.is_noop();
     let include_out = req.include_out_of_scope.unwrap_or(false);
 
+    // Train/Test validation: the rows of every test period (finite target +
+    // the running condition's value conditions). `with_tests` = the request
+    // carried test periods at all (even if none has a row).
+    let plan = req.test_plan(data);
+    let with_tests = plan.is_some();
+    let test_rows: Vec<Vec<u32>> = plan
+        .as_ref()
+        .map(|p| p.collect_rows(data, &|r| col[r].is_finite()))
+        .unwrap_or_default();
+    let in_test = mark_rows(data.n_rows(), &test_rows);
+    let is_test = |r: usize| !in_test.is_empty() && in_test[r];
+
     // Row universe (ascending dataset rows), then the in-scope flag of each.
+    // Test rows are part of it (scored with the train-only model).
     let rows: Vec<u32> = (0..data.n_rows())
         .into_par_iter()
-        .filter(|&r| col[r].is_finite() && (include_out || noop || resolved.keeps(data, r)))
+        .filter(|&r| {
+            col[r].is_finite()
+                && (include_out || noop || is_test(r) || resolved.keeps(data, r))
+        })
         .map(|r| r as u32)
         .collect();
-    let in_scope: Vec<bool> = if include_out && !noop {
+    // Does the row pass the TRAINING scope? Only needed (and only computed)
+    // when some rows of the universe may be outside it.
+    let need_flags = !noop && (include_out || with_tests);
+    let is_train: Vec<bool> = if need_flags {
         rows.par_iter()
             .map(|&r| resolved.keeps(data, r as usize))
             .collect()
     } else {
         vec![true; rows.len()]
     };
+    // Scored rows: training rows, and (with tests) the test rows.
+    let in_scope: Vec<bool> = if !in_test.is_empty() {
+        rows.iter()
+            .zip(&is_train)
+            .map(|(&r, &t)| t || in_test[r as usize])
+            .collect()
+    } else {
+        is_train.clone()
+    };
     let values: Vec<f64> = rows.iter().map(|&r| col[r as usize]).collect();
-    let scope_vals: Vec<f64> = if include_out && !noop {
+    let scope_vals: Vec<f64> = if need_flags {
         values
             .iter()
-            .zip(&in_scope)
+            .zip(&is_train)
             .filter(|&(_, &s)| s)
             .map(|(&v, _)| v)
             .collect()
@@ -452,11 +531,7 @@ pub fn individual_preview(
         // Borrow-free copy only when needed; otherwise reuse below.
         Vec::new()
     };
-    let scope: &[f64] = if include_out && !noop {
-        &scope_vals
-    } else {
-        &values
-    };
+    let scope: &[f64] = if need_flags { &scope_vals } else { &values };
     if scope.is_empty() {
         return Err(no_data(format!(
             "No valid numeric values for sensor '{target}' in the training scope"
@@ -483,6 +558,9 @@ pub fn individual_preview(
     let mut validation = validate_individual(&band, &sp);
     let valid = !has_errors(&validation);
     validation.extend(unsafe_name_warnings(&[("target", target)]));
+    if let Some(p) = &plan {
+        validation.extend(p.issues.iter().cloned());
+    }
     let params = if valid {
         IndividualParams::new(band, &sp).ok()
     } else {
@@ -504,11 +582,17 @@ pub fn individual_preview(
             .collect()
     });
 
+    // The summary describes the TRAINING rows; test rows have their own results.
     let summary = scores.as_ref().map(|sc| {
-        summarize(sc, data.n_rows(), |i| {
+        let locate = |i: usize| {
             let row = rows[i];
             (row as usize, data.timestamps[row as usize].clone())
-        })
+        };
+        if with_tests {
+            summarize(&masked_scores(sc, &is_train), data.n_rows(), locate)
+        } else {
+            summarize(sc, data.n_rows(), locate)
+        }
     });
 
     let sel = select_indices(
@@ -526,6 +610,42 @@ pub fn individual_preview(
         total_points: rows.len(),
     };
 
+    let test_validation = plan.as_ref().map(|plan| {
+        let inside3 = |v: f64| v >= b3[0] && v <= b3[1];
+        let train_in = scope.iter().filter(|&&v| inside3(v)).count();
+        let train_metrics = KindMetrics {
+            mean: Some(mean_r),
+            sd: Some(sd_r),
+            within_3sd_pct: share_pct(train_in, scope.len()),
+            ..Default::default()
+        };
+        let metrics_for = |pos: &[usize]| {
+            let vs: Vec<f64> = pos.iter().map(|&p| values[p]).collect();
+            let inside = vs.iter().filter(|&&v| inside3(v)).count();
+            let m = metrics::mean(&vs);
+            KindMetrics {
+                within_3sd_pct: share_pct(inside, vs.len()),
+                mean_shift_sd: (sd_r > 0.0 && m.is_finite())
+                    .then(|| health_validation::r2dp((m - mean_r) / sd_r)),
+                ..Default::default()
+            }
+        };
+        health_validation::build(
+            plan,
+            &test_rows,
+            &Universe {
+                data,
+                rows: &rows,
+                is_train: &is_train,
+                scores: scores.as_deref(),
+            },
+            health_validation::sample_interval_secs(data),
+            scope.len(),
+            train_metrics,
+            &metrics_for,
+        )
+    });
+
     Ok(HealthPreview {
         kind: "individual".into(),
         stats: HealthStats::Individual(stats),
@@ -536,6 +656,7 @@ pub fn individual_preview(
         histogram: histogram(scope, mean_r, sd_r, 80),
         fit_scatter: None,
         cluster_scatter: None,
+        test_validation,
     })
 }
 
@@ -607,6 +728,50 @@ pub fn relationship_preview(
     fit: &RelFit,
     req: &HealthPreviewRequest,
 ) -> Result<HealthPreview, String> {
+    relationship_preview_ex(data, fit, None, req)
+}
+
+/// Metrics of `(actual, predicted)` pairs the way `REL_INFO_*.json` /
+/// `REL_DATASET_*.csv` define them: predictions rounded with `round_metric`,
+/// residual = [`file_residual`]. Pairs with a non-finite side are skipped; no
+/// pair at all gives no metrics.
+fn rel_metrics(pairs: impl Iterator<Item = (f64, f64)>) -> KindMetrics {
+    let mut y = Vec::new();
+    let mut p = Vec::new();
+    let mut resid = Vec::new();
+    for (a, b) in pairs {
+        if a.is_finite() && b.is_finite() {
+            y.push(a);
+            p.push(round_metric(b));
+            resid.push(file_residual(a, b));
+        }
+    }
+    if y.is_empty() {
+        return KindMetrics::default();
+    }
+    let r2 = metrics::r2_score(&y, &p);
+    let (rm, rs) = mean_sd(&resid);
+    KindMetrics {
+        r2: Some(if r2.is_nan() { 0.0 } else { health_validation::r3dp(r2) }),
+        rmse: Some(round_metric(metrics::rmse(&y, &p))),
+        residual_mean: Some(health_validation::nz(round_metric(rm))),
+        residual_sd: Some(round_metric(rs)),
+        ..Default::default()
+    }
+}
+
+/// The Relationship preview, optionally with the test periods of the Train/Test
+/// validation. `extra` holds the train-only model's predictions for rows
+/// outside the training scope (see [`RelExtra`]); a test row with no
+/// prediction there is left out (no score, not counted). The fit itself, its
+/// statistics, the Fit scatter and the training score summary are always the
+/// training rows only.
+pub fn relationship_preview_ex(
+    data: &ColumnarData,
+    fit: &RelFit,
+    extra: Option<&RelExtra>,
+    req: &HealthPreviewRequest,
+) -> Result<HealthPreview, String> {
     if let Some(t) = req.target.as_deref() {
         if t != fit.target {
             return Err(not_fitted(&format!(
@@ -629,17 +794,83 @@ pub fn relationship_preview(
         None => 0,
     };
     let stats = relationship_stats(fit)?;
-    let n = fit.rows.len();
+    let n_fit = fit.rows.len();
     if fit.rows.iter().any(|&r| r as usize >= data.n_rows()) {
         // A fit can only outlive its dataset through a bug (the cache lives in
         // the session) — refuse rather than index out of range.
         return Err(not_fitted("the cached fit does not belong to the loaded dataset"));
     }
 
+    // ---- universe: the fitted (training) rows, plus the test rows ----
+    let plan = req.test_plan(data);
+    let mut test_rows: Vec<Vec<u32>> = Vec::new();
+    let mut urows_c: Cow<[u32]> = Cow::Borrowed(&fit.rows);
+    let mut uactual_c: Cow<[f64]> = Cow::Borrowed(&fit.actual);
+    let mut upred_c: Cow<[f64]> = Cow::Borrowed(&fit.predicted);
+    // Aligned with the universe; only built when a plan exists.
+    let mut is_train: Vec<bool> = Vec::new();
+    if let Some(plan) = &plan {
+        let tcol = col_index(data, &fit.target, "Target")?;
+        let pcols: Vec<usize> = fit
+            .predictors
+            .iter()
+            .map(|p| col_index(data, p, "Predictor"))
+            .collect::<Result<_, _>>()?;
+        test_rows = plan.collect_rows(data, &|r| {
+            data.columns[tcol][r].is_finite() && pcols.iter().all(|&c| data.columns[c][r].is_finite())
+        });
+        // Test rows that are not training rows and that have a prediction.
+        let mut ex: Vec<u32> = test_rows
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|r| {
+                fit.rows.binary_search(r).is_err() && extra.is_some_and(|e| e.get(*r).is_some())
+            })
+            .collect();
+        ex.sort_unstable();
+        ex.dedup();
+        if let (false, Some(e)) = (ex.is_empty(), extra) {
+            let total = n_fit + ex.len();
+            let mut rr: Vec<u32> = Vec::with_capacity(total);
+            let mut aa: Vec<f64> = Vec::with_capacity(total);
+            let mut pp: Vec<f64> = Vec::with_capacity(total);
+            let mut tr: Vec<bool> = Vec::with_capacity(total);
+            let (mut i, mut j) = (0usize, 0usize);
+            while i < n_fit || j < ex.len() {
+                let take_fit = j >= ex.len() || (i < n_fit && fit.rows[i] < ex[j]);
+                if take_fit {
+                    rr.push(fit.rows[i]);
+                    aa.push(fit.actual[i]);
+                    pp.push(fit.predicted[i]);
+                    tr.push(true);
+                    i += 1;
+                } else {
+                    let r = ex[j];
+                    rr.push(r);
+                    aa.push(data.columns[tcol][r as usize]);
+                    pp.push(e.get(r).unwrap_or(f64::NAN));
+                    tr.push(false);
+                    j += 1;
+                }
+            }
+            urows_c = Cow::Owned(rr);
+            uactual_c = Cow::Owned(aa);
+            upred_c = Cow::Owned(pp);
+            is_train = tr;
+        } else {
+            is_train = vec![true; n_fit];
+        }
+    }
+    let urows: &[u32] = &urows_c;
+    let uactual: &[f64] = &uactual_c;
+    let upred: &[f64] = &upred_c;
+    let n = urows.len();
+
     // The residual the FILE stores (see `file_residual`) — scored, plotted and
     // summarised as such so the preview and `REL_DATASET_*.csv` agree.
     let residual: Vec<f64> = (0..n)
-        .map(|i| file_residual(fit.actual[i], fit.predicted[i]))
+        .map(|i| file_residual(uactual[i], upred[i]))
         .collect();
 
     let sp = req.set_points();
@@ -649,6 +880,9 @@ pub fn relationship_preview(
         .chain(fit.predictors.iter().map(|p| ("predictor", p.as_str())))
         .collect();
     validation.extend(unsafe_name_warnings(&names));
+    if let Some(p) = &plan {
+        validation.extend(p.issues.iter().cloned());
+    }
     let scores: Option<Vec<f64>> = if valid {
         RelationshipParams::new(stats.two_rmse, &sp).ok().map(|p| {
             residual
@@ -659,25 +893,31 @@ pub fn relationship_preview(
     } else {
         None
     };
+    // The summary describes the TRAINING rows; test rows have their own results.
     let summary = scores.as_ref().map(|sc| {
-        summarize(sc, n, |i| {
-            let row = fit.rows[i];
+        let locate = |i: usize| {
+            let row = urows[i];
             (row as usize, data.timestamps[row as usize].clone())
-        })
+        };
+        if plan.is_some() {
+            summarize(&masked_scores(sc, &is_train), n_fit, locate)
+        } else {
+            summarize(sc, n_fit, locate)
+        }
     });
 
     let sel = select_indices(n, req.max_points(), Some(&residual), scores.as_deref());
     let series = RelationshipSeries {
-        rows: pick(&fit.rows, &sel),
-        timestamps: sel.iter().map(|&i| ts_text(data, fit.rows[i])).collect(),
-        actual: pick(&fit.actual, &sel),
-        predicted: opts(&fit.predicted, &sel),
+        rows: pick(urows, &sel),
+        timestamps: sel.iter().map(|&i| ts_text(data, urows[i])).collect(),
+        actual: pick(uactual, &sel),
+        predicted: opts(upred, &sel),
         residual: opts(&residual, &sel),
         score: scores.as_ref().map(|sc| opts(sc, &sel)),
         total_points: n,
     };
 
-    let sc_idx = stride_indices(n, req.max_scatter());
+    let sc_idx = stride_indices(n_fit, req.max_scatter());
     let xs = &fit.x_cols[x_idx];
     let fit_scatter = FitScatter {
         x_sensor: fit.predictors[x_idx].clone(),
@@ -685,8 +925,28 @@ pub fn relationship_preview(
         x: pick(xs, &sc_idx),
         actual: pick(&fit.actual, &sc_idx),
         predicted: opts(&fit.predicted, &sc_idx),
-        total: n,
+        total: n_fit,
     };
+
+    let test_validation = plan.as_ref().map(|plan| {
+        let train_pos: Vec<usize> = (0..n).filter(|&i| is_train[i]).collect();
+        let metrics_for =
+            |pos: &[usize]| rel_metrics(pos.iter().map(|&p| (uactual[p], upred[p])));
+        health_validation::build(
+            plan,
+            &test_rows,
+            &Universe {
+                data,
+                rows: urows,
+                is_train: &is_train,
+                scores: scores.as_deref(),
+            },
+            health_validation::sample_interval_secs(data),
+            stats.rows,
+            metrics_for(&train_pos),
+            &metrics_for,
+        )
+    });
 
     Ok(HealthPreview {
         kind: "relationship".into(),
@@ -698,6 +958,7 @@ pub fn relationship_preview(
         histogram: None,
         fit_scatter: Some(fit_scatter),
         cluster_scatter: None,
+        test_validation,
     })
 }
 
@@ -740,7 +1001,8 @@ pub fn clustering_preview(
         req.cluster_ranges.as_deref(),
         req.filter.as_ref(),
     )?;
-    // Fit exactly the way the PM preview and the exported file do.
+    // Fit exactly the way the PM preview and the exported file do (training
+    // rows only — test periods never take part in the fit).
     let preview = clustering_preview_in(
         data,
         first.to_string(),
@@ -802,14 +1064,41 @@ pub fn clustering_preview(
     let noop = resolved.is_noop();
     let (c1, c2) = (&data.columns[i1], &data.columns[i2]);
 
-    // Universe: in-scope rows with finite X and Y, plus each row's cluster
-    // (0-based; usize::MAX = none).
+    // Train/Test validation: the rows of every test period (finite X and Y +
+    // the running condition's value conditions).
+    let plan = req.test_plan(data);
+    let with_tests = plan.is_some();
+    let test_rows: Vec<Vec<u32>> = plan
+        .as_ref()
+        .map(|p| p.collect_rows(data, &|r| c1[r].is_finite() && c2[r].is_finite()))
+        .unwrap_or_default();
+    let in_test = mark_rows(data.n_rows(), &test_rows);
+    let is_test = |r: usize| !in_test.is_empty() && in_test[r];
+
+    // Universe: training rows (and, with tests, the test rows) with finite X
+    // and Y, plus each row's cluster (0-based; NONE = none).
     const NONE: u32 = u32::MAX;
     let rows: Vec<u32> = (0..data.n_rows())
         .into_par_iter()
-        .filter(|&r| c1[r].is_finite() && c2[r].is_finite() && (noop || resolved.keeps(data, r)))
+        .filter(|&r| {
+            c1[r].is_finite()
+                && c2[r].is_finite()
+                && (noop || is_test(r) || resolved.keeps(data, r))
+        })
         .map(|r| r as u32)
         .collect();
+    // Training-scope membership of each universe row (only built with tests).
+    let is_train: Vec<bool> = if with_tests {
+        if noop {
+            vec![true; rows.len()]
+        } else {
+            rows.par_iter()
+                .map(|&r| resolved.keeps(data, r as usize))
+                .collect()
+        }
+    } else {
+        Vec::new()
+    };
     let assign: Vec<u32> = rows
         .par_iter()
         .map(|&r| match criteria_idx {
@@ -823,12 +1112,28 @@ pub fn clustering_preview(
     if rows.is_empty() {
         return Err(no_data("No rows remain after dropping nulls."));
     }
-    let assigned = assign.iter().filter(|&&a| a != NONE).count();
+    let train_n = if with_tests {
+        is_train.iter().filter(|&&t| t).count()
+    } else {
+        rows.len()
+    };
+    let assigned = if with_tests {
+        assign
+            .iter()
+            .zip(&is_train)
+            .filter(|&(&a, &t)| t && a != NONE)
+            .count()
+    } else {
+        assign.iter().filter(|&&a| a != NONE).count()
+    };
 
     let sp = req.set_points();
     let mut validation = validate_clustering(&geoms, &sp);
     let valid = !has_errors(&validation);
     validation.extend(unsafe_name_warnings(&[("first_sensor", first), ("second_sensor", second)]));
+    if let Some(p) = &plan {
+        validation.extend(p.issues.iter().cloned());
+    }
     let params = if valid {
         ClusteringParams::new(geoms.clone(), &sp).ok()
     } else {
@@ -851,11 +1156,17 @@ pub fn clustering_preview(
     let scores: Option<Vec<f64>> = scored
         .as_ref()
         .map(|v| v.iter().map(|&(s, _)| s).collect());
+    // The summary describes the TRAINING rows; test rows have their own results.
     let summary = scores.as_ref().map(|sc| {
-        summarize(sc, data.n_rows(), |i| {
+        let locate = |i: usize| {
             let row = rows[i];
             (row as usize, data.timestamps[row as usize].clone())
-        })
+        };
+        if with_tests {
+            summarize(&masked_scores(sc, &is_train), data.n_rows(), locate)
+        } else {
+            summarize(sc, data.n_rows(), locate)
+        }
     });
 
     let cl_of = |i: usize| (assign[i] != NONE).then(|| assign[i] + 1);
@@ -875,20 +1186,73 @@ pub fn clustering_preview(
         total_points: rows.len(),
     };
 
-    let sc_idx = stride_indices(rows.len(), req.max_scatter());
+    // The scatter shows the training rows only.
+    let sc_idx: Vec<usize> = if with_tests {
+        let tp: Vec<usize> = (0..rows.len()).filter(|&i| is_train[i]).collect();
+        stride_indices(tp.len(), req.max_scatter())
+            .into_iter()
+            .map(|k| tp[k])
+            .collect()
+    } else {
+        stride_indices(rows.len(), req.max_scatter())
+    };
     let cluster_scatter = ClusterScatter {
         x: sc_idx.iter().map(|&i| c1[rows[i] as usize]).collect(),
         y: sc_idx.iter().map(|&i| c2[rows[i] as usize]).collect(),
         cluster: sc_idx.iter().map(|&i| cl_of(i)).collect(),
-        total: rows.len(),
+        total: train_n,
     };
+
+    let test_validation = plan.as_ref().map(|plan| {
+        // Distance to the assigned cluster's centre in SD units, from the
+        // TRAIN-fitted clusters (independent of the set points; a collapsed
+        // cluster has no meaningful distance).
+        let dist = |p: usize| -> Option<f64> {
+            let a = assign[p];
+            if a == NONE {
+                return None;
+            }
+            let g = geoms.get(a as usize)?;
+            if g.is_degenerate() {
+                return None;
+            }
+            let r = rows[p] as usize;
+            Some(g.sd_distance(c1[r], c2[r])).filter(|d| d.is_finite())
+        };
+        let ring = |pos: &mut dyn Iterator<Item = usize>| -> Option<f64> {
+            let ds: Vec<f64> = pos.filter_map(&dist).collect();
+            share_pct(ds.iter().filter(|&&d| d <= crate::health_score::ANCHOR_SD).count(), ds.len())
+        };
+        let train_metrics = KindMetrics {
+            inside_3sd_ring_pct: ring(&mut (0..rows.len()).filter(|&i| is_train[i])),
+            ..Default::default()
+        };
+        let metrics_for = |pos: &[usize]| KindMetrics {
+            inside_3sd_ring_pct: ring(&mut pos.iter().copied()),
+            ..Default::default()
+        };
+        health_validation::build(
+            plan,
+            &test_rows,
+            &Universe {
+                data,
+                rows: &rows,
+                is_train: &is_train,
+                scores: scores.as_deref(),
+            },
+            health_validation::sample_interval_secs(data),
+            train_n,
+            train_metrics,
+            &metrics_for,
+        )
+    });
 
     Ok(HealthPreview {
         kind: "clustering".into(),
         stats: HealthStats::Clustering(ClusteringStats {
-            rows: rows.len(),
+            rows: train_n,
             assigned_rows: assigned,
-            unassigned_rows: rows.len() - assigned,
+            unassigned_rows: train_n - assigned,
             cluster_count: preview.cluster_count,
             criteria_sensor: preview.criteria_sensor.clone(),
             clusters: stats_clusters,
@@ -900,6 +1264,7 @@ pub fn clustering_preview(
         histogram: None,
         fit_scatter: None,
         cluster_scatter: Some(cluster_scatter),
+        test_validation,
     })
 }
 

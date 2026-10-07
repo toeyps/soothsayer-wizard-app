@@ -21,6 +21,8 @@ import {
     buildRelationshipSetPointOption,
     buildScoreOption,
 } from './healthPageCharts';
+import { scopesOf, type TimeScopes } from './healthCharts';
+import { SlowScoringNotice, TestResultsCard, TestsChangedBanner } from './ValidationCards';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
 /*
@@ -52,6 +54,17 @@ export default function HealthScorePage(props: HealthScorePageProps) {
     // "Re-train to recompute" (NOT_FITTED) keeps its own full-page message.
     const errorMode = !preview.data && !preview.notFitted && !!preview.error && !!preview.lastData;
     const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
+    // Train / test scopes on the time charts (null = no test periods sent). Memoised
+    // on the payload so a hover re-render never rebuilds the time charts.
+    const validation = data?.test_validation;
+    // T-numbers of the sent test periods: memoised on their VALUE (the container
+    // builds a new array every render).
+    const testNumbers = props.testNumbers;
+    const numbersKey = testNumbers ? testNumbers.join(',') : '';
+    const scopes = useMemo(
+        () => scopesOf(validation, numbersKey ? numbersKey.split(',').map(Number) : null),
+        [validation, numbersKey],
+    );
     // A new request cannot be fixed by asking again after the dataset changed.
     const canRetry = !!props.onRetryPreview && preview.errorCode !== 'STALE_SESSION';
     const errorBanner = errorMode ? (
@@ -66,6 +79,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
         return (
             <div className="wb2-board" data-testid="health-page">
                 <SaveBanner save={save} />
+                <SlowScoringNotice show={props.slowScoring} />
                 <div className="wb2-lockpane" data-testid={preview.notFitted ? 'health-not-fitted' : preview.error ? 'health-error' : 'health-loading'}>
                     {preview.notFitted ? (
                         <div>
@@ -101,7 +115,9 @@ export default function HealthScorePage(props: HealthScorePageProps) {
     return (
         <div className="wb2-board wb2-hs hs-board" data-testid="health-page" data-valid={String(data.valid)}>
             <SaveBanner save={save} />
+            <SlowScoringNotice show={props.slowScoring} />
             {errorBanner}
+            <TestsChangedBanner state={props.testsChanged} />
             {preview.notFitted && (
                 <div className="wb2-stale hs-full" role="status" data-testid="health-not-fitted-banner">
                     <span><b>Re-train to recompute.</b> The fitted Relation model is no longer in memory; the chart below is the last result.</span>
@@ -117,6 +133,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                 stale={stale}
                 unit={unit}
                 sensorLabel={sensorLabel}
+                scopes={scopes}
             />
             <div className="hs-spp">
                 <SetPointsCard
@@ -147,6 +164,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                     hoverIdx={hoverIdx}
                     onHover={setHoverIdx}
                     stale={stale}
+                    scopes={scopes}
                 />
             ) : (
                 <section className="hs-card hs-full" data-testid="score-locked">
@@ -156,6 +174,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                     </div>
                 </section>
             )}
+            <TestResultsCard data={data} scoreReady={scoreReady} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={canRetry ? props.onRetryPreview : undefined} />
         </div>
     );
 }
@@ -170,7 +189,7 @@ function SaveBanner({ save }: { save: SaveInfo }) {
         return (
             <div className="hs-save hs-full" role="status" data-testid="save-running">
                 <Loader2 size={14} className="pm-spin" aria-hidden="true" />
-                <span><b>Saving results…</b>{save.slow ? ' The Relation model is fitted again for the saved files; this can take about 15 seconds.' : ''}</span>
+                <span><b>Saving results…</b>{save.slow ? ' The Relation model is fitted again for the saved files and its test periods are scored. This can take longer than 15 seconds, especially the first time.' : ''}</span>
             </div>
         );
     }
@@ -214,7 +233,7 @@ function joinSyncGroup(inst: { group?: string } | null | undefined) {
     }
 }
 
-function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabel }: {
+function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabel, scopes }: {
     data: HealthPreview;
     props: HealthScorePageProps;
     hoverIdx: number | null;
@@ -222,6 +241,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
     stale: boolean;
     unit: string;
     sensorLabel: (tag: string) => string;
+    scopes: TimeScopes | null;
 }) {
     const { model, setPoints } = props;
     const stats = data.stats;
@@ -233,7 +253,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
                 id: 'set-individual',
                 title: 'Sensor value over time',
                 sub: `${unit ? `${unit} · ` : ''}type L and H on the right`,
-                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit),
+                option: buildIndividualSetPointOption(series, stats, setPoints.kind === 'individual' ? setPoints : null, unit, scopes),
                 time: true,
             };
         }
@@ -242,7 +262,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
                 id: 'set-relationship',
                 title: 'Residual over time',
                 sub: `actual − predicted${unit ? ` (${unit})` : ''} · type the 80 and 0 points on the right`,
-                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit),
+                option: buildRelationshipSetPointOption(series, stats.two_rmse, setPoints.kind === 'relationship' ? setPoints : null, unit, scopes),
                 time: true,
             };
         }
@@ -262,7 +282,7 @@ function SetPointChart({ data, props, hoverIdx, onHover, stale, unit, sensorLabe
         // `hoverIdx` only changes the Clustering highlight; the time charts follow
         // the connected cursor and must not be rebuilt on every mouse move.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, stats.kind === 'clustering' ? hoverIdx : null]);
+    }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, stats.kind === 'clustering' ? hoverIdx : null]);
 
     if (!built) return null;
     const nOuter = setPoints.kind === 'clustering' && setPoints.outerSd !== null ? `${fmtNum(setPoints.outerSd)}×` : 'N×';
@@ -326,7 +346,7 @@ const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: strin
     { key: 'share_0_40', label: '0–40', color: CHART.danger },
 ];
 
-function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale }: {
+function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale, scopes }: {
     data: HealthPreview;
     score: (number | null)[];
     summary: ScoreSummary;
@@ -334,9 +354,10 @@ function ScoreChart({ data, score, summary, unit, hoverIdx, onHover, stale }: {
     hoverIdx: number | null;
     onHover: (i: number | null) => void;
     stale: boolean;
+    scopes: TimeScopes | null;
 }) {
     const series = data.series;
-    const option = useMemo(() => buildScoreOption(series.timestamps, score), [series.timestamps, score]);
+    const option = useMemo(() => buildScoreOption(series.timestamps, score, scopes), [series.timestamps, score, scopes]);
     const lowest = summary.min_score;
     const text = readoutText(readoutAt(series, hoverIdx), unit);
     const chartProps = {

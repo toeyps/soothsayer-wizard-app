@@ -43,6 +43,13 @@ describe('buildCheckLines', () => {
         expect(lines.map(l => [l.tone, l.text])).toEqual([['need', 'Enter H'], ['bad', 'L is inside 3σ']]);
     });
 
+    it('the test_scoring_failed warning is not a Checks line (the test results cards show it) and never changes the verdict', () => {
+        const failed = { code: 'test_scoring_failed', severity: 'warning' as const, field: 'test_periods', message: 'could not score' };
+        expect(buildCheckLines('relationship', [failed])).toEqual([]);
+        expect(buildCheckLines('individual', [issue('required', 'upper', 'Enter H'), failed]).map(l => l.text)).toEqual(['Enter H']);
+        expect(verdictOfIssues([failed])).toBe(verdictOfIssues([]));
+    });
+
     it('Relationship: two or more empty points collapse into ONE line listing them in ladder order', () => {
         const lines = buildCheckLines('relationship', [
             issue('required', 'residual_at_0_upper'),

@@ -1,6 +1,8 @@
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
 import { STIFFNESS_DEFAULT, snapStiffness } from '../components/reports/pmReportTypes';
 import { withFailureGroupState } from './failureGroupState';
+import { effectiveRunningCondition } from './runningCondition';
+import { testPeriodsKey } from './timePeriods';
 import { computeTrainFingerprint } from './trainFingerprint';
 import { migratePeriods } from './workspaceMigrations';
 
@@ -22,6 +24,9 @@ import { migratePeriods } from './workspaceMigrations';
  *
  * What does NOT trigger it: set points, name, notes, category, status, group
  * membership, `scatterXSensor` — none of them is in `computeTrainFingerprint`.
+ * TEST periods (Train/Test validation, 2026-10-07) are not in it either; a
+ * change of ONLY them takes the second road described on `applyIncompleteRule`
+ * (Complete -> Incomplete + `testsChangedAt`, but still trained).
  *
  * This is a pure `(prev, next) => next` step meant to run INSIDE a workspace
  * write (the updater passed to `updateWorkspaceData`), against the state the
@@ -75,33 +80,89 @@ export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceSta
 }
 
 /**
+ * Ids of the models in `next` whose EFFECTIVE TEST periods differ from `prev`
+ * (workspace list for a Workspace-mode model, `customTestPeriods` for a Custom
+ * one; ids / `fromHighlight` ignored — `testPeriodsKey`). Models only on one
+ * side are ignored.
+ */
+export function modelsWithChangedTests(prev: WorkspaceState, next: WorkspaceState): string[] {
+    const prevFg = prev.failureGroupState;
+    const nextFg = next.failureGroupState;
+    if (!prevFg || !nextFg || !Array.isArray(prevFg.models) || !Array.isArray(nextFg.models)) return [];
+    const before = new Map(prevFg.models.map(m => [m.id, m]));
+    const changed: string[] = [];
+    for (const m of nextFg.models) {
+        const old = before.get(m.id);
+        if (!old) continue;
+        const a = testPeriodsKey(effectiveRunningCondition(old, prevFg).testPeriods);
+        const b = testPeriodsKey(effectiveRunningCondition(m, nextFg).testPeriods);
+        if (a !== b) changed.push(m.id);
+    }
+    return changed;
+}
+
+export interface IncompleteRuleOptions {
+    /** ISO time written to `testsChangedAt` (tests pass a fixed value). */
+    now?: string;
+}
+
+/**
  * `next`, with every Complete model whose training inputs changed between
  * `prev` and `next` set back to `status: false`. Returns `next` itself (same
  * reference) when nothing needs demoting, so callers can cheaply tell.
+ *
+ * Train/Test validation (SPEC rules 8 & 9, 2026-10-07):
+ *  - a TRAINING-input change (incl. train periods) behaves exactly as before:
+ *    Incomplete, and the fingerprint mismatch asks for a re-train; it also
+ *    drops any `testsChangedAt` stamp (the train rule wins — the model needs a
+ *    re-train, not just Mark complete again);
+ *  - a change of ONLY the model's effective TEST periods keeps it trained (test
+ *    periods are not in `computeTrainFingerprint`, so it stays fresh) but a
+ *    Complete model goes back to `status: false` and gets `testsChangedAt` in
+ *    the SAME write — its saved test results no longer match. Its
+ *    `healthVerdict` is kept (the set points still describe the same fit).
+ *    Not-Complete models are left alone (nothing to mark again).
+ * Idempotent: a second pass finds no Complete model to demote.
  */
-export function applyIncompleteRule(prev: WorkspaceState, next: WorkspaceState): WorkspaceState {
+export function applyIncompleteRule(prev: WorkspaceState, next: WorkspaceState, opts: IncompleteRuleOptions = {}): WorkspaceState {
     const fg = next.failureGroupState;
     // A model also needs the pass when it only carries a saved set-point verdict:
     // that verdict describes the OLD fit and is dropped with the change (QA fix,
     // 2026-10-04) even though a not-yet-Complete model has no status to demote.
-    if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status || m.healthVerdict !== undefined)) return next;
+    // Same for a leftover `testsChangedAt` stamp: a training-input change drops it.
+    if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status || m.healthVerdict !== undefined || m.testsChangedAt !== undefined)) return next;
     let changed: Set<string>;
+    let testsChanged: Set<string>;
     try {
         changed = new Set(modelsWithChangedInputs(prev, next));
+        testsChanged = fg.models.some(m => m.status) ? new Set(modelsWithChangedTests(prev, next)) : new Set();
     } catch (e) {
         // A malformed record must never make a workspace write fail: this rule is
         // a guard on top of the write, not part of it.
         console.warn('applyIncompleteRule: could not compare model inputs, leaving statuses alone:', e);
         return next;
     }
-    if (changed.size === 0) return next;
+    if (changed.size === 0 && testsChanged.size === 0) return next;
     let demoted = false;
+    let stamp: string | undefined;
     const models = fg.models.map(m => {
-        if ((!m.status && m.healthVerdict === undefined) || !changed.has(m.id)) return m;
-        demoted = true;
-        const { healthVerdict: dropped, ...rest } = m;
-        void dropped;
-        return m.status ? { ...rest, status: false } : rest;
+        if (changed.has(m.id)) {
+            if (!m.status && m.healthVerdict === undefined && m.testsChangedAt === undefined) return m;
+            demoted = true;
+            // The train rule wins over a "tests only" change: the model now needs a
+            // re-train, so a `testsChangedAt` stamp (from this write or an earlier one)
+            // is dropped — the "Mark complete again" banners must not outlive it.
+            const { healthVerdict: dropped, testsChangedAt: droppedStamp, ...rest } = m;
+            void dropped;
+            void droppedStamp;
+            return m.status ? { ...rest, status: false } : rest;
+        }
+        if (testsChanged.has(m.id) && m.status) {
+            demoted = true;
+            stamp ??= opts.now ?? new Date().toISOString();
+            return { ...m, status: false, testsChangedAt: stamp };
+        }
+        return m;
     });
     return demoted ? withFailureGroupState(next, { models }) : next;
 }
