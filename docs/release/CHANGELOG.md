@@ -6,6 +6,120 @@
 
 ---
 
+## [0.8.0] — 2026-10-07
+
+Minor release — หน้า Build Model เปลี่ยนเป็น **Workbench** (train ในหน้าเดียว, 2 หน้าต่อโมเดล: Model fit /
+Health score), **Health score + Mark complete ที่เขียนไฟล์โมเดลจริง**, **Train/Test validation**,
+หน้า Import ใหม่ทั้งหมด, Dashboard หน้าตาใหม่ และแก้บั๊ก **Failure Group หาย** อีกกลไกหนึ่ง
+
+> ℹ️ 0.6.0 และ 0.7.0 ไม่เคยถูก build เป็น installer — installer 0.8.0 นี้จึงเป็นตัวแรกหลัง 0.5.0
+> และรวมทุกอย่างใน section 0.6.0 / 0.7.0 ด้านล่างด้วย (ยกเว้นส่วนที่ถูกแทนที่ตามที่เขียนไว้ใน section นี้
+> เช่น ปุ่ม Finish และหน้า Build แบบเต็มหน้า)
+
+### ⚠️ Breaking changes (workspace เก่าเปิดได้ แต่พฤติกรรมเปลี่ยน)
+
+- **ต้องมีช่วงเวลา Train อย่างน้อย 1 ช่วง** — เดิม "ไม่ตั้งช่วงเวลา = ใช้ทั้ง dataset" ตอนนี้ไม่ได้แล้ว
+  workspace เก่าที่ไม่มีช่วงเวลาจะขึ้น **"Needs train period"** และกด Train / Mark complete / Apply ใน
+  Running condition ไม่ได้จนกว่าจะเพิ่มช่วง Train · โมเดลที่ Complete อยู่แล้วยังเป็น Complete
+  (ไฟล์ที่เซฟไว้ก่อนหน้าไม่มีผล validation)
+- **Mark complete ต้องมีช่วง Test ที่ถูกต้องอย่างน้อย 1 ช่วง** และต้อง Train แล้ว + กรอก Health set points ครบ
+  — Mark complete เป็นทางเดียวที่ทำให้โมเดลเป็น Complete
+- **แก้ค่าที่กระทบการ train แล้วโมเดลกลับเป็น Incomplete ทันที** — ช่วงเวลา, Running condition ทุกส่วน,
+  predictors, sensor Y/X/criteria, จำนวน/ช่วงของ cluster, stiffness (set points ที่กรอกไว้ยังอยู่)
+  · แก้เฉพาะช่วง Test ไม่ต้อง train ใหม่ แต่ต้องกด Mark complete อีกครั้ง
+- **หน้า Build แบบเต็มหน้า ("Open full view ↗") และปุ่ม Finish ถูกเอาออก** — ทุกอย่างทำจบใน Workbench
+  · โมเดลที่ Complete จากเวอร์ชันก่อนแต่ยังไม่เคย Train ในเวอร์ชันนี้ จะขึ้น "train the model to see its charts"
+- **ลบ project แล้วไฟล์โมเดลที่ export ไว้ของ project นั้นถูกลบไปด้วย** (มีให้ยืนยันในแถวก่อนลบ) ·
+  การ Duplicate project ไม่คัดลอกไฟล์โมเดล โมเดลใน project ที่คัดลอกจึงเป็น Incomplete
+- **Special sensor ที่มีโมเดลใช้อยู่ถูกล็อก** — แก้ชื่อ/สูตร/source หรือลบไม่ได้ จนกว่าจะไม่มีโมเดลใช้
+  (กันโมเดลที่ train แล้วผิดเพราะค่าของ sensor เปลี่ยนใต้มัน)
+
+### ✨ Features
+
+- **Build Model Workbench** (แทนหน้า Overview แบบการ์ดพับ)
+  - ซ้าย: รายการ sensor พร้อม progress "N of M complete", ช่องค้นหา, ตัวกรอง (All / Needs setup / Complete),
+    จัดกลุ่มตาม Failure group หรือ Component, ซ่อนรายการได้เพื่อขยายกราฟ — ตัวเลือก "Group by Model Type" ถูกตัดออก
+  - ขวา: หัว sensor (Component, FG, Performance/Condition), แท็บ I/R/C, ส่วน "Model settings" พับได้
+    (กางเองเมื่อยังตั้งค่าไม่ครบ), **Train ทีละโมเดลในหน้านี้เลย** ไม่ต้องไปหน้าอื่น
+  - แถบขั้นตอนด้านบน: Running condition → Model settings → Train → Health set points → Complete (กดข้ามไปขั้นได้)
+  - สถานะ Incomplete / Trained / Complete พร้อมจุดสีที่ป้าย I/R/C ทั้งใน Workbench และแท็บ Failure Groups ของ Dashboard
+  - แก้ Running condition แบบ Custom ของแต่ละโมเดลได้ในหน้านี้
+- **หน้า Model fit** (กราฟใหญ่, ขยายเต็มจอได้ทุกกราฟ)
+  - Individual: ค่าตามเวลาพร้อมแถบ ±1σ/±3σ + **Distribution (histogram + เส้นโค้งปกติ) ใหม่**
+  - Relation model: สถิติ R² / RMSE ฯลฯ, กราฟ Fit พร้อมเลือกแกน X, Target vs predicted และ Residual ตามเวลา,
+    ปุ่ม **Compare predictors**
+  - Clustering: scatter + วงรีต่อ cluster, **แถบเลื่อนแบ่งช่วง criteria** ที่แบ่งช่วงให้อัตโนมัติตามค่าจริงของข้อมูล
+- **Health score** (หน้าที่ 2 ของแต่ละโมเดล) — คะแนน 0–100 ต่อแถว
+  - ตั้ง set points แบบบันได 100 / 80 / 0: Individual ใช้ L/H (ดึงค่าเริ่มต้นจาก alarm L/H ของ master data
+    ตอนสร้างโมเดล — ไม่เขียนกลับ master), Relation model กรอกจุด residual แต่ละฝั่ง, Clustering กรอก N เท่าของ SD
+  - ส่วน Checks บอกว่าค่าไหนผิดและเพราะอะไร, กราฟคะแนนซิงก์กับกราฟตั้งจุด
+  - แก้ set points แล้วคะแนนคำนวณใหม่ทันที ไม่ต้อง train ใหม่
+  - **Mark complete เขียนไฟล์โมเดลจริง** (`INDV_INFO` / `REL_INFO` + `.pkl` + `REL_DATASET.csv` / `CLUS_INFO`)
+    ไว้ในโฟลเดอร์ข้อมูลของแอป — หลังจาก 0.5.0 ที่ไม่มีทางเซฟไฟล์โมเดลจากหน้าจอเลย · ถ้าแก้ค่าหลังเซฟ จะมีแถบเตือนให้ Mark complete ใหม่
+- **Train / Test validation** — นอกจากช่วง Train ตั้ง **ช่วง Test** ได้ (ระดับ workspace หรือ Custom ต่อโมเดล)
+  แต่ละช่วงเลือกได้ว่า "Normal" หรือ "Known problem" + เวลาเกิดเหตุ → แอปให้คะแนน health ย้อนหลังบนช่วง Test
+  ด้วยโมเดลที่ train จากช่วง Train เท่านั้น แล้วสรุปผลเป็นสีเขียว/เหลือง (ข้อมูลประกอบ ไม่บล็อก) และบันทึกผลนี้ลงไฟล์โมเดลด้วย
+  · ช่วง Test ทับช่วง Train ได้ · มีคำเตือน (ไม่บล็อก) ถ้าข้อมูล train น้อยกว่า 30 วัน
+  · การให้คะแนนช่วง Test ของ Relation model ครั้งแรกอาจใช้เวลาราว 15 วินาที — ถ้าล้มมีปุ่ม Try again
+- **Running condition แบบใหม่**: การ์ด "Step 1" บนหน้า Build Model บอกสถานะชัดเจน (ยังไม่ตั้ง / ช่วงเวลาผิด / ตั้งแล้ว)
+  และหน้าตั้งค่า 2 คอลัมน์ "Which time" / "When the plant is running" — **แก้เป็นแบบร่างแล้วกด Apply ถึงมีผล**
+  (Cancel ทิ้งได้, ปิดตอนมีของค้างจะถามก่อน), แถบไทม์ไลน์ช่วงเวลา, ปุ่ม operator `> < ↔ =`,
+  แสดงจำนวนแถวที่จะใช้จริงก่อน Apply
+- **ตัวเลือก Failure Group ใหม่** (ปุ่ม 📁 ในแท็บ Sensors): แผงตาราง กลุ่ม × Individual/Relationship/Clustering,
+  ค้นหา, สลับ All/Assigned, เปลี่ยนชื่อ/ลบกลุ่มในแถว, สร้างกลุ่มใหม่, ปุ่ม ‹ › เดินไป sensor ถัดไป
+  และ **Undo 7 วินาที** เมื่อเอาโมเดลออก
+- **หน้า Import ใหม่ทั้งหมด**
+  - หน้าแรก "Get started": การ์ด Recent projects (ค้นหา, เปลี่ยนชื่อ, ลบโดยยืนยันในแถว), ปุ่ม New project (Ctrl+N)
+  - "Name your project": ชื่อไม่เกิน 80 ตัวอักษร, เตือนชื่อซ้ำ, คำอธิบาย, ตัวอย่างการ์ดที่จะเห็นใน Recent
+  - "Add your sensor data": progress ต่อไฟล์ระหว่างอ่าน, สรุป Rows / Sensors / Period / Interval / % empty,
+    แถบ Time coverage ต่อไฟล์, กล่อง "Fixed while reading", แผง **Tag names** (เดิมชื่อ Sensor mapping)
+    แล้วกด "Open Dashboard →" · เปิด project อื่นต้องกด "All projects" กลับหน้าแรกก่อน
+- **Dashboard หน้าตาใหม่** (ฟังก์ชันเดิมทุกอย่าง): หน่วยต่อท้ายชื่อ sensor, ตัวนับ "เลือก / ทั้งหมด" ต่อ component,
+  popup สี / Pin Y-axis / Alarm ไม่ถูกตัดขอบอีก, แท็บ Filter เป็นแถวเดียวต่อเงื่อนไข, แท็บ Highlights
+  แสดง By time | By value คู่กัน, แถบช่วงเวลาเป็นแถวเดียว, แท็บ Failure Groups โครงเดียวกับแท็บ Sensors,
+  หน้าต่าง Add Special Sensor ออกแบบใหม่
+- **Special sensor**: สร้างแล้วปักลงกราฟเฉพาะตัวใหม่ (ไม่ปัก source และไม่ล้างการเลือกเดิม), ตรวจชื่อซ้ำ/ชื่อต้องห้าม,
+  กันกดสร้างซ้ำ, คำอธิบายของ Sum (แถวที่ source ใดหายจะว่าง)
+- กันชื่อโมเดลซ้ำภายใน sensor เดียวกัน
+
+### 🐛 Bug fixes
+
+- **Failure Groups หายเอง (data loss)** — เกิดเมื่อ autosave ของ Dashboard อ่านไฟล์ workspace ไม่สำเร็จแล้วเขียน
+  สำเนาในหน่วยความจำทับไฟล์ · ตอนนี้เขียนไฟล์แบบ atomic (ไม่มีไฟล์ครึ่งๆ กลางๆ) และจะไม่เขียนทับถ้าอ่านไฟล์ไม่ได้
+  — ถ้ายังเกิด จะมีบรรทัดบันทึกใน `frontend-errors.log` ให้ส่งมาตรวจ
+- **ค่า Running condition / Training periods หาย** — ทั้งตอนเปิด-ปิด popup โดยไม่ได้แก้อะไร, ตอนปิด popup/หน้าต่าง
+  ขณะยังพิมพ์วันที่ค้างอยู่ และตอนปิดหน้าต่าง Build Model ก่อนบันทึกเสร็จ
+- **Special sensor ค่าไม่ตรง** หลังลบแล้วสร้างชื่อเดิมใหม่ หรือเปลี่ยนชื่อ (กราฟยังโชว์ค่าของตัวเก่า), ลำดับการคำนวณผิด
+  หลังแก้สูตรเมื่อเปิด workspace ใหม่, และ special sensor ของ project หนึ่งโผล่/ถูกแก้ตอนทำงานอีก project
+- เปลี่ยนชื่อ special sensor แล้วเงื่อนไข Custom running condition ของโมเดลยังอ้างชื่อเก่า
+- Dashboard แสดงจุดสถานะว่า Trained ทั้งที่โมเดลล้าสมัยแล้ว (เมื่อการแจ้งข้ามหน้าต่างหลุด)
+- ช่องวันที่ในแถบช่วงเวลาของ Dashboard แคบเกินจนตัวเลขกับไอคอนปฏิทินทับกัน
+
+### ⚡ Performance
+
+- Relation model ส่งข้อมูลกราฟแบบสุ่มตัวอย่างจำกัดจำนวนจุด (ไม่ส่งทุกแถวไปหน้าจออีก) — ใช้หน่วยความจำน้อยลงกับข้อมูลใหญ่
+- กราฟ Health score ใช้ข้อมูลแบบย่อที่เก็บค่าต่ำสุด/สูงสุดไว้ และเก็บผล fit ไว้ใช้ซ้ำ — แก้ set points ไม่ต้องรัน fit (~15 วินาที) ใหม่
+- อ่านไฟล์ CSV ไม่บล็อกหน้าจอและแสดงความคืบหน้าได้
+- หน้าต่างหลักเปิดเร็วขึ้น — ส่วนของหน้าต่าง Build Model / Add Sensor โหลดเมื่อเปิดใช้จริง
+
+### 🗑️ Removed
+
+- หน้า Build แบบเต็มหน้า, ปุ่ม "Open full view ↗" และปุ่ม Finish (ใช้ Workbench + Mark complete แทน)
+- ตัวเลือก "Group by Model Type" ในหน้า Build Model
+- แถบค้นหา/รายการ workspace ด้านซ้ายของขั้น Name / Add data ในหน้า Import (ใช้หน้าแรก "Get started" แทน)
+
+### 🧪 Tests
+
+- เทสต์ frontend **3067** ผ่าน (+1 expected-fail ที่รู้อยู่แล้ว), Rust lib **545** + integration ผ่านทั้งหมด;
+  `tsc --noEmit` และ `vite build` สะอาด — รวมชุด integration ข้ามหน้าต่างของ Workbench, Health score,
+  special sensor และ Train/Test
+
+### 📝 Docs
+
+- Manual test plan **321** ข้อ (id ที่ความหมายเปลี่ยนถูกตั้งใหม่ ข้อของหน้าที่ถูกลบถูกตัดออก)
+
+---
+
 ## [0.7.0] — 2026-09-24
 
 Minor release — Feature 4: หน้า Failure Group จัดใหม่เป็น 1 แถวต่อ sensor, ต้องตั้ง Running Condition ก่อน

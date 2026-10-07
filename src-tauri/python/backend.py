@@ -159,7 +159,15 @@ def preview_relationship(payload):
         raise ValueError(
             f"X has {X.shape[1]} columns but {len(features)} predictors named"
         )
-    X_extra = _extra_matrix(payload, X.shape[1])
+    # Best-effort (code review 2026-10-07): the Train/Test pre-warm must never
+    # fail the Train itself. A bad X_extra is dropped here, a failed prediction
+    # below just omits `predicted_extra`; Rust then predicts the test rows
+    # lazily with `predict_relationship` (and reports a warning if THAT fails).
+    try:
+        X_extra = _extra_matrix(payload, X.shape[1])
+    except Exception as e:  # noqa: BLE001 - deliberately broad, see above
+        print(f"preview_relationship: X_extra ignored: {e}", file=sys.stderr)
+        X_extra = None
 
     n_rows = X.shape[0]
     r2_per_step = []
@@ -194,8 +202,11 @@ def preview_relationship(payload):
     # Train/Test validation pre-warm: the SAME full-feature model (identical to
     # `predict_relationship`'s fit) predicts the test rows - RAW, like `predicted`.
     if X_extra is not None and last_model is not None:
-        extra = np.asarray(last_model.predict(X_extra), dtype=float)
-        out["predicted_extra"] = [_finite_or_none(v) for v in extra.tolist()]
+        try:
+            extra = np.asarray(last_model.predict(X_extra), dtype=float)
+            out["predicted_extra"] = [_finite_or_none(v) for v in extra.tolist()]
+        except Exception as e:  # noqa: BLE001 - pre-warm is best-effort (see above)
+            print(f"preview_relationship: predicting X_extra failed: {e}", file=sys.stderr)
     return out
 
 
