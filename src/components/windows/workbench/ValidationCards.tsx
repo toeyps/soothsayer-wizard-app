@@ -5,6 +5,8 @@ import { testIncludesTrainNote, testNumberFor } from '../../../utils/timePeriods
 import {
     SLOW_TEST_SCORING_TEXT,
     TEST_SCORING_FAILED_TEXT,
+    TEST_SCORING_OUTDATED_TEXT,
+    isTestScoringRetryable,
     testScoringFailure,
     testsChangedBannerText,
     trainDaysWarning,
@@ -99,15 +101,18 @@ export function TrainDaysNotice({ days }: { days: number | null | undefined }) {
 }
 
 /** Amber "Couldn't score the test periods — try again" (warning
- *  `test_scoring_failed`). Information only; `onRetry` asks for the preview again. */
+ *  `test_scoring_failed`), or without the retry for `test_scoring_outdated`
+ *  (an out-of-date engine cannot be helped by retrying). Information only;
+ *  `onRetry` asks for the preview again. */
 export function TestScoringFailedNotice({ issue, onRetry }: { issue: HealthIssue; onRetry?: () => void }) {
+    const retryable = isTestScoringRetryable(issue);
     return (
         <div className="vt-fail" role="status" data-testid="test-scoring-failed">
             <span>
-                <b>{TEST_SCORING_FAILED_TEXT}</b>
+                <b>{retryable ? TEST_SCORING_FAILED_TEXT : TEST_SCORING_OUTDATED_TEXT}</b>
                 {issue.message && <small>{issue.message}</small>}
             </span>
-            {onRetry && (
+            {onRetry && retryable && (
                 <button type="button" className="rcx-btn rcx-btn--sm" data-testid="test-scoring-retry" onClick={onRetry}>Try again</button>
             )}
         </div>

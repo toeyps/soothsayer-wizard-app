@@ -25,7 +25,7 @@
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::metrics::round_metric;
 
@@ -1130,6 +1130,50 @@ impl RelExtra {
     }
 }
 
+/// Compact identity of a set of dataset rows (ascending, unique): length,
+/// first / last row and a 64-bit hash of all of them. Used by the "last
+/// attempt failed" marker instead of the rows themselves (a test period can
+/// span millions of rows). A collision only means one remembered failure is
+/// reported for a different row set - the user can still "Try again".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowSetSig {
+    len: usize,
+    first: Option<u32>,
+    last: Option<u32>,
+    hash: u64,
+}
+
+impl RowSetSig {
+    pub fn of(rows: &[u32]) -> Self {
+        use std::hash::{Hash, Hasher};
+        // Fixed keys: deterministic within (and across) runs.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        rows.hash(&mut h);
+        RowSetSig {
+            len: rows.len(),
+            first: rows.first().copied(),
+            last: rows.last().copied(),
+            hash: h.finish(),
+        }
+    }
+}
+
+/// A remembered failed test-row prediction attempt of one cached fit.
+#[derive(Debug, Clone)]
+struct FailedAttempt {
+    key: String,
+    /// The rows that attempt had to predict.
+    rows: RowSetSig,
+    kind: crate::health_validation::TestScoringFailure,
+}
+
+/// Is `fit` (a handle taken from this cache earlier) the very fit `entry`?
+/// The `Weak` keeps the allocation alive, so its address cannot be reused by a
+/// later fit while the handle exists (no ABA).
+fn same_fit(entry: &Arc<RelFit>, fit: &Weak<RelFit>) -> bool {
+    std::ptr::eq(Arc::as_ptr(entry), fit.as_ptr())
+}
+
 /// Most-recent-first bounded cache of [`RelFit`]s. Lives INSIDE the session
 /// (`SessionData`), so a new `load_csv` drops it with the dataset it
 /// described; the caller-supplied key is `modelId + fingerprint`.
@@ -1139,13 +1183,14 @@ pub struct RelCache {
     entries: Vec<(String, Arc<RelFit>)>,
     /// Test-row predictions of the entries above (same key), see [`RelExtra`].
     extras: Vec<(String, Arc<RelExtra>)>,
-    /// Keys of cached fits whose LAST test-row prediction attempt failed
-    /// (sidecar error / timeout, predictions over the budget). While a key is
-    /// here `compute_health_preview` does not run the sidecar again for it; the
-    /// marker dies with the fit (re-train = [`RelCache::insert`], eviction,
-    /// [`RelCache::clear`]), on a successful [`RelCache::merge_extra`] and on an
-    /// explicit retry ([`RelCache::clear_extra_failed`]).
-    failed: Vec<String>,
+    /// Cached fits whose LAST test-row prediction attempt failed (sidecar error
+    /// / timeout, predictions over the budget), with the rows that attempt had
+    /// to predict. While the SAME rows are missing `compute_health_preview` does
+    /// not run the sidecar again; any other row set (test periods changed) runs
+    /// once. The marker dies with the fit (re-train = [`RelCache::insert`],
+    /// eviction, [`RelCache::clear`]), on a successful [`RelCache::merge_extra`]
+    /// and on an explicit retry ([`RelCache::clear_extra_failed`]).
+    failed: Vec<FailedAttempt>,
     max_entries: usize,
     max_bytes: usize,
     /// "Derived epoch": bumped by every [`RelCache::clear`] — i.e. by every
@@ -1215,7 +1260,7 @@ impl RelCache {
         }
         let (key, _) = self.entries.remove(0);
         self.extras.retain(|(k, _)| k != &key);
-        self.failed.retain(|k| k != &key);
+        self.failed.retain(|f| f.key != key);
     }
 
     /// Evict the least recently used entries (and their extras) until both
@@ -1230,38 +1275,71 @@ impl RelCache {
 
     /// Insert (replacing the same key), then evict the least recently used
     /// entries until both bounds hold. The newest entry is always kept, even
-    /// if it alone exceeds the byte budget.
-    pub fn insert(&mut self, key: String, fit: RelFit) {
+    /// if it alone exceeds the byte budget. Returns the stored fit: its
+    /// identity ([`Arc::downgrade`]) is what [`RelCache::merge_extra`] /
+    /// [`RelCache::mark_extra_failed`] require, so work started for THIS fit
+    /// never lands on a later fit under the same key.
+    pub fn insert(&mut self, key: String, fit: RelFit) -> Arc<RelFit> {
         self.entries.retain(|(k, _)| k != &key);
         // A new fit under the same key invalidates the old fit's test
         // predictions and its "last prediction attempt failed" marker.
         self.extras.retain(|(k, _)| k != &key);
-        self.failed.retain(|k| k != &key);
-        self.entries.push((key, Arc::new(fit)));
+        self.failed.retain(|f| f.key != key);
+        let fit = Arc::new(fit);
+        self.entries.push((key, fit.clone()));
         self.enforce_bounds();
+        fit
+    }
+
+    /// Is `fit` still the fit cached under `key` (not evicted, not replaced by
+    /// a re-train under the same key)?
+    pub fn is_current(&self, key: &str, fit: &Weak<RelFit>) -> bool {
+        self.entries.iter().any(|(k, f)| k == key && same_fit(f, fit))
     }
 
     /// Remember that the test-row prediction attempt for the cached fit `key`
-    /// failed. `false` (nothing marked) when no such fit is cached.
-    pub fn mark_extra_failed(&mut self, key: &str) -> bool {
-        if !self.entries.iter().any(|(k, _)| k == key) {
+    /// (exactly `fit`) failed for `rows` (the rows it had to predict). Replaces
+    /// an earlier marker of the key. `false` (nothing marked) when that fit is
+    /// no longer cached - evicted, or replaced by a re-train meanwhile.
+    pub fn mark_extra_failed(
+        &mut self,
+        key: &str,
+        fit: &Weak<RelFit>,
+        rows: &[u32],
+        kind: crate::health_validation::TestScoringFailure,
+    ) -> bool {
+        if !self.is_current(key, fit) {
             return false;
         }
-        if !self.failed.iter().any(|k| k == key) {
-            self.failed.push(key.to_string());
-        }
+        self.failed.retain(|f| f.key != key);
+        self.failed.push(FailedAttempt {
+            key: key.to_string(),
+            rows: RowSetSig::of(rows),
+            kind,
+        });
         true
     }
 
-    /// Did the last test-row prediction attempt for `key` fail (and nothing
-    /// cleared the marker since)?
-    pub fn extra_failed(&self, key: &str) -> bool {
-        self.failed.iter().any(|k| k == key)
+    /// Did the last test-row prediction attempt for `key` fail for exactly
+    /// these missing `rows` (and nothing cleared the marker since)? The kind of
+    /// that failure, so it is reported with the same wording. A different row
+    /// set - more rows (a test period added / lengthened) or fewer (one removed /
+    /// shortened, the natural fix for "too many rows") - is NOT remembered: it
+    /// gets one fresh attempt.
+    pub fn extra_failed(&self, key: &str, rows: &[u32]) -> Option<crate::health_validation::TestScoringFailure> {
+        let f = self.failed.iter().find(|f| f.key == key)?;
+        (f.rows == RowSetSig::of(rows)).then_some(f.kind)
+    }
+
+    /// Is there a failed marker for `key` at all (any rows)?
+    #[cfg(test)]
+    pub fn has_failed_marker(&self, key: &str) -> bool {
+        self.failed.iter().any(|f| f.key == key)
     }
 
     /// Forget a failed attempt (explicit retry by the user).
     pub fn clear_extra_failed(&mut self, key: &str) {
-        self.failed.retain(|k| k != key);
+        self.failed.retain(|f| f.key != key);
     }
 
     /// The test-row predictions stored for `key` (usable under a read lock).
@@ -1269,17 +1347,22 @@ impl RelCache {
         self.extras.iter().find(|(k, _)| k == key).map(|(_, e)| e.clone())
     }
 
-    /// Add predictions of the cached fit `key` for `rows`. `false` (nothing
-    /// stored, the previous predictions of that key kept) when there is no such
-    /// fit - e.g. it was evicted meanwhile - or when the fit plus ALL its
-    /// predictions cannot fit the byte budget even with every other entry
-    /// evicted.
+    /// Add predictions of the cached fit `key` - exactly `fit`, the fit they
+    /// were computed for - for `rows`. `false` (nothing stored, the previous
+    /// predictions of that key kept) when that fit is no longer cached (evicted
+    /// meanwhile, or replaced by a re-train under the same key: the predictions
+    /// belong to the OLD model) or when the fit plus ALL its predictions cannot
+    /// fit the byte budget even with every other entry evicted.
     ///
     /// The fit being merged is marked most recently used FIRST: the budget is
     /// then paid by the OTHER (older) fits, so a fit can never evict itself
     /// together with the predictions it was just given.
-    pub fn merge_extra(&mut self, key: &str, rows: &[u32], predicted: &[f64]) -> bool {
-        let Some(pos) = self.entries.iter().position(|(k, _)| k == key) else {
+    pub fn merge_extra(&mut self, key: &str, fit: &Weak<RelFit>, rows: &[u32], predicted: &[f64]) -> bool {
+        let Some(pos) = self
+            .entries
+            .iter()
+            .position(|(k, f)| k == key && same_fit(f, fit))
+        else {
             return false;
         };
         if rows.len() != predicted.len() {
@@ -1307,7 +1390,7 @@ impl RelCache {
             return false;
         }
         self.extras.push((key.to_string(), Arc::new(merged)));
-        self.failed.retain(|k| k != key);
+        self.failed.retain(|f| f.key != key);
         // Evict the least recently used OTHER fits (each with its own
         // predictions) until the budget holds (the merged key is last, so it is
         // never removed; the check above guarantees it fits once it is alone).
@@ -1992,16 +2075,22 @@ mod tests {
         }
     }
 
+    /// Identity of the fit currently cached under `key` (a dangling handle when
+    /// there is none, which matches no fit).
+    fn w(c: &RelCache, key: &str) -> Weak<RelFit> {
+        c.peek(key).map(|f| Arc::downgrade(&f)).unwrap_or_default()
+    }
+
     // ---------- test-row predictions (Train/Test validation) ----------
 
     #[test]
     fn extra_predictions_merge_sorted_new_values_win_and_only_for_a_cached_fit() {
         let mut c = RelCache::default();
-        assert!(!c.merge_extra("a", &[5], &[1.0]), "no fit under that key");
+        assert!(!c.merge_extra("a", &w(&c, "a"), &[5], &[1.0]), "no fit under that key");
         c.insert("a".into(), fit(10, "T"));
         assert!(c.peek_extra("a").is_none());
-        assert!(c.merge_extra("a", &[30, 10, 20], &[3.0, 1.0, 2.0]));
-        assert!(c.merge_extra("a", &[20, 40], &[2.5, f64::NAN]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &[30, 10, 20], &[3.0, 1.0, 2.0]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &[20, 40], &[2.5, f64::NAN]));
         let e = c.peek_extra("a").unwrap();
         assert_eq!(e.rows, vec![10, 20, 30, 40]);
         assert_eq!(e.get(10), Some(1.0));
@@ -2011,7 +2100,7 @@ mod tests {
         assert!(e.has(40), "... but the row is known (never asked for again)");
         assert!(!e.has(11) && e.get(11).is_none());
         // Length mismatch is refused.
-        assert!(!c.merge_extra("a", &[1, 2], &[1.0]));
+        assert!(!c.merge_extra("a", &w(&c, "a"), &[1, 2], &[1.0]));
     }
 
     #[test]
@@ -2019,7 +2108,7 @@ mod tests {
         let mut c = RelCache::default();
         c.insert("a".into(), fit(10, "T"));
         c.insert("b".into(), fit(10, "T"));
-        assert!(c.merge_extra("a", &[1], &[1.0]) && c.merge_extra("b", &[2], &[2.0]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0]) && c.merge_extra("b", &w(&c, "b"), &[2], &[2.0]));
         // A new fit under the same key invalidates the old predictions.
         c.insert("a".into(), fit(10, "T2"));
         assert!(c.peek_extra("a").is_none());
@@ -2036,7 +2125,7 @@ mod tests {
         let mut c = RelCache::new(2, usize::MAX);
         c.insert("a".into(), fit(10, "T"));
         c.insert("b".into(), fit(10, "T"));
-        assert!(c.merge_extra("a", &[1], &[1.0])); // also marks "a" most recently used
+        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0])); // also marks "a" most recently used
         assert!(c.get("b").is_some()); // so touch "b": "a" is the LRU again
         c.insert("c".into(), fit(10, "T")); // evicts "a"
         assert!(c.peek("a").is_none());
@@ -2054,13 +2143,13 @@ mod tests {
         let preds = vec![0.0; 100];
         // Fit + 1200 bytes of predictions cannot fit 400 bytes even alone: refused
         // honestly, the fit itself is untouched.
-        assert!(!c.merge_extra("b", &rows, &preds));
+        assert!(!c.merge_extra("b", &w(&c, "b"), &rows, &preds));
         assert!(c.peek("b").is_some());
         assert!(c.peek_extra("b").is_none());
         // A small one still fits (280 + 12 * 5 = 340 <= 400)...
-        assert!(c.merge_extra("b", &[1, 2, 3, 4, 5], &[0.0; 5]));
+        assert!(c.merge_extra("b", &w(&c, "b"), &[1, 2, 3, 4, 5], &[0.0; 5]));
         // ...and a later oversized merge keeps what was already stored.
-        assert!(!c.merge_extra("b", &rows, &preds));
+        assert!(!c.merge_extra("b", &w(&c, "b"), &rows, &preds));
         assert_eq!(c.peek_extra("b").unwrap().rows, vec![1, 2, 3, 4, 5]);
     }
 
@@ -2074,7 +2163,7 @@ mod tests {
         assert!(c.peek("a").is_some() && c.peek("b").is_some());
         // "a" is the least recently used entry: the old code evicted IT (and the
         // predictions it had just been given) instead of "b".
-        assert!(c.merge_extra("a", &[1, 2, 3], &[1.0, 2.0, 3.0]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &[1, 2, 3], &[1.0, 2.0, 3.0]));
         assert!(c.peek("a").is_some(), "the merged fit survives");
         assert_eq!(c.peek_extra("a").unwrap().rows, vec![1, 2, 3]);
         assert!(c.peek("b").is_none(), "the other fit paid the budget");
@@ -2084,7 +2173,7 @@ mod tests {
         c.insert("a".into(), fit(5, "T"));
         c.insert("b".into(), fit(5, "T"));
         c.insert("c".into(), fit(5, "T"));
-        assert!(c.merge_extra("a", &[1], &[1.0])); // 3 * 140 + 12 = 432 <= 440
+        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0])); // 3 * 140 + 12 = 432 <= 440
         c.insert("d".into(), fit(5, "T")); // over budget: evicts the LRU = "b", not "a"
         assert!(c.peek("a").is_some() && c.peek("b").is_none());
         assert!(c.peek_extra("a").is_some());
@@ -2096,7 +2185,7 @@ mod tests {
         let mut c = RelCache::new(8, budget);
         c.insert("a".into(), fit(5, "T"));
         let rows: Vec<u32> = (0..100).collect();
-        assert!(c.merge_extra("a", &rows, &[0.0; 100]));
+        assert!(c.merge_extra("a", &w(&c, "a"), &rows, &[0.0; 100]));
         c.insert("b".into(), fit(5, "T"));
         c.insert("c".into(), fit(5, "T"));
         assert!(c.peek("a").is_some() && c.peek("b").is_some() && c.peek("c").is_some());
@@ -2110,7 +2199,7 @@ mod tests {
         // The old loop removed only a's fit (1840, still over) and so evicted "b" too.
         let mut c = cache_with_heavy_lru(1700);
         let rows: Vec<u32> = (0..30).collect();
-        assert!(c.merge_extra("c", &rows, &[1.0; 30]));
+        assert!(c.merge_extra("c", &w(&c, "c"), &rows, &[1.0; 30]));
         assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
         assert!(c.peek("b").is_some(), "b must not pay for a's orphaned predictions");
         assert!(c.peek("c").is_some() && c.peek_extra("c").is_some());
@@ -2129,31 +2218,91 @@ mod tests {
 
     #[test]
     fn failed_marker_lives_with_its_fit_and_is_cleared_by_retrain_success_and_retry() {
+        use crate::health_validation::TestScoringFailure::{EngineError, OverBudget};
+        let rows = [7u32, 8, 9];
         let mut c = RelCache::new(2, usize::MAX);
-        assert!(!c.mark_extra_failed("a"), "no fit, nothing to mark");
-        assert!(!c.extra_failed("a"));
+        assert!(!c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError), "no fit, nothing to mark");
+        assert_eq!(c.extra_failed("a", &rows), None);
         c.insert("a".into(), fit(5, "T"));
-        assert!(c.mark_extra_failed("a") && c.mark_extra_failed("a"));
-        assert!(c.extra_failed("a"));
+        assert!(c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError));
+        assert!(c.mark_extra_failed("a", &w(&c, "a"), &rows, OverBudget), "re-marking replaces");
+        assert_eq!(c.extra_failed("a", &rows), Some(OverBudget), "the kind is remembered");
         // Explicit retry.
         c.clear_extra_failed("a");
-        assert!(!c.extra_failed("a"));
+        assert_eq!(c.extra_failed("a", &rows), None);
+        assert!(!c.has_failed_marker("a"));
         // Re-train (same key) clears it.
-        c.mark_extra_failed("a");
+        c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError);
         c.insert("a".into(), fit(5, "T2"));
-        assert!(!c.extra_failed("a"));
+        assert!(!c.has_failed_marker("a"));
         // A successful merge clears it.
-        c.mark_extra_failed("a");
-        assert!(c.merge_extra("a", &[1], &[1.0]));
-        assert!(!c.extra_failed("a"));
+        c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError);
+        assert!(c.merge_extra("a", &w(&c, "a"), &[1], &[1.0]));
+        assert!(!c.has_failed_marker("a"));
         // Eviction and clear() drop it (a later fit under the key starts clean).
-        c.mark_extra_failed("a");
+        c.mark_extra_failed("a", &w(&c, "a"), &rows, EngineError);
         c.insert("b".into(), fit(5, "T"));
         c.insert("c".into(), fit(5, "T")); // evicts "a" (max 2 entries)
-        assert!(c.peek("a").is_none() && !c.extra_failed("a"));
-        c.mark_extra_failed("b");
+        assert!(c.peek("a").is_none() && !c.has_failed_marker("a"));
+        c.mark_extra_failed("b", &w(&c, "b"), &rows, EngineError);
         c.clear();
-        assert!(!c.extra_failed("b"));
+        assert!(!c.has_failed_marker("b"));
+    }
+
+    #[test]
+    fn failed_marker_is_remembered_only_for_the_same_missing_rows() {
+        use crate::health_validation::TestScoringFailure::EngineError;
+        let mut c = RelCache::default();
+        c.insert("a".into(), fit(5, "T"));
+        // Every second row of 100..200 (gaps leave room for a same-shape variant).
+        let failed: Vec<u32> = (100..200).step_by(2).collect();
+        assert!(c.mark_extra_failed("a", &w(&c, "a"), &failed, EngineError));
+        // Same rows: remembered (set-point edits, re-renders never re-run).
+        assert_eq!(c.extra_failed("a", &failed), Some(EngineError));
+        // A test period added (superset): one fresh attempt.
+        let added: Vec<u32> = failed.iter().copied().chain(300..310).collect();
+        assert_eq!(c.extra_failed("a", &added), None);
+        // A period shortened / removed (subset - the fix for "too many rows"): fresh attempt.
+        assert_eq!(c.extra_failed("a", &failed[..25]), None);
+        // Same length, first and last row, one row inside different: a different set.
+        let mut other = failed.clone();
+        other[25] += 1; // 150 -> 151, still ascending and unique
+        assert_eq!((other.len(), other[0], other[49]), (failed.len(), failed[0], failed[49]));
+        assert_eq!(c.extra_failed("a", &other), None);
+        // The marker is still there for the original rows; markers are per key.
+        assert!(c.has_failed_marker("a"));
+        assert_eq!(c.extra_failed("b", &failed), None);
+    }
+
+    #[test]
+    fn row_set_signature_tells_sets_apart() {
+        assert_eq!(RowSetSig::of(&[1, 2, 3]), RowSetSig::of(&[1, 2, 3]));
+        assert_ne!(RowSetSig::of(&[1, 2, 3]), RowSetSig::of(&[1, 2]));
+        assert_ne!(RowSetSig::of(&[1, 2, 4]), RowSetSig::of(&[1, 3, 4]), "same len/first/last");
+        assert_ne!(RowSetSig::of(&[]), RowSetSig::of(&[0]));
+        assert_eq!(RowSetSig::of(&[]), RowSetSig::of(&[]));
+    }
+
+    #[test]
+    fn work_for_a_replaced_fit_never_lands_on_the_new_fit_under_the_same_key() {
+        use crate::health_validation::TestScoringFailure::EngineError;
+        let mut c = RelCache::default();
+        let old = Arc::downgrade(&c.insert("a".into(), fit(5, "OLD")));
+        assert!(c.is_current("a", &old));
+        // Re-train under the same key while the sidecar was predicting for "old".
+        let new = Arc::downgrade(&c.insert("a".into(), fit(5, "NEW")));
+        assert!(!c.is_current("a", &old) && c.is_current("a", &new));
+        // The old fit's predictions are refused...
+        assert!(!c.merge_extra("a", &old, &[1, 2], &[1.0, 2.0]));
+        assert!(c.peek_extra("a").is_none());
+        // ...and so is its failure.
+        assert!(!c.mark_extra_failed("a", &old, &[1, 2], EngineError));
+        assert!(!c.has_failed_marker("a"));
+        // The new fit's own work is accepted.
+        assert!(c.merge_extra("a", &new, &[1, 2], &[1.0, 2.0]));
+        assert!(c.mark_extra_failed("a", &new, &[3], EngineError));
+        // A dangling handle never matches a fit.
+        assert!(!c.is_current("a", &Weak::new()));
     }
 
     #[test]

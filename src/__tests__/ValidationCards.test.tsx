@@ -268,6 +268,23 @@ describe('review fixes 2026-10-07: T-numbers of the ORIGINAL list, test scoring 
         expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
     });
 
+    it('test_scoring_outdated: same amber notice in place of the tiles, but NO "Try again" (retrying cannot fix an out-of-date engine)', () => {
+        const outdated = { code: 'test_scoring_outdated', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine in this build is out of date - reinstall or update the app.' };
+        render(<TestResultsCard data={{ ...unscored(), validation: [outdated] }} scoreReady onRetry={() => {}} />);
+        const n = screen.getByTestId('test-scoring-failed');
+        expect(n.textContent).toContain("Couldn't score the test periods");
+        expect(n.textContent).not.toContain('try again');
+        expect(n.textContent).toContain('out of date');
+        expect(screen.queryByTestId('test-scoring-retry')).toBeNull();
+        expect(screen.queryByTestId('test-result-1')).toBeNull();
+    });
+
+    it('over budget: Rust\'s own reason (too many rows) is shown under the headline', () => {
+        const overBudget = { ...failedIssue, message: 'These test periods have too many rows to score in memory - shorten them or remove one.' };
+        render(<TestResultsCard data={{ ...unscored(), validation: [overBudget] }} scoreReady />);
+        expect(screen.getByTestId('test-scoring-failed').textContent).toContain('too many rows to score in memory');
+    });
+
     it('SlowScoringNotice: the "up to ~15 s" hint only when asked for', () => {
         render(<SlowScoringNotice show />);
         expect(screen.getByTestId('slow-test-scoring').textContent).toBe(SLOW_TEST_SCORING_TEXT);

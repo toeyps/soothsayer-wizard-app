@@ -549,17 +549,26 @@ impl SessionData {
 /// (`stamp`, captured under the same read lock that copied the columns). A
 /// `load_csv`, or a special sensor recomputed / removed, while the sidecar ran
 /// makes this a no-op that returns `false` (the Train response then carries
-/// `cached: false` and the page asks the user to train again).
+/// `cached: false` and the page asks the user to train again). (Tests; the app
+/// uses [`store_rel_fit_ex`].)
+#[cfg(test)]
 fn store_rel_fit(state: &AppState, stamp: SessionStamp, key: String, fit: health_score::RelFit) -> bool {
-    let Ok(mut lock) = state.0.write() else {
-        return false;
-    };
+    store_rel_fit_ex(state, stamp, key, fit).is_some()
+}
+
+/// [`store_rel_fit`] returning the stored fit's identity (`None` = not
+/// stored), which work started for this very fit (the Train pre-warm of its
+/// test-row predictions) must present to land on it.
+fn store_rel_fit_ex(
+    state: &AppState,
+    stamp: SessionStamp,
+    key: String,
+    fit: health_score::RelFit,
+) -> Option<std::sync::Weak<health_score::RelFit>> {
+    let mut lock = state.0.write().ok()?;
     match lock.as_mut() {
-        Some(s) if s.stamp() == stamp => {
-            s.rel_cache.insert(key, fit);
-            true
-        }
-        _ => false,
+        Some(s) if s.stamp() == stamp => Some(std::sync::Arc::downgrade(&s.rel_cache.insert(key, fit))),
+        _ => None,
     }
 }
 
@@ -1732,11 +1741,13 @@ fn finish_relationship_response_ex(
                             health_preview::relationship_preview(&s.data, &fit, &req).ok()
                         })
                 };
-                let cached = store_rel_fit(state, stamp, key.clone(), fit);
-                // Pre-warm: the test-row predictions of this very fit. Over the
-                // cache budget / session changed = not stored (lazy fallback).
-                if let (true, Some(preds)) = (cached, predicted_extra.as_deref()) {
-                    merge_rel_extra(state, stamp, &key, extra_rows, preds);
+                let stored = store_rel_fit_ex(state, stamp, key.clone(), fit);
+                let cached = stored.is_some();
+                // Pre-warm: the test-row predictions of this very fit (never of
+                // a later same-key fit). Over the cache budget / session or fit
+                // changed = not stored (lazy fallback).
+                if let (Some(handle), Some(preds)) = (stored.as_ref(), predicted_extra.as_deref()) {
+                    merge_rel_extra(state, stamp, &key, handle, extra_rows, preds);
                 }
                 if let Some(obj) = parsed.as_object_mut() {
                     obj.insert("cache_key".into(), serde_json::Value::String(key));
@@ -5340,6 +5351,7 @@ async fn compute_health_preview(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<health_preview::HealthPreview, String> {
+    // `reason` arrives already bounded (`truncate_log_detail` in score_test_rows).
     let log = |reason: &str| {
         if let Ok(path) = error_log_path(&app) {
             append_error_line(
@@ -5363,7 +5375,7 @@ async fn compute_health_preview(
         &log,
     )
     .await?;
-    health_preview_with_outcome(&state, &request, scoring_error.as_deref())
+    health_preview_with_outcome(&state, &request, scoring_error.map(|e| e.kind))
 }
 
 /// Set for the rest of the process once a sidecar run answered
@@ -5373,26 +5385,65 @@ async fn compute_health_preview(
 /// updated install) can fix it.
 static SIDECAR_KNOWN_OUTDATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Stand-in reason for "the last attempt for this fit failed and nobody asked to
-/// retry": never shown (the user gets the generic `test_scoring_failed` text).
+/// Stand-in reason for "the last attempt for this fit and these rows failed and
+/// nobody asked to retry": never shown (the user gets the wording of the
+/// remembered failure's kind).
 const TEST_SCORING_PREVIOUSLY_FAILED: &str =
-    "the last prediction attempt for this fit failed (not retried until a re-train or an explicit retry)";
+    "the last prediction attempt for this fit and these test rows failed (not retried until the \
+     test rows change, a re-train or an explicit retry)";
+
+/// Why the test periods of a Relationship preview cannot be scored: the kind
+/// picks the user-facing warning, `reason` is the raw detail (logged, never
+/// shown).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TestScoringError {
+    kind: health_validation::TestScoringFailure,
+    reason: String,
+}
+
+impl TestScoringError {
+    fn new(kind: health_validation::TestScoringFailure, reason: impl Into<String>) -> Self {
+        TestScoringError { kind, reason: reason.into() }
+    }
+}
+
+/// Longest detail [`score_test_rows`] writes to the permanent error log: a
+/// sidecar parse error carries the engine's WHOLE stdout (every predicted
+/// value - megabytes) and a crash a full traceback.
+const ERROR_LOG_DETAIL_MAX: usize = 4 * 1024;
+
+/// `s` cut to at most `max` bytes (on a char boundary) plus
+/// "… (N bytes truncated)"; unchanged when it already fits.
+fn truncate_log_detail(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    if s.len() <= max {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!("{}… ({} bytes truncated)", &s[..end], s.len() - end))
+}
 
 /// The test-row prediction step of [`compute_health_preview`], generic over the
 /// sidecar run (`run`) and the error log (`log`) so it is testable without an
 /// `AppHandle`. `Ok(None)` = nothing to do or the predictions are now cached;
-/// `Ok(Some(reason))` = the test periods cannot be scored (the caller degrades
-/// the answer); `Err` = the request itself is refused (`STALE_SESSION`, a fit
-/// that changed meanwhile = `NOT_FITTED`).
+/// `Ok(Some(error))` = the test periods cannot be scored (the caller degrades
+/// the answer with the warning of `error.kind`); `Err` = the request itself is
+/// refused (`STALE_SESSION`, the data changed meanwhile = `NOT_FITTED`).
 ///
 /// * Planning runs WITHOUT `serial`: a preview whose rows are all cached (every
-///   set-point edit) or whose fit is known to fail never waits for another
-///   model's ~15 s prediction. Only when rows are missing it takes `serial`
-///   and plans AGAIN under it (another caller may have filled them meanwhile).
-/// * A failure is logged (raw reason) and remembered: `SIDECAR_OUTDATED` in
+///   set-point edit) or whose fit + rows are known to fail never waits for
+///   another model's ~15 s prediction. Only when rows are missing it takes
+///   `serial` and plans AGAIN under it (another caller may have filled them).
+/// * A failure is logged (raw reason, at most [`ERROR_LOG_DETAIL_MAX`] bytes,
+///   written after `serial` is released) and remembered: `SIDECAR_OUTDATED` in
 ///   `outdated` (process lifetime), anything else as the fit's failed marker
-///   in the cache (cleared by re-train, eviction, a dataset change or
-///   `retry_test_scoring`).
+///   for exactly the rows of that attempt (cleared by re-train, eviction, a
+///   dataset change or `retry_test_scoring`; a different set of missing rows
+///   gets one fresh attempt).
+/// * Predictions and failures only ever land on the fit they were computed
+///   for: a re-train under the same key meanwhile discards them.
 async fn score_test_rows<R, Fut>(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
@@ -5400,11 +5451,12 @@ async fn score_test_rows<R, Fut>(
     outdated: &std::sync::atomic::AtomicBool,
     run: R,
     log: &(dyn Fn(&str) + Sync),
-) -> Result<Option<String>, String>
+) -> Result<Option<TestScoringError>, String>
 where
     R: FnOnce(RelExtraJob) -> Fut,
     Fut: std::future::Future<Output = (RelExtraJob, Result<Vec<f64>, String>)>,
 {
+    use health_validation::TestScoringFailure as Kind;
     use std::sync::atomic::Ordering;
     if request.kind != "relationship" || !request.has_test_periods() {
         return Ok(None);
@@ -5415,45 +5467,88 @@ where
     // 1. Without the lock, and without building the job.
     match plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), false)? {
         ExtraPlan::Nothing => return Ok(None),
-        ExtraPlan::Failed(reason) => return Ok(Some(reason)),
+        ExtraPlan::Failed(e) => return Ok(Some(e)),
         ExtraPlan::Needed(_) => {}
     }
     // 2. One prediction run at a time; re-plan under the lock.
-    let _serial = serial.lock().await;
-    let job = match plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), true)? {
-        ExtraPlan::Nothing => return Ok(None),
-        ExtraPlan::Failed(reason) => return Ok(Some(reason)),
-        ExtraPlan::Needed(Some(job)) => job,
-        ExtraPlan::Needed(None) => return Ok(None), // unreachable: built on request
-    };
-    let (job, result) = run(job).await;
-    let failure = match result {
-        Ok(predicted) => match apply_rel_extra(state, &job, &predicted)? {
-            true => None,
-            false => Some(format!(
-                "the predictions of {} test rows do not fit the model cache",
-                job.rows.len()
-            )),
-        },
-        Err(e) => Some(e),
-    };
-    if let Some(reason) = &failure {
-        log(&format!("model {}: {reason}", job.key));
-        if reason.starts_with("SIDECAR_OUTDATED") {
-            outdated.store(true, Ordering::SeqCst);
-        } else {
-            mark_rel_extra_failed(state, job.stamp, &job.key);
+    let serial_guard = serial.lock().await;
+    let (outcome, to_log) = 'locked: {
+        let job = match plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), true)? {
+            ExtraPlan::Nothing => return Ok(None),
+            ExtraPlan::Failed(e) => return Ok(Some(e)),
+            ExtraPlan::Needed(Some(job)) => job,
+            ExtraPlan::Needed(None) => {
+                // `build_job = true` always builds the job: a bug if reached.
+                if cfg!(debug_assertions) {
+                    unreachable!("plan_rel_extra_ex(build_job = true) returned no job");
+                }
+                let e = TestScoringError::new(
+                    Kind::EngineError,
+                    "internal error: the prediction step was planned without a job",
+                );
+                let line = e.reason.clone();
+                break 'locked (Some(e), Some(line));
+            }
+        };
+        let (job, result) = run(job).await;
+        let failure = match result {
+            Ok(predicted) => match apply_rel_extra(state, &job, &predicted)? {
+                ExtraStored::Stored => None,
+                ExtraStored::OverBudget => Some(TestScoringError::new(
+                    Kind::OverBudget,
+                    format!("the predictions of {} test rows do not fit the model cache", job.rows.len()),
+                )),
+                ExtraStored::Superseded => {
+                    // Trained again under the same key while this ran: the
+                    // predictions belong to the old model and were dropped.
+                    // Nothing failed - answer for the NEW fit (its Train may
+                    // have pre-warmed the rows); never mark it.
+                    let again = plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), false)?;
+                    break 'locked (
+                        match again {
+                            ExtraPlan::Nothing => None,
+                            ExtraPlan::Failed(e) => Some(e),
+                            ExtraPlan::Needed(_) => Some(TestScoringError::new(
+                                Kind::EngineError,
+                                "the model was trained again while its test periods were being predicted",
+                            )),
+                        },
+                        None,
+                    );
+                }
+                // `apply_rel_extra` already answers this with `Err(NOT_FITTED)`.
+                ExtraStored::FitGone => return Err(health_preview::not_fitted(REL_EXTRA_FIT_GONE)),
+            },
+            Err(e) if e.starts_with("SIDECAR_OUTDATED") => Some(TestScoringError::new(Kind::Outdated, e)),
+            Err(e) => Some(TestScoringError::new(Kind::EngineError, e)),
+        };
+        let mut line = None;
+        if let Some(f) = &failure {
+            line = Some(format!("model {}: {}", job.key, f.reason));
+            // Remembered while `serial` is still held, so the next caller in
+            // line re-plans against it instead of running the same job again.
+            if f.kind == Kind::Outdated {
+                outdated.store(true, Ordering::SeqCst);
+            } else {
+                mark_rel_extra_failed(state, &job, f.kind);
+            }
         }
+        (failure, line)
+    };
+    drop(serial_guard);
+    if let Some(line) = to_log {
+        log(&truncate_log_detail(&line, ERROR_LOG_DETAIL_MAX));
     }
-    Ok(failure)
+    Ok(outcome)
 }
 
-/// Remember a failed prediction attempt for the fit `key` - only on the same
-/// data (`stamp`), so an attempt that straddled a reload marks nothing.
-fn mark_rel_extra_failed(state: &AppState, stamp: SessionStamp, key: &str) {
+/// Remember a failed prediction attempt of `job` (its fit, its rows) - only on
+/// the same data (`stamp`) and the very same fit, so an attempt that straddled
+/// a reload or a same-key re-train marks nothing.
+fn mark_rel_extra_failed(state: &AppState, job: &RelExtraJob, kind: health_validation::TestScoringFailure) {
     if let Ok(mut lock) = state.0.write() {
-        if let Some(s) = lock.as_mut().filter(|s| s.stamp() == stamp) {
-            s.rel_cache.mark_extra_failed(key);
+        if let Some(s) = lock.as_mut().filter(|s| s.stamp() == job.stamp) {
+            s.rel_cache.mark_extra_failed(&job.key, &job.fit, &job.rows, kind);
         }
     }
 }
@@ -5471,16 +5566,18 @@ fn clear_rel_extra_failed(state: &AppState, request: &health_preview::HealthPrev
 }
 
 /// [`health_preview_in`] plus the degraded answer for a failed test-row
-/// prediction step: `scoring_error` = why it failed (never shown verbatim - the
-/// user gets the `test_scoring_failed` warning; only the `SIDECAR_OUTDATED`
-/// prefix changes its wording). The train part of the answer is untouched.
+/// prediction step: `scoring_error` = what kind of failure it was (the raw
+/// reason is never shown - the user gets the warning of that kind:
+/// `test_scoring_outdated` for an outdated engine, `test_scoring_failed`
+/// otherwise, see [`health_validation::test_scoring_issue`]). The train part of
+/// the answer is untouched.
 fn health_preview_with_outcome(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
-    scoring_error: Option<&str>,
+    scoring_error: Option<health_validation::TestScoringFailure>,
 ) -> Result<health_preview::HealthPreview, String> {
     let mut preview = health_preview_in(state, request)?;
-    if let Some(err) = scoring_error {
+    if let Some(kind) = scoring_error {
         if let Some(tv) = preview.test_validation.as_mut() {
             let (counts, interval) = match rel_test_input_counts(state, request) {
                 Some((c, iv)) => (Some(c), iv),
@@ -5488,9 +5585,7 @@ fn health_preview_with_outcome(
             };
             health_validation::mark_unscored(tv, counts.as_deref(), interval);
         }
-        preview.validation.push(health_validation::test_scoring_failed_issue(
-            err.starts_with("SIDECAR_OUTDATED"),
-        ));
+        preview.validation.push(health_validation::test_scoring_issue(kind));
     }
     Ok(preview)
 }
@@ -5506,6 +5601,11 @@ struct RelExtraJob {
     /// The dataset / special-sensor state the rows were read from; the result is
     /// only stored if it is still current.
     stamp: SessionStamp,
+    /// The very fit this job predicts for: a re-train under the same `key`
+    /// while the sidecar runs replaces it, and then neither the predictions nor
+    /// a failure of this job may land on the new fit. (A `Weak`: identity
+    /// without keeping the old fit's columns alive.)
+    fit: std::sync::Weak<health_score::RelFit>,
     predictors: Vec<String>,
     target: String,
     lambda: f64,
@@ -5525,9 +5625,10 @@ enum ExtraPlan {
     /// target / predictors, bad columns).
     Nothing,
     /// Rows are missing but must not be predicted now: the sidecar is known to
-    /// be outdated (`SIDECAR_OUTDATED` reason) or this fit's last attempt failed
-    /// ([`TEST_SCORING_PREVIOUSLY_FAILED`]).
-    Failed(String),
+    /// be outdated (kind `Outdated`, `SIDECAR_OUTDATED` reason) or this fit's
+    /// last attempt failed for exactly these rows (the remembered kind,
+    /// [`TEST_SCORING_PREVIOUSLY_FAILED`]).
+    Failed(TestScoringError),
     /// Rows are missing; the job when it was asked for (`build_job`).
     Needed(Option<RelExtraJob>),
 }
@@ -5581,10 +5682,13 @@ fn plan_rel_extra_ex(
         return Ok(ExtraPlan::Nothing);
     }
     if sidecar_outdated {
-        return Ok(ExtraPlan::Failed(SIDECAR_OUTDATED.to_string()));
+        return Ok(ExtraPlan::Failed(TestScoringError::new(
+            health_validation::TestScoringFailure::Outdated,
+            SIDECAR_OUTDATED,
+        )));
     }
-    if session.rel_cache.extra_failed(key) {
-        return Ok(ExtraPlan::Failed(TEST_SCORING_PREVIOUSLY_FAILED.to_string()));
+    if let Some(kind) = session.rel_cache.extra_failed(key, &rows) {
+        return Ok(ExtraPlan::Failed(TestScoringError::new(kind, TEST_SCORING_PREVIOUSLY_FAILED)));
     }
     if !build_job {
         return Ok(ExtraPlan::Needed(None));
@@ -5596,6 +5700,7 @@ fn plan_rel_extra_ex(
     Ok(ExtraPlan::Needed(Some(RelExtraJob {
         key: key.to_string(),
         stamp: session.stamp(),
+        fit: std::sync::Arc::downgrade(&fit),
         predictors: fit.predictors.clone(),
         target: fit.target.clone(),
         lambda: fit.lambda,
@@ -5652,16 +5757,20 @@ enum ExtraStored {
     Stored,
     /// The dataset / special sensors changed, or the fit left the cache.
     FitGone,
+    /// The key now holds ANOTHER fit (trained again under the same key while
+    /// the predictions were computed): they belong to the old model, dropped.
+    Superseded,
     /// The fit is still cached but fit + predictions exceed the cache budget.
     OverBudget,
 }
 
-/// Store test-row predictions under `key` - only into the same fit of the same
-/// data (`stamp`).
+/// Store test-row predictions under `key` - only into the very fit (`fit`) they
+/// were computed for, on the same data (`stamp`).
 fn merge_rel_extra(
     state: &AppState,
     stamp: SessionStamp,
     key: &str,
+    fit: &std::sync::Weak<health_score::RelFit>,
     rows: &[u32],
     predicted: &[f64],
 ) -> ExtraStored {
@@ -5670,10 +5779,12 @@ fn merge_rel_extra(
     };
     match lock.as_mut() {
         Some(s) if s.stamp() == stamp => {
-            if s.rel_cache.merge_extra(key, rows, predicted) {
+            if s.rel_cache.merge_extra(key, fit, rows, predicted) {
                 ExtraStored::Stored
-            } else if s.rel_cache.peek(key).is_some() {
+            } else if s.rel_cache.is_current(key, fit) {
                 ExtraStored::OverBudget
+            } else if s.rel_cache.peek(key).is_some() {
+                ExtraStored::Superseded
             } else {
                 ExtraStored::FitGone
             }
@@ -5682,18 +5793,20 @@ fn merge_rel_extra(
     }
 }
 
-/// Store the predictions - only into the same fit of the same data.
-/// `Ok(true)` = stored; `Ok(false)` = the fit is still there but its
-/// predictions do not fit the cache budget (the caller degrades to "test
-/// periods could not be scored"); `Err(NOT_FITTED)` = the data or the model
-/// changed meanwhile.
-fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Result<bool, String> {
-    match merge_rel_extra(state, job.stamp, &job.key, &job.rows, predicted) {
-        ExtraStored::Stored => Ok(true),
-        ExtraStored::OverBudget => Ok(false),
-        ExtraStored::FitGone => Err(health_preview::not_fitted(
-            "the data or the model changed while the test periods were being predicted - train the model again",
-        )),
+/// `NOT_FITTED` detail when the data or the fit left while predicting.
+const REL_EXTRA_FIT_GONE: &str =
+    "the data or the model changed while the test periods were being predicted - train the model again";
+
+/// Store the predictions of `job` - only into the job's fit on the same data.
+/// `Ok(Stored)`; `Ok(OverBudget)` = the fit is still there but its predictions
+/// do not fit the cache budget (the caller degrades to "test periods could not
+/// be scored"); `Ok(Superseded)` = the model was trained again under the same
+/// key meanwhile (nothing stored); `Err(NOT_FITTED)` = the data changed or the
+/// fit left the cache. Never `Ok(FitGone)`.
+fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Result<ExtraStored, String> {
+    match merge_rel_extra(state, job.stamp, &job.key, &job.fit, &job.rows, predicted) {
+        ExtraStored::FitGone => Err(health_preview::not_fitted(REL_EXTRA_FIT_GONE)),
+        other => Ok(other),
     }
 }
 

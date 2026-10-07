@@ -19,7 +19,7 @@ use crate::health_preview::{
     HealthPreviewRequest, HealthSeries, HealthStats,
 };
 use crate::health_score::{RelExtra, RelFit, SetPointsArg};
-use crate::health_validation::{TestPeriodArg, TestValidation};
+use crate::health_validation::{TestPeriodArg, TestScoringFailure, TestValidation};
 use crate::model_export::{export_sync, ModelFilesRequest};
 use crate::{
     apply_rel_extra, health_preview_in, parse_predicted_extra, plan_export, plan_rel_extra,
@@ -864,7 +864,8 @@ fn failed_prediction_gives_the_train_preview_with_unscored_tests_and_one_warning
     let req = rel_req(tests);
     // What a sidecar crash looks like to the caller.
     let crash = parse_predicted_extra(&serde_json::json!({ "error": "boom: C:\\build\\x.py line 3" }), 1).unwrap_err();
-    let p = crate::health_preview_with_outcome(&state, &req, Some(&crash)).unwrap();
+    assert!(crash.contains("boom"), "the raw reason only goes to the log");
+    let p = crate::health_preview_with_outcome(&state, &req, Some(TestScoringFailure::EngineError)).unwrap();
     // Train part intact: the very same answer as without test periods.
     let plain = health_preview_in(&state, &rel_req(vec![])).unwrap();
     let (a, b) = (serde_json::to_value(&plain).unwrap(), serde_json::to_value(&p).unwrap());
@@ -905,9 +906,13 @@ fn outdated_sidecar_gets_its_own_user_facing_wording() {
     for dev in ["build_sidecar", ".sh", "src-tauri", "Python", "sidecar"] {
         assert!(!old.contains(dev), "no developer wording ({dev}) in: {old}");
     }
-    let p = crate::health_preview_with_outcome(&state, &rel_req(vec![tp("normal", 288, 575, None)]), Some(&old)).unwrap();
-    let w = p.validation.iter().find(|i| i.code == "test_scoring_failed").unwrap();
+    let p = crate::health_preview_with_outcome(&state, &rel_req(vec![tp("normal", 288, 575, None)]), Some(TestScoringFailure::Outdated)).unwrap();
+    // Its own code (review fix 3, 2026-10-07): a retry cannot help, so the
+    // frontend shows no "Try again" for it.
+    let w = p.validation.iter().find(|i| i.code == "test_scoring_outdated").unwrap();
     assert!(w.message.contains("out of date"));
+    assert_eq!((w.severity, w.field.as_str()), (crate::health_score::Severity::Warning, "test_periods"));
+    assert!(p.validation.iter().all(|i| i.code != "test_scoring_failed"), "never both codes");
     assert!(tv(&p).tests.iter().all(|t| t.scored == 0));
     // An Individual preview has no prediction step and is never touched.
     let d = ind_data(0, 0..0);
@@ -927,11 +932,13 @@ fn predictions_over_the_cache_budget_are_reported_not_stored_and_not_an_error() 
     let req = rel_req(vec![tp("normal", 288, 431, None)]);
     let job = plan_rel_extra(&state, &req).unwrap().unwrap();
     let preds: Vec<f64> = job.rows.iter().map(|&r| 2.0 * d.columns[1][r as usize]).collect();
-    assert_eq!(apply_rel_extra(&state, &job, &preds), Ok(false), "still fitted, but no room");
+    assert_eq!(apply_rel_extra(&state, &job, &preds), Ok(crate::ExtraStored::OverBudget), "still fitted, but no room");
     assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.peek("m1::fp").is_some());
-    // The caller turns that into the degraded answer.
-    let p = crate::health_preview_with_outcome(&state, &req, Some("the predictions do not fit the model cache")).unwrap();
-    assert!(p.validation.iter().any(|i| i.code == "test_scoring_failed"));
+    // The caller turns that into the degraded answer, with its own wording.
+    let p = crate::health_preview_with_outcome(&state, &req, Some(TestScoringFailure::OverBudget)).unwrap();
+    let w = p.validation.iter().find(|i| i.code == "test_scoring_failed").unwrap();
+    assert!(w.message.contains("too many rows to score in memory"), "{}", w.message);
+    assert!(!w.message.contains("did not answer"));
     // A fit that is really gone is still NOT_FITTED.
     state.0.write().unwrap().as_mut().unwrap().rel_cache.clear();
     assert!(apply_rel_extra(&state, &job, &preds).unwrap_err().starts_with("NOT_FITTED"));
@@ -943,7 +950,7 @@ fn unscored_tests_still_report_their_rows_and_days() {
     // prediction after a failure; it used to report 0 rows / 0 days.
     let (state, _d) = rel_state();
     let req = rel_req(vec![tp("normal", 288, 575, None), tp("normal", 144, 431, None)]);
-    let p = crate::health_preview_with_outcome(&state, &req, Some("boom")).unwrap();
+    let p = crate::health_preview_with_outcome(&state, &req, Some(TestScoringFailure::EngineError)).unwrap();
     let t = &tv(&p).tests;
     assert_eq!((t[0].rows, t[0].days, t[0].scored), (288, 2.0, 0));
     assert_eq!((t[1].rows, t[1].days, t[1].train_rows, t[1].scored), (288, 2.0, 144, 0));
@@ -951,7 +958,7 @@ fn unscored_tests_still_report_their_rows_and_days() {
 
 // ---------- score_test_rows: lock scope, remembered failures, retry ----------
 
-use crate::{score_test_rows, ExtraPlan, RelExtraJob};
+use crate::{score_test_rows, ExtraPlan, RelExtraJob, TestScoringError};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
@@ -1021,7 +1028,7 @@ fn the_planning_split_builds_the_job_only_when_asked() {
     }
     // Outdated sidecar: rows are missing, but nothing is to be run.
     match crate::plan_rel_extra_ex(&state, &req, true, true).unwrap() {
-        ExtraPlan::Failed(r) => assert!(r.starts_with("SIDECAR_OUTDATED")),
+        ExtraPlan::Failed(e) => assert!(e.reason.starts_with("SIDECAR_OUTDATED") && e.kind == TestScoringFailure::Outdated),
         other => panic!("{other:?}"),
     }
     // Nothing missing -> Nothing, whatever the flags.
@@ -1044,22 +1051,23 @@ fn a_failed_attempt_is_logged_remembered_and_retried_only_on_request() {
 
     // 1. The sidecar fails: the raw reason is returned and logged, the fit is marked.
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom at C:\\x.py", &calls), &log));
-    assert_eq!(r, Ok(Some("boom at C:\\x.py".to_string())));
+    assert_eq!(r, Ok(Some(TestScoringError::new(TestScoringFailure::EngineError, "boom at C:\\x.py"))));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     {
         let l = logged.lock().unwrap();
         assert_eq!(l.len(), 1);
         assert!(l[0].contains("boom at C:\\x.py") && l[0].contains("m1::fp"), "{l:?}");
     }
-    assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.extra_failed("m1::fp"));
+    assert!(has_marker(&state, "m1::fp"));
     assert!(!outdated.load(Ordering::SeqCst));
 
     // 2. The next (debounced) preview does NOT run the sidecar again.
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("again", &calls), &log)).unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 1, "no second sidecar run");
     assert_eq!(logged.lock().unwrap().len(), 1, "nothing new to log");
-    let reason = r.expect("still reported as not scored");
-    let p = crate::health_preview_with_outcome(&state, &req, Some(&reason)).unwrap();
+    let e = r.expect("still reported as not scored");
+    assert_eq!(e.kind, TestScoringFailure::EngineError, "the remembered kind");
+    let p = crate::health_preview_with_outcome(&state, &req, Some(e.kind)).unwrap();
     let w = p.validation.iter().find(|i| i.code == "test_scoring_failed").unwrap();
     assert!(!w.message.contains("out of date"), "generic wording: {}", w.message);
     assert!(tv(&p).tests.iter().all(|t| t.scored == 0));
@@ -1069,7 +1077,7 @@ fn a_failed_attempt_is_logged_remembered_and_retried_only_on_request() {
     retry.retry_test_scoring = true;
     assert_eq!(block_on(score_test_rows(&state, &retry, &serial, &outdated, good_runner(&d, &calls), &log)), Ok(None));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert!(!state.0.read().unwrap().as_ref().unwrap().rel_cache.extra_failed("m1::fp"));
+    assert!(!has_marker(&state, "m1::fp"));
     let p = crate::health_preview_with_outcome(&state, &req, None).unwrap();
     assert_eq!(tv(&p).tests[0].scored, 144);
 }
@@ -1100,9 +1108,10 @@ fn an_outdated_sidecar_is_remembered_for_the_process_not_per_fit() {
     let req = rel_req(vec![tp("normal", 288, 431, None)]);
     let old = parse_predicted_extra(&serde_json::json!({ "error": "Unknown action: 'predict_relationship'" }), 1).unwrap_err();
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner(&old, &calls), &|_| {})).unwrap();
-    assert!(r.unwrap().starts_with("SIDECAR_OUTDATED"));
+    let e = r.unwrap();
+    assert!(e.reason.starts_with("SIDECAR_OUTDATED") && e.kind == TestScoringFailure::Outdated);
     assert!(outdated.load(Ordering::SeqCst));
-    assert!(!state.0.read().unwrap().as_ref().unwrap().rel_cache.extra_failed("m1::fp"), "the flag, not the marker");
+    assert!(!has_marker(&state, "m1::fp"), "the flag, not the marker");
     // Any later run is skipped - also another fit, also on retry.
     let stamp = session_stamp(&state).unwrap().unwrap();
     assert!(store_rel_fit(&state, stamp, "m2::fp".into(), rel_fit(&d)));
@@ -1110,8 +1119,8 @@ fn an_outdated_sidecar_is_remembered_for_the_process_not_per_fit() {
     other.cache_key = Some("m2::fp".into());
     other.retry_test_scoring = true;
     for r in [&req, &other] {
-        let reason = block_on(score_test_rows(&state, r, &serial, &outdated, good_runner(&d, &calls), &|_| {})).unwrap();
-        assert!(reason.unwrap().starts_with("SIDECAR_OUTDATED"));
+        let e = block_on(score_test_rows(&state, r, &serial, &outdated, good_runner(&d, &calls), &|_| {})).unwrap().unwrap();
+        assert!(e.reason.starts_with("SIDECAR_OUTDATED") && e.kind == TestScoringFailure::Outdated);
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // Fully cached periods (here: inside the training rows) need no sidecar: no warning.
@@ -1132,10 +1141,154 @@ fn over_budget_predictions_are_remembered_like_a_failure() {
     let logged = std::sync::Mutex::new(Vec::<String>::new());
     let req = rel_req(vec![tp("normal", 288, 431, None)]);
     let r = block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|s| logged.lock().unwrap().push(s.into()))).unwrap();
-    assert!(r.unwrap().contains("do not fit the model cache"));
+    let e = r.unwrap();
+    assert!(e.reason.contains("do not fit the model cache") && e.kind == TestScoringFailure::OverBudget);
     assert!(logged.lock().unwrap()[0].contains("144 test rows"));
-    assert!(block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {})).unwrap().is_some());
+    let again = block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {})).unwrap();
+    assert_eq!(again.map(|e| e.kind), Some(TestScoringFailure::OverBudget), "remembered with its own wording");
     assert_eq!(calls.load(Ordering::SeqCst), 1, "not predicted again");
+    // The natural fix - a shorter test period - is tried again (and here fits).
+    let shorter = rel_req(vec![tp("normal", 288, 289, None)]);
+    assert_eq!(block_on(score_test_rows(&state, &shorter, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+fn has_marker(state: &AppState, key: &str) -> bool {
+    state.0.read().unwrap().as_ref().unwrap().rel_cache.has_failed_marker(key)
+}
+
+#[test]
+fn a_remembered_failure_applies_only_to_the_same_missing_rows() {
+    // Review fix 2026-10-07 (third review): the marker used to be per fit, so
+    // after a failure ANY change of the test periods answered "failed" at once.
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let t1 = rel_req(vec![tp("normal", 288, 431, None)]);
+    assert!(block_on(score_test_rows(&state, &t1, &serial, &outdated, failing_runner("boom", &calls), &|_| {})).unwrap().is_some());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // Same rows (a set-point edit): remembered, no run.
+    assert!(block_on(score_test_rows(&state, &t1, &serial, &outdated, failing_runner("x", &calls), &|_| {})).unwrap().is_some());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // T2 added: other rows -> one fresh attempt (fails again here).
+    let t1_t2 = rel_req(vec![tp("normal", 288, 431, None), tp("problem", 576, 700, Some(600))]);
+    assert!(block_on(score_test_rows(&state, &t1_t2, &serial, &outdated, failing_runner("boom 2", &calls), &|_| {})).unwrap().is_some());
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "a superset runs again");
+    // ...and THAT set is now the remembered one.
+    assert!(block_on(score_test_rows(&state, &t1_t2, &serial, &outdated, failing_runner("x", &calls), &|_| {})).unwrap().is_some());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    // A period shortened: runs again (and succeeds).
+    let shrunk = rel_req(vec![tp("normal", 288, 300, None)]);
+    assert_eq!(block_on(score_test_rows(&state, &shrunk, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "a subset runs again");
+    assert!(!has_marker(&state, "m1::fp"), "a success clears the marker");
+}
+
+#[test]
+fn the_logged_reason_is_bounded() {
+    // Review fix 2026-10-07: a parse error carries the engine's whole stdout.
+    let (state, _d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let logged = std::sync::Mutex::new(Vec::<String>::new());
+    let huge = format!("Failed to parse sidecar output: EOF (raw: {})", "ก1.5, ".repeat(400_000));
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let e = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner(&huge, &calls), &|s| logged.lock().unwrap().push(s.into())))
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.reason, huge, "the caller still gets the full reason (never shown)");
+    let l = logged.lock().unwrap();
+    assert_eq!(l.len(), 1);
+    assert!(l[0].len() < crate::ERROR_LOG_DETAIL_MAX + 64, "logged {} bytes", l[0].len());
+    assert!(l[0].starts_with("model m1::fp: Failed to parse sidecar output"));
+    let full = format!("model m1::fp: {huge}");
+    let kept = l[0].find('…').unwrap();
+    assert!(l[0].ends_with(&format!("… ({} bytes truncated)", full.len() - kept)), "{}", &l[0][kept..]);
+}
+
+#[test]
+fn truncate_log_detail_is_char_boundary_safe() {
+    use crate::truncate_log_detail as t;
+    assert_eq!(t("short", 10), "short");
+    assert_eq!(t("exactly10!", 10), "exactly10!");
+    assert_eq!(t("abcdefghijk", 4), "abcd… (7 bytes truncated)");
+    // "ก" is 3 bytes: a cut inside it backs off to the previous boundary.
+    assert_eq!(t("กขค", 4), "ก… (6 bytes truncated)");
+    assert_eq!(t("กขค", 2), "… (9 bytes truncated)");
+    assert_eq!(t("", 0), "");
+}
+
+#[test]
+fn the_log_is_written_after_the_prediction_lock_is_released() {
+    let (state, _d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let free_while_logging = AtomicBool::new(false);
+    let log = |_: &str| free_while_logging.store(serial.try_lock().is_ok(), Ordering::SeqCst);
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    assert!(block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom", &calls), &log)).unwrap().is_some());
+    assert!(free_while_logging.load(Ordering::SeqCst));
+    // ...while the failure itself was remembered before (the next caller sees it).
+    assert!(has_marker(&state, "m1::fp"));
+}
+
+#[test]
+fn a_same_key_retrain_during_the_run_never_receives_the_old_fits_predictions() {
+    // Review fix 2026-10-07 (third review): the job now carries its fit's identity.
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let retrain = || {
+        let stamp = session_stamp(&state).unwrap().unwrap();
+        assert!(store_rel_fit(&state, stamp, "m1::fp".into(), rel_fit(&d)));
+    };
+    // a) The run succeeds, but the model was trained again meanwhile.
+    let x = d.columns[1].clone();
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, |job: RelExtraJob| {
+        retrain();
+        let preds = job.rows.iter().map(|&r| 2.0 * x[r as usize]).collect();
+        std::future::ready((job, Ok(preds)))
+    }, &|_| {}))
+    .unwrap();
+    let e = r.expect("the new fit has no predictions yet: reported, not silently unscored");
+    assert_eq!(e.kind, TestScoringFailure::EngineError);
+    {
+        let lock = state.0.read().unwrap();
+        let c = &lock.as_ref().unwrap().rel_cache;
+        assert!(c.peek_extra("m1::fp").is_none(), "old predictions never merged into the new fit");
+        assert!(!c.has_failed_marker("m1::fp"), "the new fit did not fail");
+    }
+    // b) The run fails, and the model was trained again meanwhile: nothing marked.
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, |job: RelExtraJob| {
+        retrain();
+        std::future::ready((job, Err("boom".to_string())))
+    }, &|_| {}))
+    .unwrap();
+    assert!(r.is_some());
+    assert!(!has_marker(&state, "m1::fp"), "the failure belongs to the OLD fit");
+    // c) The re-train pre-warmed the new fit's test rows: answer for it, all scored.
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, |job: RelExtraJob| {
+        retrain();
+        let new_fit = {
+            let lock = state.0.read().unwrap();
+            std::sync::Arc::downgrade(&lock.as_ref().unwrap().rel_cache.peek("m1::fp").unwrap())
+        };
+        let stamp = session_stamp(&state).unwrap().unwrap();
+        let preds: Vec<f64> = job.rows.iter().map(|&r| 2.0 * x[r as usize]).collect();
+        assert_eq!(crate::merge_rel_extra(&state, stamp, "m1::fp", &new_fit, &job.rows, &preds), crate::ExtraStored::Stored);
+        std::future::ready((job, Ok(vec![-1.0; preds.len()])))
+    }, &|_| {}))
+    .unwrap();
+    assert_eq!(r, None);
+    let p = crate::health_preview_with_outcome(&state, &req, None).unwrap();
+    assert_eq!(tv(&p).tests[0].scored, 144);
+    let lock = state.0.read().unwrap();
+    let extra = lock.as_ref().unwrap().rel_cache.peek_extra("m1::fp").unwrap();
+    assert!(extra.get(300).unwrap() > 0.0, "the new fit's predictions, not the old run's -1");
 }
 
 #[test]

@@ -102,13 +102,31 @@ export function testsChangedNoticeText(n: TestsChangedNotice): string {
  *  back unscored. */
 export const TEST_SCORING_FAILED_CODE = 'test_scoring_failed';
 
+/** Same, but the Relation model engine bundled with this build is too old to
+ *  score test periods (2026-10-07). Retrying cannot help — only updating the
+ *  app does — so this one gets no "Try again". */
+export const TEST_SCORING_OUTDATED_CODE = 'test_scoring_outdated';
+
+/** Both warning codes that mean "the test periods were not scored". */
+export const TEST_SCORING_ISSUE_CODES: readonly string[] = [TEST_SCORING_FAILED_CODE, TEST_SCORING_OUTDATED_CODE];
+
 /** Headline the test tiles / "Train vs test" card show for `test_scoring_failed`
- *  (amber, information only — never a block). */
+ *  (amber, information only — never a block). Rust's own `message` is shown under
+ *  it (it says why, e.g. too many rows to score in memory). */
 export const TEST_SCORING_FAILED_TEXT = "Couldn't score the test periods — try again";
 
-/** The `test_scoring_failed` issue of a preview, or null. */
+/** Headline for `test_scoring_outdated` (no retry offered). */
+export const TEST_SCORING_OUTDATED_TEXT = "Couldn't score the test periods";
+
+/** The test-scoring warning of a preview (`test_scoring_failed` or
+ *  `test_scoring_outdated`), or null. */
 export function testScoringFailure(data: Pick<HealthPreview, 'validation'> | null | undefined): HealthIssue | null {
-    return data?.validation?.find(i => i.code === TEST_SCORING_FAILED_CODE) ?? null;
+    return data?.validation?.find(i => TEST_SCORING_ISSUE_CODES.includes(i.code)) ?? null;
+}
+
+/** Whether "Try again" can help for this test-scoring warning. */
+export function isTestScoringRetryable(issue: Pick<HealthIssue, 'code'>): boolean {
+    return issue.code === TEST_SCORING_FAILED_CODE;
 }
 
 /** Shown while a Relation-model preview that scores test periods is still

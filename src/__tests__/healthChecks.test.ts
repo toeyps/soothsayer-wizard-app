@@ -50,6 +50,12 @@ describe('buildCheckLines', () => {
         expect(verdictOfIssues([failed])).toBe(verdictOfIssues([]));
     });
 
+    it('the test_scoring_outdated warning is not a Checks line either', () => {
+        const outdated = { code: 'test_scoring_outdated', severity: 'warning' as const, field: 'test_periods', message: 'engine out of date' };
+        expect(buildCheckLines('relationship', [outdated])).toEqual([]);
+        expect(verdictOfIssues([outdated])).toBe(verdictOfIssues([]));
+    });
+
     it('Relationship: two or more empty points collapse into ONE line listing them in ladder order', () => {
         const lines = buildCheckLines('relationship', [
             issue('required', 'residual_at_0_upper'),

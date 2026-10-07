@@ -311,6 +311,31 @@ describe('useHealthPreview - lastData and retry (QA 2026-10-04)', () => {
         for (const call of mockInvoke.mock.calls.slice(2)) expect(call[1].request).not.toHaveProperty('retry_test_scoring');
     });
 
+    it('a "Try again" clicked while the hook is idle is NOT carried onto the next model\'s request (code review 2026-10-07: it used to clear model B\'s remembered failure and run the slow sidecar unasked)', async () => {
+        mockInvoke.mockResolvedValue(preview('a'));
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts({ enabled: false }) });
+        await settle();
+        act(() => { result.current.retryTestScoring!(); });
+        await settle();
+        expect(mockInvoke).not.toHaveBeenCalled(); // idle: nothing sent
+        rerender(opts({ model: indModel({ id: 'i2', targetSensor: 'P1' }) }));
+        await settle();
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(mockInvoke.mock.calls[0][1].request).not.toHaveProperty('retry_test_scoring');
+    });
+
+    it('a "Try again" for model A followed by a switch to model B within the debounce is not sent with B\'s request', async () => {
+        mockInvoke.mockResolvedValue(preview('a'));
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });
+        await settle();
+        mockInvoke.mockClear();
+        act(() => { result.current.retryTestScoring!(); });
+        rerender(opts({ model: indModel({ id: 'i2', targetSensor: 'P1' }) })); // before the debounce fires
+        await settle();
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(mockInvoke.mock.calls[0][1].request).not.toHaveProperty('retry_test_scoring');
+    });
+
     it('retry is stable between renders (safe as a prop)', async () => {
         mockInvoke.mockResolvedValue(preview('a'));
         const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });

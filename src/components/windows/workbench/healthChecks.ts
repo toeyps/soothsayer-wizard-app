@@ -2,7 +2,7 @@ import type { HealthSetPoints } from '../../../types';
 import type { HealthIssue, HealthPreview, HealthSeries } from '../../../types/health';
 import { fmtNum } from './chartTheme';
 import { parseTimestamps } from './healthCharts';
-import { TEST_SCORING_FAILED_CODE } from '../../../utils/trainTestValidation';
+import { TEST_SCORING_ISSUE_CODES } from '../../../utils/trainTestValidation';
 
 /*
  * Pure helpers of the Health score page (health score phase 3b-2, 2026-10-04):
@@ -98,7 +98,7 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
     issues.forEach((i, n) => {
         // "The test periods could not be scored" is about the test results, not the set
         // points: the Test results / Train vs test cards show it (amber), not Checks.
-        if (i.code === TEST_SCORING_FAILED_CODE) return;
+        if (TEST_SCORING_ISSUE_CODES.includes(i.code)) return;
         if (relRequired.length > 1 && relRequired.includes(i)) {
             if (collapsed) return;
             collapsed = true;

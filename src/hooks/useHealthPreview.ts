@@ -108,12 +108,14 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     // Bumped by `retry`: part of the effect's key, never sent.
     const [retryTick, setRetryTick] = useState(0);
     const retry = useCallback(() => setRetryTick(n => n + 1), []);
-    // Set by `retryTestScoring`, consumed (sent once) by the next request.
-    const retryScoringRef = useRef(false);
-    const retryTestScoring = useCallback(() => {
-        retryScoringRef.current = true;
-        setRetryTick(n => n + 1);
-    }, []);
+    // Set by `retryTestScoring`: WHICH request the user asked to retry (model id +
+    // Relation-model cache key at click time). Sent once, and only with a request
+    // for that same model and fit -- never carried over to another model's
+    // request after an idle spell or a model switch (code review 2026-10-07).
+    const retryScoringRef = useRef<{ modelId: string | null; cacheKey: string | null } | null>(null);
+    // Live mirrors for the stable `retryTestScoring` callback (assigned below).
+    const keyRef = useRef<string | null>(null);
+    const modelIdRef = useRef<string | null>(null);
 
     let idle: UseHealthPreviewResult['idle'] = null;
     let request = null as ReturnType<typeof buildHealthPreviewRequest>;
@@ -143,12 +145,23 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     const requestRef = useRef(request);
     requestRef.current = request;
     const modelId = model?.id ?? null;
+    keyRef.current = key;
+    modelIdRef.current = modelId;
+    const retryTestScoring = useCallback(() => {
+        // Nothing would be sent while idle (stale model, missing inputs): do not
+        // leave a pending retry behind for whatever request comes next.
+        if (keyRef.current === null) return;
+        retryScoringRef.current = { modelId: modelIdRef.current, cacheKey: requestRef.current?.cache_key ?? null };
+        setRetryTick(n => n + 1);
+    }, []);
     const debounceMs = opts.debounceMs ?? DEBOUNCE_MS;
 
     useEffect(() => {
         const req = requestRef.current;
         if (key === null || !req) {
-            // Idle: drop any in-flight response, keep the last data on screen.
+            // Idle: drop any in-flight response, keep the last data on screen,
+            // and forget a pending test-scoring retry (it was for that request).
+            retryScoringRef.current = null;
             seqRef.current++;
             setState(s => (s.loading ? { ...s, loading: false } : s));
             return;
@@ -164,8 +177,9 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
             errorCode: null,
         }));
         const timer = setTimeout(() => {
-            const retryScoring = retryScoringRef.current;
-            retryScoringRef.current = false;
+            const pending = retryScoringRef.current;
+            retryScoringRef.current = null;
+            const retryScoring = !!pending && pending.modelId === modelId && pending.cacheKey === (req.cache_key ?? null);
             const sent = retryScoring ? { ...req, retry_test_scoring: true } : req;
             invoke<HealthPreview>('compute_health_preview', { request: sent })
                 .then(data => {

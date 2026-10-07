@@ -323,22 +323,50 @@ pub fn x_rows(data: &ColumnarData, pred_cols: &[usize], rows: &[u32]) -> Vec<Vec
         .collect()
 }
 
-/// Stable code of the warning added when the test periods could not be scored.
+/// Stable code of the warning added when the test periods could not be scored
+/// and trying again may help (engine error / timeout, too many rows).
 pub const TEST_SCORING_FAILED: &str = "test_scoring_failed";
+/// Stable code of the warning added when the bundled Relation model engine is
+/// too old to score test periods: a retry can never help (only an updated
+/// install), so the frontend shows no "Try again" for it.
+pub const TEST_SCORING_OUTDATED: &str = "test_scoring_outdated";
+
+/// Why the test periods of a Relationship preview could not be scored. Picks
+/// the warning's code and user-facing wording; also kept with the cache's
+/// "last attempt failed" marker, so a remembered failure is reported with the
+/// same wording as the original one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestScoringFailure {
+    /// The engine failed, timed out or answered something unusable.
+    EngineError,
+    /// The predictions do not fit the model cache's memory budget.
+    OverBudget,
+    /// The bundled engine predates `predict_relationship` (`SIDECAR_OUTDATED`).
+    Outdated,
+}
 
 /// The warning `compute_health_preview` adds when the prediction step for the
 /// test rows failed (never an error: the training results are still valid).
-/// `outdated` = the bundled Relation model engine predates this feature.
-pub fn test_scoring_failed_issue(outdated: bool) -> Issue {
-    let message = if outdated {
-        "The test periods could not be scored: the Relation model engine in this build is out of \
-         date - reinstall or update the app. The training results above are not affected."
-    } else {
-        "The test periods could not be scored because the Relation model engine did not answer. \
-         The training results above are not affected - try again, or train the model again."
+pub fn test_scoring_issue(kind: TestScoringFailure) -> Issue {
+    let (code, message) = match kind {
+        TestScoringFailure::Outdated => (
+            TEST_SCORING_OUTDATED,
+            "The test periods could not be scored: the Relation model engine in this build is out of \
+             date - reinstall or update the app. The training results above are not affected.",
+        ),
+        TestScoringFailure::OverBudget => (
+            TEST_SCORING_FAILED,
+            "These test periods have too many rows to score in memory - shorten them or remove one. \
+             The training results above are not affected.",
+        ),
+        TestScoringFailure::EngineError => (
+            TEST_SCORING_FAILED,
+            "The test periods could not be scored because the Relation model engine did not answer. \
+             The training results above are not affected - try again, or train the model again.",
+        ),
     };
     Issue {
-        code: TEST_SCORING_FAILED.to_string(),
+        code: code.to_string(),
         severity: Severity::Warning,
         message: message.to_string(),
         field: "test_periods".to_string(),
@@ -725,6 +753,28 @@ mod tests {
 
     fn rows(n: u32) -> Vec<u32> {
         (0..n).collect()
+    }
+
+    // ---------- test-scoring warnings ----------
+
+    #[test]
+    fn test_scoring_issue_codes_and_wording_per_kind() {
+        let out = test_scoring_issue(TestScoringFailure::Outdated);
+        assert_eq!(out.code, TEST_SCORING_OUTDATED, "own code: a retry cannot help");
+        assert!(out.message.contains("out of date") && out.message.contains("reinstall"));
+        let big = test_scoring_issue(TestScoringFailure::OverBudget);
+        assert_eq!(big.code, TEST_SCORING_FAILED);
+        assert!(big.message.contains("too many rows") && big.message.contains("shorten them or remove one"));
+        assert!(!big.message.contains("did not answer"));
+        let eng = test_scoring_issue(TestScoringFailure::EngineError);
+        assert_eq!(eng.code, TEST_SCORING_FAILED);
+        assert!(eng.message.contains("did not answer") && eng.message.contains("try again"));
+        for i in [&out, &big, &eng] {
+            assert_eq!(i.severity, Severity::Warning);
+            assert_eq!(i.field, "test_periods");
+            assert!(i.message.contains("training results above are not affected"));
+            assert!(!i.message.contains("LinearGAM") && !i.message.contains("sidecar"));
+        }
     }
 
     // ---------- sustained-drop rule ----------
