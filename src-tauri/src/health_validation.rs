@@ -275,6 +275,10 @@ impl TestPlan {
 /// health preview, the lazy `predict_relationship` run, the Train pre-warm and
 /// the export all call it, so they can never disagree on which rows are tested.
 /// `train_rows` must be ascending (a fit's `rows` are).
+///
+/// Composed of [`rel_test_rows`] + [`rows_outside_training`]; a caller that also
+/// needs the per-test lists (the Relationship preview) calls those two itself so
+/// the dataset is scanned once.
 pub fn extra_test_rows(
     plan: &TestPlan,
     data: &ColumnarData,
@@ -282,12 +286,29 @@ pub fn extra_test_rows(
     pred_cols: &[usize],
     train_rows: &[u32],
 ) -> Vec<u32> {
-    let per_test = plan.collect_rows(data, &|r| {
+    rows_outside_training(&rel_test_rows(plan, data, target_col, pred_cols), train_rows)
+}
+
+/// Relationship: the rows of each test period that have all inputs
+/// (`target_col` + `pred_cols` finite), one ascending `Vec` per planned test.
+pub fn rel_test_rows(
+    plan: &TestPlan,
+    data: &ColumnarData,
+    target_col: usize,
+    pred_cols: &[usize],
+) -> Vec<Vec<u32>> {
+    plan.collect_rows(data, &|r| {
         data.columns[target_col][r].is_finite() && pred_cols.iter().all(|&c| data.columns[c][r].is_finite())
-    });
+    })
+}
+
+/// The rows of `per_test` that are not in `train_rows` (ascending), ascending
+/// and unique across all tests.
+pub fn rows_outside_training(per_test: &[Vec<u32>], train_rows: &[u32]) -> Vec<u32> {
     let mut rows: Vec<u32> = per_test
-        .into_iter()
+        .iter()
         .flatten()
+        .copied()
         .filter(|r| train_rows.binary_search(r).is_err())
         .collect();
     rows.sort_unstable();
@@ -328,8 +349,20 @@ pub fn test_scoring_failed_issue(outdated: bool) -> Issue {
 /// keeps its identity (index, label, period, days, rows) but has no score, no
 /// metrics and none of the nullable detection fields - never a half-filled
 /// result that looks like a real one.
-pub fn mark_unscored(v: &mut TestValidation) {
-    for t in &mut v.tests {
+///
+/// `input_rows` (aligned with `v.tests`; ignored when the length differs): the
+/// rows of each test period that have all the model's inputs, i.e. what a
+/// successful prediction step would have scored. When given, `rows` / `days`
+/// are set from it - otherwise a period fully outside the training scope would
+/// report 0 rows only because its predictions are missing. `interval_secs` =
+/// [`sample_interval_secs`] of the dataset.
+pub fn mark_unscored(v: &mut TestValidation, input_rows: Option<&[usize]>, interval_secs: Option<f64>) {
+    let counts = input_rows.filter(|c| c.len() == v.tests.len());
+    for (j, t) in v.tests.iter_mut().enumerate() {
+        if let Some(c) = counts {
+            t.rows = c[j];
+            t.days = days_of(c[j], interval_secs);
+        }
         t.scored = 0;
         t.metrics = KindMetrics::default();
         t.pct_below_80 = None;
@@ -843,6 +876,62 @@ mod tests {
         let p = TestPlan::resolve(&[], Some(&legacy), &headers());
         assert_eq!(p.train_ranges, vec![TrainRange { start: Some("2024-01-01T00:00".into()), end: None }]);
         assert!(TestPlan::resolve(&[], None, &headers()).train_ranges.is_empty());
+    }
+
+    // ---------- shared row selection / unscored ----------
+
+    #[test]
+    fn rows_outside_training_are_merged_sorted_unique_and_exclude_train_rows() {
+        let per_test = vec![vec![5u32, 6, 7, 8], vec![1, 2, 7, 9], vec![]];
+        assert_eq!(rows_outside_training(&per_test, &[2, 6, 8]), vec![1, 5, 7, 9]);
+        assert!(rows_outside_training(&[], &[1]).is_empty());
+    }
+
+    fn unscored_fixture() -> TestValidation {
+        let t = |index: usize, rows: usize| TestResult {
+            index,
+            label: "normal".into(),
+            start: None,
+            end: None,
+            event_time: None,
+            days: 0.0,
+            rows,
+            metrics: KindMetrics { r2: Some(0.9), ..Default::default() },
+            train_rows: 0,
+            train_days: 0.0,
+            scored: rows,
+            pct_below_80: Some(1.0),
+            first_below_80: Some("x".into()),
+            lowest: Some(50.0),
+            lowest_at: Some("y".into()),
+            lead_days: Some(1.0),
+        };
+        TestValidation {
+            train: TrainBlock { rows: 10, days: 1.0, metrics: KindMetrics::default() },
+            train_ranges: vec![],
+            tests: vec![t(1, 0), t(2, 5)],
+        }
+    }
+
+    #[test]
+    fn mark_unscored_clears_the_scores_and_takes_rows_from_the_inputs() {
+        let mut v = unscored_fixture();
+        // 10-minute rows: 144 rows = 1 day.
+        mark_unscored(&mut v, Some(&[144, 288]), Some(600.0));
+        assert_eq!((v.tests[0].rows, v.tests[0].days), (144, 1.0));
+        assert_eq!((v.tests[1].rows, v.tests[1].days), (288, 2.0));
+        for t in &v.tests {
+            assert_eq!(t.scored, 0);
+            assert_eq!(t.metrics, KindMetrics::default());
+            assert!(t.pct_below_80.is_none() && t.first_below_80.is_none() && t.lowest.is_none());
+            assert!(t.lowest_at.is_none() && t.lead_days.is_none());
+        }
+        // No counts / a length mismatch: rows and days are left as they were.
+        let mut v = unscored_fixture();
+        mark_unscored(&mut v, Some(&[1]), Some(600.0));
+        assert_eq!(v.tests[1].rows, 5);
+        mark_unscored(&mut v, None, None);
+        assert_eq!((v.tests[1].rows, v.tests[1].scored), (5, 0));
     }
 
     // ---------- json ----------

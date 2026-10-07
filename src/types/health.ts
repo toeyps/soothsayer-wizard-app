@@ -89,6 +89,10 @@ export interface HealthPreviewRequest {
     include_out_of_scope?: boolean;
     /** Refuse with `STALE_SESSION` when the loaded dataset's generation differs. */
     expected_generation?: number;
+    /** Clear Rust's remembered test-scoring failure for this fit and try the
+     *  Relation-model prediction again. Sent ONLY from the "Try again" button
+     *  (`useHealthPreview.retryTestScoring`), never on ordinary previews. */
+    retry_test_scoring?: boolean;
     /** Train/Test validation (2026-10-07): the model's EFFECTIVE test periods.
      *  Omitted when there are none; when present the response carries
      *  `test_validation`. Built by `toTestPeriodsWire`. */

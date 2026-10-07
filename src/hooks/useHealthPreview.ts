@@ -67,6 +67,12 @@ export interface UseHealthPreviewResult {
     lastData?: HealthPreview | null;
     /** Ask again for the same request (the error banner's Retry button). */
     retry?: () => void;
+    /** Ask again AND tell Rust to retry scoring the test periods (2026-10-07):
+     *  after a failed Relation-model prediction Rust remembers the failure so
+     *  debounced set-point edits don't re-run the slow sidecar; only the
+     *  `test_scoring_failed` notice's "Try again" clears it, by sending
+     *  `retry_test_scoring: true` on exactly ONE request. */
+    retryTestScoring?: () => void;
 }
 
 interface State {
@@ -102,6 +108,12 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     // Bumped by `retry`: part of the effect's key, never sent.
     const [retryTick, setRetryTick] = useState(0);
     const retry = useCallback(() => setRetryTick(n => n + 1), []);
+    // Set by `retryTestScoring`, consumed (sent once) by the next request.
+    const retryScoringRef = useRef(false);
+    const retryTestScoring = useCallback(() => {
+        retryScoringRef.current = true;
+        setRetryTick(n => n + 1);
+    }, []);
 
     let idle: UseHealthPreviewResult['idle'] = null;
     let request = null as ReturnType<typeof buildHealthPreviewRequest>;
@@ -152,7 +164,10 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
             errorCode: null,
         }));
         const timer = setTimeout(() => {
-            invoke<HealthPreview>('compute_health_preview', { request: req })
+            const retryScoring = retryScoringRef.current;
+            retryScoringRef.current = false;
+            const sent = retryScoring ? { ...req, retry_test_scoring: true } : req;
+            invoke<HealthPreview>('compute_health_preview', { request: sent })
                 .then(data => {
                     if (seqRef.current !== mySeq) return; // superseded
                     setState({ modelId, data, lastData: data, loading: false, error: null, errorCode: null });
@@ -190,5 +205,6 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
         idle,
         lastData: mine ? state.lastData : null,
         retry,
+        retryTestScoring,
     };
 }

@@ -3237,6 +3237,7 @@ export default function BuildModelWindow() {
                                 filesOutOfDate={filesOutOfDateFor(activeModel)}
                                 onRetrain={() => runTrainClick(activeModel)}
                                 onRetryPreview={healthPreview.retry}
+                                onRetryTestScoring={healthPreview.retryTestScoring}
                                 testsChanged={testsChangedState(activeModel, gateFg)}
                             />
                         )}

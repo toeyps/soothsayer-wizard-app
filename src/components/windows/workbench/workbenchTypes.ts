@@ -77,6 +77,10 @@ export interface HealthScorePageProps extends WorkbenchPageProps {
     onRetrain: () => void;
     /** The error banner's Retry: ask `compute_health_preview` again. */
     onRetryPreview?: () => void;
+    /** The `test_scoring_failed` notice's "Try again": same, but also tells Rust to
+     *  retry the test-period prediction it remembered as failed. Falls back to
+     *  `onRetryPreview` when absent. */
+    onRetryTestScoring?: () => void;
     /** Train/Test validation (rule 8): only the model's test periods changed since
      *  it was Complete — `'changed'` / `'removed'` shows the "Mark complete again"
      *  banner (`testsChangedState`); null/absent = nothing to say. */

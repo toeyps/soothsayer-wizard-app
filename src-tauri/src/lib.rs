@@ -5326,33 +5326,148 @@ fn sample_dataset(
 /// only predicted - same model, same lambda) and caches the predictions under the
 /// fit's key; set-point edits and repeated calls never run it again.
 ///
-/// If that prediction step fails (sidecar crash, outdated sidecar, cache budget),
-/// the preview does NOT fail: it returns the normal train preview with
+/// If that prediction step fails (sidecar crash, timeout, outdated sidecar, cache
+/// budget), the preview does NOT fail: it returns the normal train preview with
 /// `test_validation` present but every test unscored and one `warning` issue
 /// `test_scoring_failed` in `validation`. (Export still refuses - files never
-/// claim a validation they could not compute.)
+/// claim a validation they could not compute.) The raw reason goes to the
+/// permanent error log. A failure is remembered (see [`score_test_rows`]): later
+/// previews answer with the same warning at once instead of re-running the
+/// sidecar, until a re-train or a request with `retry_test_scoring: true`.
 #[tauri::command]
 async fn compute_health_preview(
     request: health_preview::HealthPreviewRequest,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<health_preview::HealthPreview, String> {
-    let mut scoring_error: Option<String> = None;
-    if request.kind == "relationship" && request.has_test_periods() {
-        // One prediction run at a time: a second caller waits and then finds the
-        // rows already cached.
-        let _serial = REL_EXTRA_LOCK.lock().await;
-        if let Some(job) = plan_rel_extra(&state, &request)? {
-            scoring_error = match run_predict_relationship(&app, &job).await {
-                Ok(predicted) => match apply_rel_extra(&state, &job, &predicted)? {
-                    true => None,
-                    false => Some("the predictions do not fit the model cache".to_string()),
-                },
-                Err(e) => Some(e),
-            };
+    let log = |reason: &str| {
+        if let Ok(path) = error_log_path(&app) {
+            append_error_line(
+                &path,
+                "test-scoring",
+                "Test periods could not be scored (Relation model prediction step)",
+                Some(reason),
+            );
+        }
+    };
+    let runner_app = app.clone();
+    let scoring_error = score_test_rows(
+        &state,
+        &request,
+        &REL_EXTRA_LOCK,
+        &SIDECAR_KNOWN_OUTDATED,
+        move |job| async move {
+            let result = run_predict_relationship(&runner_app, &job).await;
+            (job, result)
+        },
+        &log,
+    )
+    .await?;
+    health_preview_with_outcome(&state, &request, scoring_error.as_deref())
+}
+
+/// Set for the rest of the process once a sidecar run answered
+/// `SIDECAR_OUTDATED` (the bundled binary cannot change while the app runs):
+/// later previews skip the ~15 s run and answer with the outdated warning at
+/// once. Not cleared by `retry_test_scoring` - only a new app start (i.e. an
+/// updated install) can fix it.
+static SIDECAR_KNOWN_OUTDATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Stand-in reason for "the last attempt for this fit failed and nobody asked to
+/// retry": never shown (the user gets the generic `test_scoring_failed` text).
+const TEST_SCORING_PREVIOUSLY_FAILED: &str =
+    "the last prediction attempt for this fit failed (not retried until a re-train or an explicit retry)";
+
+/// The test-row prediction step of [`compute_health_preview`], generic over the
+/// sidecar run (`run`) and the error log (`log`) so it is testable without an
+/// `AppHandle`. `Ok(None)` = nothing to do or the predictions are now cached;
+/// `Ok(Some(reason))` = the test periods cannot be scored (the caller degrades
+/// the answer); `Err` = the request itself is refused (`STALE_SESSION`, a fit
+/// that changed meanwhile = `NOT_FITTED`).
+///
+/// * Planning runs WITHOUT `serial`: a preview whose rows are all cached (every
+///   set-point edit) or whose fit is known to fail never waits for another
+///   model's ~15 s prediction. Only when rows are missing it takes `serial`
+///   and plans AGAIN under it (another caller may have filled them meanwhile).
+/// * A failure is logged (raw reason) and remembered: `SIDECAR_OUTDATED` in
+///   `outdated` (process lifetime), anything else as the fit's failed marker
+///   in the cache (cleared by re-train, eviction, a dataset change or
+///   `retry_test_scoring`).
+async fn score_test_rows<R, Fut>(
+    state: &AppState,
+    request: &health_preview::HealthPreviewRequest,
+    serial: &tauri::async_runtime::Mutex<()>,
+    outdated: &std::sync::atomic::AtomicBool,
+    run: R,
+    log: &(dyn Fn(&str) + Sync),
+) -> Result<Option<String>, String>
+where
+    R: FnOnce(RelExtraJob) -> Fut,
+    Fut: std::future::Future<Output = (RelExtraJob, Result<Vec<f64>, String>)>,
+{
+    use std::sync::atomic::Ordering;
+    if request.kind != "relationship" || !request.has_test_periods() {
+        return Ok(None);
+    }
+    if request.retry_test_scoring {
+        clear_rel_extra_failed(state, request);
+    }
+    // 1. Without the lock, and without building the job.
+    match plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), false)? {
+        ExtraPlan::Nothing => return Ok(None),
+        ExtraPlan::Failed(reason) => return Ok(Some(reason)),
+        ExtraPlan::Needed(_) => {}
+    }
+    // 2. One prediction run at a time; re-plan under the lock.
+    let _serial = serial.lock().await;
+    let job = match plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), true)? {
+        ExtraPlan::Nothing => return Ok(None),
+        ExtraPlan::Failed(reason) => return Ok(Some(reason)),
+        ExtraPlan::Needed(Some(job)) => job,
+        ExtraPlan::Needed(None) => return Ok(None), // unreachable: built on request
+    };
+    let (job, result) = run(job).await;
+    let failure = match result {
+        Ok(predicted) => match apply_rel_extra(state, &job, &predicted)? {
+            true => None,
+            false => Some(format!(
+                "the predictions of {} test rows do not fit the model cache",
+                job.rows.len()
+            )),
+        },
+        Err(e) => Some(e),
+    };
+    if let Some(reason) = &failure {
+        log(&format!("model {}: {reason}", job.key));
+        if reason.starts_with("SIDECAR_OUTDATED") {
+            outdated.store(true, Ordering::SeqCst);
+        } else {
+            mark_rel_extra_failed(state, job.stamp, &job.key);
         }
     }
-    health_preview_with_outcome(&state, &request, scoring_error.as_deref())
+    Ok(failure)
+}
+
+/// Remember a failed prediction attempt for the fit `key` - only on the same
+/// data (`stamp`), so an attempt that straddled a reload marks nothing.
+fn mark_rel_extra_failed(state: &AppState, stamp: SessionStamp, key: &str) {
+    if let Ok(mut lock) = state.0.write() {
+        if let Some(s) = lock.as_mut().filter(|s| s.stamp() == stamp) {
+            s.rel_cache.mark_extra_failed(key);
+        }
+    }
+}
+
+/// `retry_test_scoring`: forget the failed attempt of the request's fit.
+fn clear_rel_extra_failed(state: &AppState, request: &health_preview::HealthPreviewRequest) {
+    let Some(key) = request.cache_key.as_deref().filter(|k| !k.is_empty()) else {
+        return;
+    };
+    if let Ok(mut lock) = state.0.write() {
+        if let Some(s) = lock.as_mut() {
+            s.rel_cache.clear_extra_failed(key);
+        }
+    }
 }
 
 /// [`health_preview_in`] plus the degraded answer for a failed test-row
@@ -5367,7 +5482,11 @@ fn health_preview_with_outcome(
     let mut preview = health_preview_in(state, request)?;
     if let Some(err) = scoring_error {
         if let Some(tv) = preview.test_validation.as_mut() {
-            health_validation::mark_unscored(tv);
+            let (counts, interval) = match rel_test_input_counts(state, request) {
+                Some((c, iv)) => (Some(c), iv),
+                None => (None, None),
+            };
+            health_validation::mark_unscored(tv, counts.as_deref(), interval);
         }
         preview.validation.push(health_validation::test_scoring_failed_issue(
             err.starts_with("SIDECAR_OUTDATED"),
@@ -5398,36 +5517,53 @@ struct RelExtraJob {
     x_extra: Vec<Vec<f64>>,
 }
 
-/// The test rows of `request` that have no cached prediction yet, with
-/// everything needed to predict them. `Ok(None)` = nothing to do (all cached,
-/// or the request is one `health_preview_in` itself will refuse with the right
-/// code: no cache key, unknown fit, other target / predictors, bad columns).
-fn plan_rel_extra(
+/// What [`plan_rel_extra_ex`] found.
+#[derive(Debug)]
+enum ExtraPlan {
+    /// Nothing to predict: all cached, or the request is one `health_preview_in`
+    /// itself refuses with the right code (no cache key, unknown fit, other
+    /// target / predictors, bad columns).
+    Nothing,
+    /// Rows are missing but must not be predicted now: the sidecar is known to
+    /// be outdated (`SIDECAR_OUTDATED` reason) or this fit's last attempt failed
+    /// ([`TEST_SCORING_PREVIOUSLY_FAILED`]).
+    Failed(String),
+    /// Rows are missing; the job when it was asked for (`build_job`).
+    Needed(Option<RelExtraJob>),
+}
+
+/// The test rows of `request` that have no cached prediction yet and, with
+/// `build_job`, everything needed to predict them (copying the training matrix
+/// is skipped otherwise - the lock-free first look of [`score_test_rows`]).
+/// `sidecar_outdated` = [`SIDECAR_KNOWN_OUTDATED`].
+fn plan_rel_extra_ex(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
-) -> Result<Option<RelExtraJob>, String> {
+    sidecar_outdated: bool,
+    build_job: bool,
+) -> Result<ExtraPlan, String> {
     let lock = state.0.read().map_err(|e| e.to_string())?;
     let session = lock
         .as_ref()
         .ok_or_else(|| missing_session_error(request.expected_generation))?;
     check_expected_generation(request.expected_generation, session.generation)?;
     let Some(key) = request.cache_key.as_deref().filter(|k| !k.is_empty()) else {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
     };
     let Some(fit) = session.rel_cache.peek(key) else {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
     };
     if request.target.as_deref().is_some_and(|t| t != fit.target)
         || (!request.predictors.is_empty() && request.predictors != fit.predictors)
     {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
     }
     let data = &session.data;
     let Some(plan) = request.test_plan(data) else {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
     };
     let Some(tcol) = data.col_index(&fit.target) else {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
     };
     let Some(pcols) = fit
         .predictors
@@ -5435,20 +5571,29 @@ fn plan_rel_extra(
         .map(|p| data.col_index(p))
         .collect::<Option<Vec<usize>>>()
     else {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
     };
     // The same rows the Train pre-warm and the export predict (one function).
     let known = session.rel_cache.peek_extra(key);
     let mut rows = health_validation::extra_test_rows(&plan, data, tcol, &pcols, &fit.rows);
     rows.retain(|r| !known.as_ref().is_some_and(|e| e.has(*r)));
     if rows.is_empty() {
-        return Ok(None);
+        return Ok(ExtraPlan::Nothing);
+    }
+    if sidecar_outdated {
+        return Ok(ExtraPlan::Failed(SIDECAR_OUTDATED.to_string()));
+    }
+    if session.rel_cache.extra_failed(key) {
+        return Ok(ExtraPlan::Failed(TEST_SCORING_PREVIOUSLY_FAILED.to_string()));
+    }
+    if !build_job {
+        return Ok(ExtraPlan::Needed(None));
     }
     let x: Vec<Vec<f64>> = (0..fit.rows.len())
         .map(|i| fit.x_cols.iter().map(|c| c[i]).collect())
         .collect();
     let x_extra = health_validation::x_rows(data, &pcols, &rows);
-    Ok(Some(RelExtraJob {
+    Ok(ExtraPlan::Needed(Some(RelExtraJob {
         key: key.to_string(),
         stamp: session.stamp(),
         predictors: fit.predictors.clone(),
@@ -5458,7 +5603,47 @@ fn plan_rel_extra(
         x,
         y: fit.actual.clone(),
         x_extra,
-    }))
+    })))
+}
+
+/// Test helper with the pre-2026-10-07 shape: the job when rows must be
+/// predicted (ignores the outdated flag; a failed marker reads as `None`).
+#[cfg(test)]
+fn plan_rel_extra(
+    state: &AppState,
+    request: &health_preview::HealthPreviewRequest,
+) -> Result<Option<RelExtraJob>, String> {
+    Ok(match plan_rel_extra_ex(state, request, false, true)? {
+        ExtraPlan::Needed(job) => job,
+        ExtraPlan::Nothing | ExtraPlan::Failed(_) => None,
+    })
+}
+
+/// Rows of each test period of a Relationship `request` that have all the
+/// fit's inputs (what a successful prediction step would score), plus the
+/// dataset's sample interval - for [`health_validation::mark_unscored`].
+/// `None` when the request has no usable fit / plan.
+fn rel_test_input_counts(
+    state: &AppState,
+    request: &health_preview::HealthPreviewRequest,
+) -> Option<(Vec<usize>, Option<f64>)> {
+    let lock = state.0.read().ok()?;
+    let session = lock.as_ref()?;
+    let key = request.cache_key.as_deref().filter(|k| !k.is_empty())?;
+    let fit = session.rel_cache.peek(key)?;
+    let data = &session.data;
+    let plan = request.test_plan(data)?;
+    let tcol = data.col_index(&fit.target)?;
+    let pcols = fit
+        .predictors
+        .iter()
+        .map(|p| data.col_index(p))
+        .collect::<Option<Vec<usize>>>()?;
+    let counts = health_validation::rel_test_rows(&plan, data, tcol, &pcols)
+        .iter()
+        .map(Vec::len)
+        .collect();
+    Some((counts, health_validation::sample_interval_secs(data)))
 }
 
 /// Outcome of [`merge_rel_extra`].
@@ -5512,15 +5697,54 @@ fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Re
     }
 }
 
-/// Run one request through the sidecar and return its JSON answer.
+/// Longest wait for one `predict_relationship` sidecar run (a refit on the
+/// training rows + the predictions; normally ~15 s). Generous on purpose: only
+/// a hung engine should ever reach it.
+const PREDICT_SIDECAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Run `on_timeout` on a helper thread once `limit` has passed, unless the
+/// returned `Sender` is dropped (or sent to) first - which also ends the thread
+/// at once. The flag says whether it fired.
+fn arm_timeout<F: FnOnce() + Send + 'static>(
+    limit: std::time::Duration,
+    on_timeout: F,
+) -> (
+    std::sync::mpsc::Sender<()>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = fired.clone();
+    std::thread::spawn(move || {
+        if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done_rx.recv_timeout(limit) {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            on_timeout();
+        }
+    });
+    (done_tx, fired)
+}
+
+/// Run one request through the sidecar and return its JSON answer. A sidecar
+/// that has not finished after `limit` is KILLED (the process does not linger)
+/// and the call fails with a "did not answer" error.
 async fn run_sidecar_json(
     app: &tauri::AppHandle,
     payload: &serde_json::Value,
+    limit: std::time::Duration,
 ) -> Result<serde_json::Value, String> {
     let mut line = serde_json::to_string(payload).map_err(|e| e.to_string())?;
     line.push('\n');
     let (mut rx, mut child) = spawn_sidecar(app)?;
-    child.write(line.as_bytes()).map_err(|e| e.to_string())?;
+    if let Err(e) = child.write(line.as_bytes()) {
+        // Do not leave a process waiting on its stdin forever.
+        let _ = child.kill();
+        return Err(e.to_string());
+    }
+    // The timer thread owns the child from here: on timeout it kills it, which
+    // makes the shell plugin send `Terminated` and ends the loop below.
+    let (done, timed_out) = arm_timeout(limit, move || {
+        let _ = child.kill();
+    });
     let mut stdout_buf = String::new();
     let mut stderr_buf = String::new();
     while let Some(event) = rx.recv().await {
@@ -5530,6 +5754,13 @@ async fn run_sidecar_json(
             CommandEvent::Terminated(_) => break,
             _ => {}
         }
+    }
+    drop(done); // stop the timer (it drops the already finished child)
+    if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(format!(
+            "The Relation model engine did not answer within {} s and was stopped.",
+            limit.as_secs()
+        ));
     }
     if stdout_buf.trim().is_empty() {
         return Err(format!("Sidecar returned no output. Stderr: {}", stderr_buf.trim()));
@@ -5586,7 +5817,7 @@ async fn run_predict_relationship(
             "linearGAM_lambda": job.lambda,
         }
     });
-    let resp = run_sidecar_json(app, &payload).await?;
+    let resp = run_sidecar_json(app, &payload, PREDICT_SIDECAR_TIMEOUT).await?;
     parse_predicted_extra(&resp, job.rows.len())
 }
 

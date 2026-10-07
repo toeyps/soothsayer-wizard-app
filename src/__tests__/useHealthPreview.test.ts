@@ -293,6 +293,24 @@ describe('useHealthPreview - lastData and retry (QA 2026-10-04)', () => {
         expect(result.current.data).not.toBeNull();
     });
 
+    it('retryTestScoring() sends retry_test_scoring: true on exactly ONE request; later requests and plain retry() never carry it (Rust remembers a failed test-period prediction so debounced edits do not re-run the slow sidecar; only "Try again" may clear it)', async () => {
+        mockInvoke.mockResolvedValue(preview('a'));
+        const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });
+        await settle();
+        expect(mockInvoke.mock.calls[0][1].request).not.toHaveProperty('retry_test_scoring');
+
+        act(() => { result.current.retryTestScoring!(); });
+        await settle();
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+        expect(mockInvoke.mock.calls[1][1].request.retry_test_scoring).toBe(true);
+
+        rerender(opts({ setPoints: sp(2, 9) }));
+        await settle();
+        act(() => { result.current.retry!(); });
+        await settle();
+        for (const call of mockInvoke.mock.calls.slice(2)) expect(call[1].request).not.toHaveProperty('retry_test_scoring');
+    });
+
     it('retry is stable between renders (safe as a prop)', async () => {
         mockInvoke.mockResolvedValue(preview('a'));
         const { result, rerender } = renderHook((o: UseHealthPreviewOptions) => useHealthPreview(o), { initialProps: opts() });

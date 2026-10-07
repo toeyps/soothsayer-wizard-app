@@ -71,7 +71,9 @@ export default function ModelFitPage(props: ModelFitPageProps) {
             <TrainDaysNotice days={data.test_validation?.train.days ?? props.trainDaysEstimate ?? null} />
         </>
     );
-    const vt = { testNumbers: props.testNumbers, onRetry: props.preview.retry };
+    // "Try again" on the test_scoring_failed notice also asks Rust to retry the
+    // remembered failed prediction (a plain retry would get the same warning back).
+    const vt = { testNumbers: props.testNumbers, onRetry: props.preview.retryTestScoring ?? props.preview.retry };
 
     if (stats.kind === 'individual' && data.series.kind === 'individual') {
         const series = data.series;

@@ -174,7 +174,7 @@ export default function HealthScorePage(props: HealthScorePageProps) {
                     </div>
                 </section>
             )}
-            <TestResultsCard data={data} scoreReady={scoreReady} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={canRetry ? props.onRetryPreview : undefined} />
+            <TestResultsCard data={data} scoreReady={scoreReady} custom={model.runningConditionMode === 'custom'} testNumbers={testNumbers} onRetry={canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined} />
         </div>
     );
 }

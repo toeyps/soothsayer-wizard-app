@@ -116,6 +116,14 @@ pub struct HealthPreviewRequest {
     /// empty = no change at all and `test_validation: null`.
     #[serde(default)]
     pub test_periods: Option<Vec<TestPeriodArg>>,
+    /// Relationship + test periods: `true` = the user asked to try scoring the
+    /// test periods again ("Try again" on the `test_scoring_failed` notice).
+    /// Forgets this fit's failed prediction attempt so the sidecar runs once
+    /// more; without it a failed attempt is NOT repeated by later previews (only
+    /// a re-train or this flag clears it). Default `false` - send it only from
+    /// that button, never on every preview.
+    #[serde(default, alias = "retryTestScoring")]
+    pub retry_test_scoring: bool,
 }
 
 impl HealthPreviewRequest {
@@ -303,7 +311,11 @@ pub struct HealthPreview {
     pub stats: HealthStats,
     /// Re-run on every call. Empty = fine.
     pub validation: Vec<Issue>,
-    /// `false` when any validation issue is an error (no score is produced).
+    /// `false` when any validation issue OF THE SET POINTS is an error (no score
+    /// is produced). Test-period issues are NOT part of it: an invalid test
+    /// period (`test_*` / `event_*` codes, error severity - that period is only
+    /// skipped) and the `test_scoring_failed` warning can appear with
+    /// `valid: true`.
     pub valid: bool,
     pub series: HealthSeries,
     /// `null` when `valid` is false.
@@ -816,20 +828,13 @@ pub fn relationship_preview_ex(
             .iter()
             .map(|p| col_index(data, p, "Predictor"))
             .collect::<Result<_, _>>()?;
-        test_rows = plan.collect_rows(data, &|r| {
-            data.columns[tcol][r].is_finite() && pcols.iter().all(|&c| data.columns[c][r].is_finite())
-        });
-        // Test rows that are not training rows and that have a prediction.
-        let mut ex: Vec<u32> = test_rows
-            .iter()
-            .flatten()
-            .copied()
-            .filter(|r| {
-                fit.rows.binary_search(r).is_err() && extra.is_some_and(|e| e.get(*r).is_some())
-            })
-            .collect();
-        ex.sort_unstable();
-        ex.dedup();
+        // The same test-row selection as the prediction step / pre-warm / export
+        // (`health_validation::extra_test_rows`, split so the per-test lists are
+        // kept for `build` without a second scan)...
+        test_rows = health_validation::rel_test_rows(plan, data, tcol, &pcols);
+        let mut ex = health_validation::rows_outside_training(&test_rows, &fit.rows);
+        // ...of which only the rows that have a prediction join the universe.
+        ex.retain(|r| extra.is_some_and(|e| e.get(*r).is_some()));
         if let (false, Some(e)) = (ex.is_empty(), extra) {
             let total = n_fit + ex.len();
             let mut rr: Vec<u32> = Vec::with_capacity(total);

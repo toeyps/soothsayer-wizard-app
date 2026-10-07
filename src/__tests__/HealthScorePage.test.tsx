@@ -775,6 +775,20 @@ describe('Train / Test validation (2026-10-07)', () => {
         expect(onRetryPreview).toHaveBeenCalledTimes(1);
     });
 
+    it('"Try again" on test_scoring_failed calls onRetryTestScoring (which tells Rust to retry the remembered failed prediction) when given, not the plain preview retry', () => {
+        const onRetryPreview = vi.fn();
+        const onRetryTestScoring = vi.fn();
+        const data: HealthPreview = {
+            ...previewFor('relationship', REL_VALID),
+            validation: [{ code: 'test_scoring_failed', severity: 'warning', field: 'test_periods', message: 'The Relation model engine did not answer.' }],
+            test_validation: makeValidation({ tests: [makeTestResult({ scored: 0, pct_below_80: null, lowest: null })] }),
+        };
+        mount({ kind: 'relationship', sp: REL_VALID, data, onRetryPreview, onRetryTestScoring });
+        fireEvent.click(screen.getByTestId('test-scoring-retry'));
+        expect(onRetryTestScoring).toHaveBeenCalledTimes(1);
+        expect(onRetryPreview).not.toHaveBeenCalled();
+    });
+
     it('review fix 2026-10-07: the "Scoring test periods … ~15 s" hint shows when the container says so', () => {
         mount({ sp: IND_VALID, slowScoring: true });
         expect(screen.getByTestId('slow-test-scoring').textContent).toContain('Scoring test periods with the Relation model');

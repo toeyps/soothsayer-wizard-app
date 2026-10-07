@@ -1139,6 +1139,13 @@ pub struct RelCache {
     entries: Vec<(String, Arc<RelFit>)>,
     /// Test-row predictions of the entries above (same key), see [`RelExtra`].
     extras: Vec<(String, Arc<RelExtra>)>,
+    /// Keys of cached fits whose LAST test-row prediction attempt failed
+    /// (sidecar error / timeout, predictions over the budget). While a key is
+    /// here `compute_health_preview` does not run the sidecar again for it; the
+    /// marker dies with the fit (re-train = [`RelCache::insert`], eviction,
+    /// [`RelCache::clear`]), on a successful [`RelCache::merge_extra`] and on an
+    /// explicit retry ([`RelCache::clear_extra_failed`]).
+    failed: Vec<String>,
     max_entries: usize,
     max_bytes: usize,
     /// "Derived epoch": bumped by every [`RelCache::clear`] — i.e. by every
@@ -1164,6 +1171,7 @@ impl RelCache {
         RelCache {
             entries: Vec::new(),
             extras: Vec::new(),
+            failed: Vec::new(),
             max_entries: max_entries.max(1),
             max_bytes,
             epoch: 0,
@@ -1189,6 +1197,7 @@ impl RelCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.extras.clear();
+        self.failed.clear();
         self.epoch += 1;
     }
 
@@ -1197,16 +1206,26 @@ impl RelCache {
             + self.extras.iter().map(|(_, e)| e.approx_bytes()).sum::<usize>()
     }
 
+    /// Remove the least recently used entry TOGETHER with its test-row
+    /// predictions and its failed marker, so the next `total_bytes()` no longer
+    /// counts orphaned predictions (which used to evict more fits than needed).
+    fn evict_lru(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let (key, _) = self.entries.remove(0);
+        self.extras.retain(|(k, _)| k != &key);
+        self.failed.retain(|k| k != &key);
+    }
+
     /// Evict the least recently used entries (and their extras) until both
     /// bounds hold. The newest entry is always kept.
     fn enforce_bounds(&mut self) {
         while self.entries.len() > 1
             && (self.entries.len() > self.max_entries || self.total_bytes() > self.max_bytes)
         {
-            self.entries.remove(0);
+            self.evict_lru();
         }
-        let live: Vec<&String> = self.entries.iter().map(|(k, _)| k).collect();
-        self.extras.retain(|(k, _)| live.contains(&k));
     }
 
     /// Insert (replacing the same key), then evict the least recently used
@@ -1214,10 +1233,35 @@ impl RelCache {
     /// if it alone exceeds the byte budget.
     pub fn insert(&mut self, key: String, fit: RelFit) {
         self.entries.retain(|(k, _)| k != &key);
-        // A new fit under the same key invalidates the old fit's test predictions.
+        // A new fit under the same key invalidates the old fit's test
+        // predictions and its "last prediction attempt failed" marker.
         self.extras.retain(|(k, _)| k != &key);
+        self.failed.retain(|k| k != &key);
         self.entries.push((key, Arc::new(fit)));
         self.enforce_bounds();
+    }
+
+    /// Remember that the test-row prediction attempt for the cached fit `key`
+    /// failed. `false` (nothing marked) when no such fit is cached.
+    pub fn mark_extra_failed(&mut self, key: &str) -> bool {
+        if !self.entries.iter().any(|(k, _)| k == key) {
+            return false;
+        }
+        if !self.failed.iter().any(|k| k == key) {
+            self.failed.push(key.to_string());
+        }
+        true
+    }
+
+    /// Did the last test-row prediction attempt for `key` fail (and nothing
+    /// cleared the marker since)?
+    pub fn extra_failed(&self, key: &str) -> bool {
+        self.failed.iter().any(|k| k == key)
+    }
+
+    /// Forget a failed attempt (explicit retry by the user).
+    pub fn clear_extra_failed(&mut self, key: &str) {
+        self.failed.retain(|k| k != key);
     }
 
     /// The test-row predictions stored for `key` (usable under a read lock).
@@ -1263,11 +1307,12 @@ impl RelCache {
             return false;
         }
         self.extras.push((key.to_string(), Arc::new(merged)));
-        // Evict the least recently used OTHER fits until the budget holds (the
-        // merged key is last, so it is never removed; the check above
-        // guarantees it fits once it is alone).
+        self.failed.retain(|k| k != key);
+        // Evict the least recently used OTHER fits (each with its own
+        // predictions) until the budget holds (the merged key is last, so it is
+        // never removed; the check above guarantees it fits once it is alone).
         while self.entries.len() > 1 && self.total_bytes() > self.max_bytes {
-            self.entries.remove(0);
+            self.evict_lru();
         }
         self.enforce_bounds();
         true
@@ -2043,6 +2088,72 @@ mod tests {
         c.insert("d".into(), fit(5, "T")); // over budget: evicts the LRU = "b", not "a"
         assert!(c.peek("a").is_some() && c.peek("b").is_none());
         assert!(c.peek_extra("a").is_some());
+    }
+
+    /// "a" = 5-row fit (140 bytes) + 100 predictions (1200 bytes), "b" / "c" =
+    /// 140 bytes each, "a" the least recently used. 1620 bytes in all.
+    fn cache_with_heavy_lru(budget: usize) -> RelCache {
+        let mut c = RelCache::new(8, budget);
+        c.insert("a".into(), fit(5, "T"));
+        let rows: Vec<u32> = (0..100).collect();
+        assert!(c.merge_extra("a", &rows, &[0.0; 100]));
+        c.insert("b".into(), fit(5, "T"));
+        c.insert("c".into(), fit(5, "T"));
+        assert!(c.peek("a").is_some() && c.peek("b").is_some() && c.peek("c").is_some());
+        c
+    }
+
+    #[test]
+    fn merge_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
+        // Review fix 2026-10-07: merging 30 predictions (360 bytes) into "c" makes
+        // 1980 > 1700. Evicting "a" WITH its predictions leaves 640: only "a" goes.
+        // The old loop removed only a's fit (1840, still over) and so evicted "b" too.
+        let mut c = cache_with_heavy_lru(1700);
+        let rows: Vec<u32> = (0..30).collect();
+        assert!(c.merge_extra("c", &rows, &[1.0; 30]));
+        assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
+        assert!(c.peek("b").is_some(), "b must not pay for a's orphaned predictions");
+        assert!(c.peek("c").is_some() && c.peek_extra("c").is_some());
+    }
+
+    #[test]
+    fn insert_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
+        // Inserting a 10-row fit (280 bytes): 1900 > 1700. Without "a" and its
+        // predictions: 700 -> only "a" goes (the old loop, still at 1760 after
+        // removing a's fit alone, also evicted "b").
+        let mut c = cache_with_heavy_lru(1700);
+        c.insert("d".into(), fit(10, "T"));
+        assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
+        assert!(c.peek("b").is_some() && c.peek("c").is_some() && c.peek("d").is_some());
+    }
+
+    #[test]
+    fn failed_marker_lives_with_its_fit_and_is_cleared_by_retrain_success_and_retry() {
+        let mut c = RelCache::new(2, usize::MAX);
+        assert!(!c.mark_extra_failed("a"), "no fit, nothing to mark");
+        assert!(!c.extra_failed("a"));
+        c.insert("a".into(), fit(5, "T"));
+        assert!(c.mark_extra_failed("a") && c.mark_extra_failed("a"));
+        assert!(c.extra_failed("a"));
+        // Explicit retry.
+        c.clear_extra_failed("a");
+        assert!(!c.extra_failed("a"));
+        // Re-train (same key) clears it.
+        c.mark_extra_failed("a");
+        c.insert("a".into(), fit(5, "T2"));
+        assert!(!c.extra_failed("a"));
+        // A successful merge clears it.
+        c.mark_extra_failed("a");
+        assert!(c.merge_extra("a", &[1], &[1.0]));
+        assert!(!c.extra_failed("a"));
+        // Eviction and clear() drop it (a later fit under the key starts clean).
+        c.mark_extra_failed("a");
+        c.insert("b".into(), fit(5, "T"));
+        c.insert("c".into(), fit(5, "T")); // evicts "a" (max 2 entries)
+        assert!(c.peek("a").is_none() && !c.extra_failed("a"));
+        c.mark_extra_failed("b");
+        c.clear();
+        assert!(!c.extra_failed("b"));
     }
 
     #[test]

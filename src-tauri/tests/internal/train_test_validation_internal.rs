@@ -937,6 +937,266 @@ fn predictions_over_the_cache_budget_are_reported_not_stored_and_not_an_error() 
     assert!(apply_rel_extra(&state, &job, &preds).unwrap_err().starts_with("NOT_FITTED"));
 }
 
+#[test]
+fn unscored_tests_still_report_their_rows_and_days() {
+    // Review fix 2026-10-07: a period fully outside the training scope has no
+    // prediction after a failure; it used to report 0 rows / 0 days.
+    let (state, _d) = rel_state();
+    let req = rel_req(vec![tp("normal", 288, 575, None), tp("normal", 144, 431, None)]);
+    let p = crate::health_preview_with_outcome(&state, &req, Some("boom")).unwrap();
+    let t = &tv(&p).tests;
+    assert_eq!((t[0].rows, t[0].days, t[0].scored), (288, 2.0, 0));
+    assert_eq!((t[1].rows, t[1].days, t[1].train_rows, t[1].scored), (288, 2.0, 144, 0));
+}
+
+// ---------- score_test_rows: lock scope, remembered failures, retry ----------
+
+use crate::{score_test_rows, ExtraPlan, RelExtraJob};
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::task::{Context, Poll, Waker};
+
+type RunResult = (RelExtraJob, Result<Vec<f64>, String>);
+
+/// A runner that answers with Y = 2X for every job row (counts its calls).
+fn good_runner<'a>(d: &ColumnarData, calls: &'a AtomicUsize) -> impl FnOnce(RelExtraJob) -> std::future::Ready<RunResult> + 'a {
+    let x = d.columns[1].clone();
+    move |job: RelExtraJob| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        let preds = job.rows.iter().map(|&r| 2.0 * x[r as usize]).collect();
+        std::future::ready((job, Ok(preds)))
+    }
+}
+
+fn failing_runner<'a>(err: &str, calls: &'a AtomicUsize) -> impl FnOnce(RelExtraJob) -> std::future::Ready<RunResult> + 'a {
+    let err = err.to_string();
+    move |job: RelExtraJob| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        std::future::ready((job, Err(err)))
+    }
+}
+
+fn block_on<F: Future>(f: F) -> F::Output {
+    tauri::async_runtime::block_on(f)
+}
+
+#[test]
+fn a_fully_cached_preview_is_planned_without_waiting_for_the_prediction_lock() {
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    // Fill the predictions once.
+    assert_eq!(block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Another model's prediction run holds the lock...
+    let held = serial.try_lock().unwrap();
+    // ...a preview whose rows are all cached answers on the FIRST poll.
+    let mut cx = Context::from_waker(Waker::noop());
+    let fut = std::pin::pin!(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {}));
+    assert_eq!(fut.poll(&mut cx), Poll::Ready(Ok(None)), "must not wait for the lock");
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "no sidecar run");
+
+    // A preview that needs NEW rows does wait for it...
+    let longer = rel_req(vec![tp("normal", 288, 575, None)]);
+    let mut fut = std::pin::pin!(score_test_rows(&state, &longer, &serial, &outdated, good_runner(&d, &calls), &|_| {}));
+    assert!(fut.as_mut().poll(&mut cx).is_pending(), "a run needs the lock");
+    // ...and runs once it is free.
+    drop(held);
+    assert_eq!(block_on(fut), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(crate::plan_rel_extra(&state, &longer).unwrap().is_none());
+}
+
+#[test]
+fn the_planning_split_builds_the_job_only_when_asked() {
+    let (state, _d) = rel_state();
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    assert!(matches!(crate::plan_rel_extra_ex(&state, &req, false, false).unwrap(), ExtraPlan::Needed(None)));
+    match crate::plan_rel_extra_ex(&state, &req, false, true).unwrap() {
+        ExtraPlan::Needed(Some(job)) => assert_eq!(job.rows, (288..432).collect::<Vec<u32>>()),
+        other => panic!("expected a job, got {other:?}"),
+    }
+    // Outdated sidecar: rows are missing, but nothing is to be run.
+    match crate::plan_rel_extra_ex(&state, &req, true, true).unwrap() {
+        ExtraPlan::Failed(r) => assert!(r.starts_with("SIDECAR_OUTDATED")),
+        other => panic!("{other:?}"),
+    }
+    // Nothing missing -> Nothing, whatever the flags.
+    assert!(matches!(crate::plan_rel_extra_ex(&state, &rel_req(vec![tp("normal", 0, 100, None)]), true, true).unwrap(), ExtraPlan::Nothing));
+    // The generation guard still applies to the lock-free look.
+    let mut stale = req.clone();
+    stale.expected_generation = Some(99);
+    assert!(crate::plan_rel_extra_ex(&state, &stale, false, false).unwrap_err().starts_with("STALE_SESSION"));
+}
+
+#[test]
+fn a_failed_attempt_is_logged_remembered_and_retried_only_on_request() {
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let logged = std::sync::Mutex::new(Vec::<String>::new());
+    let log = |s: &str| logged.lock().unwrap().push(s.to_string());
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+
+    // 1. The sidecar fails: the raw reason is returned and logged, the fit is marked.
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom at C:\\x.py", &calls), &log));
+    assert_eq!(r, Ok(Some("boom at C:\\x.py".to_string())));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    {
+        let l = logged.lock().unwrap();
+        assert_eq!(l.len(), 1);
+        assert!(l[0].contains("boom at C:\\x.py") && l[0].contains("m1::fp"), "{l:?}");
+    }
+    assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.extra_failed("m1::fp"));
+    assert!(!outdated.load(Ordering::SeqCst));
+
+    // 2. The next (debounced) preview does NOT run the sidecar again.
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("again", &calls), &log)).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "no second sidecar run");
+    assert_eq!(logged.lock().unwrap().len(), 1, "nothing new to log");
+    let reason = r.expect("still reported as not scored");
+    let p = crate::health_preview_with_outcome(&state, &req, Some(&reason)).unwrap();
+    let w = p.validation.iter().find(|i| i.code == "test_scoring_failed").unwrap();
+    assert!(!w.message.contains("out of date"), "generic wording: {}", w.message);
+    assert!(tv(&p).tests.iter().all(|t| t.scored == 0));
+
+    // 3. An explicit retry (the "Try again" button) runs it once more.
+    let mut retry = req.clone();
+    retry.retry_test_scoring = true;
+    assert_eq!(block_on(score_test_rows(&state, &retry, &serial, &outdated, good_runner(&d, &calls), &log)), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(!state.0.read().unwrap().as_ref().unwrap().rel_cache.extra_failed("m1::fp"));
+    let p = crate::health_preview_with_outcome(&state, &req, None).unwrap();
+    assert_eq!(tv(&p).tests[0].scored, 144);
+}
+
+#[test]
+fn a_retrain_clears_the_failed_marker() {
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner("boom", &calls), &|_| {})).unwrap();
+    assert!(matches!(crate::plan_rel_extra_ex(&state, &req, false, false).unwrap(), ExtraPlan::Failed(_)));
+    // Train again (same key): a fresh fit, a fresh attempt.
+    let stamp = session_stamp(&state).unwrap().unwrap();
+    assert!(store_rel_fit(&state, stamp, "m1::fp".into(), rel_fit(&d)));
+    assert!(matches!(crate::plan_rel_extra_ex(&state, &req, false, false).unwrap(), ExtraPlan::Needed(None)));
+    assert_eq!(block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn an_outdated_sidecar_is_remembered_for_the_process_not_per_fit() {
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let old = parse_predicted_extra(&serde_json::json!({ "error": "Unknown action: 'predict_relationship'" }), 1).unwrap_err();
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, failing_runner(&old, &calls), &|_| {})).unwrap();
+    assert!(r.unwrap().starts_with("SIDECAR_OUTDATED"));
+    assert!(outdated.load(Ordering::SeqCst));
+    assert!(!state.0.read().unwrap().as_ref().unwrap().rel_cache.extra_failed("m1::fp"), "the flag, not the marker");
+    // Any later run is skipped - also another fit, also on retry.
+    let stamp = session_stamp(&state).unwrap().unwrap();
+    assert!(store_rel_fit(&state, stamp, "m2::fp".into(), rel_fit(&d)));
+    let mut other = rel_req(vec![tp("normal", 288, 431, None)]);
+    other.cache_key = Some("m2::fp".into());
+    other.retry_test_scoring = true;
+    for r in [&req, &other] {
+        let reason = block_on(score_test_rows(&state, r, &serial, &outdated, good_runner(&d, &calls), &|_| {})).unwrap();
+        assert!(reason.unwrap().starts_with("SIDECAR_OUTDATED"));
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // Fully cached periods (here: inside the training rows) need no sidecar: no warning.
+    let inside = rel_req(vec![tp("normal", 0, 200, None)]);
+    assert_eq!(block_on(score_test_rows(&state, &inside, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+}
+
+#[test]
+fn over_budget_predictions_are_remembered_like_a_failure() {
+    let d = rel_data();
+    let state = state_with(rel_data());
+    state.0.write().unwrap().as_mut().unwrap().rel_cache = crate::health_score::RelCache::new(8, 8100);
+    let stamp = session_stamp(&state).unwrap().unwrap();
+    assert!(store_rel_fit(&state, stamp, "m1::fp".into(), rel_fit(&d)));
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let logged = std::sync::Mutex::new(Vec::<String>::new());
+    let req = rel_req(vec![tp("normal", 288, 431, None)]);
+    let r = block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|s| logged.lock().unwrap().push(s.into()))).unwrap();
+    assert!(r.unwrap().contains("do not fit the model cache"));
+    assert!(logged.lock().unwrap()[0].contains("144 test rows"));
+    assert!(block_on(score_test_rows(&state, &req, &serial, &outdated, good_runner(&d, &calls), &|_| {})).unwrap().is_some());
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "not predicted again");
+}
+
+#[test]
+fn other_kinds_and_requests_without_tests_never_touch_the_sidecar() {
+    let (state, d) = rel_state();
+    let serial = tauri::async_runtime::Mutex::new(());
+    let outdated = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    assert_eq!(block_on(score_test_rows(&state, &rel_req(vec![]), &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+    let mut ind = rel_req(vec![tp("normal", 288, 431, None)]);
+    ind.kind = "individual".into();
+    assert_eq!(block_on(score_test_rows(&state, &ind, &serial, &outdated, good_runner(&d, &calls), &|_| {})), Ok(None));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn the_request_accepts_retry_test_scoring_in_snake_and_camel_case() {
+    let a: HealthPreviewRequest = serde_json::from_str(r#"{"kind":"relationship","retry_test_scoring":true}"#).unwrap();
+    assert!(a.retry_test_scoring);
+    let b: HealthPreviewRequest = serde_json::from_str(r#"{"kind":"relationship","retryTestScoring":true}"#).unwrap();
+    assert!(b.retry_test_scoring);
+    let c: HealthPreviewRequest = serde_json::from_str(r#"{"kind":"relationship"}"#).unwrap();
+    assert!(!c.retry_test_scoring, "default false");
+}
+
+#[test]
+fn a_sidecar_timeout_fires_once_and_a_finished_run_cancels_it() {
+    use std::time::Duration;
+    // Fires: the callback (the kill) runs and the flag is set.
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let (_done, fired) = crate::arm_timeout(Duration::from_millis(20), move || tx.send(()).unwrap());
+    assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "the timeout callback ran");
+    assert!(fired.load(Ordering::SeqCst));
+    // Cancelled: dropping the sender before the limit means no callback, no flag.
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let (done, fired) = crate::arm_timeout(Duration::from_millis(300), move || tx.send(()).unwrap());
+    drop(done);
+    assert!(rx.recv_timeout(Duration::from_millis(600)).is_err(), "never called after the run finished");
+    assert!(!fired.load(Ordering::SeqCst));
+    assert!(crate::PREDICT_SIDECAR_TIMEOUT >= Duration::from_secs(300), "generous: only a hung engine hits it");
+}
+
+#[test]
+fn the_preview_and_the_prediction_step_select_the_same_test_rows() {
+    // Review fix 2026-10-07: relationship_preview_ex uses the shared selection.
+    let d = rel_data();
+    let fit = rel_fit(&d);
+    let tests = vec![tp("normal", 144, 431, None), tp("problem", 576, 600, Some(590))];
+    let plan = crate::health_validation::TestPlan::resolve(&tests, Some(&train_to(2 * DAY - 1, vec![])), &d.headers);
+    let rows = crate::health_validation::extra_test_rows(&plan, &d, 2, &[1], &fit.rows);
+    let extra = rel_extra(&d, rows.iter().copied());
+    let p = relationship_preview_ex(&d, &fit, Some(&extra), &rel_req(tests)).unwrap();
+    match &p.series {
+        HealthSeries::Relationship(s) => assert_eq!(s.total_points, fit.rows.len() + rows.len()),
+        _ => unreachable!(),
+    }
+    let t = &tv(&p).tests;
+    assert_eq!((t[0].rows, t[0].train_rows, t[0].scored), (288, 144, 288));
+    assert_eq!((t[1].rows, t[1].scored), (25, 25));
+}
+
 // ---------- the export still refuses what it cannot validate ----------
 
 #[test]
