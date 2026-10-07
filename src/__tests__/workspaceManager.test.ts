@@ -290,6 +290,11 @@ describe('loadWorkspaceData', () => {
         const { loadWorkspaceData, WorkspaceReadError } = await freshModule();
         await expect(loadWorkspaceData('ws1')).rejects.toBeInstanceOf(WorkspaceReadError);
         expect(mockReadTextFile.mock.calls.length).toBeGreaterThan(1); // retried
+        // ...and it leaves a permanent trace in the log FILE (the only evidence
+        // if a skipped save is ever followed by missing data).
+        expect(mockInvoke).toHaveBeenCalledWith('log_frontend_error', expect.objectContaining({
+            message: expect.stringContaining('[workspace-read] Could not read workspace ws1'),
+        }));
     });
 
     it('retries a read that hits a half-written file and returns the state once it is complete', async () => {

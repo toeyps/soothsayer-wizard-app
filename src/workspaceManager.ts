@@ -7,6 +7,7 @@ import { migrateHealthSetPoints } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
 import { applyIncompleteRule } from './utils/incompleteRule';
 import { withFailureGroupState } from './utils/failureGroupState';
+import { logToFile } from './errorReporter';
 
 const STORE_FILE = 'settings.json';
 
@@ -434,6 +435,11 @@ async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
         }
     }
     console.error("Failed to load workspace data:", lastError);
+    // Leave a trace in the log FILE (no toast): the caller skips its write
+    // because of this, and it is the only evidence if data ever goes missing.
+    logToFile('workspace-read',
+        `Could not read workspace ${id} (${filePath}) after ${READ_RETRY_ATTEMPTS} tries; the save that needed it was skipped, nothing was overwritten`,
+        lastError instanceof Error ? (lastError.stack ?? lastError.message) : String(lastError));
     throw new WorkspaceReadError(id, lastError);
 }
 

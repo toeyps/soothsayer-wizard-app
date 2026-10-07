@@ -42,6 +42,29 @@ describe('errorReporter', () => {
         expect(entry.detail).toContain('Error: boom'); // stack trace
     });
 
+    it('logToFile writes the log file WITHOUT showing a toast, and coalesces the same line within the dedupe window', async () => {
+        vi.useFakeTimers();
+        const { logToFile, getErrors } = await freshModule();
+        logToFile('workspace-read', 'Could not read workspace ws1', 'stack');
+        logToFile('workspace-read', 'Could not read workspace ws1', 'stack');
+        expect(getErrors()).toEqual([]);
+        expect(mockInvoke).toHaveBeenCalledTimes(1);
+        expect(mockInvoke).toHaveBeenCalledWith('log_frontend_error', {
+            message: '[workspace-read] Could not read workspace ws1',
+            detail: 'stack',
+        });
+        vi.advanceTimersByTime(6_000);
+        logToFile('workspace-read', 'Could not read workspace ws1');
+        expect(mockInvoke).toHaveBeenCalledTimes(2);
+        expect(mockInvoke).toHaveBeenLastCalledWith('log_frontend_error', { message: '[workspace-read] Could not read workspace ws1', detail: null });
+    });
+
+    it('logToFile never throws when the logger itself fails', async () => {
+        mockInvoke.mockRejectedValue(new Error('no backend'));
+        const { logToFile } = await freshModule();
+        expect(() => logToFile('x', 'y')).not.toThrow();
+    });
+
     it('subscribeErrors returns an unsubscribe function', async () => {
         const { reportError, subscribeErrors } = await freshModule();
         const listener = vi.fn();

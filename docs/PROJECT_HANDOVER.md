@@ -3304,3 +3304,234 @@ No repo code touched, nothing committed.
   - **แก้** (`src/workspaceManager.ts`, `src/components/dashboard/Dashboard.tsx`): (a) `writeWorkspaceJsonAtomically` — เขียนไฟล์ชั่วคราวข้างๆ แล้ว `rename` ทับไฟล์จริง ผู้อ่านเห็นแค่ไฟล์เก่าหรือใหม่ทั้งไฟล์ (ถ้า rename ถูกปฏิเสธ → ลบไฟล์ชั่วคราวแล้ว fallback เขียนตรง) · permission `rename` มีอยู่แล้วใน `fs:allow-appdata-write-recursive` (= `write-all` + scope `$APPDATA`) **ไม่ได้ขยาย capability** (b) `readWorkspaceFile` ลองอ่านซ้ำ 4 ครั้ง (40/80/120 ms) แล้ว **throw `WorkspaceReadError`** แทนการคืน `null` — `null` หมายถึง "ไม่มีไฟล์" เท่านั้น (c) `updateWorkspaceData` อ่านไม่ได้ → ไม่เรียก patch ไม่เขียน คืน `null` (d) autosave ของ Dashboard อ่านไม่ได้ → **ไม่เขียนอะไรเลย** (คง dirty ไว้ให้ครั้งถัดไปลองใหม่) แทนการเขียน mirror ทับ · ผู้เรียก `loadWorkspaceData` อื่นจัดการ throw อยู่แล้ว: DataUploadPage (แสดง error), BuildModelWindow (try/catch), AddSensorWindow (ถือเป็น error อยู่แล้ว), rename/duplicate (try/catch)
   - **หมายเหตุ**: ตอนเริ่มแก้ รอบก่อนหน้าของ session นี้ถูกตัดกลางคันโดย safety classifier ทำให้ `Dashboard.tsx` ค้างครึ่ง edit (compile ไม่ผ่าน) ~09:12 — ซ่อมแล้ว ถ้า `tauri dev` เปิดอยู่ช่วงนั้นจะเห็น error
   - **Test**: `workspaceManager.test.ts` (+helper `savedFiles()`, เขียนแบบ temp+rename, fallback เมื่อ rename ถูกปฏิเสธ, อ่านไม่ได้ → `WorkspaceReadError` หลัง retry, อ่านเจอไฟล์ครึ่งไฟล์แล้วสำเร็จเมื่อครบ, ไม่มีไฟล์ → `null`, `updateWorkspaceData` อ่านไม่ได้ → ไม่เขียน) · `Dashboard.test.tsx` test ใหม่จำลองเคสผู้ใช้ (snapshot ไม่มี FG + ดิสก์มี FG + อ่านล้ม → ไม่เขียน; อ่านได้อีก → เขียนสิ่งที่อยู่บนดิสก์) — **ทดลองใส่โค้ดเดิมกลับแล้ว test นี้ล้มจริง** · fs mock ของ integration test ทุกตัว + `helpers/healthEnv.tsx` ได้ `rename` และนับการเขียนเมื่อไฟล์จริงถูกแทนที่ · tsc ผ่าน, vite build ผ่าน (ไม่มี warning ใหม่), vitest 105 ไฟล์ 2867 ผ่าน + 1 expected-fail · ไม่ได้แก้ Rust · ยังไม่ได้ทดสอบในแอปจริง · ไม่ push
+
+### 🆕 2026-10-07 — Design: Train/Test model validation merged into the Workbench and loop v8 (design session, no code)
+
+The "Soothsayer wizard future" session handed over its Train/Test validation design (retrospective health scoring) with three mockups:
+- (a) Running condition editor: https://claude.ai/artifact/UbcsBhMTbbS5grmZfFDkzU
+- (b) Workbench: https://claude.ai/artifact/2nLoUMwNjUk1E7UrU5W8Yt
+- (c) Export reference: https://claude.ai/artifact/8rrrNgFqH2nLxvgcDZ4Ccj
+
+Copies of the sources are in this session's scratchpad `val/`. The ask was to merge the design and to ask the user the open questions.
+
+**User answers (asked here on 2026-10-07):**
+- Q1: a train period is REQUIRED (no "train on everything outside the tests").
+- A test period is REQUIRED before Mark complete. Training can start with train periods only. The "Not tested" state is gone, so the export always has tested = true.
+  - The future session relayed this as "train and test both required" — I told it which version I designed.
+- Q2: the Normal/Known-problem label is NOT stored on the Highlight.
+- Q3: changing only test periods → re-score, no re-train, but completed models need Mark complete again. Changing train periods → Incomplete + re-train.
+- Q4: Normal period is amber when ≥ 5 % of running time is below 80.
+- Q5: Known problem not detected = amber.
+
+**What was built** (scratchpad `val/val.js` + `val/val.css`; `val/make_h5.py` turns `health-v4.html` into `health-v5.html`; `build_loop.py` now uses `health-v5`):
+- **Step-1 card:** Train / T1 Normal / T2 Known problem chips, with the event time on the Known problem chip.
+- **Running condition editor** (Step-1 "Edit…" and a Custom model's "Edit periods…"):
+  - Train and Test lists, each with its rule copy; Normal / Known problem per test period, plus an event time.
+  - "From Highlights" menu: highlights that overlap a train period are disabled with the reason.
+  - Train-overlaps-highlight: amber warning plus "Remove the overlap" (splits the train period).
+  - Test-overlaps-train: red, and Apply is disabled.
+  - No train period: Apply is blocked. No test period: amber note.
+  - Data-used panel: train/test rows, a mini timeline and the two-level data minimum with the placeholders.
+  - Apply applies the Q3 rule and shows a toast.
+- **Model fit:** training statistics now come from the train rows only. Every time chart shows the time scopes.
+  - Relation model: "Fit statistics" table (Train vs each Normal test plus Test/Train ratio) and a Known-problem residual-shift line.
+  - Individual: % of test rows within ±3σ and the mean shift in σ.
+  - Clustering: % of test rows inside the 3× SD ring.
+- **Health score:** rows outside every period are unscored.
+  - "Test results" cards (information only): Normal shows % of running time below 80; Known problem shows the lead time, first drop and lowest score, or "Not detected" in amber.
+  - "Test periods changed — Mark complete again" banner.
+- **Footer:**
+  - `Tested · N` pill.
+  - Mark complete is blocked with "Add a test period before marking complete".
+  - Re-train is blocked when there is no train period or the running time is below the minimum.
+- **Demo data:**
+  - BEARING DE TEMPERATURE's relation model is detected with a 1.9-day lead time before the event (24 Mar 10:30).
+  - COOLING WATER OUTLET TEMP shows "Not detected".
+
+**Published and documented:**
+- Loop v8 published: https://claude.ai/artifact/NyTzUanJNZdqs5FCfpnuh3. The standalone Workbench artifact EqqcM7miNdBmNMZAiQxtSA is left as the record of what is implemented.
+- `docs/design/DESIGN_SYSTEM.md` gained the Train/Test patterns (colours, time scopes, information-only results, two-level minimum, rules).
+
+**Checks done:** jsdom smoke test plus headless Chrome renders of the fit, health, editor, overlap-error and not-detected states.
+
+**Still open:**
+- [MIN DAYS] / [RECOMMENDED DAYS] thresholds.
+- Export reference (c) still needs its not-tested variant dropped.
+- Not yet reviewed by the user.
+
+No repo code touched, nothing committed.
+
+### 🆕 2026-10-07 — Correction: Train/Test validation goes into the CURRENT design, not the future loop; design agents back in use
+
+**What went wrong:** the user said the merge above was in the wrong place. Train/Test validation extends the **current** app's health-score calculation (Build Model Workbench). It belongs in the current-design mockup https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q, not in the future Studio loop.
+
+**Reverted:**
+- The future loop is rebuilt without the validation layer and republished as https://claude.ai/artifact/NyTzUanJNZdqs5FCfpnuh3 version 9, which has the same content as v7.
+- The `DESIGN_SYSTEM.md` Train/Test entry is re-worded: it applies to the current Workbench.
+- `health-v5.html` stays in the scratchpad for reference only.
+
+**Agents:** the user asked why the design agents they set up were no longer being used. The main session had been doing every design round itself, against the CLAUDE.md "Design workflow (Fable + Opus)". From now on, design work goes through the agents. This task was handed to `ui-design-agent` (Opus), with `ui-design-reviewer` to check the result before hand-off.
+
+**Work handed to the agent — main session's edits so far in the scratchpad source copy `cur/app/src`** (the real frontend built against the mock backend):
+- `TestPeriod` types, the request/response types, and the gates: a train period is required, a test period that overlaps a train period is blocked, and Mark complete needs a test period.
+- New `TestPeriodsEditor`.
+- Train + Test sections in `RunningConditionPanel`.
+- Train/Test chips in `RunningConditionCard`.
+- State, draft and Apply wiring in `BuildModelWindow`, including the tests-only rule.
+
+**Still open for the agent:** CSS, the mock backend validation output, the Model fit and Health score cards, time scopes on the charts, build, browser check and publish.
+
+No repo code touched, nothing committed.
+
+### 🆕 2026-10-07 — Rule for every session: design work only through the design agents (CLAUDE.md change)
+
+**User request:** "พอบอกทุก session เลยได้ไหมว่าให้ผ่าน agent ที่สร้างไว้เท่านั้น เพราะว่า design workflow ไว้แล้ว".
+
+**CLAUDE.md:** added a "⚠️ MANDATORY for every session" paragraph at the top of the "Design workflow (Fable + Opus)" section.
+- All design work goes only through `ui-design-lead` / `ui-design-agent` / `ui-design-reviewer`.
+- That covers mockups, variations, feedback rounds, design reviews and design-system changes.
+- The main session briefs the agent, relays the result in Thai, and keeps the handover/Notion duties.
+- A small tweak starts at `ui-design-agent`.
+
+**Live sessions told:**
+- "Soothsayer wizard future" was messaged; delivery is queued.
+- "soothsayer-wizard-dev" was messaged; delivery is queued.
+
+**Also saved:** a memory, `feedback_use_design_agents.md`.
+
+The CLAUDE.md edit is uncommitted, since this design session does not commit.
+- **🆕 2026-10-07 (session manage-agent) — ⚙️ กำหนดทางส่งงานจากทีมออกแบบไปเป็นโค้ด (config/docs เท่านั้น)**: ผู้ใช้ดูผัง agent แล้วถามว่า "งานจากทีมออกแบบต้องส่งให้ PM หรือเปล่า ทำไมส่งให้ FE เลย" — ผังเดิมวาดลูกศร reviewer → fe-ui-agent ตรง ๆ ตามที่ CLAUDE.md design step 4 เขียนไว้สั้นเกินไป ตกลงกันว่า: งานออกแบบที่ผ่าน reviewer **กลับมาที่ main session เสมอ** → บันทึก SPEC FINAL → เลือก 1 ใน 3 ทางจากรายงานของ ui-design-agent: ก. UI ล้วน → fe-ui-agent เลย · ข. มีข้อมูล/command ใหม่ → contract → fe-logic ∥ rust → fe-ui · ค. ใหญ่/ยังไม่ชัด → pm-agent คืนแผนก่อน แล้วเข้าทาง ข. ทุกทางจบที่ qa + main session ตรวจซ้ำ **ไม่ส่งผ่าน pm-agent ทุกงาน** (mockup ที่อนุมัติ+รีวิวแล้วคือสเปกชัดอยู่แล้ว) ผู้ใช้ตอบ "ถ้าเป็นท่านี้ ok เลย" · แก้ `CLAUDE.md` (design workflow ข้อ 4) และ `multi_agent_orchestration_design.md` (หัวข้องานออกแบบ) · commit แยกเฉพาะ 2 ไฟล์นี้ (รวมกฎ 2026-10-07 "งานออกแบบต้องผ่าน design agent" ที่ session อื่นเพิ่มไว้ใน CLAUDE.md แล้ว); handover + `docs/design/DESIGN_SYSTEM.md` มีงานค้างของ session อื่นปนอยู่ จึงยังไม่ commit
+
+### 🆕 2026-10-07 — Train/Test validation in the current-design mockup: agent round 1, review, user answers (design session, no code)
+
+**Process:** this is the design-agent workflow from the CLAUDE.md rule.
+- `ui-design-agent` (Opus) finished the main session's partial edits in the scratchpad source copy `cur/app/src` (real frontend + mock backend) and published https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q Version 2.
+- Version 2 contents:
+  - New `workbench/ValidationCards.tsx`: a "Train vs test" card on Model fit and "Test results" tiles on Health score.
+  - Scope bands with pills and an EVENT line on every time chart (`healthCharts.ts`).
+  - `test_validation` in the mock preview, and seed v2 with train/test periods and highlights.
+  - The tests-only banner, "Tested · N" and the Mark complete gate.
+- The agent renamed `HealthPreview.validation` to `test_validation`, because the old name clashed with the existing issue list.
+
+**Review:** `ui-design-reviewer` (Fable) verdict was "needs fixes", with 6 must-fix items:
+1. Custom-mode models had no test editor, so they could never be completed.
+2. The no-train state contradicted itself in the modal.
+3. `--perf` was used for an OK state, and the event input was red by default.
+4. Chart labels collided at the right edge.
+5. A stale "Saved" banner stayed on screen.
+6. The banner wording was wrong when every test was removed.
+
+It also gave 14 should-fix items and 3 nice-to-haves.
+
+**User answers (2026-10-07):**
+- "Detected" means below 80 for 1 h of running time, and "Lowest" uses the same rule.
+- A drop only after the event is amber "Detected only N days after the event".
+- Test periods are shown on the coverage strips.
+- No train period blocks Apply.
+
+**Docs and status:**
+- `DESIGN_SYSTEM.md` §4 updated: these rules added; gaps instead of dimming; no highlight lane on Workbench charts.
+- The fix round has been sent back to `ui-design-agent` and was still running at the time of writing.
+- No repo code touched, nothing committed.
+
+### 🆕 2026-10-07 — Train/Test validation mockup Version 3 (agent fix round done; design session, no code)
+
+`ui-design-agent` applied all 4 user answers and every reviewer item (must-fix 1–6, should-fix 7–20, nice 21–22), then published https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q Version 3.
+
+**Main changes:**
+- 1-hour detection rule, also used by "Lowest" (constants `SUSTAIN_ROWS` / `DROP_SUSTAIN_HOURS`).
+- Amber "Detected only N days after the event".
+- Test periods on the modal and Step-1 strips ("117 d train · 44 d test").
+- Apply is blocked when there is no train period.
+- Custom-mode test periods editor, with the Custom block reason.
+- Fixed the contradictory no-train state.
+- Colour fixes: `--ok`; the event-time input is red only when invalid or outside its test period, which also blocks Apply.
+- Chart scope pills in a strip above the plot, with reference labels at the left.
+- "Saved" banner shows only while complete; "Test periods removed" banner wording.
+- Step-1 notice after a tests-only Apply.
+- Layout fixes, mock clustering row-count fix, −0 fix.
+- "Remove the overlap" action.
+- Reset pill moved to the top centre.
+
+**Checks:**
+- The agent verified the result in the browser pane.
+- `tsc --noEmit` is clean for non-test files in the copy.
+
+**Notes for implementation:**
+- Pass scopes through `TimeSeriesSpec.scopes`; the mockup uses a module-level setter.
+- Response field is named `test_validation`.
+
+**Status:** not reviewed by the user yet. No repo code touched, nothing committed.
+- **🆕 2026-10-07 (session manage-agent) — ⚙️ เติม agent ให้ครอบคลุมงานทั้งหมด: `release-agent` + `code-reviewer` ใหม่, ปิด zone ที่เหลือ, fe-logic → Opus (config/docs เท่านั้น)**: ผู้ใช้ถามว่า agent ควรแก้ตรงไหนให้ครอบคลุมงานทั้งหมด ผมเสนอ 7 ข้อ ผู้ใช้สั่ง "1-6 ทำตามที่คุณว่าได้เลย" ส่วนข้อ 7 (agent ตรวจคณิตศาสตร์) ไม่ทำ — session "soothsayer-concept" ผู้ใช้ใช้คุยเรื่อง concept ของโปรแกรม (model + การใช้งาน) เอง ข้อสรุปให้บันทึกเป็น entry "📐 concept" ใน handover
+  - **`release-agent` (Opus, ใหม่)**: ทำ Release checklist เป็น 2 รอบ — รอบเตรียม (อ่าน handover ทุก entry หลังเวอร์ชันล่าสุดใน CHANGELOG, หา commit ที่ไม่มี handover, เลือก bump, แก้ version 3 ไฟล์, เขียน changelog สำหรับผู้ใช้) → ผู้ใช้อนุมัติ → รอบ build; ไม่ commit/tag/push · พบระหว่างทำ: **v0.6.0 และ v0.7.0 ship แล้วแต่ไม่มี git tag** (tag ล่าสุด v0.5.0) — แก้ "Repo state snapshot" ใน CLAUDE.md ให้บอกตรงนี้
+  - **`code-reviewer` (Opus, ใหม่, read-only)**: รีวิว diff ตามกับดักที่โปรเจกต์นี้เคยพังจริง (rename_all snake_case, `failureGroupState` literal, workspaceId/subscribe, ข้อมูลไม่จำกัดแถว, ชื่อ algorithm ใน UI, CSP/fs/capabilities, validate_read_path ฯลฯ, เทสต์) — เรียกหลัง worker ก่อน commit feature หลาย phase หรือเมื่อผู้ใช้ขอรีวิวโค้ด/ความปลอดภัย
+  - **zone ที่ปิดเพิ่ม**: `src-tauri/capabilities/*.json` + `tauri*.conf.json` → rust-agent (ห้ามขยาย CSP/fs/สิทธิ์ และห้ามลบ `'unsafe-eval'` โดยไม่มีอนุมัติ; window ใหม่ต้องมี capability) · `src/config/`, `src/types.ts`, `src/errorReporter.ts` → fe-logic-agent · ห้าม worker เพิ่ม/ลบ dependency เอง ให้ขอใน HANDOFF
+  - **ปรับของเดิม**: qa-agent ต้องจบด้วยรายการ "ลองในแอปจริง" 3–7 ข้อให้ผู้ใช้ · fe-ui-agent รายงาน "Screens shipped" ให้ main session อัปเดต `APP_MAP.md` · **fe-logic-agent Sonnet → Opus** (ดูแล `src/utils/` กฎธุรกิจ + การบันทึก workspace ซึ่งเป็นต้นเหตุบั๊กข้อมูลหายที่ร้ายแรงที่สุด)
+  - agent ใหม่ใช้ได้ใน session ที่เปิดใหม่ (harness โหลดรายชื่อ agent ตอนเริ่ม session)
+  - ไฟล์ที่แก้: `.claude/agents/{release-agent,code-reviewer}.md` (ใหม่), `{fe-logic,fe-ui,rust,qa}-agent.md`, `ui-design-lead.md`, `CLAUDE.md`, `multi_agent_orchestration_design.md` — commit เฉพาะไฟล์เหล่านี้; handover + `DESIGN_SYSTEM.md` ยังมีงานค้างของ session อื่นจึงไม่ commit
+
+### 🆕 2026-10-07 — Rule change: test periods may overlap train periods (design session, no code)
+
+**User's new rule:** "ช่วง train test มันอาจจะ overlay กันได้นะ เช่น train เดือน 1-3 test เดือน 1-12". This reverses the earlier rule that a test period overlapping a train period is red and blocks.
+
+**Asked as a follow-up:** which rows the test results use. Answer: the WHOLE test period, overlapping rows included. The row and its result get a neutral note, "includes N d of train data", which never blocks.
+
+**Unchanged:** a train period overlapping a Dashboard highlight is still an amber warning.
+
+**Updated so far:**
+- `DESIGN_SYSTEM.md` §4.
+- The change has been sent to `ui-design-agent` for mockup Version 4: remove the overlap error and gate, add the neutral note, overlapping bands on charts, new copy. That round was still running at the time of this entry.
+
+No repo code touched, nothing committed.
+
+### 🆕 2026-10-07 — Train/Test mockup Version 4: test periods may overlap train (design session, no code)
+
+`ui-design-agent` published https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q Version 4.
+
+**What changed:**
+- The overlap error and gate are removed everywhere: block reason, Apply, red chip, disabled highlights.
+- A neutral grey note appears on the test row, the table row and the result tile, e.g. "T1 includes 13.0 d of train running time — results include rows the model was trained on".
+- The mock returns `train_rows` / `train_days` per test, and there is a new `trainOverlapDays()` helper.
+- **Charts:** train is a fill; test is a fill with a dashed outline. Train labels sit above the plot and test labels inside it.
+- **Strips:** train on the top half, test on the bottom half.
+- **Copy:** "test periods are when the score is checked · may include train time".
+- **Seed v3:** T1 Normal overlaps train P2.
+
+**Checks:** the agent verified it in the browser pane, and `tsc` is clean for non-test files.
+
+**Status:** not reviewed by the user yet. No repo code touched, nothing committed.
+
+### 🆕 2026-10-07 — 📐 SPEC FINAL: Train/Test model validation — handed to the dev session (design session, no code)
+
+**User:** "ส่งให้ session dev จัดการเลย".
+
+**Spec:** `docs/design/handoff/train-test-validation/README.md`. It covers:
+- the 14 rules, the metrics and the screens;
+- the wire contract: `test_periods` in the request, `test_validation` in the response;
+- the open placeholders [MIN DAYS] / [RECOMMENDED DAYS].
+
+**Reference files:**
+- `mockup-frontend.diff` — 18 changed `src/` files from the mockup copy. It is reference only: the module-level chart-scope setter must become `TimeSeriesSpec.scopes`, and it has no tests.
+- `mock-backend-reference.js` — the maths to port to Rust.
+
+**Approved mockup:** https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q, Version 4.
+
+**Review status:** the last `ui-design-reviewer` pass was on round 2, and all of its items were applied in V3. V4 (the overlap rule change) was not reviewed again; the user asked to hand off directly.
+
+**Sent to:** the "soothsayer-wizard-dev" session.
+
+No code changed in this session, nothing committed. The new files under `docs/design/handoff/` are uncommitted.
+
+### 🆕 2026-10-07 — Train/Test validation: code review required after the dev implementation
+
+**User:** "หลังจาก dev ทำงานเสร็จแล้วตรวจเรื่อง reviewer code ด้วย".
+
+**Sent to the "soothsayer-wizard-dev" session** (delivery queued; no reply yet):
+- Run the `code-reviewer` agent on the whole Train/Test change set before committing.
+- Fix the must-fix findings and re-run tsc, vitest and cargo test.
+- Report the findings and fixes to the user.
+- Record it in this handover.
+- Hold the push until the user has tested the real app.
+
+**Follow-up:** this design session subscribed to one idle notice from the dev session, to follow up.
+- **🆕 2026-10-07 — บันทึกลงไฟล์ log ถาวรเมื่ออ่านไฟล์ workspace ไม่สำเร็จ (ต่อจาก fix FG หาย)** · ผู้ใช้บอกว่าการเทสว่า FG ยังหายไหม "ยากมากเพราะจับ pattern ไม่ได้" ผมจึงเสนอและผู้ใช้เลือก "เพิ่ม": ทุกครั้งที่ `readWorkspaceFile` อ่านไฟล์ที่มีอยู่ไม่สำเร็จครบ 4 ครั้ง (แล้วคนเรียกจึงข้ามการบันทึก) จะเขียนบรรทัด `[workspace-read] Could not read workspace <id> (<path>) after 4 tries; the save that needed it was skipped, nothing was overwritten` + stack ลง `frontend-errors.log` (โฟลเดอร์ logs ของแอปใน LOCALAPPDATA) **ไม่แสดง toast** · ฟังก์ชันใหม่ `logToFile(source, message, detail?)` ใน `src/errorReporter.ts` (บรรทัดเดิมซ้ำภายใน 5 วิรวมเป็นบรรทัดเดียว, ไม่ throw) · ถ้า FG หายอีกให้ขอไฟล์ log นี้จากผู้ใช้: มีบรรทัดนี้ = เกิดที่จุดนี้ (ตอนนี้ปลอดภัยแล้วเพราะไม่เขียนทับ) / ไม่มี = เป็นสาเหตุอื่นที่ยังไม่เจอ · test: `errorReporter.test.ts` (+2), `workspaceManager.test.ts` (ตรวจว่ามีบรรทัด log) · tsc ผ่าน, 4 ไฟล์ที่เกี่ยว 289 ผ่าน · ยังไม่ได้ทดสอบในแอปจริง · ไม่ push
