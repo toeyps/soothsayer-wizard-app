@@ -59,8 +59,17 @@ fe-logic) → `qa` → main session ตรวจซ้ำ
 ## งานออกแบบ
 
 lead (Fable) วางทิศทาง + จอหลัก → agent (Opus) ทำจอที่เหลือ วนแก้กับผู้ใช้ →
-reviewer (Fable) รีวิว → `fe-ui-agent` เขียนโค้ด แก้จอเดิมเล็กๆ เริ่มที่
-`ui-design-agent` ได้เลย Fable ช้ากว่า/แพงกว่า ~2.5× จึงใช้เฉพาะงานตัดสินคุณภาพ
+reviewer (Fable) รีวิว (must-fix ส่งกลับ agent) → **กลับมาที่ main session** แก้จอเดิม
+เล็กๆ เริ่มที่ `ui-design-agent` ได้เลย Fable ช้ากว่า/แพงกว่า ~2.5× จึงใช้เฉพาะงาน
+ตัดสินคุณภาพ ทุกงานออกแบบต้องผ่าน design agent — main session ไม่ทำ mockup เอง
+
+**ส่งต่อเป็นโค้ด (main session เลือกทาง ไม่ส่งตรงจาก reviewer ไป worker)** —
+บันทึก SPEC FINAL ใน handover แล้วดูจากรายงานของ `ui-design-agent` ว่าต้องแตะอะไร:
+- ก. **UI ล้วน** (layout/สี/ข้อความ ไม่มีข้อมูลหรือ command ใหม่) → `fe-ui-agent` เลย
+- ข. **มีข้อมูล/command ใหม่** → กำหนด contract → `fe-logic` ∥ `rust` → `fe-ui`
+- ค. **ใหญ่หรือยังไม่ชัด** → `pm-agent` คืนแผนก่อน แล้วเข้าทาง ข.
+ทุกทางจบที่ `qa-agent` + main session ตรวจซ้ำ ไม่ส่งผ่าน pm-agent ทุกงาน เพราะ
+mockup ที่ผ่าน reviewer แล้วคือสเปกที่ชัดอยู่แล้ว
 
 ## ปิดงาน (main session ทุกครั้ง)
 

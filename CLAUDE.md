@@ -179,11 +179,18 @@ The user tracks all work in the Notion database **"wizard application plan impro
 | `ui-design-reviewer` (Fable) | — (read-only) | nothing (report only) | Final strict review of finished screens against the design system before hand-off to code |
 | `notion-sync-agent` | — (no repo writes)                            | Notion pages only               | Updates the Notion tracker after a task finishes, so the sync step can't be silently dropped — see the Post-task checklist above and its own `.claude/agents/notion-sync-agent.md`. Never sets `Status: Done` |
 
+**⚠️ MANDATORY for every session (user rule, 2026-10-07): all design work goes ONLY through the design agents below — never done solo by the main session.** That covers mockups, design variations, feedback rounds, design reviews and design-system changes. The main session's job is to brief the right agent, relay its result to the user in Thai, and keep its own duties: the handover entry and Notion. This holds even for a "quick" tweak; a small tweak starts at `ui-design-agent`. Why: for several days one session built every mockup itself and bypassed this workflow, and the user had to ask why their agents were not being used.
+
 **Design workflow (Fable + Opus, set up 2026-10-04 at the user's request)** — quality-deciding work that happens a few times goes to Fable; volume work that follows a set direction and gets revised many times goes to Opus (Fable is slower and costs ~2.5× more, so never run every round on it):
 1. **`ui-design-lead` (Fable)** — at the start of a genuinely new screen/feature or a visual redesign: UX brief (flow, IA, states), design direction, updates `docs/design/DESIGN_SYSTEM.md`, builds the 1–2 key reference screens.
 2. **`ui-design-agent` (Opus)** — all remaining screens and states, variations, and every feedback round with the user, following the lead's references. Small tweaks to existing screens start here directly (no lead pass needed).
 3. **`ui-design-reviewer` (Fable)** — once the set of screens is settled, before the SPEC FINAL / hand-off: strict consistency/standards review; `ui-design-agent` applies its must-fix list.
-4. **Implementation**: `fe-ui-agent` (Opus) builds to the approved mockup + `DESIGN_SYSTEM.md`. Give agents concrete inputs (reference images, the user's exact feedback such as "the button looks heavy") rather than "make it prettier".
+4. **Hand-off to code goes back to the main session, never straight to a worker** (2026-10-07, user-approved): the main session records the approved design as a SPEC FINAL handover entry, then routes it by what the design needs — `ui-design-agent`'s report already says which files change and whether the data model/Rust must change:
+   - **UI only** (layout, styling, copy; no new data or command) → `fe-ui-agent` directly.
+   - **New data or a new command** → main session fixes the contract → `fe-logic-agent` ∥ `rust-agent` → `fe-ui-agent`.
+   - **Large or still unclear** (needs phasing or open questions answered) → `pm-agent` returns a plan first, then the middle path.
+   Every path ends with `qa-agent` and the main session's own verification. Don't route every design through `pm-agent` — an approved, reviewed mockup is already a clear spec.
+   `fe-ui-agent` (Opus) builds to the approved mockup + `DESIGN_SYSTEM.md`. Give agents concrete inputs (reference images, the user's exact feedback such as "the button looks heavy") rather than "make it prettier".
 
 **Requirements & plans live in the prompt + `docs/PROJECT_HANDOVER.md` only** (2026-10-05, user decision): the user gives work through the chat prompt; specs and plans are recorded as handover entries (SPEC FINAL / plan entries). `docs/archive/planning/` (`task.md`, `requirements*.md`, `contracts/`) is history from Features 1–4 — never update it or treat it as the current plan.
 
