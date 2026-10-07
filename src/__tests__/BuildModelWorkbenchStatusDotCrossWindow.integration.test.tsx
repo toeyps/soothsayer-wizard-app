@@ -55,6 +55,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
         return v;
     },
     writeTextFile: async (p: string, c: string) => { h.files.set(p, c); },
+    rename: async (from: string, to: string) => { h.files.set(to, h.files.get(from)!); h.files.delete(from); },
     exists: async (p: string) => p === 'workspaces' || h.files.has(p),
     mkdir: async () => {},
     remove: async (p: string) => { h.files.delete(p); },

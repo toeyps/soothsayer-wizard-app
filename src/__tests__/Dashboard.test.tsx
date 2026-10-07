@@ -347,6 +347,32 @@ describe('Dashboard', () => {
         expect(saved.failureGroupState).toEqual(fresherFailureGroupState);
     });
 
+    it('never writes its in-memory copy over the file when the disk read FAILS (2026-10-07 data-loss fix: a project created in this session opens with no Failure Groups in its snapshot; under tauri dev a hot-reload remount resets the mirror to that snapshot; one failed read -- the file caught half-written -- then made the autosave write that empty copy over every saved group). It retries on the next change once the file reads again', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // Opened from the creation snapshot: no failureGroupState at all.
+        renderDashboard({ initialState: makeInitialState({ failureGroupState: undefined }) });
+        const onDisk = {
+            groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'Bearing FG' }],
+            models: [{ id: 'm1', groupNos: [1] }],
+        };
+        mockLoadWorkspaceData.mockRejectedValue(new Error('Could not read workspace ws1: Unexpected end of JSON input'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); }); // on-mount autosave
+        mockSaveWorkspaceData.mockClear();
+
+        act(() => { fireEvent.click(screen.getByText('select-tag1')); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Autosave skipped'), expect.anything());
+
+        // The file reads again: the next change saves -- with what is ON DISK.
+        mockLoadWorkspaceData.mockResolvedValue({ failureGroupState: onDisk });
+        act(() => { fireEvent.click(screen.getByText('select-none')); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1);
+        expect(last(mockSaveWorkspaceData.mock.calls)[0].failureGroupState).toEqual(onDisk);
+    });
+
     it('the autosave keeps every failureGroupState field it does not own, e.g. the workspace time range (regression 2026-09-23: the fresh-from-disk copy listed only groups/models/filters/combine, so BuildModelWindow\'s runningConditionTimeStart/End vanished ~250ms after any Dashboard edit)', async () => {
         vi.useFakeTimers();
         renderDashboard({

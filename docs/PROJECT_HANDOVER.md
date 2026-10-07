@@ -3240,3 +3240,67 @@ Also fixed a mockup bug found on the way: the Highlights tab had a stray `</div>
   - **worker ทุกตัว**: รับงานจาก brief ของผู้เรียก (ตัดการอ้าง task.md/contracts ออก) · `qa-agent` เทียบกับ brief + SPEC FINAL
   - **เอกสาร**: `CLAUDE.md` (ตาราง Agent Roles แถว pm-agent, ย่อหน้าใหม่ "Requirements & plans live in the prompt + handover only", workflow), `docs/README.md` (หัวข้อ archive + design), `multi_agent_orchestration_design.md` **เขียนใหม่ทั้งไฟล์** ให้ตรงการทำงานจริง (หลักใหญ่, ลำดับชั้น, ตาราง agent, งานโค้ด 3 ระดับ, งานออกแบบ, ปิดงาน, บทเรียน, ประวัติ) — entry เก่าใน handover ที่อ้าง `docs/planning/` ไม่แก้ (เป็นประวัติ)
   - ไฟล์ที่แก้: `.claude/agents/{pm,fe-logic,fe-ui,rust,qa}-agent.md`, `CLAUDE.md`, `docs/README.md`, `multi_agent_orchestration_design.md`, `docs/planning/*` → `docs/archive/planning/*` — **ยังไม่ commit** (เหตุผลเดียวกับ entry 2026-10-04 ด้านบน: ไฟล์ปนกับงานค้างของ session design)
+
+### 🆕 2026-10-05 — Design: mockups handed to the "Soothsayer wizard future" session as a future plan (no code)
+
+User decision: the app keeps its current design for now, with small fixes from team comments. The new design (full-loop prototype v7, placement map, welcome screen, health-score Workbench, `docs/design/DESIGN_SYSTEM.md` + `APP_MAP.md`) is the plan to switch to later. Sent a self-contained hand-over message to the peer session "Soothsayer wizard future" with:
+- every artifact link
+- the 2026-10-04 handover entries to read
+- the 11 restored Dashboard functions and their placements
+- the scratchpad source and build chain
+- the one open question (Overlay default vs auto-Split)
+- the user's rules: no code without an explicit hand-off, reply in Thai
+
+Delivery was queued; no reply yet. No repo code touched, nothing committed.
+
+### 🆕 2026-10-05 — Design: clickable mockup of the CURRENT design (shipped code, mock backend) for team comments (no repo changes)
+
+User: the redesign is for a later phase; for now they keep the current design and adjust it from team comments, so they asked for a mockup of the current design. Asked them for the scope (whole loop) and how interactive it should be (clickable).
+
+**Approach:** instead of redrawing the screens, the real frontend (`src/`, v0.7.0) is built with Vite against a browser stand-in for Tauri. So every screen is the real UI, pixel for pixel, with nothing redrawn by hand.
+- **Build:**
+  - The scratchpad script `cur/build.mjs` runs Vite with `root` = repo and `configFile:false`.
+  - Output goes to the scratchpad. The repo is not modified.
+  - Aliases map every `@tauri-apps/*` import to `cur/mock/runtime.js`.
+- **`runtime.js` provides:**
+  - `invoke`
+  - Events across windows (BroadcastChannel)
+  - Sub-windows: `build-model` and `add-sensor` open as iframe overlays over the main page
+  - Dialogs, which return fake paths; `message` shows an in-page modal
+  - plugin-fs and plugin-store on top of localStorage
+  - A no-op menu
+- **`cur/mock/backend.js` emulates the Rust commands:**
+  - `load_csv` with progress events, plus `load_mapping_csv` and `apply_sensor_mapping`
+  - `get_chart_data` (sampling + min/max downsample), `get_scatter_sample`, `compute_sensor_stats`
+  - `preview_relationship_model`: a least-squares stand-in for the Relation model, with a fit cache
+  - `compute_clustering_preview`
+  - `compute_health_preview`: same score rules and validation codes as `health_score.rs`
+  - `export_model_files` (fake paths)
+  - Formula and operation special sensors (`validate_formula`, `evaluate_formula`, `calculate_new_sensor`, `extract_formula_refs`, `rename_formula_refs`, `remove_sensor_columns`)
+- **Data:** 15 sensors with the user's real tags, 10-minute data from 2026-02-09 to 2026-08-07 (25,920 rows), in two CSV "files".
+- **Example project:** a first visit seeds "GEG-4 Bearing study" with:
+  - 3 failure groups
+  - 9 models (I/R/C)
+  - Running condition GENERATOR ACTIVE POWER > 1000 kW, 9 Feb–30 Jun
+- **Mockup controls:** a small "Mockup · example data · Reset" pill restores the example.
+
+**Verified locally (browser pane, local static server):**
+- New project → name → parse 2 CSVs → tag-name file 15/15 → Dashboard.
+- Line and Scatter charts.
+- Failure-group sheet.
+- Reopen from Recent projects.
+- Build Model: Individual train → Health score with a valid score; Relationship train with R²/RMSE and charts.
+- Add Special Sensor: a formula sensor is created and appears in the Dashboard.
+
+**Published:** private artifact https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q (`index.html` launcher → `app.html` + `assets/`). It was NOT verified inside the claude.ai viewer, because the browser pane is not signed in. Two risks remain there:
+- The artifact CSP may block `eval`, which regl-scatterplot needs, so Scatter and Pair Plot may render empty.
+- Module scripts and nested iframes may also be blocked.
+
+No repo code touched, nothing committed.
+- **🆕 2026-10-07 — 🐛 [data loss] Failure Groups หายอีกรอบ (ผู้ใช้รายงานซ้ำ, ใช้ `tauri dev`) — หาเจอว่าเกิดจาก autosave ของ Dashboard เขียน "สำเนาในหน่วยความจำ" ทับไฟล์เมื่ออ่านไฟล์ไม่สำเร็จ · แก้แล้ว (เขียนไฟล์แบบ atomic + ห้ามเขียนทับเมื่ออ่านไม่ได้)**
+  - **อาการ**: ผู้ใช้สร้าง FG ใน Dashboard แล้วเห็นหายไปตั้งแต่หน้า Dashboard (ไม่ได้เปิด Build Model) จากนั้นปิดแอป เปิดใหม่ก็ไม่มี · ผู้ใช้สงสัยว่าเกี่ยวกับ hot reload
+  - **หลักฐานบนดิสก์**: `workspaces/ws_1791085629614.json` (GEG-4, สร้างในแอปเมื่อ 2026-10-04 10:47) มี `failureGroupState` = `groups: [Not in Group]`, `models: []` — ตรงกับค่าเริ่มต้นของ mirror ใน Dashboard พอดี (`fgGroups` ค่าตั้งต้นเมื่อ snapshot ตอนเปิดไม่มี failureGroupState) บวกฟิลด์ที่ Build Model ใส่ตอนเปิดภายหลัง (`runningConditionTimePeriods: []`, notice = null) → แปลว่ามี Dashboard ที่ mirror ว่างเขียนทับไฟล์ · ไม่มีไฟล์สำรอง จึงกู้ FG เดิมไม่ได้
+  - **สาเหตุ (จากโค้ด)**: (1) autosave ของ Dashboard (debounce 250 ms หลังการเปลี่ยนแปลงใดๆ) อ่าน `failureGroupState` จากดิสก์ก่อนเขียนเสมอ (fix 2026-09-18) แต่ถ้าอ่านล้มเหลว — `readWorkspaceFile` คืน `null` สำหรับ error ทุกชนิด รวมถึง JSON ไม่สมบูรณ์ — จะ fallback ไปใช้ mirror ในหน่วยความจำแล้วเขียนทับไฟล์ (2) `writeTextFile` ไม่ atomic (truncate แล้วค่อยเขียน) ผู้อ่านจึงอาจเจอไฟล์ว่าง/ครึ่งไฟล์ได้ระหว่างที่อีก writer กำลังเขียน — อีกหน้าต่าง หรือใน `tauri dev` คือ module instance ใหม่หลัง HMR ที่มีคิวเขียนของตัวเอง (3) mirror อาจเก่ามาก: ใน `tauri dev` การ hot-reload remount Dashboard รีเซ็ต mirror กลับเป็น snapshot ตอนเปิด — สำหรับโปรเจกต์ที่สร้างใน session นั้นคือ "ไม่มี FG เลย" (หน้าจอจะเห็น FG หายทันที ตรงกับที่ผู้ใช้เห็น) · รวมกัน: hot reload ทำให้สำเนาในหน่วยความจำว่าง + การอ่านที่ล้มครั้งเดียวทำให้สำเนานั้นถูกเขียนทับไฟล์จริง · **ยืนยันไม่ได้ 100% ว่าการอ่านครั้งไหนล้มในแอปจริง** (ไม่มี log ของการอ่าน) — ข้อสรุปมาจากเนื้อหาไฟล์ + เส้นทางโค้ดเดียวที่ทำให้ได้ผลลัพธ์นั้น · ใน installer โอกาสต่ำกว่า (ต้องมีการอ่าน/เขียนชนกันข้ามหน้าต่าง) แต่ช่องเดียวกันเปิดอยู่
+  - **แก้** (`src/workspaceManager.ts`, `src/components/dashboard/Dashboard.tsx`): (a) `writeWorkspaceJsonAtomically` — เขียนไฟล์ชั่วคราวข้างๆ แล้ว `rename` ทับไฟล์จริง ผู้อ่านเห็นแค่ไฟล์เก่าหรือใหม่ทั้งไฟล์ (ถ้า rename ถูกปฏิเสธ → ลบไฟล์ชั่วคราวแล้ว fallback เขียนตรง) · permission `rename` มีอยู่แล้วใน `fs:allow-appdata-write-recursive` (= `write-all` + scope `$APPDATA`) **ไม่ได้ขยาย capability** (b) `readWorkspaceFile` ลองอ่านซ้ำ 4 ครั้ง (40/80/120 ms) แล้ว **throw `WorkspaceReadError`** แทนการคืน `null` — `null` หมายถึง "ไม่มีไฟล์" เท่านั้น (c) `updateWorkspaceData` อ่านไม่ได้ → ไม่เรียก patch ไม่เขียน คืน `null` (d) autosave ของ Dashboard อ่านไม่ได้ → **ไม่เขียนอะไรเลย** (คง dirty ไว้ให้ครั้งถัดไปลองใหม่) แทนการเขียน mirror ทับ · ผู้เรียก `loadWorkspaceData` อื่นจัดการ throw อยู่แล้ว: DataUploadPage (แสดง error), BuildModelWindow (try/catch), AddSensorWindow (ถือเป็น error อยู่แล้ว), rename/duplicate (try/catch)
+  - **หมายเหตุ**: ตอนเริ่มแก้ รอบก่อนหน้าของ session นี้ถูกตัดกลางคันโดย safety classifier ทำให้ `Dashboard.tsx` ค้างครึ่ง edit (compile ไม่ผ่าน) ~09:12 — ซ่อมแล้ว ถ้า `tauri dev` เปิดอยู่ช่วงนั้นจะเห็น error
+  - **Test**: `workspaceManager.test.ts` (+helper `savedFiles()`, เขียนแบบ temp+rename, fallback เมื่อ rename ถูกปฏิเสธ, อ่านไม่ได้ → `WorkspaceReadError` หลัง retry, อ่านเจอไฟล์ครึ่งไฟล์แล้วสำเร็จเมื่อครบ, ไม่มีไฟล์ → `null`, `updateWorkspaceData` อ่านไม่ได้ → ไม่เขียน) · `Dashboard.test.tsx` test ใหม่จำลองเคสผู้ใช้ (snapshot ไม่มี FG + ดิสก์มี FG + อ่านล้ม → ไม่เขียน; อ่านได้อีก → เขียนสิ่งที่อยู่บนดิสก์) — **ทดลองใส่โค้ดเดิมกลับแล้ว test นี้ล้มจริง** · fs mock ของ integration test ทุกตัว + `helpers/healthEnv.tsx` ได้ `rename` และนับการเขียนเมื่อไฟล์จริงถูกแทนที่ · tsc ผ่าน, vite build ผ่าน (ไม่มี warning ใหม่), vitest 105 ไฟล์ 2867 ผ่าน + 1 expected-fail · ไม่ได้แก้ Rust · ยังไม่ได้ทดสอบในแอปจริง · ไม่ push

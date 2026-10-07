@@ -1,5 +1,5 @@
 import { load } from '@tauri-apps/plugin-store';
-import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, rename, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
@@ -101,6 +101,34 @@ function enqueue<T>(op: () => Promise<T>): Promise<T> {
     return result;
 }
 
+// 🆕 2026-10-07 [data-loss fix — Failure Groups "gone again"]: `writeTextFile`
+// is NOT atomic (it truncates the file, then writes). Dashboard and the Build
+// Model window are separate OS windows, each with its own write queue, so one
+// could READ the workspace file in the few milliseconds the other had it
+// truncated: the read came back empty, `JSON.parse` threw, the loader returned
+// `null`, and Dashboard's autosave — which falls back to its in-memory mirror
+// when the disk read fails — then wrote that mirror over the file. The mirror
+// is only as fresh as the last broadcast this window received (and, under
+// `tauri dev`, a hot-reload remount resets it to the snapshot taken when the
+// workspace was opened), so the Failure Groups the other window had just
+// saved were replaced by an older copy. Writing to a sibling temp file and
+// renaming it over the real one means a reader only ever sees the old or the
+// new file, never a half-written one. `rename` replaces an existing file on
+// Windows/macOS/Linux alike. If the rename is refused (an older capability
+// without `fs:allow-rename`), fall back to the plain write so saving still
+// works — the readers' retry below covers that case.
+async function writeWorkspaceJsonAtomically(filePath: string, json: string): Promise<void> {
+    const tmpPath = `${filePath}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.tmp`;
+    try {
+        await writeTextFile(tmpPath, json, { baseDir: BaseDirectory.AppData });
+        await rename(tmpPath, filePath, { oldPathBaseDir: BaseDirectory.AppData, newPathBaseDir: BaseDirectory.AppData });
+    } catch (e) {
+        console.warn('Atomic workspace write failed, falling back to a direct write:', e);
+        try { await removeFile(tmpPath, { baseDir: BaseDirectory.AppData }); } catch { /* may not exist */ }
+        await writeTextFile(filePath, json, { baseDir: BaseDirectory.AppData });
+    }
+}
+
 async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     debugLog("Saving Workspace Data for:", state.id);
     try {
@@ -118,7 +146,7 @@ async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
 
         // Serialize state
         const json = JSON.stringify(state);
-        await writeTextFile(filePath, json, { baseDir: BaseDirectory.AppData });
+        await writeWorkspaceJsonAtomically(filePath, json);
 
         // Update recent workspaces list
         let recent = await getRecentWorkspaces();
@@ -173,7 +201,15 @@ export async function updateWorkspaceData(
         // calling it from inside an already-running enqueued operation would
         // queue a second operation that can only run once this one finishes,
         // which this one is waiting on — a deadlock.
-        const current = await readWorkspaceFile(id);
+        let current: WorkspaceState | null;
+        try {
+            current = await readWorkspaceFile(id);
+        } catch (e) {
+            // Unreadable file: write NOTHING (a patch computed against a missing
+            // `prev` would replace every field the patch does not mention).
+            console.error('updateWorkspaceData: skipping the write, the workspace file could not be read:', e);
+            return null;
+        }
         if (!current) return null;
         // 2026-10-03 (health score): "Incomplete immediately" — any write that
         // changes what a Complete model is trained on (its own inputs, or the
@@ -358,29 +394,47 @@ function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceStat
 // read-inside-enqueue doesn't try to enqueue a second time onto a queue it is
 // already occupying (that would deadlock — the queued read would wait
 // forever for itself to finish).
+/** Thrown by `loadWorkspaceData` when the workspace file EXISTS but could not
+ *  be read or parsed (after retries). Distinct from `null` = "no such
+ *  workspace", so a caller that would otherwise overwrite the file from its
+ *  own memory (Dashboard's autosave) can tell "nothing there" from "there is
+ *  data there that I could not read" — and must not write in the second case. */
+export class WorkspaceReadError extends Error {
+    constructor(public readonly workspaceId: string, cause: unknown) {
+        super(`Could not read workspace ${workspaceId}: ${cause instanceof Error ? cause.message : String(cause)}`);
+        this.name = 'WorkspaceReadError';
+    }
+}
+
+const READ_RETRY_ATTEMPTS = 4;
+const READ_RETRY_DELAY_MS = 40;
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// 🆕 2026-10-07: a read that fails on an EXISTING file is retried a few times
+// before giving up — the file may be mid-write by another window (see
+// `writeWorkspaceJsonAtomically`; also covers an older build still writing in
+// place). Gives up with `WorkspaceReadError`, never with `null`.
 async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
     debugLog("Loading Workspace Data for ID:", id);
-    try {
-        const recent = await getRecentWorkspaces();
-        const meta = recent.find(w => w.id === id);
+    const recent = await getRecentWorkspaces();
+    const meta = recent.find(w => w.id === id);
+    const filePath = meta ? meta.filePath : `workspaces/${id}.json`;
 
-        let filePath = '';
-        if (meta) {
-            filePath = meta.filePath;
-        } else {
-            filePath = `workspaces/${id}.json`;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < READ_RETRY_ATTEMPTS; attempt++) {
+        if (attempt > 0) await sleep(READ_RETRY_DELAY_MS * attempt);
+        try {
+            const fileExists = await exists(filePath, { baseDir: BaseDirectory.AppData });
+            if (!fileExists) return null;
+            const content = await readTextFile(filePath, { baseDir: BaseDirectory.AppData });
+            const parsed = JSON.parse(content) as WorkspaceState;
+            return migrateFailureGroupState(parsed);
+        } catch (e) {
+            lastError = e;
         }
-
-        const fileExists = await exists(filePath, { baseDir: BaseDirectory.AppData });
-        if (!fileExists) return null;
-
-        const content = await readTextFile(filePath, { baseDir: BaseDirectory.AppData });
-        const parsed = JSON.parse(content) as WorkspaceState;
-        return migrateFailureGroupState(parsed);
-    } catch (e) {
-        console.error("Failed to load workspace data:", e);
-        return null;
     }
+    console.error("Failed to load workspace data:", lastError);
+    throw new WorkspaceReadError(id, lastError);
 }
 
 // 🆕 2026-10-02 [data-loss fix, real root cause of the repeated "Running

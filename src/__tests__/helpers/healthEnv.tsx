@@ -64,7 +64,14 @@ export const fsModule = () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    writeTextFile: async (p: string, c: string) => { env.writes.push({ path: p, content: c }); env.files.set(p, c); },
+    // Workspace saves go to a temp sibling and are renamed over the real file
+    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    writeTextFile: async (p: string, c: string) => { if (!p.endsWith('.tmp')) env.writes.push({ path: p, content: c }); env.files.set(p, c); },
+    rename: async (from: string, to: string) => {
+        const c = env.files.get(from);
+        if (c === undefined) throw new Error(`ENOENT ${from}`);
+        env.files.set(to, c); env.files.delete(from); env.writes.push({ path: to, content: c });
+    },
     exists: async (p: string) => p === 'workspaces' || env.files.has(p) || hasPrefix(p),
     mkdir: async () => {},
     remove: async (p: string, o?: { recursive?: boolean }) => {

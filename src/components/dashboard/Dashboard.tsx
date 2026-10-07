@@ -2062,9 +2062,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     freshFailureGroupState = onDisk.failureGroupState;
                 }
             } catch (e) {
-                // Disk read failed — fall back to this window's own
-                // mirror rather than blocking the autosave entirely.
-                console.warn('Autosave: failed to re-read failureGroupState from disk, using local copy:', e);
+                // 🆕 2026-10-07 [data-loss fix — Failure Groups "gone again"]: the file
+                // is there but could not be read (`WorkspaceReadError`). This used to
+                // fall back to this window's mirror and write it over the file — and
+                // the mirror can be far behind disk (under `tauri dev` a hot-reload
+                // remount resets it to the snapshot taken when the workspace was
+                // opened, e.g. no Failure Groups at all for a project created in this
+                // session), so every group saved since was wiped. Write NOTHING now:
+                // keep the autosave pending so the next change (or leaving the
+                // Dashboard) tries again against a readable file.
+                console.warn('Autosave skipped: the workspace file could not be read, nothing was overwritten:', e);
+                autosaveDirtyRef.current = true;
+                return;
             }
             const next = buildWorkspaceState({ failureGroupState: freshFailureGroupState });
             const payload = JSON.stringify(next);

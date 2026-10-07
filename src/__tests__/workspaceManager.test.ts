@@ -13,12 +13,14 @@ const mockWriteTextFile = vi.fn().mockResolvedValue(undefined);
 const mockExists = vi.fn();
 const mockMkdir = vi.fn().mockResolvedValue(undefined);
 const mockRemove = vi.fn().mockResolvedValue(undefined);
+const mockRename = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tauri-apps/plugin-fs', () => ({
     readTextFile: (...args: unknown[]) => mockReadTextFile(...args),
     writeTextFile: (...args: unknown[]) => mockWriteTextFile(...args),
     exists: (...args: unknown[]) => mockExists(...args),
     mkdir: (...args: unknown[]) => mockMkdir(...args),
     remove: (...args: unknown[]) => mockRemove(...args),
+    rename: (...args: unknown[]) => mockRename(...args),
     BaseDirectory: { AppData: 'AppData' },
 }));
 
@@ -32,6 +34,23 @@ vi.mock('@tauri-apps/api/core', () => ({
 async function freshModule() {
     vi.resetModules();
     return await import('../workspaceManager');
+}
+
+/** Where every workspace save LANDED, in order: `[path, content]`. A save writes
+ *  a temp sibling and renames it over the real file (2026-10-07, so another
+ *  window never reads a half-written file); a direct write (the fallback when
+ *  the rename is refused) counts as landing at its own path. */
+function savedFiles(): Array<[string, string]> {
+    const out: Array<[string, string]> = [];
+    const tmp = new Map<string, string>();
+    for (const [path, content] of mockWriteTextFile.mock.calls as Array<[string, string]>) {
+        if (path.endsWith('.tmp')) tmp.set(path, content);
+        else out.push([path, content]);
+    }
+    for (const [from, to] of mockRename.mock.calls as Array<[string, string]>) {
+        if (tmp.has(from)) out.push([to, tmp.get(from)!]);
+    }
+    return out;
 }
 
 function deferred<T = void>() {
@@ -50,6 +69,7 @@ beforeEach(() => {
     mockExists.mockReset().mockResolvedValue(true);
     mockMkdir.mockReset().mockResolvedValue(undefined);
     mockRemove.mockReset().mockResolvedValue(undefined);
+    mockRename.mockReset().mockResolvedValue(undefined);
     mockInvoke.mockReset().mockResolvedValue(undefined);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -134,11 +154,29 @@ describe('saveWorkspaceData', () => {
         mockStoreGet.mockResolvedValue([]);
         const { saveWorkspaceData } = await freshModule();
         await saveWorkspaceData(state);
-        expect(mockWriteTextFile).toHaveBeenCalledWith(
-            'workspaces/ws1.json',
-            JSON.stringify(state),
-            { baseDir: 'AppData' },
-        );
+        expect(savedFiles()).toContainEqual(['workspaces/ws1.json', JSON.stringify(state)]);
+    });
+
+    it('writes atomically: a temp sibling is renamed over the real file, never a write in place (2026-10-07: a read in another window could hit the file while an in-place write had it truncated, and the Dashboard then wrote its stale copy over every Failure Group)', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData(state);
+        const paths = mockWriteTextFile.mock.calls.map(c => c[0] as string);
+        expect(paths).not.toContain('workspaces/ws1.json');
+        expect(paths).toHaveLength(1);
+        expect(paths[0]).toMatch(/^workspaces\/ws1\.json\..+\.tmp$/);
+        expect(mockRename).toHaveBeenCalledWith(paths[0], 'workspaces/ws1.json', { oldPathBaseDir: 'AppData', newPathBaseDir: 'AppData' });
+    });
+
+    it('falls back to a direct write (and removes the temp file) when the rename is refused', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockRename.mockRejectedValueOnce(new Error('rename not allowed'));
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData(state);
+        const tmpPath = mockWriteTextFile.mock.calls[0][0] as string;
+        expect(mockRemove).toHaveBeenCalledWith(tmpPath, { baseDir: 'AppData' });
+        expect(mockWriteTextFile).toHaveBeenLastCalledWith('workspaces/ws1.json', JSON.stringify(state), { baseDir: 'AppData' });
     });
 
     it('prepends a new entry to the recent-workspaces list', async () => {
@@ -208,15 +246,11 @@ describe('saveWorkspaceData', () => {
         // All three actually write now -- ws2 is NOT dropped in favour of
         // ws3, unlike the old single-slot queue.
         await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(3));
-        expect(mockWriteTextFile).toHaveBeenNthCalledWith(1,
-            'workspaces/ws1.json', JSON.stringify({ ...state, id: 'ws1' }), { baseDir: 'AppData' },
-        );
-        expect(mockWriteTextFile).toHaveBeenNthCalledWith(2,
-            'workspaces/ws2.json', JSON.stringify({ ...state, id: 'ws2' }), { baseDir: 'AppData' },
-        );
-        expect(mockWriteTextFile).toHaveBeenNthCalledWith(3,
-            'workspaces/ws3.json', JSON.stringify({ ...state, id: 'ws3' }), { baseDir: 'AppData' },
-        );
+        expect(savedFiles()).toEqual([
+            ['workspaces/ws1.json', JSON.stringify({ ...state, id: 'ws1' })],
+            ['workspaces/ws2.json', JSON.stringify({ ...state, id: 'ws2' })],
+            ['workspaces/ws3.json', JSON.stringify({ ...state, id: 'ws3' })],
+        ]);
     });
 });
 
@@ -249,10 +283,29 @@ describe('loadWorkspaceData', () => {
         expect(mockReadTextFile).toHaveBeenCalledWith('workspaces/ws9.json', { baseDir: 'AppData' });
     });
 
-    it('returns null when reading or parsing throws', async () => {
+    it('throws WorkspaceReadError (never null) when the file exists but stays unreadable after retries (2026-10-07: null used to mean both "no such workspace" and "could not read it", and Dashboard\'s autosave answered the second by writing its in-memory copy over the file — erasing every Failure Group saved since that copy was taken)', async () => {
         mockStoreGet.mockResolvedValue([]);
         mockExists.mockResolvedValue(true);
         mockReadTextFile.mockResolvedValue('{not valid json');
+        const { loadWorkspaceData, WorkspaceReadError } = await freshModule();
+        await expect(loadWorkspaceData('ws1')).rejects.toBeInstanceOf(WorkspaceReadError);
+        expect(mockReadTextFile.mock.calls.length).toBeGreaterThan(1); // retried
+    });
+
+    it('retries a read that hits a half-written file and returns the state once it is complete', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile
+            .mockResolvedValueOnce('')             // another window had it truncated
+            .mockResolvedValueOnce('{"id":"ws1",') // still being written
+            .mockResolvedValue(JSON.stringify({ id: 'ws1', name: 'A' }));
+        const { loadWorkspaceData } = await freshModule();
+        expect(await loadWorkspaceData('ws1')).toEqual({ id: 'ws1', name: 'A' });
+    });
+
+    it('still returns null when the workspace file does not exist', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockExists.mockResolvedValue(false);
         const { loadWorkspaceData } = await freshModule();
         expect(await loadWorkspaceData('ws1')).toBeNull();
     });
@@ -540,11 +593,19 @@ describe('updateWorkspaceData', () => {
 
         const result = await updateWorkspaceData('ws1', (s) => ({ ...s, name: 'Patched' }));
         expect(result).toEqual({ id: 'ws1', name: 'Patched' });
-        expect(mockWriteTextFile).toHaveBeenCalledWith(
-            'workspaces/ws1.json',
-            JSON.stringify({ id: 'ws1', name: 'Patched' }),
-            { baseDir: 'AppData' },
-        );
+        expect(savedFiles()).toEqual([['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'Patched' })]]);
+    });
+
+    it('writes NOTHING (and never calls the patch) when the file exists but cannot be read (2026-10-07: a patch computed against a missing prev would replace every field it does not mention)', async () => {
+        mockStoreGet.mockResolvedValue([]);
+        mockExists.mockResolvedValue(true);
+        mockReadTextFile.mockResolvedValue('');
+        const { updateWorkspaceData } = await freshModule();
+        const patch = vi.fn();
+        expect(await updateWorkspaceData('ws1', patch)).toBeNull();
+        expect(patch).not.toHaveBeenCalled();
+        expect(mockWriteTextFile).not.toHaveBeenCalled();
+        expect(mockRename).not.toHaveBeenCalled();
     });
 
     it('a second call\'s read never sees a stale pre-write snapshot while a first call\'s write is still in flight (regression: this exact race lost real Failure Group / model data on 2026-09-16 -- a rapid second edit read the disk before the first edit\'s write landed, computed its patch against that stale copy, and then overwrote the first edit\'s already-saved change)', async () => {
@@ -955,7 +1016,7 @@ describe('duplicateWorkspace', () => {
         expect(saved.failureGroupState.models[0].status).toBe(false);
         expect(saved.failureGroupState.models[0]).not.toHaveProperty('healthExport');
         // the ORIGINAL file is never written
-        expect(mockWriteTextFile.mock.calls.every(c => c[0] !== 'workspaces/ws1.json')).toBe(true);
+        expect(savedFiles().every(([path]) => path !== 'workspaces/ws1.json')).toBe(true);
     });
 
     it('(QA 2026-10-04) a workspace with no failure-group slice is copied as before', async () => {
@@ -985,10 +1046,6 @@ describe('renameWorkspaceFile', () => {
         const { renameWorkspaceFile } = await freshModule();
 
         expect(await renameWorkspaceFile('ws1', 'New Name')).toBe(true);
-        expect(mockWriteTextFile).toHaveBeenCalledWith(
-            'workspaces/ws1.json',
-            JSON.stringify({ id: 'ws1', name: 'New Name' }),
-            { baseDir: 'AppData' },
-        );
+        expect(savedFiles()).toContainEqual(['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'New Name' })]);
     });
 });

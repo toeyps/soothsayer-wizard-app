@@ -52,7 +52,10 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    writeTextFile: async (p: string, c: string) => { h.files.set(p, c); h.writes.push(p); },
+    // Workspace saves go to a temp sibling and are renamed over the real file
+    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    writeTextFile: async (p: string, c: string) => { h.files.set(p, c); if (!p.endsWith('.tmp')) h.writes.push(p); },
+    rename: async (from: string, to: string) => { h.files.set(to, h.files.get(from)!); h.files.delete(from); h.writes.push(to); },
     exists: async (p: string) => p === 'workspaces' || h.files.has(p),
     mkdir: async () => {},
     remove: async (p: string) => { h.files.delete(p); },
