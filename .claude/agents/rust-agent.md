@@ -1,6 +1,6 @@
 ---
 name: rust-agent
-model: sonnet
+model: opus
 description: "Rust Backend Agent — implements Tauri v2 commands, CSV processing logic, and file I/O, with inline unit tests plus any integration tests its own signature changes affect. Only writes to src-tauri/src/, src-tauri/Cargo.toml, src-tauri/python/backend.py (sidecar source), src-tauri/capabilities/ + tauri*.conf.json, and src-tauri/tests/ (files its own change touches)."
 ---
 

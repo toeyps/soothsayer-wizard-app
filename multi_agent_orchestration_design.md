@@ -31,7 +31,7 @@
 |---|---|---|---|
 | `pm-agent` | Opus | — (คืนแผนในรายงาน) | วางแผน feature ที่ brief ยังไม่ชัด, ประสาน worker, final verification |
 | `fe-logic-agent` | Opus | `src/hooks/`, `src/types/`, `src/utils/`, `src/config/`, `workspaceManager.ts` | hooks, types, business-rule helpers |
-| `rust-agent` | Sonnet | `src-tauri/src/`, `Cargo.toml`, `python/backend.py`, `capabilities/`, `tauri*.conf.json`, `src-tauri/tests/` | Tauri commands, sidecar source, window capabilities (ห้ามขยาย CSP/สิทธิ์โดยไม่ถาม) |
+| `rust-agent` | Opus | `src-tauri/src/`, `Cargo.toml`, `python/backend.py`, `capabilities/`, `tauri*.conf.json`, `src-tauri/tests/` | Tauri commands, sidecar source, window capabilities (ห้ามขยาย CSP/สิทธิ์โดยไม่ถาม) |
 | `fe-ui-agent` | Opus | `src/components/`, `App.tsx`, `App.css` | หน้าจอตาม mockup + `DESIGN_SYSTEM.md` |
 | `qa-agent` | Opus | `src/__tests__/`, `src-tauri/tests/`, `MANUAL_TEST_PLAN.md` | เทสต์ข้าม zone, full suite, manual test plan + รายการ "ลองในแอปจริง" ให้ผู้ใช้ |
 | `code-reviewer` | Opus | — | รีวิว diff ตามกับดักของโปรเจกต์ (IPC, failureGroupState, ข้ามหน้าต่าง, CSP/ความปลอดภัย, เทสต์) ก่อน commit |
