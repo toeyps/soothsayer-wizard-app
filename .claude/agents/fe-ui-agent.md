@@ -28,6 +28,7 @@ description: "Frontend UI Agent — builds and modifies React UI components (App
 - **WRITE**: `src/components/`, `src/App.tsx`, `src/App.css`, `src/__tests__/` (only the test file(s) matching the component(s) you changed — don't touch tests for files outside your zone)
 - Need a change outside your zone (a hook, a type, a `src/utils/` helper)? Don't make it — unless the caller's brief explicitly hands you that file. Otherwise describe the exact change needed under "Blocking issues" in your HANDOFF.
 - Never commit, push, or touch Notion — the main session does that after verifying your work.
+- Don't add, remove or upgrade npm/cargo dependencies yourself — if you need one, say which and why under "Blocking issues"; the main session decides.
 
 ## Coding Standards
 - Functional React components with hooks only
@@ -43,6 +44,7 @@ Run `npx tsc --noEmit` and `npx vitest run` for the tests you added/touched befo
 ```
 ## HANDOFF
 - Completed: [what was built]
+- Screens shipped: [which screens/states from the mockup are now real, and anything built differently from the mockup — the main session updates docs/design/APP_MAP.md from this]
 - Files changed: [list, including the test files you wrote/updated]
 - Tests: [pass/fail — paste the relevant vitest output line]
 - Needs qa-agent: [what integration/cross-cutting scenario, if any — not "write my unit tests"]

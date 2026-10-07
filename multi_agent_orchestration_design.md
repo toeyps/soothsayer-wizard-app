@@ -22,17 +22,20 @@
 ผู้ใช้
  └─ Main session ── รับงาน → แจกงาน → ตรวจซ้ำ → ปิดงาน
      ├─ ทีมออกแบบ:   ui-design-lead (Fable) → ui-design-agent (Opus) ↻ → ui-design-reviewer (Fable)
-     ├─ ทีมเขียนโค้ด: (pm-agent) → fe-logic ∥ rust → fe-ui → qa
+     ├─ ทีมเขียนโค้ด: (pm-agent) → fe-logic ∥ rust → fe-ui → qa → code-reviewer
+     ├─ release-agent (ตอนออกเวอร์ชัน)
      └─ notion-sync-agent (main session เรียกท้ายทุกงาน)
 ```
 
 | Agent | Model | เขียนได้ | หน้าที่ |
 |---|---|---|---|
 | `pm-agent` | Opus | — (คืนแผนในรายงาน) | วางแผน feature ที่ brief ยังไม่ชัด, ประสาน worker, final verification |
-| `fe-logic-agent` | Sonnet | `src/hooks/`, `src/types/`, `src/utils/`, `workspaceManager.ts` | hooks, types, business-rule helpers |
-| `rust-agent` | Sonnet | `src-tauri/src/`, `Cargo.toml`, `python/backend.py`, `src-tauri/tests/` | Tauri commands, sidecar source |
+| `fe-logic-agent` | Opus | `src/hooks/`, `src/types/`, `src/utils/`, `src/config/`, `workspaceManager.ts` | hooks, types, business-rule helpers |
+| `rust-agent` | Sonnet | `src-tauri/src/`, `Cargo.toml`, `python/backend.py`, `capabilities/`, `tauri*.conf.json`, `src-tauri/tests/` | Tauri commands, sidecar source, window capabilities (ห้ามขยาย CSP/สิทธิ์โดยไม่ถาม) |
 | `fe-ui-agent` | Opus | `src/components/`, `App.tsx`, `App.css` | หน้าจอตาม mockup + `DESIGN_SYSTEM.md` |
-| `qa-agent` | Opus | `src/__tests__/`, `src-tauri/tests/`, `MANUAL_TEST_PLAN.md` | เทสต์ข้าม zone, full suite, manual test plan |
+| `qa-agent` | Opus | `src/__tests__/`, `src-tauri/tests/`, `MANUAL_TEST_PLAN.md` | เทสต์ข้าม zone, full suite, manual test plan + รายการ "ลองในแอปจริง" ให้ผู้ใช้ |
+| `code-reviewer` | Opus | — | รีวิว diff ตามกับดักของโปรเจกต์ (IPC, failureGroupState, ข้ามหน้าต่าง, CSP/ความปลอดภัย, เทสต์) ก่อน commit |
+| `release-agent` | Opus | version 3 ไฟล์, `CHANGELOG.md` | ออกเวอร์ชัน: เตรียม (bump + changelog) → ผู้ใช้อนุมัติ → build installer |
 | `ui-design-lead` | Fable | `docs/design/` | ทิศทาง + 1–2 จออ้างอิง |
 | `ui-design-agent` | Opus | scratchpad | จอที่เหลือ + วน feedback |
 | `ui-design-reviewer` | Fable | — | รีวิวเข้มรอบสุดท้าย |
@@ -52,7 +55,14 @@
 
 ลำดับ phase เหมือนกันทั้งข้อ 2–3: **contract ก่อน** (command · snake_case args ·
 result · error prefixes) → `fe-logic` ∥ `rust` ทำสองฝั่งพร้อมกัน → `fe-ui` (รอ
-fe-logic) → `qa` → main session ตรวจซ้ำ
+fe-logic) → `qa` → `code-reviewer` → main session ตรวจซ้ำ + commit
+
+**ออกเวอร์ชัน**: `release-agent` รอบเตรียม → ผู้ใช้ดูเลขเวอร์ชัน + changelog →
+รอบ build → main session commit + tag + push
+
+**คุยหลักการ (concept)**: session แยกที่ผู้ใช้คุยเรื่อง concept ของโปรแกรม (model +
+การใช้งาน) ไม่ต้องมี agent — ข้อสรุปบันทึกเป็น entry "📐 concept" ใน handover
+แล้ว agent ทุกตัวอ่านจากที่นั่น
 
 **Rule of thumb**: ถ้าลังเลว่าจะ spawn pm-agent ดีไหม แปลว่าไม่ควร
 

@@ -56,6 +56,7 @@ Output a HANDOFF block at the end of your work:
 - Integration tests added: [list of test files — should be new/cross-zone only, not duplicates of worker-owned unit tests]
 - Full suite results: [frontend count pass/fail] / [Rust count pass/fail]
 - Files changed: [list, incl. MANUAL_TEST_PLAN.md if touched]
+- Test in the real app (for the user, 3–7 steps, plain language): [what to open, click and expect — focus on what automated tests CAN'T see: real windows/capabilities, the sidecar, cross-window sync, reopening a saved workspace, real CSV data]
 - Worker HANDOFF discrepancies found: [none / describe — e.g. a claimed-passing test that's actually broken]
 - Blocking issues: [none / describe failing tests]
 ```
