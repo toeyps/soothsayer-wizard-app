@@ -3767,3 +3767,38 @@ No code changed, nothing committed. The new `docs/design/handoff/welcome-c6-orbi
 - **🆕 2026-10-08 — หน้า Welcome: ข้อความใหม่ + ภาพเครื่องจักร C6 + ลากหมุนแบบ 3D (implement ตาม hand-off ของ session ออกแบบ)** · ผู้ใช้ยืนยันให้เริ่ม (AskUserQuestion "เริ่มเลย") · SPEC: `docs/design/handoff/welcome-c6-orbit/README.md` (ไฟล์ของ session ออกแบบ ยังไม่ commit ตามที่ผู้ใช้ให้ "เอาไว้ก่อน") · route UI only: fe-ui-agent → code-reviewer → fe-ui-agent (แก้) → ตรวจซ้ำ · **ข้อความ**: แอปวิเคราะห์ข้อมูล offline หาพฤติกรรมผิดปกติเทียบกับ normal ที่เรียนรู้ ไม่ได้ทำนายความเสียหาย — kicker `OFFLINE SENSOR DATA → MACHINE BEHAVIOUR`, headline "Abnormal behaviour, found in your history.", subtitle ใหม่, "Machine health studio", ป้าย "● ABNORMAL" (เดิม WATCH), About dialog (`App.tsx`), `tauri.conf.json` shortDescription/longDescription (ผมแก้เอง) และ README ย่อหน้าแรก · **ภาพ C6** (`machineShapes.ts`, ใหม่ `machineDots.ts`): 6,000 จุด (mini 2,400), จุดเน้นที่ขอบ, rim light, stride 8, วาดผ่าน ImageData buffer เดียวต่อเฟรม งบ 260k พิกเซล (นับ padding ด้วย) · **ลากหมุน** (ใหม่ `machineOrbit.ts`) เฉพาะภาพใหญ่: หมุนอิสระ, เอียง −10°..80° (ค่าเริ่ม 18°), ปล่อยแล้วไหลต่อ (จำกัดความเร็ว 12 rad/s หยุดภายใน ~1 วิ), หยุดหมุนอัตโนมัติ/เปลี่ยนเครื่องขณะกดและกลับมา 1.5 วิหลังปล่อย, ดับเบิลคลิกรีเซ็ต, ไม่มีซูม, pointer capture (เมาส์/นิ้ว/ปากกา) · ภาพ mini ไม่มี listener · reduced motion = ลากได้อย่างเดียว ภาพนิ่งขึ้น ABNORMAL · **ต่างจาก SPEC (ตัดสินใจโดย fe-ui-agent)**: การ์ด callout กว้าง **224 px** (SPEC 204) วัดจากฟอนต์จริงรวมฟอนต์สำรองของ installer (CSP บล็อก Google Fonts → Segoe UI/Consolas) — 204 ทำให้ป้ายทับชื่อ "Exhaust gas temperature" · ไม่มีชิป "Drag to turn" (อยู่ใน aria-label แทน) · Gas turbine generator ใช้ Exhaust gas temperature เป็นตัวที่ค่าไต่ขึ้น · **code review**: ไม่มี MUST-FIX — SHOULD-FIX: ลากแล้วถูกขัด (Alt+Tab ขณะกดค้าง) ภาพหมุนตามเมาส์ต่อ / นิ้ว-ปากกาลากไม่ได้อีก → แก้ด้วย `lostpointercapture`, เช็ก `buttons === 0`, กดใหม่ล้างการลากที่ค้าง · NIT ที่แก้: จำกัดความเร็วปัด, bounds check กัน NaN, งบพิกเซลรวม padding, ตัด "double-click to reset" ออกจาก aria-label, reduced motion refit เมื่อ DPR เปลี่ยน, แคช shape ดิบ · **ประสิทธิภาพ** (วัดใน Chromium dev, ดูสัดส่วน): DPR 1 เท่าเดิม (~5.5 ms/เฟรม), DPR 1.5 ถูกกว่าเดิม (7.3 vs 9.1–9.6 ms, worst 5% 11 vs 20–22 ms) ทั้งตอนนิ่งและตอนลาก · test: `MachineMorphCanvas.test.tsx` (เขียนใหม่ ~59), `machineOrbit.test.ts`, `machineDots.test.ts` (ใหม่), `DataUploadPage.test.tsx`, `App.test.tsx` · manual plan: IMP-23/24 ปรับข้อความ (id เดิม), ใหม่ IMP-40..44 (เมาส์, นิ้ว/ปากกา, 125–150 % + CPU บนโน้ตบุ๊ก, reduced motion, ลากถูกขัด) รวม 326 ข้อ · **ค้างให้ session ออกแบบ**: บันทึกสีส้ม group 2 เป็นข้อยกเว้นใน `DESIGN_SYSTEM.md` และแก้ README ของ hand-off ที่ยังเขียน LABEL_W 204 · tsc ผ่าน, vite build ผ่าน, vitest 3140 ผ่าน + 1 expected-fail · ยังไม่ได้ลองใน Tauri/installer · ไม่ push
 - **🆕 2026-10-08 — Release 0.9.0 prep (ผู้ใช้: "ถ้าทำทุกอย่างเสร็จแล้ว build installer ใหม่รวมหน้า Welcome ด้วยเลย")** · ตอนแรกผมบอกผู้ใช้ว่าจะใช้ 0.8.1 (0.8.0 build + tag ในเครื่องไปแล้ว ผู้ใช้อาจติดตั้งไว้ จึงไม่ใช้เลขซ้ำ) แต่ release-agent ชี้ว่าการลากหมุนภาพเป็น "การโต้ตอบใหม่" ซึ่งตามตาราง CLAUDE.md = New feature → MINOR → ผมเลือกทำตามกฎ: **0.9.0** · CHANGELOG `## [0.9.0] — 2026-10-08` (ไทย สำหรับผู้ใช้: ข้อความ Welcome ใหม่, ภาพ C6 + ลากหมุน, ประสิทธิภาพที่สเกลจอ 125–150 %) · version ใน `package.json`, `package-lock.json` (root), `src-tauri/Cargo.toml`, `Cargo.lock` (เฉพาะ tauri-app), `tauri.conf.json` · release-agent ไม่พบ commit ที่ไม่มี handover entry (`v0.8.0..HEAD` มีแค่ 062e24d) · ไม่ต้อง rebuild sidecar (ไม่มีการเปลี่ยน Rust/backend.py หลัง 0.8.0) · tag `v0.8.0` เก็บไว้ (ยังไม่ push) · ยังไม่ build / tag 0.9.0 ณ entry นี้ · ไม่ push
 - **🆕 2026-10-08 — Build installer 0.9.0 + tag `v0.9.0` (ในเครื่อง ยังไม่ push)** · `scripts/build-installer-windows.ps1` สำเร็จ → `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Wizard_0.9.0_x64-setup.exe` (57.8 MB, unsigned) · sidecar ใน bundle = ตัว optimised ของ 0.8.0 (cmp ตรงกัน) · รวมหน้า Welcome ใหม่ + ทุกอย่างของ 0.8.0 · ยังไม่ได้ติดตั้ง/ลองบนเครื่องจริง · ไม่ push (รอผู้ใช้เทส; push ไป `personal` เท่านั้น รวม tag v0.8.0 และ v0.9.0)
+
+### 🆕 2026-10-08 — Welcome C6 + orbit shipped by dev; design docs synced (design session, no code)
+
+**Dev report:**
+- Implemented and committed as 062e24d.
+- `code-reviewer`: no must-fix. The should-fix about interrupted drags is fixed.
+- Built installer 0.9.0, tagged v0.9.0 locally. Not pushed.
+
+**Deviations from the SPEC:**
+- `LABEL_W` = 224, not 204.
+- No visible "Drag to turn" chip; there is an aria-label instead.
+- Release velocity capped at 12 rad/s.
+
+**Docs:**
+- The SPEC README now has an "As shipped" section, written by the main session.
+- `ui-design-lead` was asked to record the following in `DESIGN_SYSTEM.md` / `APP_MAP.md`:
+  - the orange group-2 colour exception;
+  - the shipped welcome-art pattern;
+  - a typography note: the installed app's CSP blocks Google Fonts, so it falls back to Segoe UI / Consolas.
+
+**Font issue:** dev found it while sizing the callout. It is an open decision for the user: bundle Inter and JetBrains Mono locally (no CSP change needed), or accept the fallbacks.
+
+Design docs are still uncommitted, as the user asked.
+
+- **🆕 2026-10-08 — 📋 Requirement ชุดใหญ่จากลูกค้า (ผู้ใช้เก็บมาแล้วส่งทีเดียว) + การแจกงาน** · ผู้ใช้: "มันมีทั้งบัค / เพิ่ม แก้ไข feature / แล้วก็ design ใหม่ด้วย … แจกจ่ายงานทั้งหมดนี้ให้ session or agent ต่างๆทำตามหน้าที่ตามความเหมาะสม" · รายการตามคำผู้ใช้:
+  1. "tag ที่ใช้ในการดูค่าหลายๆอันพร้อมกันมันลบทีละอันไม่ได้ ต้องลบทั้งหมด" (บัค/feature — ตัว tag ดูค่าหลายจุดบนกราฟ)
+  2. "feature highlight เอา line color ออกไม่ได้ใช้" (ภาพ 59: แท็บ Highlights → By time มีสวิตช์ Band / Line colour)
+  3. "highlight แก้ไข by value ตอนเลือก sensor ให้แสดง tag description ด้วย (ลองเช็คจุดอื่นด้วย ต้องแสดงเหมือนกันทั้งโปรแกรม … แต่ละจุดมันแสดงผลไม่เหมือนกันเลย)" (ภาพ 60: dropdown By value แสดงแค่ tag)
+  4. "ตัวเปลี่ยนสีกราฟของ pair plot มันไม่เหมือนจุดอื่น … ต้องเหมือนกันทั้งระบบ" (ภาพ 61: ตัวเลือกสี cluster ของ Pair Plot เป็น picker แบบ RGB ของระบบ)
+  5. "ออกแบบการใส่ FG … FG เป็นอย่างแรกที่ต้องสร้างหลังจาก import data master data แล้ว แต่อันนี้เหมือนเอาไว้ทำทีหลังเท่าที่ออกแบบ … ออกแบบให้ตรงกับ concept การทำงาน" (ภาพ 62: แท็บ Failure Groups)
+  6. "special sensor … ลูกค้าอยากได้แทบจะเหมือนการทำงานของเครื่องคิดเลข เลือก sensor ใส่เครื่องหมายตัวเลข ใส่วงเล็บเพื่อบอกการ cal ได้"
+  7. "special sensor บัคเยอะมาก เช็คให้ละเอียดว่าค่าที่ cal ถูกต้องไหม ถ้ามาแก้สมการหลังจากสร้าง sensor ใหม่ไปแล้ว (function edit) cal ถูกต้องใช่ไหม"
+  8. "sensor 1 ตัวที่ทำ model ≥ 2 ชนิด การกด train ครั้งเดียวที่ sensor ต้องเป็นการ train model ทั้งหมดของ sensor นั้น"
+  9. "run all train model คือกด train model ทั้งหมดเลย … ถ้ายังใส่ detail ไม่ครบละ จะทำยังไง"
+  · **การแจกงาน (ผมตัดสินใจ)**: ข้อ 1, 2 → fe-ui-agent (แก้ตรง ไม่ต้องออกแบบ) · ข้อ 7 → qa-agent ตรวจความถูกต้องเชิงตัวเลขเชิงลึก (สร้าง + edit) แล้วส่งบัคที่เจอให้ agent เจ้าของโซนแก้ · ข้อ 3, 4, 5, 6, 8, 9 → session ออกแบบ (กฎ 2026-10-07: งานออกแบบต้องผ่าน design agents) — 3/4 = กำหนดมาตรฐานตัวเลือก sensor / ตัวเลือกสีเดียวทั้งแอป (+ audit ทุกจุด), 5 = flow สร้าง FG เป็นขั้นแรกหลัง import, 6 = ตัวสร้างสูตรแบบเครื่องคิดเลข, 8+9 = flow การ Train ทั้ง sensor / Train all เมื่อ detail ไม่ครบ · ภาพประกอบเก็บไว้ที่ TEMP `req-2026-10-08/` (59–62.png) · ยังไม่ commit โค้ดใดๆ ณ entry นี้
