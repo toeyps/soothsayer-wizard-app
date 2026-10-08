@@ -779,33 +779,23 @@ describe('Dashboard', () => {
             expect(last(highlightsPanelProps).chartType).toBe('scatter');
         });
 
-        it('seeds highlightLineDisplay from initialState (default \'band\' when absent) and forwards it to both HighlightsPanel and Chart', () => {
-            renderDashboard({
-                initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], highlightLineDisplay: 'line', chartType: 'line' }),
-            });
+        it('a workspace saved with the removed highlightLineDisplay: "line" still loads: highlights reach the Line chart (which always draws bands), nothing forwards a display mode, and the stale key is dropped on the next autosave', async () => {
+            const timeHighlights = [{ id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true }];
+            // The field no longer exists on WorkspaceState -- build the
+            // legacy on-disk shape explicitly.
+            const legacy = { selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line', timeHighlights, highlightLineDisplay: 'line' } as unknown as Partial<WorkspaceState>;
+            renderDashboard({ initialState: makeInitialState(legacy) });
+            expect(last(chartProps).timeHighlights).toEqual(timeHighlights);
+            expect('highlightDisplay' in last(chartProps)).toBe(false);
             fireEvent.click(screen.getByText('Highlights'));
-            expect(last(highlightsPanelProps).lineDisplay).toBe('line');
-            expect(last(chartProps).highlightDisplay).toBe('line');
-        });
+            expect('lineDisplay' in last(highlightsPanelProps)).toBe(false);
+            expect('onSetLineDisplay' in last(highlightsPanelProps)).toBe(false);
 
-        it('defaults highlightLineDisplay to \'band\' when absent from initialState', () => {
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
-            fireEvent.click(screen.getByText('Highlights'));
-            expect(last(highlightsPanelProps).lineDisplay).toBe('band');
-            expect(last(chartProps).highlightDisplay).toBe('band');
-        });
-
-        it('onSetLineDisplay updates state, forwarded to Chart, and persists via autosave', async () => {
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
-            fireEvent.click(screen.getByText('Highlights'));
-
-            act(() => { last(highlightsPanelProps).onSetLineDisplay('line'); });
-            expect(last(highlightsPanelProps).lineDisplay).toBe('line');
-            expect(last(chartProps).highlightDisplay).toBe('line');
-
+            fireEvent.click(screen.getByText('hl-add-highlight')); // any edit -> autosave
             await waitFor(() => expect(mockSaveWorkspaceData).toHaveBeenCalled());
             const saved = last(mockSaveWorkspaceData.mock.calls)[0];
-            expect(saved.highlightLineDisplay).toBe('line');
+            expect('highlightLineDisplay' in saved).toBe(false);
+            expect(saved.timeHighlights[0]).toEqual(timeHighlights[0]); // the user's highlights survive
         });
     });
 

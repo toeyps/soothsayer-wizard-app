@@ -10,6 +10,7 @@ import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } fr
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
 
 // Re-exported so existing callers (Dashboard.tsx, charts/index.ts) that
 // import RANGE_PALETTE from this module keep working — the array itself
@@ -412,7 +413,8 @@ function ScatterChart({
                 const existing = prev.find(t => t.pointIdx === idx);
                 if (existing) return prev.filter(t => t.id !== existing.id);
                 if (prev.length >= MAX_TAGGED_POINTS) return prev;
-                return [...prev, { id: `tag-${Date.now()}-${prev.length}`, pointIdx: idx, colorIdx: prev.length }];
+                const colorIdx = firstFreeColorIndex(prev.map(t => t.colorIdx), RANGE_PALETTE.length);
+                return [...prev, { id: `tag-${Date.now()}-${prev.length}`, pointIdx: idx, colorIdx }];
             });
         };
         canvas.addEventListener('click', onCanvasClick);
@@ -756,6 +758,25 @@ function ScatterChart({
             .filter((v): v is NonNullable<typeof v> => v !== null);
     }, [sc, scatterTags, data, scatterX, scatterY, headers, visibleBounds]);
 
+    // Rows of the tag list under the toolbox (one × per tag). Built from
+    // `scatterTags` itself, not `tagOverlays`, so a tag whose point can't be
+    // placed on screen right now can still be removed on its own.
+    // Focus target when the last tag's × is pressed (the list empties).
+    const tagButtonRef = useRef<HTMLButtonElement>(null);
+    const removeScatterTag = useCallback((id: string) => {
+        setScatterTags(prev => prev.filter(t => t.id !== id));
+    }, []);
+    const tagListItems = useMemo(() => scatterTags.map((tag, order) => {
+        const origIdx = origIndicesRef.current[tag.pointIdx];
+        const row = origIdx != null ? data[origIdx] : null;
+        return {
+            id: tag.id,
+            badge: TAG_BADGES[order % TAG_BADGES.length],
+            color: rgbaToHex(RANGE_PALETTE[tag.colorIdx % RANGE_PALETTE.length]),
+            label: row?.timestamp || `Point ${order + 1}`,
+        };
+    }), [scatterTags, data]);
+
     if (sensors.length < 2) {
         return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
@@ -806,6 +827,7 @@ function ScatterChart({
                     <Ruler size={13} />
                 </button>
                 <button
+                    ref={tagButtonRef}
                     onClick={() => setScatterTagMode(m => !m)}
                     className={`scatter-regl-tool${scatterTagMode ? ' active' : ''}`}
                     title={scatterTagMode
@@ -819,14 +841,23 @@ function ScatterChart({
                         onClick={() => setScatterTags([])}
                         className="scatter-regl-tool"
                         title="Clear all tags"
+                        aria-label="Clear all tags"
                     >
                         <Trash2 size={13} />
                     </button>
                 )}
             </div>
-            {scatterTagMode && (
-                <div className="scatter-regl-hint" style={{ position: 'absolute', top: 44, right: 12, zIndex: 11 }}>
-                    Click a point to tag it — click it again to remove
+            {/* Tag-mode hint + the tag list (one × per tag) share one
+                right-hand column under the toolbox so they stack instead of
+                overlapping. */}
+            {(scatterTagMode || tagListItems.length > 0) && (
+                <div className="chart-tag-anchor">
+                    {scatterTagMode && (
+                        <div className="scatter-regl-hint chart-tag-hint">
+                            Click a point to tag it — remove one with its × below
+                        </div>
+                    )}
+                    <TaggedPointList items={tagListItems} onRemove={removeScatterTag} emptyFocusRef={tagButtonRef} />
                 </div>
             )}
 

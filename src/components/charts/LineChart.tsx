@@ -6,6 +6,7 @@ import { formatDate, formatDateTime } from '../../utils/dateFormat';
 import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
+import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
 
 /** Parses one `xData` entry to epoch ms, or `null` for a missing/unparseable
  *  timestamp — a time-axis series point needs an explicit x value per point
@@ -34,51 +35,6 @@ function nearestXIndex(xData: (string | null)[], targetMs: number): number {
         if (diff < bestDiff) { bestDiff = diff; best = i; }
     }
     return best;
-}
-
-/**
- * Collapses a (possibly overlapping) list of highlighted index ranges into a
- * flat, non-overlapping run of `{min, max, color}` pieces — one entry per
- * contiguous stretch of x-axis indices that all resolve to the same colour.
- * Indices covered by no highlight are simply omitted from the result.
- *
- * Used to build the 'line' display mode's highlight overlay: one extra,
- * thicker line series per (sensor, piece) pair, drawn on top of that
- * sensor's normal line — see the overlay-building code below for why a
- * bolder second layer reads better than recolouring the base line in place
- * (a same-width colour swap was too easy to miss against a busy chart).
- *
- * Resolves overlaps itself rather than depending on undocumented tie-break
- * behaviour elsewhere — `ranges` is walked in array order and the FIRST
- * range covering a given index wins, matching the "first enabled highlight
- * wins" convention already used for ScatterChart's halo layer.
- */
-export function buildLineColorPieces(
-    dataCount: number,
-    ranges: { startIdx: number; endIdx: number; color: string }[],
-): { min: number; max: number; color: string }[] {
-    const pieces: { min: number; max: number; color: string }[] = [];
-    if (dataCount === 0 || ranges.length === 0) return pieces;
-
-    const colorAt = (i: number): string | null => {
-        for (const r of ranges) {
-            if (i >= r.startIdx && i <= r.endIdx) return r.color;
-        }
-        return null;
-    };
-
-    let runStart = 0;
-    let runColor = colorAt(0);
-    for (let i = 1; i < dataCount; i++) {
-        const c = colorAt(i);
-        if (c !== runColor) {
-            if (runColor !== null) pieces.push({ min: runStart, max: i - 1, color: runColor });
-            runStart = i;
-            runColor = c;
-        }
-    }
-    if (runColor !== null) pieces.push({ min: runStart, max: dataCount - 1, color: runColor });
-    return pieces;
 }
 
 // Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
@@ -133,7 +89,7 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
 
 function LineChart({
     data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange,
-    sensorMetadata, timeHighlights, highlightDisplay,
+    sensorMetadata, timeHighlights,
     lineTaggedPoints: persistedTaggedPoints, onLineTaggedPointsChange,
 }: ChartProps) {
     // Track container height so the grid/slider/legend scale with it.
@@ -294,10 +250,12 @@ function LineChart({
                 });
                 if (existing) return prev.filter(t => t.id !== existing.id);
                 if (prev.length >= MAX_TAGGED_POINTS) return prev;
+                const used = prev.map(t => RANGE_PALETTE.findIndex(c => rgbaToHex(c) === t.color));
+                const colorIdx = firstFreeColorIndex(used, RANGE_PALETTE.length);
                 return [...prev, {
                     id: `tag-${Date.now()}-${prev.length}`,
                     timestamp: timestamp as string,
-                    color: rgbaToHex(RANGE_PALETTE[prev.length % RANGE_PALETTE.length]),
+                    color: rgbaToHex(RANGE_PALETTE[colorIdx]),
                 }];
             });
         };
@@ -370,6 +328,35 @@ function LineChart({
         };
     }, [chartInstance]);
 
+    // Removes ONE tag (the × on its row in the tag list) — the rest keep
+    // their colours; badges renumber by position, same as the markers.
+    // Focus target when the last tag's × is pressed (the list unmounts).
+    const tagButtonRef = useRef<HTMLButtonElement>(null);
+    const removeTag = useCallback((id: string) => {
+        setTaggedPoints(prev => prev.filter(t => t.id !== id));
+    }, []);
+    // Each row's label is resolved the SAME way as the marker callout below:
+    // snap the stored timestamp to the nearest point currently in `xData` and
+    // show THAT point's time. After a refetch (new aggregation / Time Range)
+    // the stored timestamp may no longer be a plotted point, and the marker
+    // moves to the nearest one — the list must name the same instant, not the
+    // stale stored one. Falls back to the stored text when there is nothing
+    // to snap to (no data, or an unparseable timestamp).
+    const tagListItems = useMemo(() => taggedPoints.map((tag, order) => {
+        const tagMs = new Date(tag.timestamp).getTime();
+        let resolved: string = tag.timestamp;
+        if (!isNaN(tagMs) && xData.length > 0) {
+            resolved = xData[nearestXIndex(xData, tagMs)] ?? tag.timestamp;
+        }
+        const d = new Date(resolved);
+        return {
+            id: tag.id,
+            badge: TAG_BADGES[order % TAG_BADGES.length],
+            color: tag.color,
+            label: isNaN(d.getTime()) ? tag.timestamp : formatDateTime(d),
+        };
+    }), [taggedPoints, xData]);
+
     const zoomOut = useCallback(() => {
         chartInstance?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
         setZoomMenuOpen(false);
@@ -431,15 +418,11 @@ function LineChart({
         // segment), so the pretty profile is reserved for genuinely small data.
         const isLargeData = dataCount > 2000;
 
-        // Time highlights ("Highlights" tab's "By time" group) — snapped to
-        // the nearest plotted index once, shared by both display modes
-        // below. `buildLineColorPieces`'s overlay-series slicing needs an
-        // actual data-array index range (not a raw timestamp), so each
-        // highlight's start/end snap to the nearest plotted point — the
-        // 'band' markArea below then resolves that same index back to its
-        // point's own timestamp. Kept in the user's own creation order — the
-        // "first enabled highlight wins" convention (see
-        // `buildLineColorPieces`) needs that order preserved.
+        // Time highlights ("Highlights" tab's "By time" group) — each
+        // highlight's start/end snaps to the nearest plotted index, and the
+        // band below resolves that index back to its point's own timestamp,
+        // so a band always starts/ends exactly on a drawn point. Kept in the
+        // user's own creation order.
         const highlightIndexRanges = dataCount > 0
             ? (timeHighlights ?? [])
                 .filter(h => h.enabled)
@@ -457,43 +440,34 @@ function LineChart({
                 .filter((v): v is NonNullable<typeof v> => v !== null)
             : [];
 
-        // 'band' (the default): a tinted background rectangle — a distinct
+        // Always a tinted background band — the Highlights tab's old Band /
+        // Line colour switch was removed 2026-10-08 (customer: the Line
+        // colour mode was never used), so a workspace saved with
+        // `highlightLineDisplay: 'line'` now draws bands too. A distinct
         // ECharts mechanism from the horizontal markLine used for alarm
         // setpoints above/below. Attached to the first series only:
         // markArea renders across the shared grid regardless of which
         // series owns it, so adding it to every series would just draw the
         // same bands N times over.
-        // Time axis: `markArea.data[*].xAxis` now takes an actual axis
-        // value (ms), not a category index — `r.startIdx`/`r.endIdx` (still
-        // snapped to the nearest plotted point, same as before) are
+        // Time axis: `markArea.data[*].xAxis` takes an actual axis value
+        // (ms), not a category index — `r.startIdx`/`r.endIdx` are
         // resolved back to that point's own timestamp via `xData`.
-        const highlightAreas = highlightDisplay !== 'line'
-            ? highlightIndexRanges.map(r => [
-                {
-                    xAxis: toMs(xData[r.startIdx]),
-                    itemStyle: { color: hexToRgbaCss(r.color, 0.16) },
-                    label: {
-                        show: true,
-                        formatter: r.label,
-                        position: 'insideTop' as const,
-                        color: r.color,
-                        fontSize: 10,
-                        fontWeight: 600,
-                        fontFamily: 'JetBrains Mono, monospace',
-                    },
+        const highlightAreas = highlightIndexRanges.map(r => [
+            {
+                xAxis: toMs(xData[r.startIdx]),
+                itemStyle: { color: hexToRgbaCss(r.color, 0.16) },
+                label: {
+                    show: true,
+                    formatter: r.label,
+                    position: 'insideTop' as const,
+                    color: r.color,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontFamily: 'JetBrains Mono, monospace',
                 },
-                { xAxis: toMs(xData[r.endIdx]) },
-            ])
-            : [];
-
-        // 'line': emphasise each highlighted window with a second, bolder
-        // line drawn on top of the trace, instead of a background band. The
-        // base series is untouched — same colour and width across its whole
-        // range — and `linePieces` (below) drives one extra overlay series
-        // per (sensor, piece), built alongside `series` further down.
-        const linePieces = highlightDisplay === 'line'
-            ? buildLineColorPieces(dataCount, highlightIndexRanges)
-            : [];
+            },
+            { xAxis: toMs(xData[r.endIdx]) },
+        ]);
 
         // ── Dynamic horizontal padding ────────────────────────────
         const AXIS_OFFSET = 60;
@@ -725,53 +699,6 @@ function LineChart({
             };
         });
 
-        // 'line' display mode: one extra, bolder line per (sensor, piece) —
-        // drawn on top of that sensor's own (untouched) base line above, so
-        // the highlighted stretch reads as "the same trace, but thicker and
-        // in the highlight's colour" rather than a same-width colour swap
-        // that's easy to miss on a busy multi-sensor chart. `null` outside
-        // its own [min, max] leaves the rest of the line simply not drawn
-        // by this series — the always-continuous base line underneath is
-        // what the eye follows there.
-        const highlightOverlaySeries = linePieces.length > 0
-            ? sensors.flatMap((sensor, index) => {
-                const sensorIdx = headers.indexOf(sensor);
-                const rawValues = columnar
-                    ? (columnar.series[sensorIdx] ?? [])
-                    : data.map(d => d.values[sensorIdx] ?? null);
-                return linePieces.map(piece => ({
-                    name: sensor,
-                    type: 'line',
-                    yAxisIndex: index,
-                    data: rawValues.map((v, i) => [toMs(xData[i]), i >= piece.min && i <= piece.max ? v : null]),
-                    smooth: !isLargeData,
-                    showSymbol: false,
-                    silent: true,
-                    // Excluded from the axis-trigger tooltip — without this
-                    // every hover inside a highlighted window would show the
-                    // same sensor twice (once from this overlay, once from
-                    // its base series).
-                    tooltip: { show: false },
-                    legendHoverLink: false,
-                    animation: false,
-                    // Above the base lines (default z) so the emphasis
-                    // stroke is never hidden behind a neighbouring sensor's
-                    // trace.
-                    z: 5,
-                    itemStyle: { color: piece.color },
-                    // A FIXED emphasis width, not a multiple of the base
-                    // line's own width — the large-data profile's hairline
-                    // stroke is only 0.8px, and doubling that to 1.6px reads
-                    // as no different from the base line at a glance
-                    // (confirmed live: barely visible on a real ~4 000-point
-                    // aggregated chart). This has to be thick enough to read
-                    // as "emphasised" regardless of how thin the base trace
-                    // currently is.
-                    lineStyle: { color: piece.color, width: 4 },
-                }));
-            })
-            : [];
-
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
@@ -793,28 +720,7 @@ function LineChart({
                 hideDelay: 0,
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
-                    const rawList = Array.isArray(params) ? params : [params];
-                    // 'line' display mode's highlight overlay series (see the
-                    // series-building code above) share their sensor's own
-                    // `name` and can report the exact same value, at the
-                    // exact same index, as their base series. Per-series
-                    // `tooltip.show: false` is documented for item-trigger
-                    // tooltips but isn't confirmed to exclude a series from
-                    // *axis*-trigger aggregation too (a matching upstream
-                    // feature request, unresolved as of writing:
-                    // https://github.com/apache/echarts/issues/15924) — don't
-                    // depend on it. Dedupe defensively instead, keeping the
-                    // FIRST entry per sensor name (the base series always
-                    // sorts first: `series: [...baseSeries,
-                    // ...highlightOverlaySeries]`), so a hover inside a
-                    // highlighted window can never show one sensor twice
-                    // regardless of which way that ECharts behavior goes.
-                    const seenNames = new Set<string>();
-                    const pList = rawList.filter((p: any) => {
-                        if (seenNames.has(p.seriesName)) return false;
-                        seenNames.add(p.seriesName);
-                        return true;
-                    });
+                    const pList = Array.isArray(params) ? params : [params];
                     // `axisValue` (the raw underlying value, ms for a time
                     // axis) rather than `axisValueLabel` — the label is
                     // ECharts' own smart-time-formatted display string for a
@@ -962,9 +868,9 @@ function LineChart({
                     splitLine: { show: !hideYSplitLine && index === 0, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } }
                 };
             }),
-            series: [...baseSeries, ...highlightOverlaySeries],
+            series: baseSeries,
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, highlightDisplay, xData, taggedPoints, rangeChanged]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, xData, taggedPoints, rangeChanged]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
@@ -995,6 +901,7 @@ function LineChart({
                 </div>
                 <button
                     type="button"
+                    ref={tagButtonRef}
                     onClick={toggleTagMode}
                     className={`line-chart-tool${tagMode ? ' active' : ''}`}
                     title={tagMode
@@ -1009,11 +916,17 @@ function LineChart({
                         onClick={() => setTaggedPoints([])}
                         className="line-chart-tool"
                         title="Clear all tags"
+                        aria-label="Clear all tags"
                     >
                         <Trash2 size={13} />
                     </button>
                 )}
             </div>
+            {tagListItems.length > 0 && (
+                <div className="chart-tag-anchor">
+                    <TaggedPointList items={tagListItems} onRemove={removeTag} emptyFocusRef={tagButtonRef} />
+                </div>
+            )}
             {zoomSelectMode && (
                 <div style={{
                     position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
@@ -1027,7 +940,7 @@ function LineChart({
                     position: 'absolute', top: 12, left: 44, pointerEvents: 'none',
                     fontSize: 10, fontStyle: 'italic', color: txtSecondary,
                 }}>
-                    Click the chart to tag a point — click a tag again to remove it
+                    Click the chart to tag a point — remove one with its × in the tag list
                 </div>
             )}
             {/* Live feedback for an in-progress Horizontal Zoom drag — a

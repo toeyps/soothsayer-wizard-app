@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
-import type { TimeHighlight, HighlightLineDisplay, ValueHighlight } from '../../types';
+import type { TimeHighlight, ValueHighlight } from '../../types';
 import ColorPlatePicker from './ColorPlatePicker';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 
@@ -18,15 +18,6 @@ interface HighlightsPanelProps {
     onRemoveTimeHighlight: (id: string) => void;
     onRecolorTimeHighlight: (id: string, color: string) => void;
     onRenameTimeHighlight: (id: string, label: string) => void;
-
-    /** How highlights render on the Line chart -- a tinted band, or by
-     *  recolouring the line itself during each window. Only Line reads
-     *  this: Scatter always shows the ring regardless, and Pair Plot
-     *  doesn't apply at all. Both buttons are disabled outside Line (see
-     *  `chartType` below), not just dimmed -- same "genuinely inert, not
-     *  just dimmed" rule as the rest of this component. */
-    lineDisplay: HighlightLineDisplay;
-    onSetLineDisplay: (mode: HighlightLineDisplay) => void;
 
     // "By value" -- one sensor + its value ranges, colours Scatter points.
     // Scatter-only (see ValueHighlight's own docstring in types.ts for why
@@ -78,16 +69,12 @@ function fmtRange(start: string, end: string): string {
  */
 export default function HighlightsPanel({
     timeHighlights, onAddTimeHighlight, onToggleTimeHighlight, onRemoveTimeHighlight, onRecolorTimeHighlight,
-    onRenameTimeHighlight, lineDisplay, onSetLineDisplay,
+    onRenameTimeHighlight,
     valueHighlight, valueHighlightSensors, onSetValueHighlightSensor, onAddValueHighlightRange,
     onToggleValueHighlightRange, onRemoveValueHighlightRange, onRecolorValueHighlightRange,
     chartType,
 }: HighlightsPanelProps) {
     const highlightApplies = chartType !== 'pair';
-    // Band/Line-colour is a Line-only choice -- Scatter still shows
-    // highlights (as a ring) but has nothing for this control to change,
-    // and Pair Plot is already fully covered by `highlightApplies` above.
-    const lineDisplayApplies = chartType === 'line';
     // "By value" only ever does anything on Scatter -- Line has no 3rd-
     // sensor colour channel and Pair Plot keeps its own lasso-cluster.
     const valueHighlightApplies = chartType === 'scatter';
@@ -126,15 +113,14 @@ export default function HighlightsPanel({
     // panel's own layout shifts in between (the "Not shown on Pair Plot"
     // banner appears above the list), so that position is stale.
     //
-    // Narrowing this to "only clear when the column becomes DISABLED" (the
-    // original fix) missed a second case: Line <-> Scatter never disables
-    // the "By time" column, but Scatter inserts/removes its own inline note
-    // above the chip list, which also moves the swatch -- so the popover
-    // stayed open at a stale position across that switch too. Clearing on
-    // ANY chartType change (not just disabled transitions) covers both --
-    // every popover/draft that depends on chart-relative layout is cheap to
-    // re-open, so there's no reason to try to preserve it across a type
-    // switch (QA sweep, 2026-10-02).
+    // Clearing on ANY chartType change (not just when the column becomes
+    // disabled) is deliberate: Line <-> Scatter used to insert/remove a
+    // Scatter-only inline note above the chip list (gone since the Band /
+    // Line colour switch was removed, 2026-10-08), and the "By value"
+    // column still toggles its own banner -- every popover/draft that
+    // depends on chart-relative layout is cheap to re-open, so there's no
+    // reason to try to preserve it across a type switch (QA sweep,
+    // 2026-10-02).
     useEffect(() => {
         setHighlightColorFor(null);
         setHighlightColorAnchor(null);
@@ -184,25 +170,6 @@ export default function HighlightsPanel({
                 <div className="highlights-col-head">
                     <span className="highlights-col-title">By time</span>
                     <span className="highlights-col-hint">Line + Scatter</span>
-                    <span className="highlights-spacer" />
-                    <div className="highlights-seg" title="How highlights render on the Line chart">
-                        <button
-                            type="button"
-                            className={lineDisplay === 'band' ? 'is-on' : ''}
-                            onClick={() => onSetLineDisplay('band')}
-                            disabled={!lineDisplayApplies}
-                        >
-                            Band
-                        </button>
-                        <button
-                            type="button"
-                            className={lineDisplay === 'line' ? 'is-on' : ''}
-                            onClick={() => onSetLineDisplay('line')}
-                            disabled={!lineDisplayApplies}
-                        >
-                            Line colour
-                        </button>
-                    </div>
                 </div>
 
                 {!highlightApplies && (
@@ -213,18 +180,6 @@ export default function HighlightsPanel({
                 )}
 
                 <fieldset disabled={!highlightApplies} className={`highlights-fieldset${highlightApplies ? '' : ' highlights-fieldset--dim'}`}>
-                    {/* Scatter-specific: NOT the amber note above -- highlights
-                        are still fully live on Scatter, just fixed to the
-                        ring, so a "not shown" warning would overstate it.
-                        Quiet, informational tone instead. Pair Plot needs no
-                        equivalent note here -- the banner above already
-                        explains the whole column is inert there. */}
-                    {chartType === 'scatter' && (
-                        <div className="highlights-inline-note">
-                            Not adjustable here — Scatter always renders highlights as a ring, regardless of this setting.
-                        </div>
-                    )}
-
                     <div className="highlights-add-row">
                         <input type="datetime-local" value={draftStart} onChange={e => { setDraftStart(e.target.value); setHighlightError(null); }} className="highlights-field highlights-field--date" />
                         <span className="highlights-add-sep">→</span>
@@ -301,7 +256,7 @@ export default function HighlightsPanel({
                     </div>
                 </fieldset>
                 <div className="highlights-scope-note">
-                    Applies to Line and Scatter. Line shows a tinted band or recolours itself (see above); Scatter always rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
+                    Applies to Line and Scatter. Line shows a tinted band over each window; Scatter rings matching points. Pair Plot keeps its own lasso-cluster gesture instead.
                 </div>
             </div>
 

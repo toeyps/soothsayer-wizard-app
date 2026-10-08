@@ -3802,3 +3802,110 @@ Design docs are still uncommitted, as the user asked.
   8. "sensor 1 ตัวที่ทำ model ≥ 2 ชนิด การกด train ครั้งเดียวที่ sensor ต้องเป็นการ train model ทั้งหมดของ sensor นั้น"
   9. "run all train model คือกด train model ทั้งหมดเลย … ถ้ายังใส่ detail ไม่ครบละ จะทำยังไง"
   · **การแจกงาน (ผมตัดสินใจ)**: ข้อ 1, 2 → fe-ui-agent (แก้ตรง ไม่ต้องออกแบบ) · ข้อ 7 → qa-agent ตรวจความถูกต้องเชิงตัวเลขเชิงลึก (สร้าง + edit) แล้วส่งบัคที่เจอให้ agent เจ้าของโซนแก้ · ข้อ 3, 4, 5, 6, 8, 9 → session ออกแบบ (กฎ 2026-10-07: งานออกแบบต้องผ่าน design agents) — 3/4 = กำหนดมาตรฐานตัวเลือก sensor / ตัวเลือกสีเดียวทั้งแอป (+ audit ทุกจุด), 5 = flow สร้าง FG เป็นขั้นแรกหลัง import, 6 = ตัวสร้างสูตรแบบเครื่องคิดเลข, 8+9 = flow การ Train ทั้ง sensor / Train all เมื่อ detail ไม่ครบ · ภาพประกอบเก็บไว้ที่ TEMP `req-2026-10-08/` (59–62.png) · ยังไม่ commit โค้ดใดๆ ณ entry นี้
+
+### 🆕 2026-10-08 — Customer requirement set: design items started with `ui-design-lead` (design session, no code)
+
+**Source:** the dev session forwarded the user's customer requirements (entry "📋 Requirement ชุดใหญ่จากลูกค้า", commit 4a5b001). Dev keeps items 1, 2 and 7. The design items went to two parallel `ui-design-lead` (Fable) runs.
+
+**Run A — standards:**
+- Item 3: one sensor label and picker standard across the whole app. Audit every sensor picker and label, then specify the standard label and picker.
+- Item 4: one colour picker everywhere — sensor lines, highlights, value ranges and pair-plot clusters, which today use the native RGB picker.
+
+**Run B — flows:**
+- Item 5: Failure Groups as the first step after importing data and master data.
+- Item 6: calculator-style special-sensor formula builder.
+- Items 8 + 9:
+  - per-sensor Train that trains all of that sensor's models;
+  - "Train all", with a clear rule for models whose settings are incomplete;
+  - progress/queue UI — a Relation model takes ~13–15 s each.
+
+**Plan:** each run returns reference mockups, open questions and next screens for `ui-design-agent`. `ui-design-reviewer` reviews before a SPEC FINAL goes to dev.
+
+**Also pending:** the font decision (bundle Inter/JetBrains Mono vs accept the fallbacks). The question was not answered; the user interrupted it.
+
+No code changed, nothing committed.
+
+### 🆕 2026-10-08 — Run A done: sensor label / picker / colour picker standards (design session, no code)
+
+**Reference mockup** (`ui-design-lead`): https://claude.ai/artifact/FvViQRhtz8RiXxE2YwhT6o (private).
+
+**Audit:** the lead listed about 23 sensor-label places and 4 colour controls. Inconsistencies found include:
+- tag-only labels in Highlights By value, the line tooltip and the special-sensor source select;
+- the picker rows show the tag first;
+- the pair-plot cluster colour uses the native `<input type="color">`.
+
+**Standards** (now in `DESIGN_SYSTEM.md` §4; `APP_MAP.md` row added):
+1. **SensorLabel**
+   - Two forms: Stacked (description + unit chip, tag in mono underneath) or Inline (description then tag).
+   - The description always comes first. With no description, the tag goes on line 1.
+   - Pair-plot axes may show the tag alone, with the full label on hover.
+2. **SensorPicker**
+   - Single: an anchored popover under the control, with search and component groups; no OK.
+   - Multi: chips + an "Add…" modal with OK/Cancel.
+   - Native `<select>`, `SensorAutocomplete` and the Scatter X/Y exception are retired.
+3. **ColourPicker**
+   - The swatch itself is the button.
+   - The popover has the 12-colour palette, a check on the current colour, a dot on colours in use, and a Custom option with HSV + hex.
+   - It replaces the native picker and the pipette icon.
+
+**Next screens for `ui-design-agent`:** six groups — Dashboard right panel, Dashboard tabs, charts, Workbench, Add special sensor, picker internals.
+
+**Open questions:**
+1. Single picker as a popover instead of the centred modal?
+2. Scatter X/Y and Fit X also use the standard picker?
+3. "Colour by" / Filter list only sensors on the chart?
+4. Keep each colour cycle and share only the picker?
+5. Keep descriptions uppercase?
+
+**Route:** UI-only.
+
+No code changed, nothing committed.
+
+### 🆕 2026-10-08 — Run B done: FG-first step, calculator formula builder, Train flow (design session, no code)
+
+**`ui-design-lead` (Fable)** produced three reference mockups (private). `DESIGN_SYSTEM.md` gained §4.1 "Flow patterns", and `APP_MAP.md` was updated.
+
+**Item 5 — Failure groups first** (https://claude.ai/artifact/GPen6YgGTJtqinZUXyhC4J)
+- New Import **Step 3 "Failure groups"**:
+  - quick-add input;
+  - one card per group with Name, Description and Recommendation;
+  - "Skip for now" text link; Open Dashboard is disabled at 0 groups.
+- The Dashboard then opens on the FG tab, with an "Assign sensors →" callout. Sensors are assigned only in the Dashboard.
+- **Data/Rust:** none — frontend only.
+
+**Item 6 — Calculator formula builder** (https://claude.ai/artifact/C5ukqnyLXcoWHUtWoTV7NB)
+- A token strip with a movable caret: sensor / number / operator / bracket / function tokens.
+- Keypad with digits, operators, `( )`, ⌫, AC and 9 functions; keyboard typing mirrors the keys.
+- The serialised formula is shown, with "Edit as text".
+- One validation line; the preview chart shows only while the formula is valid.
+- Manage tab unchanged.
+- **Needs Rust:** a bounded `preview_formula` command.
+- **Needs fe-logic:** a TS tokenizer that converts formula text ↔ tokens.
+- No schema change; recipes stay as formula text.
+
+**Items 8 + 9 — Train flow** (https://claude.ai/artifact/B3mZ4pPntU4psDYPzSxtQ9)
+- **"Train sensor":** trains every model of that sensor that needs it (I → R → C) and skips up-to-date ones. A ▾ menu has "Re-train all" and "Train only this model".
+- **"Train all":**
+  - a pre-flight modal grouped by FG: Ready / Up to date / Can't train, with a reason and "Fix →";
+  - recommended rule: skip blocked models, never block the whole run.
+- **Run:**
+  - sequential queue;
+  - progress strip with ETA;
+  - Cancel stops after the current model;
+  - a failed model shows an error and the queue continues;
+  - finish summary.
+- **Data/Rust:** none for v1 — a frontend queue (`useTrainQueue`) over the existing commands.
+
+**Open questions** (defaults in brackets):
+1. Step 3 skippable? (yes)
+2. Assign sensors only in the Dashboard? (yes)
+3. Keep the multi-sensor shortcuts as a "Templates" row? (keep)
+4. Remove the per-model Train button from the footer? (remove)
+5. Train all skips blocked models? (skip)
+
+**Status:** waiting on the user. Then: `ui-design-agent` builds the remaining states, `ui-design-reviewer` reviews, and a SPEC FINAL goes to dev.
+
+No code changed, nothing committed.
+
+- **🆕 2026-10-08 — Requirement ข้อ 1 + 2: ลบ tag บนกราฟทีละอัน / เอา Line colour ออกจาก Highlights** · fe-ui-agent → code-reviewer → fe-ui-agent · **ข้อ 1**: เดิมลบ tag เดี่ยวได้แค่คลิกจุดเดิมซ้ำตอนเปิด tag mode (ไม่มีใครรู้) นอกนั้นมีแต่ Clear all → component ใหม่ `src/components/charts/TaggedPointList.tsx`: รายการ tag ใต้ toolbox มุมขวาบนของกราฟ (Line + Scatter) แต่ละแถว = เลข/สี/เวลา + ปุ่ม × (คีย์บอร์ดได้, ลบแล้ว focus ไปแถวถัดไป/ก่อนหน้า/ปุ่ม Tag) · ใช้ได้แม้ปิด tag mode · Clear all ยังอยู่ · แก้บัคเดิม: tag ใหม่หยิบสีตามจำนวน tag → ลบตรงกลางแล้วเพิ่มใหม่สีซ้ำ → ตอนนี้หยิบสีแรกที่ว่าง · เวลาในรายการ snap ตามจุดเดียวกับ marker บนกราฟ · **ข้อ 2**: ลบสวิตช์ Band / Line colour และโค้ดวาดเส้นเปลี่ยนสีทั้งหมด → ช่วงเวลาเป็นแถบเสมอ (Scatter ยังเป็นวง) · ลบ `highlightLineDisplay` ออกจาก type; `withoutLegacyWorkspaceFields` ใน Dashboard.tsx ตัด key เดิมตอน autosave ครั้งถัดไป — workspace เก่าที่ตั้ง Line colour เปิดได้และแสดงแถบ · **code review**: MUST-FIX 1 — รายการ tag (z-index 11) ทับเมนู Zoom ของกราฟ Line (toolbox เป็น stacking context ของตัวเอง) → `.chart-tag-anchor` z-index 10 · SHOULD-FIX: focus หลุดหลังกด ×, เวลาในรายการไม่ตรง marker หลัง refetch — แก้ทั้งสอง · ส่วน persistence (autosave/failureGroupState/lastSavedPayload/close-flush) reviewer ตรวจแล้ว clean · manual plan: HL-4 ตัด, ใหม่ HL-8, LINE-9, SCAT-9; header 328 ข้อ · ข้อที่ agent พบแต่ไม่ได้แก้ (นอก brief): ข้อความตอนไม่มี highlight บอก "drag on the chart with the tag tool" ผิดมาแต่เดิม (tag tool ไม่ได้สร้าง highlight), `DESIGN_SYSTEM.md` บรรทัด ~107 ยังพูดถึง "Band or Recolour line" (ไฟล์ของ session ออกแบบ) · tsc ผ่าน, test ไฟล์ที่เกี่ยว 450 ผ่าน, vite build ผ่าน · ยังไม่ได้ลองในแอปจริง (ลำดับการวาดเมนู Zoom/axis editor ทับรายการ tag ต้องดูจริง) · ไม่ push
+- **🆕 2026-10-08 — Requirement ข้อ 7: QA ตรวจความถูกต้องของ special sensor (qa-agent)** · **ผล: ค่าที่คำนวณถูกต้อง** ทั้งตอนสร้าง, edit สูตร/source/ชื่อ (รวม sensor ที่สร้างต่อกัน 3 ชั้น), บน chart (raw, aggregation 5 แบบ, downsample), scatter sample และเปิด workspace ใหม่ (replay recipe บน CSV จริงหลายไฟล์ที่มีปี พ.ศ. รวม 2567-02-29 ได้ค่าตรงทุก bit) — เทียบกับการคำนวณอิสระใน test · **บัคที่ทำให้ได้ "ค่าแปลก" แบบไม่มี error**: (1 HIGH) ฟังก์ชัน/ชื่อที่ไม่รู้จัก (`$A * pi`, `ln($A)`, พิมพ์ผิด) → sensor ว่างทุกแถวแต่ขึ้น "Updated" (`compute_formula_sensor` แปลง error เป็น NaN) และ editor ไม่ใช้ผล `validate_formula` · (2 HIGH) `round($A, 2)` แบบ Excel = fasteval `round(modulus, x)` → ค่าผิด · (3 MED) `log` = ฐาน 10 ไม่มี `ln` · (4 MED) แก้ source ของ sensor แบบ Average/Sum/Median แล้วกลายเป็นสูตรผลรวม (`prevSourcesKey` effect รีเซ็ต operation) · (5–9 LOW) Spread เกิน ~32 sensor → SlabOverflow, สูตรยาว → TooLong หลัง rewrite ชื่อ, wrap "Round to N decimals" ได้ 1.1300000000000001, ชิป Referenced sensors แสดงชื่อผิด (regex ASCII), คำอธิบาย recipe ไม่บอกจำนวนทศนิยม · ไม่ใช่บัค (แจ้งลูกค้า): `-$A ^ 2` = (−A)² เหมือน Excel, `5k` = 5000 · test ใหม่: `src-tauri/tests/internal/qa_special_sensor_internal.rs` (31: 25 ผ่าน + 6 `#[ignore = "BUG"]`), fixture `src-tauri/tests/fixtures/special_sensor_formulas.json`, `src/__tests__/SpecialSensorEditCorrectness.integration.test.tsx` (17 ผ่าน + 3 `it.fails`), fake `log`/`round` ใน `helpers/fakeRustSession.ts` ให้ตรง fasteval · **กำลังแก้**: rust-agent (บัค 1–3, 5, 6) และ fe-logic-agent (บัค 4, 7–9, แสดง error ของสูตรทันที, help text) — commit แยกเมื่อเสร็จ · ยังไม่ commit ไฟล์ test ของ QA ใน entry นี้ (รวมไปกับรอบแก้)

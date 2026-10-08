@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useEffect } from 'react';
-import { render, fireEvent, act } from '@testing-library/react';
+import { render, fireEvent, act, screen, within } from '@testing-library/react';
+import { formatDateTime } from '../utils/dateFormat';
 
 const capturedOptions: any[] = [];
 /** Fake echarts instance handed to `onChartReady`, exposing just enough of
@@ -58,7 +59,7 @@ class MockResizeObserver {
     unobserve = vi.fn();
 }
 
-import LineChart, { LINE_CHART_COLORS, defaultSensorColor, buildLineColorPieces } from '../components/charts/LineChart';
+import LineChart, { LINE_CHART_COLORS, defaultSensorColor } from '../components/charts/LineChart';
 import type { ColumnarSeries } from '../components/charts/ChartTypes';
 
 function columnarOf(headers: string[], length: number): ColumnarSeries {
@@ -134,46 +135,6 @@ describe('LINE_CHART_COLORS', () => {
 
     it('starts with a maximally-distinct blue/emerald/rose triad for the common few-sensor case', () => {
         expect(LINE_CHART_COLORS.slice(0, 3)).toEqual(['#3b82f6', '#10b981', '#f43f5e']);
-    });
-});
-
-describe('buildLineColorPieces (visualMap piece construction for \'line\' display mode)', () => {
-    it('returns nothing for zero data points or zero ranges', () => {
-        expect(buildLineColorPieces(0, [{ startIdx: 0, endIdx: 2, color: '#f00' }])).toEqual([]);
-        expect(buildLineColorPieces(10, [])).toEqual([]);
-    });
-
-    it('produces one piece for a single range, leaving the rest uncovered (outOfRange picks it up)', () => {
-        const pieces = buildLineColorPieces(10, [{ startIdx: 2, endIdx: 5, color: '#f00' }]);
-        expect(pieces).toEqual([{ min: 2, max: 5, color: '#f00' }]);
-    });
-
-    it('produces one piece per disjoint range, in index order', () => {
-        const pieces = buildLineColorPieces(10, [
-            { startIdx: 6, endIdx: 8, color: '#0f0' },
-            { startIdx: 1, endIdx: 3, color: '#f00' },
-        ]);
-        // Output order follows index position, not input array order.
-        expect(pieces).toEqual([
-            { min: 1, max: 3, color: '#f00' },
-            { min: 6, max: 8, color: '#0f0' },
-        ]);
-    });
-
-    it('resolves overlapping ranges by "first range in the array wins" (same convention as ScatterChart\'s halo)', () => {
-        const pieces = buildLineColorPieces(10, [
-            { startIdx: 2, endIdx: 6, color: '#f00' }, // listed first -> wins the overlap
-            { startIdx: 4, endIdx: 8, color: '#0f0' },
-        ]);
-        expect(pieces).toEqual([
-            { min: 2, max: 6, color: '#f00' },
-            { min: 7, max: 8, color: '#0f0' },
-        ]);
-    });
-
-    it('a range spanning the entire dataset produces exactly one piece covering it all', () => {
-        const pieces = buildLineColorPieces(5, [{ startIdx: 0, endIdx: 4, color: '#f00' }]);
-        expect(pieces).toEqual([{ min: 0, max: 4, color: '#f00' }]);
     });
 });
 
@@ -380,80 +341,28 @@ describe('LineChart option building', () => {
         });
     });
 
-    describe('\'line\' highlight display mode (a bolder overlay line drawn on top of the trace, instead of a markArea band)', () => {
+    describe('time highlights always draw as a band (the Band / Line colour switch was removed 2026-10-08)', () => {
         const highlight = { id: 'h1', start: '2026-01-01T00:01:00', end: '2026-01-01T00:03:00', label: 'Startup', color: '#ff0000', enabled: true };
 
-        it('with no highlightDisplay prop (default), behaves exactly like \'band\': markArea attached, no overlay series, base data untouched', () => {
+        it('attaches a markArea band and adds no extra overlay series -- one series per sensor, base data untouched', () => {
             const columnar = columnarOf(headers, 5);
             render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} />);
             const option = capturedOptions[capturedOptions.length - 1];
-            expect(option.series).toHaveLength(3); // one per sensor, no overlays
+            expect(option.series).toHaveLength(3); // one per sensor, no recolour overlays any more
             expect(option.series[0].markArea).toBeDefined();
-            expect(option.series[0].data[0]).toEqual([msOf(columnar.timestamps[0]), 0]); // [x_ms, y] pair, untouched
-        });
-
-        it('with highlightDisplay="line" and an enabled highlight: no markArea, base series are untouched (own colour/width, full data), plus one overlay series per sensor', () => {
-            const columnar = columnarOf(headers, 5);
-            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} highlightDisplay="line" />);
-            const option = capturedOptions[capturedOptions.length - 1];
-
-            expect(option.series).toHaveLength(6); // 3 base + 3 overlay (one highlight x 3 sensors)
-            const baseSeries = option.series.slice(0, 3);
-            const overlaySeries = option.series.slice(3);
-
-            baseSeries.forEach((s: any, i: number) => {
-                expect(s.markArea).toBeUndefined();
-                expect(s.itemStyle.color).toBe(defaultSensorColor(headers[i]));
-                expect(s.lineStyle.width).toBe(2); // unchanged, small-data profile
-                expect(s.data).toEqual(pairs(columnar, [i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4])); // full, untouched
-            });
-
-            overlaySeries.forEach((s: any, i: number) => {
-                expect(s.name).toBe(headers[i]);
-                expect(s.itemStyle.color).toBe('#ff0000'); // the highlight's own colour
-                expect(s.lineStyle.color).toBe('#ff0000');
-                expect(s.lineStyle.width).toBe(4); // double the base width (2 * 2)
-                expect(s.tooltip).toEqual({ show: false }); // excluded, so hover doesn't double up on the sensor
-                expect(s.silent).toBe(true);
-                // null outside the highlighted [1,3] index range (00:01..00:03), the sensor's real value inside it.
-                expect(s.data).toEqual(pairs(columnar, [null, i * 100 + 1, i * 100 + 2, i * 100 + 3, null]));
+            option.series.forEach((s: any, i: number) => {
+                expect(s.itemStyle.color).toBe(defaultSensorColor(headers[i])); // never recoloured
+                expect(s.data).toEqual(pairs(columnar, [i * 100, i * 100 + 1, i * 100 + 2, i * 100 + 3, i * 100 + 4]));
             });
         });
 
-        it('the overlay stays at its full emphasis width even on the large-data hairline profile (regression: doubling the 0.8px hairline base only reached 1.6px, which read as no different from the base line on a real ~4 000-point chart)', () => {
-            const columnar = columnarOf(['A'], 2001); // > 2000 -> isLargeData
-            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} timeHighlights={[highlight]} highlightDisplay="line" />);
-            const option = capturedOptions[capturedOptions.length - 1];
-            const [base, overlay] = option.series;
-            expect(base.lineStyle.width).toBe(0.8); // base still gets the hairline profile
-            expect(overlay.lineStyle.width).toBe(4); // overlay does NOT shrink with it
-        });
-
-        it('a second, differently-coloured highlight produces its own separate overlay series per sensor', () => {
-            const highlight2 = { id: 'h2', start: '2026-01-01T00:00:00', end: '2026-01-01T00:00:00', label: 'Spike', color: '#00ff00', enabled: true };
-            const columnar = columnarOf(['A'], 5);
-            render(
-                <LineChart
-                    data={[]} columnar={columnar} sensors={['A']} headers={['A']}
-                    timeHighlights={[highlight, highlight2]} highlightDisplay="line"
-                />,
-            );
-            const option = capturedOptions[capturedOptions.length - 1];
-            expect(option.series).toHaveLength(3); // 1 base + 2 overlays (one per highlight)
-            const [, overlay1, overlay2] = option.series;
-            expect(overlay1.lineStyle.color).toBe('#00ff00'); // earlier index (0) sorts first
-            expect(overlay1.data).toEqual(pairs(columnar, [0, null, null, null, null]));
-            expect(overlay2.lineStyle.color).toBe('#ff0000');
-            expect(overlay2.data).toEqual(pairs(columnar, [null, 1, 2, 3, null]));
-        });
-
-        it('with highlightDisplay="line" but no enabled highlights: no overlay series, no markArea, same as \'band\' with nothing to draw', () => {
+        it('a legacy highlightDisplay="line" prop (an old caller / saved setting) is ignored -- still a band, no overlays', () => {
             const columnar = columnarOf(headers, 5);
-            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} highlightDisplay="line" />);
+            const legacyProps = { highlightDisplay: 'line' } as Record<string, unknown>;
+            render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} timeHighlights={[highlight]} {...legacyProps} />);
             const option = capturedOptions[capturedOptions.length - 1];
-            expect(option.series).toHaveLength(3); // no overlays added
-            expect(option.series[0].markArea).toBeUndefined();
-            expect(option.series[0].data[0]).toEqual([msOf(columnar.timestamps[0]), 0]);
+            expect(option.series).toHaveLength(3);
+            expect(option.series[0].markArea.data).toHaveLength(1);
         });
     });
 
@@ -561,19 +470,6 @@ describe('LineChart option building', () => {
             ]);
             expect(html).toContain('A: 5');
             expect(html).not.toContain('undefined');
-        });
-
-        it('dedupes by seriesName, keeping only the first entry -- defends against a highlight overlay series (same name as its sensor) appearing twice regardless of whether ECharts actually honours that series\' tooltip.show:false for axis-trigger aggregation', () => {
-            const columnar = columnarOf(['A'], 3);
-            render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
-            const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
-            const ms = msOf('2026-01-01T00:00:00');
-            const html = formatter([
-                { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#3b82f6' }, // base series
-                { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#ff0000' }, // highlight overlay, same sensor
-            ]);
-            expect((html.match(/A:/g) ?? [])).toHaveLength(1);
-            expect(html).toContain('#3b82f6'); // the FIRST (base series) entry wins, not the overlay
         });
 
         it('caps the number of rendered rows at 10', () => {
@@ -799,6 +695,125 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         fireEvent.click(clearAll);
         expect(onChange).toHaveBeenLastCalledWith([]);
         expect(container.querySelectorAll('.line-chart-tool').length).toBe(2); // Clear all disappears, Zoom + Tag toggle remain
+    });
+});
+
+describe('Tag Point -- removing ONE tag from the tag list (customer request 2026-10-08: tags could only be cleared all at once)', () => {
+    const headers = ['A', 'B'];
+    const seeded = [
+        { id: 't1', timestamp: '2026-01-01T00:01:00', color: '#aa0000' },
+        { id: 't2', timestamp: '2026-01-01T00:02:00', color: '#00aa00' },
+        { id: 't3', timestamp: '2026-01-01T00:03:00', color: '#0000aa' },
+    ];
+    const label = (ts: string) => formatDateTime(new Date(ts));
+
+    it('shows no tag list until a tag exists', () => {
+        render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} />);
+        expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
+    });
+
+    it('lists every tag with its badge, time and its own keyboard-reachable remove button', () => {
+        render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={seeded} />);
+        const list = screen.getByRole('list', { name: 'Tagged points' });
+        const rows = within(list).getAllByRole('listitem');
+        expect(rows.map(r => r.textContent)).toEqual(seeded.map((t, i) => `${['①', '②', '③'][i]}${label(t.timestamp)}`));
+        const removeButtons = within(list).getAllByRole('button', { name: /^Remove tag/ });
+        expect(removeButtons).toHaveLength(3);
+        removeButtons.forEach(b => expect(b.tagName).toBe('BUTTON')); // native button: Tab + Enter/Space for free
+    });
+
+    it('the x removes exactly that tag, keeps the others with their own colours, and reports the new list', () => {
+        const onChange = vi.fn();
+        render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={seeded} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(screen.getByRole('button', { name: `Remove tag ② ${label(seeded[1].timestamp)}` }));
+
+        expect(onChange).toHaveBeenLastCalledWith([seeded[0], seeded[2]]);
+        const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
+        expect(markPoint.data.map((d: any) => d.itemStyle.color)).toEqual(['#aa0000', '#0000aa']);
+        expect(markPoint.data[1].label.formatter).toContain('②'); // badges renumber by position
+        const rows = within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
+        expect(rows).toHaveLength(2);
+        // "Clear all" is still offered for the rest.
+        expect(document.querySelector('[title="Clear all tags"]')).not.toBeNull();
+    });
+
+    it('works with tag mode off (no need to enter tag mode just to remove one)', () => {
+        const onChange = vi.fn();
+        const { container } = render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={seeded} onLineTaggedPointsChange={onChange} />);
+        expect(tagToggle(container).className).not.toContain('active');
+        fireEvent.click(screen.getByRole('button', { name: `Remove tag ① ${label(seeded[0].timestamp)}` }));
+        expect(onChange).toHaveBeenLastCalledWith([seeded[1], seeded[2]]);
+    });
+
+    it('removing the last tag hides the list and the Clear all button', () => {
+        const onChange = vi.fn();
+        render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={[seeded[0]]} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Remove tag ①/ }));
+        expect(onChange).toHaveBeenLastCalledWith([]);
+        expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
+        expect(document.querySelector('[title="Clear all tags"]')).toBeNull();
+        expect(capturedOptions[capturedOptions.length - 1].series[0].markPoint).toBeUndefined();
+    });
+
+    it('Clear all still clears every tag at once', () => {
+        const onChange = vi.fn();
+        render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={seeded} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(document.querySelector('[title="Clear all tags"]') as HTMLElement);
+        expect(onChange).toHaveBeenLastCalledWith([]);
+        expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
+    });
+
+    it('a tag added after removing a middle one takes the freed colour instead of duplicating one still on the chart', () => {
+        const columnar = columnarOf(headers, 5);
+        const onChange = vi.fn();
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} onLineTaggedPointsChange={onChange} />);
+        fireEvent.click(tagToggle(container));
+        for (const i of [0, 1, 2]) {
+            mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[i]), 0]);
+            act(() => { zrClickHandler!({ offsetX: i, offsetY: i }); });
+        }
+        const before = onChange.mock.calls[onChange.mock.calls.length - 1][0].map((t: any) => t.color);
+        fireEvent.click(screen.getByRole('button', { name: /^Remove tag ②/ }));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[4]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 4, offsetY: 4 }); });
+        const after = onChange.mock.calls[onChange.mock.calls.length - 1][0].map((t: any) => t.color);
+        expect(after).toHaveLength(3);
+        expect(new Set(after).size).toBe(3);
+        expect(after).toEqual([before[0], before[2], before[1]]);
+    });
+
+    it('keyboard focus moves to the next row’s ×, then to the toolbox Tag button once the last tag is gone', () => {
+        const { container } = render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={seeded.slice(0, 2)} />);
+        const first = screen.getByRole('button', { name: /^Remove tag ①/ });
+        first.focus();
+        fireEvent.click(first);
+        // The former ② row is now ① and holds focus.
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: `Remove tag ① ${label(seeded[1].timestamp)}` }));
+        fireEvent.click(document.activeElement as HTMLElement);
+        expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
+        expect(document.activeElement).toBe(tagToggle(container));
+    });
+
+    it('each row names the SAME instant as its marker callout: the stored timestamp snapped to the nearest plotted point, re-resolved after a refetch', () => {
+        // A tag stored at 00:01:20 (e.g. pinned on a finer aggregation) on a
+        // chart whose points are 00:00, 00:01, ... -> both resolve to 00:01.
+        const tag = [{ id: 'tx', timestamp: '2026-01-01T00:01:20', color: '#aa0000' }];
+        const { rerender } = render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={tag} />);
+        const rowText = () => within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem')[0].textContent;
+        const calloutHead = () => String(capturedOptions[capturedOptions.length - 1].series[0].markPoint.data[0].label.formatter).split('\n')[0];
+        expect(rowText()).toBe(`①${label('2026-01-01T00:01:00')}`);
+        expect(calloutHead()).toContain(label('2026-01-01T00:01:00'));
+
+        // Refetch onto a coarser 5-minute grid: the marker snaps to 00:00,
+        // and the list must follow it rather than keep the stored 00:01:20.
+        const coarse: ColumnarSeries = {
+            timestamps: ['2026-01-01T00:00:00', '2026-01-01T00:05:00', '2026-01-01T00:10:00'],
+            series: headers.map(() => [1, 2, 3]),
+        };
+        rerender(<LineChart data={[]} columnar={coarse} sensors={headers} headers={headers} lineTaggedPoints={tag} />);
+        expect(rowText()).toBe(`①${label('2026-01-01T00:00:00')}`);
+        expect(calloutHead()).toContain(label('2026-01-01T00:00:00'));
+        expect(screen.getByRole('button', { name: `Remove tag ① ${label('2026-01-01T00:00:00')}` })).toBeTruthy();
     });
 });
 

@@ -20,8 +20,6 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof HighlightsPane
         onRemoveTimeHighlight: vi.fn(),
         onRecolorTimeHighlight: vi.fn(),
         onRenameTimeHighlight: vi.fn(),
-        lineDisplay: 'band' as const,
-        onSetLineDisplay: vi.fn(),
         valueHighlight: { sensor: '', ranges: [] } as ValueHighlight,
         valueHighlightSensors: ['TAG1', 'TAG2', 'TAG3'],
         onSetValueHighlightSensor: vi.fn(),
@@ -216,67 +214,26 @@ describe('HighlightsPanel', () => {
         });
     });
 
-    describe('Line display (Band vs Line colour -- Line-only; Scatter always rings, Pair Plot never applies)', () => {
-        it('reflects the current lineDisplay prop via "is-on" styling', () => {
-            const { container, rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'line', lineDisplay: 'band' })} />);
-            const [bandBtn, lineBtn] = container.querySelectorAll('.highlights-seg button');
-            expect(bandBtn.className).toContain('is-on');
-            expect(lineBtn.className).not.toContain('is-on');
-
-            rerender(<HighlightsPanel {...makeProps({ chartType: 'line', lineDisplay: 'line' })} />);
-            const [bandBtn2, lineBtn2] = container.querySelectorAll('.highlights-seg button');
-            expect(bandBtn2.className).not.toContain('is-on');
-            expect(lineBtn2.className).toContain('is-on');
+    describe('no Band / Line colour switch (removed 2026-10-08 per customer request -- time highlights always draw as a band on Line)', () => {
+        it.each(['line', 'scatter', 'pair'] as const)('renders no display-mode switch and no "Line colour" option on %s', (chartType) => {
+            const { container } = render(<HighlightsPanel {...makeProps({ chartType })} />);
+            expect(container.querySelector('.highlights-seg')).toBeNull();
+            expect(screen.queryByText('Line colour')).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Band' })).toBeNull();
         });
 
-        it('calls onSetLineDisplay with the clicked mode', () => {
-            const onSetLineDisplay = vi.fn();
-            render(<HighlightsPanel {...makeProps({ chartType: 'line', onSetLineDisplay })} />);
-            fireEvent.click(screen.getByText('Line colour'));
-            expect(onSetLineDisplay).toHaveBeenCalledWith('line');
-            fireEvent.click(screen.getByText('Band'));
-            expect(onSetLineDisplay).toHaveBeenCalledWith('band');
+        it('shows no Scatter-only "Not adjustable here" note any more -- there is no setting left for it to refer to', () => {
+            render(<HighlightsPanel {...makeProps({ chartType: 'scatter' })} />);
+            expect(screen.queryByText(/Not adjustable here/)).toBeNull();
+            expect(screen.queryByText(/always renders highlights as a ring/)).toBeNull();
+            // ...and the "By time" group stays fully live on Scatter.
+            expect((document.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(false);
         });
 
-        it('both buttons are enabled on Line', () => {
+        it('the scope footer describes the band (no more "recolours itself")', () => {
             render(<HighlightsPanel {...makeProps({ chartType: 'line' })} />);
-            expect((screen.getByText('Band') as HTMLButtonElement).disabled).toBe(false);
-            expect((screen.getByText('Line colour') as HTMLButtonElement).disabled).toBe(false);
-        });
-
-        it('both buttons are disabled on Scatter, even though the rest of the group stays live', () => {
-            render(<HighlightsPanel {...makeProps({ chartType: 'scatter' })} />);
-            expect((screen.getByText('Band') as HTMLButtonElement).disabled).toBe(true);
-            expect((screen.getByText('Line colour') as HTMLButtonElement).disabled).toBe(true);
-            // The rest of the group is NOT disabled on Scatter -- only this
-            // sub-control is, since Scatter still renders highlights (as a
-            // ring), just with no display-mode choice to make.
-            expect((screen.getByPlaceholderText('Label (optional)') as HTMLInputElement).disabled).toBe(false);
-        });
-
-        it('both buttons are disabled on Pair Plot too', () => {
-            render(<HighlightsPanel {...makeProps({ chartType: 'pair' })} />);
-            expect((screen.getByText('Band') as HTMLButtonElement).disabled).toBe(true);
-            expect((screen.getByText('Line colour') as HTMLButtonElement).disabled).toBe(true);
-        });
-
-        it('shows the Scatter-specific inline note only on Scatter -- not Line, not Pair Plot', () => {
-            const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'scatter' })} />);
-            expect(screen.getByText(/always renders highlights as a ring/)).toBeTruthy();
-
-            rerender(<HighlightsPanel {...makeProps({ chartType: 'line' })} />);
-            expect(screen.queryByText(/always renders highlights as a ring/)).toBeNull();
-
-            rerender(<HighlightsPanel {...makeProps({ chartType: 'pair' })} />);
-            expect(screen.queryByText(/always renders highlights as a ring/)).toBeNull();
-        });
-
-        it('the Scatter-specific note is NOT the amber compat banner -- it stays quiet since the group still works there', () => {
-            render(<HighlightsPanel {...makeProps({ chartType: 'scatter' })} />);
-            // The amber "Not shown on ..." banner only fires for Pair Plot;
-            // Scatter must not trigger it just because this one sub-control
-            // is inert.
-            expect(screen.queryByText(/Not shown on/)).toBeNull();
+            expect(screen.queryByText(/recolours itself/)).toBeNull();
+            expect(screen.getByText(/Line shows a tinted band over each window; Scatter rings matching points/)).toBeTruthy();
         });
     });
 

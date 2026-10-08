@@ -433,12 +433,10 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         // Banners: one per column, only when that column is inert.
         expect(!!timeCol.querySelector('.highlights-note')).toBe(k === 'pair');
         expect(!!valueCol.querySelector('.highlights-note')).toBe(k !== 'scatter');
-        expect(!!timeCol.querySelector('.highlights-inline-note')).toBe(k === 'scatter');
-        // Band / Line colour live in the column HEADER (outside the fieldset)
-        // so they need their own disabled gate: Line only.
-        const seg = Array.from(timeCol.querySelectorAll<HTMLButtonElement>('.highlights-seg button'));
-        expect(seg).toHaveLength(2);
-        for (const b of seg) expect(b.disabled, `${b.textContent} disabled on ${chart}`).toBe(k !== 'line');
+        // The Band / Line colour switch (and its Scatter-only "Not adjustable
+        // here" note) was removed 2026-10-08 -- bands only on Line now.
+        expect(timeCol.querySelector('.highlights-inline-note')).toBeNull();
+        expect(timeCol.querySelectorAll('.highlights-seg button')).toHaveLength(0);
         // Exactly one chart-type button is active — the one we expect.
         expect(chartBtn(chart).className).toContain('active');
     }
@@ -463,26 +461,18 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         expectColumnsMatch('Scatter');
     });
 
-    it('the persisted line-display choice survives the cycle (dimming disables, never resets, the setting)', () => {
-        mountOnHighlights();
-        const lineColourBtn = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.highlights-seg button')).find(b => b.textContent === 'Line colour')!;
-        fireEvent.click(lineColourBtn());
-        expect(lineColourBtn().className).toContain('is-on');
-        for (const step of ['Scatter', 'Pair Plot', 'Line'] as ChartLabel[]) fireEvent.click(chartBtn(step));
-        expect(lineColourBtn().className).toContain('is-on');
-    });
-
     // ── popovers ──
 
     const SWATCH_TOP = 200;
     /** Scripted swatch geometry that MOVES with the column's layout: the
-     *  Scatter-only inline note and the inert-column banner both sit above
-     *  the chip list in the same column, pushing the swatch down. */
+     *  inert-column banner sits above the chip list in the same column,
+     *  pushing the swatch down. (A Scatter-only inline note used to do the
+     *  same; it went away with the Band / Line colour switch, 2026-10-08.) */
     function layoutAwareSwatches() {
         rectFor = (el) => {
             if (!(el instanceof HTMLElement) || !el.classList.contains('highlights-chip-swatch')) return null;
             const col = el.closest('.highlights-col');
-            const shift = (col?.querySelector('.highlights-inline-note') ? 40 : 0) + (col?.querySelector('.highlights-note') ? 30 : 0);
+            const shift = col?.querySelector('.highlights-note') ? 30 : 0;
             return mkRect({ top: SWATCH_TOP + shift, left: 40, width: 16, height: 16 });
         };
     }

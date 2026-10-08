@@ -10,7 +10,7 @@ import { subscribe } from '../../utils/tauriEvents';
 import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
-    FailureGroup, FailureModel, ModelKind, ModelCategory, AlarmLevel, ScatterAxisPins, TimeHighlight, HighlightLineDisplay, ValueHighlight, LineTaggedPoint,
+    FailureGroup, FailureModel, ModelKind, ModelCategory, AlarmLevel, ScatterAxisPins, TimeHighlight, ValueHighlight, LineTaggedPoint,
     FailureGroupStateSlice, FailureGroupStateChangedPayload, WorkspaceSensorFilter,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
@@ -118,6 +118,20 @@ const LINE_MAX_POINTS = 4000;
 // keystroke in a Filter value box, which has no debounce of its own)
 // triggered an immediate JSON.stringify + writeTextFile to $APPDATA.
 const AUTOSAVE_DEBOUNCE_MS = 250;
+
+/** Workspace fields that USED to exist and are no longer read by anything.
+ *  `highlightLineDisplay` ('band' | 'line') was the Highlights tab's Band /
+ *  Line colour switch — removed 2026-10-08 per customer request (time
+ *  highlights always draw as a band on Line now). A workspace saved before
+ *  that still carries the key; it is ignored on load and dropped by the
+ *  next Dashboard autosave write instead of being carried forward forever by the
+ *  `...initialState` spread in `buildWorkspaceState`. */
+type LegacyWorkspaceFields = { highlightLineDisplay?: unknown };
+
+function withoutLegacyWorkspaceFields(state: WorkspaceState | null | undefined): WorkspaceState {
+    const { highlightLineDisplay: _droppedLineDisplay, ...rest } = (state ?? {}) as WorkspaceState & LegacyWorkspaceFields;
+    return rest as WorkspaceState;
+}
 
 type RelativeRangeUnit = 'Y' | 'M' | 'W' | 'D' | 'H';
 
@@ -873,12 +887,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const handleRenameTimeHighlight = useCallback((id: string, label: string) => {
         setTimeHighlights(prev => prev.map(h => h.id === id ? { ...h, label } : h));
     }, []);
-
-    // How highlights render on the Line chart — see HighlightLineDisplay.
-    // Global (not per-highlight) and Line-only; Scatter/Pair Plot ignore it.
-    const [highlightLineDisplay, setHighlightLineDisplay] = useState<HighlightLineDisplay>(
-        initialState?.highlightLineDisplay ?? 'band',
-    );
 
     // "By value" highlighting ("Highlights" tab) — Scatter-only. Lives
     // alongside timeHighlights in the same tab (per explicit user request —
@@ -1946,7 +1954,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     // Build workspace state helper for saving
     const buildWorkspaceState = useCallback((overrides?: Partial<WorkspaceState>): WorkspaceState => ({
-        ...initialState!,
+        ...withoutLegacyWorkspaceFields(initialState),
         name: localName,
         lastRoute: 'dashboard',
         selectedSensors,
@@ -1973,7 +1981,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         sensorAxisRange,
         scatterAxisPins,
         timeHighlights,
-        highlightLineDisplay,
         valueHighlight,
         // lineTaggedPoints deliberately excluded — see the state's own
         // comment above for why (not meant to survive app close/reopen).
@@ -1982,7 +1989,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }), [
         initialState, localName, selectedSensors, visibleSensors, operationConfig, filters, chartType,
         samplingMethod, collapsedPanels, layoutSizes, fgGroups, fgModels, fgExtra, alarmLinesEnabled, scatterAxes,
-        extraSensorMetadata, specialSensorRecipes, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights, highlightLineDisplay,
+        extraSensorMetadata, specialSensorRecipes, sensorColors, sensorAxisRange, scatterAxisPins, timeHighlights,
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 
@@ -2377,7 +2384,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         sensorAxisRange={sensorAxisRange}
                         sensorMetadata={sensorMetadata}
                         timeHighlights={timeHighlights}
-                        highlightDisplay={highlightLineDisplay}
                         lineTaggedPoints={lineTaggedPoints}
                         onLineTaggedPointsChange={handleLineTaggedPointsChange}
                     />
@@ -2629,8 +2635,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onRemoveTimeHighlight={handleRemoveTimeHighlight}
                         onRecolorTimeHighlight={handleRecolorTimeHighlight}
                         onRenameTimeHighlight={handleRenameTimeHighlight}
-                        lineDisplay={highlightLineDisplay}
-                        onSetLineDisplay={setHighlightLineDisplay}
                         valueHighlight={valueHighlight}
                         valueHighlightSensors={scatterChartHeaders}
                         onSetValueHighlightSensor={handleSetValueHighlightSensor}

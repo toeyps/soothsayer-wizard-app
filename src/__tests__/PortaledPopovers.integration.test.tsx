@@ -254,8 +254,6 @@ function highlightProps(overrides: Partial<React.ComponentProps<typeof Highlight
         onRemoveTimeHighlight: vi.fn(),
         onRecolorTimeHighlight: vi.fn(),
         onRenameTimeHighlight: vi.fn(),
-        lineDisplay: 'band' as const,
-        onSetLineDisplay: vi.fn(),
         valueHighlight: { sensor: '', ranges: [] } as ValueHighlight,
         valueHighlightSensors: ['TAG1'],
         onSetValueHighlightSensor: vi.fn(),

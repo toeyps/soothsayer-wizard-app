@@ -443,7 +443,6 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
         timeHighlights: [h1],
         onAddTimeHighlight: vi.fn(), onToggleTimeHighlight: vi.fn(), onRemoveTimeHighlight: vi.fn(),
         onRecolorTimeHighlight: vi.fn(), onRenameTimeHighlight: vi.fn(),
-        lineDisplay: 'band' as const, onSetLineDisplay: vi.fn(),
         valueHighlight: { sensor: '', ranges: [] } as ValueHighlight,
         valueHighlightSensors: ['TAG1'],
         onSetValueHighlightSensor: vi.fn(), onAddValueHighlightRange: vi.fn(), onToggleValueHighlightRange: vi.fn(),

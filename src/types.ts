@@ -511,16 +511,6 @@ export interface TimeHighlight {
     enabled: boolean;
 }
 
-/** How "By time" highlights render on the Line chart specifically — a
- *  tinted background band (the original behaviour), or by recolouring the
- *  line itself during each highlighted window. One setting for every
- *  highlight at once (not per-item), so a chart with several highlights
- *  never ends up half bands, half recoloured segments. Scatter is
- *  unaffected either way — it always shows the coloured ring, regardless
- *  of this setting; Pair Plot doesn't read highlights at all. Absent =
- *  'band' (the original, pre-this-field default). */
-export type HighlightLineDisplay = 'band' | 'line';
-
 /** One user-defined value range ("load band") under `ValueHighlight.sensor`
  *  — a point whose value on that sensor falls in [min, max] gets this
  *  range's colour when `enabled`. Colour is assigned once (from the same
@@ -672,8 +662,6 @@ export interface WorkspaceState {
      *  this list) — see `TimeHighlight`. Absent = no highlights defined
      *  (the pre-feature default). */
     timeHighlights?: TimeHighlight[];
-    /** See `HighlightLineDisplay`. Absent = 'band'. */
-    highlightLineDisplay?: HighlightLineDisplay;
     /** "By value" highlighting — see `ValueHighlight`. Scatter-only. Absent
      *  = no sensor picked (the pre-feature default). */
     valueHighlight?: ValueHighlight;

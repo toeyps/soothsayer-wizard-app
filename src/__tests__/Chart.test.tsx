@@ -126,17 +126,9 @@ describe('Chart', () => {
         expect(pairProps[0].timeHighlights).toBeUndefined();
     });
 
-    it('forwards highlightDisplay to Line only -- Scatter always rings regardless, Pair Plot has no highlights at all', () => {
-        const { unmount: unmountLine } = render(<Chart {...baseProps} sensors={['A']} chartType="line" highlightDisplay="line" />);
-        expect(lineProps[0].highlightDisplay).toBe('line');
-        unmountLine();
-
-        const { unmount: unmountScatter } = render(<Chart {...baseProps} sensors={['A', 'B']} chartType="scatter" highlightDisplay="line" />);
-        expect(scatterProps[0].highlightDisplay).toBeUndefined();
-        unmountScatter();
-
-        render(<Chart {...baseProps} sensors={['A', 'B']} chartType="pair" highlightDisplay="line" />);
-        expect(pairProps[0].highlightDisplay).toBeUndefined();
+    it('no longer forwards any highlight display mode to Line (the Band / Line colour switch was removed 2026-10-08 -- bands only)', () => {
+        render(<Chart {...baseProps} sensors={['A']} chartType="line" />);
+        expect('highlightDisplay' in lineProps[0]).toBe(false);
     });
 
     it('forwards lineTaggedPoints/onLineTaggedPointsChange to Line only -- Scatter keeps its own tags local, Pair Plot has none', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react';
 
 function makeMockInstance() {
     const subs: Record<string, (...args: any[]) => void> = {};
@@ -625,6 +625,95 @@ describe('ScatterChart', () => {
             fireEvent.click(screen.getByTitle('Clear all tags'));
             expect(container.querySelector('.scatter-tag-ring')).toBeNull();
             expect(screen.queryByTitle('Clear all tags')).toBeNull();
+        });
+
+        describe('removing ONE tag from the tag list (customer request 2026-10-08: tags could only be cleared all at once)', () => {
+            function tagThree(container: HTMLElement) {
+                fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+                for (const idx of [0, 1, 2]) {
+                    act(() => { lastInstance!.__subs['pointover'](idx); });
+                    fireEvent.click(getCanvas(container));
+                }
+            }
+
+            it('lists every tag with its badge, timestamp and its own remove button', () => {
+                const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+                expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull(); // nothing tagged yet
+                tagThree(container);
+                const list = screen.getByRole('list', { name: 'Tagged points' });
+                const rows = within(list).getAllByRole('listitem');
+                expect(rows.map(r => r.textContent)).toEqual(['①t0', '②t1', '③t2']);
+                expect(within(list).getAllByRole('button', { name: /^Remove tag/ })).toHaveLength(3);
+            });
+
+            it('the × removes exactly that tag and keeps the others (and their colours)', () => {
+                const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+                tagThree(container);
+                const ringColours = () => Array.from(container.querySelectorAll<HTMLElement>('.scatter-tag-ring')).map(r => r.style.borderColor);
+                const [c0, , c2] = ringColours();
+
+                fireEvent.click(screen.getByRole('button', { name: 'Remove tag ② t1' }));
+
+                expect(container.querySelectorAll('.scatter-tag-ring')).toHaveLength(2);
+                expect(ringColours()).toEqual([c0, c2]);
+                const callouts = Array.from(container.querySelectorAll('.scatter-tag-callout')).map(c => c.textContent);
+                expect(callouts[0]).toContain('t0');
+                expect(callouts[1]).toContain('t2');
+                expect(callouts.join(' ')).not.toContain('t1');
+                // Badges renumber by position, the list matches the markers.
+                const rows = within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem');
+                expect(rows.map(r => r.textContent)).toEqual(['①t0', '②t2']);
+                // Clear all is still there for the rest.
+                expect(screen.getByTitle('Clear all tags')).toBeTruthy();
+            });
+
+            it('works with tag mode switched off (the list is not a tag-mode-only control)', () => {
+                const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+                tagThree(container);
+                fireEvent.click(screen.getByTitle(/click a point to pin it/i)); // tag mode off
+                fireEvent.click(screen.getByRole('button', { name: 'Remove tag ① t0' }));
+                expect(container.querySelectorAll('.scatter-tag-ring')).toHaveLength(2);
+            });
+
+            it('a tag added after removing a middle one takes the freed colour, never a colour still on the chart', () => {
+                const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+                tagThree(container);
+                const ringColours = () => Array.from(container.querySelectorAll<HTMLElement>('.scatter-tag-ring')).map(r => r.style.borderColor);
+                const [, c1] = ringColours();
+                fireEvent.click(screen.getByRole('button', { name: 'Remove tag ② t1' }));
+                act(() => { lastInstance!.__subs['pointover'](1); });
+                fireEvent.click(getCanvas(container)); // re-tag point 1
+                const after = ringColours();
+                expect(after).toHaveLength(3);
+                expect(new Set(after).size).toBe(3); // all distinct
+                expect(after[2]).toBe(c1);
+            });
+
+            it('removing the last remaining tag hides the list and the Clear all button', () => {
+                const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByTitle(/compare 2\+ points/i));
+                act(() => { lastInstance!.__subs['pointover'](0); });
+                fireEvent.click(getCanvas(container));
+                fireEvent.click(screen.getByRole('button', { name: 'Remove tag ① t0' }));
+                expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
+                expect(screen.queryByTitle('Clear all tags')).toBeNull();
+                expect(container.querySelector('.scatter-tag-ring')).toBeNull();
+            });
+
+            it('keyboard focus moves to the previous row\'s × after removing the last row, then to the toolbox Tag button once none remain', () => {
+                const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
+                tagThree(container);
+                const tagButton = screen.getByTitle(/click a point to pin it/i);
+                const last = screen.getByRole('button', { name: 'Remove tag ③ t2' });
+                last.focus();
+                fireEvent.click(last);
+                expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove tag ② t1' }));
+                fireEvent.click(document.activeElement as HTMLElement);
+                expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove tag ① t0' }));
+                fireEvent.click(document.activeElement as HTMLElement);
+                expect(screen.queryByRole('list', { name: 'Tagged points' })).toBeNull();
+                expect(document.activeElement).toBe(tagButton);
+            });
         });
 
         it('clears every tag when the underlying data changes (sampled points have no stable identity across a refetch)', () => {
