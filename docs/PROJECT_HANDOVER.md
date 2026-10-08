@@ -3909,3 +3909,124 @@ No code changed, nothing committed.
 
 - **🆕 2026-10-08 — Requirement ข้อ 1 + 2: ลบ tag บนกราฟทีละอัน / เอา Line colour ออกจาก Highlights** · fe-ui-agent → code-reviewer → fe-ui-agent · **ข้อ 1**: เดิมลบ tag เดี่ยวได้แค่คลิกจุดเดิมซ้ำตอนเปิด tag mode (ไม่มีใครรู้) นอกนั้นมีแต่ Clear all → component ใหม่ `src/components/charts/TaggedPointList.tsx`: รายการ tag ใต้ toolbox มุมขวาบนของกราฟ (Line + Scatter) แต่ละแถว = เลข/สี/เวลา + ปุ่ม × (คีย์บอร์ดได้, ลบแล้ว focus ไปแถวถัดไป/ก่อนหน้า/ปุ่ม Tag) · ใช้ได้แม้ปิด tag mode · Clear all ยังอยู่ · แก้บัคเดิม: tag ใหม่หยิบสีตามจำนวน tag → ลบตรงกลางแล้วเพิ่มใหม่สีซ้ำ → ตอนนี้หยิบสีแรกที่ว่าง · เวลาในรายการ snap ตามจุดเดียวกับ marker บนกราฟ · **ข้อ 2**: ลบสวิตช์ Band / Line colour และโค้ดวาดเส้นเปลี่ยนสีทั้งหมด → ช่วงเวลาเป็นแถบเสมอ (Scatter ยังเป็นวง) · ลบ `highlightLineDisplay` ออกจาก type; `withoutLegacyWorkspaceFields` ใน Dashboard.tsx ตัด key เดิมตอน autosave ครั้งถัดไป — workspace เก่าที่ตั้ง Line colour เปิดได้และแสดงแถบ · **code review**: MUST-FIX 1 — รายการ tag (z-index 11) ทับเมนู Zoom ของกราฟ Line (toolbox เป็น stacking context ของตัวเอง) → `.chart-tag-anchor` z-index 10 · SHOULD-FIX: focus หลุดหลังกด ×, เวลาในรายการไม่ตรง marker หลัง refetch — แก้ทั้งสอง · ส่วน persistence (autosave/failureGroupState/lastSavedPayload/close-flush) reviewer ตรวจแล้ว clean · manual plan: HL-4 ตัด, ใหม่ HL-8, LINE-9, SCAT-9; header 328 ข้อ · ข้อที่ agent พบแต่ไม่ได้แก้ (นอก brief): ข้อความตอนไม่มี highlight บอก "drag on the chart with the tag tool" ผิดมาแต่เดิม (tag tool ไม่ได้สร้าง highlight), `DESIGN_SYSTEM.md` บรรทัด ~107 ยังพูดถึง "Band or Recolour line" (ไฟล์ของ session ออกแบบ) · tsc ผ่าน, test ไฟล์ที่เกี่ยว 450 ผ่าน, vite build ผ่าน · ยังไม่ได้ลองในแอปจริง (ลำดับการวาดเมนู Zoom/axis editor ทับรายการ tag ต้องดูจริง) · ไม่ push
 - **🆕 2026-10-08 — Requirement ข้อ 7: QA ตรวจความถูกต้องของ special sensor (qa-agent)** · **ผล: ค่าที่คำนวณถูกต้อง** ทั้งตอนสร้าง, edit สูตร/source/ชื่อ (รวม sensor ที่สร้างต่อกัน 3 ชั้น), บน chart (raw, aggregation 5 แบบ, downsample), scatter sample และเปิด workspace ใหม่ (replay recipe บน CSV จริงหลายไฟล์ที่มีปี พ.ศ. รวม 2567-02-29 ได้ค่าตรงทุก bit) — เทียบกับการคำนวณอิสระใน test · **บัคที่ทำให้ได้ "ค่าแปลก" แบบไม่มี error**: (1 HIGH) ฟังก์ชัน/ชื่อที่ไม่รู้จัก (`$A * pi`, `ln($A)`, พิมพ์ผิด) → sensor ว่างทุกแถวแต่ขึ้น "Updated" (`compute_formula_sensor` แปลง error เป็น NaN) และ editor ไม่ใช้ผล `validate_formula` · (2 HIGH) `round($A, 2)` แบบ Excel = fasteval `round(modulus, x)` → ค่าผิด · (3 MED) `log` = ฐาน 10 ไม่มี `ln` · (4 MED) แก้ source ของ sensor แบบ Average/Sum/Median แล้วกลายเป็นสูตรผลรวม (`prevSourcesKey` effect รีเซ็ต operation) · (5–9 LOW) Spread เกิน ~32 sensor → SlabOverflow, สูตรยาว → TooLong หลัง rewrite ชื่อ, wrap "Round to N decimals" ได้ 1.1300000000000001, ชิป Referenced sensors แสดงชื่อผิด (regex ASCII), คำอธิบาย recipe ไม่บอกจำนวนทศนิยม · ไม่ใช่บัค (แจ้งลูกค้า): `-$A ^ 2` = (−A)² เหมือน Excel, `5k` = 5000 · test ใหม่: `src-tauri/tests/internal/qa_special_sensor_internal.rs` (31: 25 ผ่าน + 6 `#[ignore = "BUG"]`), fixture `src-tauri/tests/fixtures/special_sensor_formulas.json`, `src/__tests__/SpecialSensorEditCorrectness.integration.test.tsx` (17 ผ่าน + 3 `it.fails`), fake `log`/`round` ใน `helpers/fakeRustSession.ts` ให้ตรง fasteval · **กำลังแก้**: rust-agent (บัค 1–3, 5, 6) และ fe-logic-agent (บัค 4, 7–9, แสดง error ของสูตรทันที, help text) — commit แยกเมื่อเสร็จ · ยังไม่ commit ไฟล์ test ของ QA ใน entry นี้ (รวมไปกับรอบแก้)
+
+### 🆕 2026-10-08 — User accepted all 10 defaults (runs A + B); ui-design-agent rounds started (design session, no code)
+
+**User:** "ตามที่แนะนำ".
+
+**Run A — accepted:**
+- single picker = popover;
+- Scatter X/Y and Fit X use the standard picker;
+- Colour by / Filter list only sensors on the chart;
+- keep each colour cycle;
+- keep uppercase descriptions.
+
+**Run B — accepted:**
+- Step 3 skippable;
+- sensors are assigned only in the Dashboard;
+- Templates row kept;
+- per-model Train removed from the footer;
+- Train all skips blocked models.
+
+**Next — two `ui-design-agent` (Opus) runs in parallel:**
+- **Standards rollout:** six screen groups, before/after.
+- **Remaining flow states:**
+  - Item 5: skip rail, recent card chip, assign sheet, keyboard.
+  - Item 6: Templates, locked, unknown token, narrow layout, undo.
+  - Items 8+9: new footer, close prompt, dataset-changed abort, queued Model fit, 0 ready, after a bulk run.
+
+Then `ui-design-reviewer` reviews, a SPEC FINAL is written, and the work goes to dev.
+
+No code changed, nothing committed.
+
+## 🆕 2026-10-08 — Design session: forwarded dev's formula-audit findings into the item-6 calculator design
+- The dev session sent its special-sensor formula audit summary. Full detail is in the entry "Requirement ข้อ 7: QA ตรวจความถูกต้องของ special sensor" (commit ab33621).
+- Values are correct everywhere. The silent-wrong cases being fixed are:
+  - unknown function or name → empty sensor;
+  - Excel-style `round($A,2)`;
+  - no `ln` (being added);
+  - an aggregate silently becoming a SUM when its sources are edited;
+  - SlabOverflow above about 32 sensors, and TooLong formulas;
+  - float noise from the round wrap;
+  - chip mis-parse of names with `.` or Thai;
+  - the recipe description dropping its decimals.
+- All of this was forwarded to the running ui-design-agent run (FG-first / calculator / train states). Its calculator must:
+  - emit only valid tokens, with `${…}` braces for names that have spaces or Thai;
+  - keep the aggregate kind when sources are edited;
+  - show limit states;
+  - match dev's inline-validation state (red error, Save disabled).
+- Implication for the hand-off: the planned `preview_formula` command must return the same error codes as the save path.
+- No code touched; design-only session.
+
+## 🆕 2026-10-08 — Design run A (items 3 + 4: sensor label / picker / colour standards rollout) — ui-design-agent finished
+- Mockup (private): https://claude.ai/artifact/GsAKsGA2gwbjvyYPNJmMkt
+  - Source: scratchpad `req-standards/sensor-colour-screens.html`.
+  - Six groups, before → after: Dashboard right panel, Dashboard tabs, charts, Workbench, Add special sensor, picker internals. About 22 screens.
+  - Has an "installed-app fonts" toggle (Segoe UI / Consolas).
+- Route: UI only. No data-model or Rust change.
+- New shared components:
+  - `SensorLabel`
+  - `ColourPicker` (wraps today's `ColorPlatePicker` as "Custom")
+  - `SensorPicker` (single = anchored popover on `AnchoredPopover.tsx`; `SensorAutocomplete` retired)
+- `SpecialSensorEditor.tsx` overlaps dev's current formula work → coordinate at hand-off.
+- Agent flagged for the lead:
+  - the canvas tag-point label (fixed 190 px + ellipsis);
+  - the scatter Y title using `writing-mode: vertical-rl`;
+  - FG panel rows going stacked (26 → 38 px);
+  - "On the chart" text losing the series colour (the swatch carries it).
+- Open questions (agent defaults):
+  - drop the coloured text (yes);
+  - a filter whose sensor was removed from the chart: keep it and show an amber note;
+  - one predictor: Fit X selector disabled with a reason;
+  - excluded sensors in the predictor modal: hidden;
+  - thousands separators in chart values: yes.
+- Next: ui-design-reviewer started on run A. Run B (flows 5 / 6 / 8+9) is still running. No code touched.
+
+## 🆕 2026-10-08 — Design run B (items 5 / 6 / 8+9 flow states) — ui-design-agent finished
+- New versions of the lead's artifacts (same URLs). Sources are in scratchpad `req-flows/`, and the lead's originals are in `req-flows/lead-v1/`.
+- **Item 5:** https://claude.ai/artifact/GPen6YgGTJtqinZUXyhC4J
+  - New states:
+    - after skip ("Skipped · 0 groups", never a ✓);
+    - a recent-project chip (n failure groups, or a neutral dashed "No failure groups");
+    - "Assign sensors →" mode (Sensor tab with an "Assigning to FG-n" bar);
+    - a keyboard pass.
+  - Data: optional `WorkspaceMetadata.failureGroupCount` (frontend only).
+- **Item 6:** https://claude.ai/artifact/C5ukqnyLXcoWHUtWoTV7NB — calculator with dev's audit folded in.
+  - Templates expand to tokens: Sum, Spread (max 32 sources), |A−B| and Efficiency %.
+  - **Average/Median stay aggregate blocks** — this deviates from the decided "expanded tokens" default, because a token sum does not skip missing values. Needs the user's OK.
+  - Formula pieces:
+    - an `ln` key;
+    - `log₁₀` is written as `log`;
+    - "Round the result" writes `round(0.01, expr)`;
+    - names are written as `${…}`.
+  - Edit-as-text shows a red error and disables Save.
+  - Other states: limits, unknown sensor with Replace…, locked, a 760 px window, delete + 8 s undo.
+  - Rust contract: `preview_formula` (bounded) returns stats + structured issue codes with token positions. Codes in the mock: `unknown_function`, `unknown_sensor`, `bad_arg_count`, `too_many_args`, `too_long`, `unclosed_bracket`, `unmatched_close`, `empty_brackets`, `op_no_left`, `op_no_right`, `missing_operator`, `stray_comma`, `fn_no_bracket`, `constant_only`, `div_zero`, `bad_number`, `bad_char`, `agg_too_few`.
+  - Rust must also expose the real limits; the mock's 32 / 4096 are placeholders.
+  - The files overlap dev's current formula work.
+- **Items 8+9:** https://claude.ai/artifact/B3mZ4pPntU4psDYPzSxtQ9
+  - Footer: the per-model Train is removed.
+  - Queue states:
+    - a queued or running model locks its settings, with "Remove from run";
+    - closing during a run defaults to "Keep training", and the native close is covered too;
+    - STALE_SESSION stops the run.
+  - Other states: nothing ready; a Health score banner "N need set points".
+  - Code: new `useTrainQueue`. No data or Rust change.
+- Open questions (agent defaults):
+  - Average/Median as aggregate blocks (yes);
+  - Round allowed on aggregates (yes);
+  - a run locks queued models' settings (yes);
+  - the 0-groups chip stays neutral (yes);
+  - the real limits come from Rust.
+- Not done: a width check with the fallback fonts.
+- Next: ui-design-reviewer started on run B; the reviewer on run A is still running. No code touched.
+
+## 🆕 2026-10-08 — User feedback: review designs merged into the full app mockup; integration run started
+- The user said the part mockups (before/after pages, per-flow pages) can't be judged. Designs must be merged into the real screens before they can tell whether they work.
+- Started a ui-design-agent run to merge runs A (items 3+4) and B (items 5, 6, 8+9) into one clickable full-app mockup.
+  - It works in a fresh harness `cur2/`: the current repo frontend copied read-only, plus the mock backend.
+  - It publishes as a new version of https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q.
+  - It publishes after each part, so the user can try them early.
+- The two ui-design-reviewer runs on the part mockups keep going. Their must-fixes go to the integration run.
+- Saved as a standing preference in memory.
+- **🆕 2026-10-08 — แก้บัค special sensor ที่ QA พบ (rust-agent + fe-logic-agent) + code review** · **Rust** (`lib.rs`): gate เดียว `compile_formula` (parse + ลองคำนวณครั้งเดียวด้วยค่า sensor = 1.0) ใช้ทั้ง validate / create / edit / replay — ชื่อหรือฟังก์ชันที่ไม่รู้จักถูกปฏิเสธพร้อมข้อความบอกวิธีแก้ (เช่น "unknown name 'pi'. Write pi() for π.") แทนการได้ sensor ว่าง · `round($A, 2)` (sensor ก่อน ตัวเลขหลัง) ถูกปฏิเสธพร้อมคำแนะนำ `round($A * 100) / 100` (round(x), round(0.01,$A), round($A,$B) ยังใช้ได้) · เพิ่ม `ln` (`log` = ฐาน 10 เหมือนเดิม) · slab ตามขนาดสูตร (Spread หลายร้อย sensor ได้) · ชื่อตัวแปรภายในสั้น `_N` + กันชนกับข้อความผู้ใช้ (สูตรยาว ~4096 ได้) · nesting limit ของ fasteval 128 · ย้าย module QA ไป lib.rs · **Frontend**: แก้ source ของ Sum/Average/Median/Spread แล้วยังเป็น op เดิม (`sourceChangeEffect` ใช้ทั้ง Create และ Edit) · wrap ปัดทศนิยมเป็น `round(x * 10^n) / 10^n` · `useFormulaValidation` (ใหม่) แสดง error สีแดงใต้ช่องสูตรและปิด Save/Add เมื่อสูตรผิด · `utils/formulaRefs.ts` (ใหม่) ชิปชื่อ sensor ใช้ไวยากรณ์เดียวกับ Rust · คำอธิบาย recipe บอกจำนวนทศนิยม · Help: log/ln/pi()/e()/round/SI suffix/−A^2 · `specialSensorReplay` คืน error ต่อ tag และ `DataUploadPage` แสดงตอนเปิด workspace (โหลดไม่พัง) · fake Rust ใน test ตรงกับ gate ใหม่ · ผมแก้เอง: un-ignore Rust test e02 ให้ตรง wrap ใหม่ + ขอบช่อง Name ใช้ `border` (กัน React warning) · **ผล**: QA bug test ทั้งหมดผ่าน ไม่มีตัวที่ถูกปิด (Rust 31/31, TS 3 it.fails → it) · tsc ผ่าน, vitest 3229 ผ่าน + 1 expected-fail, cargo lib 589 + integration ผ่าน · manual plan SPC-26..30, EDT-42..46 (EDT-13 → EDT-42), 337 ข้อ · **code review**: ไม่มี MUST-FIX · SHOULD-FIX: (S1) recipe เก่าที่เคย "ได้ค่า" แต่ตอนนี้ถูกปฏิเสธ (`round($A, 2)` พิมพ์เอง, `$A (1 - $B)`) — ถ้า model/Running condition ใช้ sensor นั้น สูตรถูกล็อกจึงแก้ไม่ได้ และลบไม่ได้; (S2) `check_formula_limits` ไม่นับ `[` `]` → วงเล็บเหลี่ยมซ้อน ~127 ชั้นอาจ stack overflow ใน debug (`tauri dev`) · NIT: validate บอก "Valid" กับสูตรที่ไม่มี sensor แต่ Add ล้ม, comment เรื่อง `&&`/`||` ผิด, ป้าย Valid/error ค้างกับข้อความเก่า ~500 ms, validate ไม่มี expectedGeneration · ปุ่มที่สร้างสูตรด้วยปุ่ม (`round(0.01, expr)` แบบเก่า) ยังผ่าน → กระทบเฉพาะสูตรที่พิมพ์เอง · commit นี้ = checkpoint ก่อนแก้ S1/S2 · ยังไม่ได้ลองในแอปจริง · ไม่ push

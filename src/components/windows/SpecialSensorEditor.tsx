@@ -4,7 +4,8 @@ import {
     SensorMetadata,
     SpecialSensorRecipe,
 } from "../../types";
-import { useCalculationEngine, CalculationEngineSeed } from "../../hooks/useCalculationEngine";
+import { useCalculationEngine, CalculationEngineSeed, sourceChangeEffect } from "../../hooks/useCalculationEngine";
+import { useFormulaValidation, formulaIssue as issueFor } from "../../hooks/useFormulaValidation";
 import { ButtonBuilder, BASE_OP_IDS, ComponentSelect } from "./SensorTooling";
 import { nameProblem } from "../../utils/specialSensorNaming";
 import { describeRecipe } from "../../utils/specialSensorDescribe";
@@ -133,8 +134,18 @@ export default function SpecialSensorEditor({
 
     const isFormula = recipe.kind === 'formula';
 
-    // ---- Formula-kind editing: unchanged, raw text -------------------------
-    const [formula, setFormula] = useState(recipe.kind === 'formula' ? recipe.formula : '');
+    // ---- Formula-kind editing: raw text, checked by `validate_formula` ------
+    const [formula, setFormulaText] = useState(recipe.kind === 'formula' ? recipe.formula : '');
+    // Checked only once the user changes the text: the stored formula was
+    // computed successfully when it was saved. A text whose own check failed
+    // blocks Save; a text not checked yet does not (the recompute refuses a
+    // bad formula anyway, with the same message, through `error`).
+    const formulaCheck = useFormulaValidation();
+    const setFormula = (text: string) => {
+        setFormulaText(text);
+        formulaCheck.schedule(text.trim(), 400);
+    };
+    const formulaError = isFormula && !locked ? issueFor(formula.trim(), formulaCheck.validated) : null;
 
     // ---- Operation-kind editing: the same engine + button UI as Create -----
     const [sources, setSources] = useState<string[]>(recipe.kind === 'operation' ? recipe.sourceSensors : []);
@@ -145,23 +156,25 @@ export default function SpecialSensorEditor({
     // so "once at mount" always means "once per edit session", never stale.
     const engine = useCalculationEngine(sources, useMemo(() => seedFromRecipe(recipe), [])); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Same reset `SensorTooling` itself does when its `selectedSensors` prop
-    // changes -- and for the same reason: an operation/shortcut picked for
-    // one set of source sensors doesn't mean anything for a different set
-    // (e.g. a "starting value" that's no longer even selected). This isn't
-    // inside `useCalculationEngine` itself, so reusing the engine here
-    // doesn't get it for free; it has to be replicated on this side of the
-    // seam too. Guarded to skip the very first render so the seeded
-    // operation survives mounting the editor.
-    const prevSourcesKey = useRef(sources.join("|"));
+    // Same rule `SensorTooling` applies when its `selectedSensors` prop
+    // changes (`sourceChangeEffect`): the picked operation is cleared only
+    // when it no longer applies to the new sources -- one source <-> several,
+    // a two-sensor-only shortcut with a third source, a "starting value" that
+    // was removed. "Average all" with one more source stays an average, and a
+    // single-sensor op survives swapping its source (2026-10-08: it used to be
+    // cleared on ANY change, so the saved sensor silently became `$A + $B + $C`).
+    // Guarded to skip the very first render so the seeded operation survives
+    // mounting the editor.
+    const prevSources = useRef(sources);
     useEffect(() => {
-        const key = sources.join("|");
-        if (key !== prevSourcesKey.current) {
-            prevSourcesKey.current = key;
-            engine.setOperationId(null);
-            engine.setWrapFunc(null);
+        const prev = prevSources.current;
+        if (sources.join("|") !== prev.join("|")) {
+            prevSources.current = sources;
+            const effect = sourceChangeEffect(prev, sources, engine.operationId, engine.baseSensor);
+            if (effect !== "keep") engine.setOperationId(null);
+            if (effect === "reset-all") engine.setWrapFunc(null);
         }
-    }, [sources, engine.setOperationId, engine.setWrapFunc]);
+    }, [sources, engine.operationId, engine.baseSensor, engine.setOperationId, engine.setWrapFunc]);
 
     const getSensorName = (tag: string) => {
         const m = sensorMetadata?.find(s => s.tag === tag);
@@ -198,7 +211,7 @@ export default function SpecialSensorEditor({
 
     const canSave =
         !saving && !tagError && missingFields.length === 0
-        && (locked || (isFormula ? formula.trim().length > 0 : buildResult.kind !== 'none'));
+        && (locked || (isFormula ? formula.trim().length > 0 && !formulaError : buildResult.kind !== 'none'));
 
     const submit = () => {
         if (locked) {
@@ -280,7 +293,7 @@ export default function SpecialSensorEditor({
                         onChange={e => setTag(e.target.value)}
                         readOnly={locked}
                         aria-readonly={locked || undefined}
-                        style={{ ...fieldStyle, borderColor: tagError ? 'var(--danger)' : undefined, ...(locked ? { opacity: 0.7, cursor: 'not-allowed' } : null) }}
+                        style={{ ...fieldStyle, ...(tagError ? { border: '1px solid var(--danger)' } : null), ...(locked ? { opacity: 0.7, cursor: 'not-allowed' } : null) }}
                     />
                     {locked ? null : tagError ? (
                         <p role="alert" style={{ fontSize: '11px', color: 'var(--danger)', marginTop: 3 }}>{tagError}</p>
@@ -315,11 +328,25 @@ export default function SpecialSensorEditor({
                             rows={3}
                             spellCheck={false}
                             aria-label="Formula"
-                            style={{ ...fieldStyle, fontFamily: 'var(--mono)', resize: 'vertical' }}
+                            aria-invalid={formulaError ? true : undefined}
+                            aria-describedby={formulaError ? 'special-sensor-formula-error' : undefined}
+                            // `border` (not `borderColor`): fieldStyle sets the shorthand,
+                            // and React warns when a longhand toggles next to it.
+                            style={{ ...fieldStyle, fontFamily: 'var(--mono)', resize: 'vertical', border: `1px solid ${formulaError ? 'var(--danger)' : 'var(--border)'}` }}
                         />
-                        <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
-                            Reference a sensor as <code>$Name</code>, or <code>{'${Name With Spaces}'}</code>.
-                        </p>
+                        {formulaError ? (
+                            <p
+                                id="special-sensor-formula-error"
+                                data-testid="formula-error"
+                                style={{ fontSize: '11px', color: 'var(--danger)', marginTop: 3 }}
+                            >
+                                {formulaError}
+                            </p>
+                        ) : (
+                            <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
+                                Reference a sensor as <code>$Name</code>, or <code>{'${Name With Spaces}'}</code>.
+                            </p>
+                        )}
                     </div>
                 ) : (
                     <>

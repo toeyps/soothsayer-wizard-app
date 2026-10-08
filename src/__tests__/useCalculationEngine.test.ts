@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-import { useCalculationEngine, FORMULA_MULTI_IDS } from '../hooks/useCalculationEngine';
+import { useCalculationEngine, FORMULA_MULTI_IDS, sourceChangeEffect } from '../hooks/useCalculationEngine';
 
 describe('useCalculationEngine', () => {
     // ── opGroup derivation ───────────────────────────────────────────
@@ -238,13 +238,63 @@ describe('useCalculationEngine', () => {
         });
     });
 
-    it('applyWrap converts "round" decimals into a fasteval modulus', () => {
+    // 2026-10-08: was `round(0.001, $A + $B)` -- fasteval divides by the step
+    // and multiplies back, storing 1.1300000000000001 instead of 1.13.
+    it('applyWrap rounds to N decimals as round(x * 10^N) / 10^N, parenthesising a chain', () => {
         const { result } = renderHook(() => useCalculationEngine(['A', 'B']));
         act(() => result.current.setWrapFunc('round'));
         act(() => result.current.setWrapValue(3));
         expect(result.current.build()).toEqual({
             kind: 'formula',
-            expression: 'round(0.001, $A + $B)',
+            expression: 'round(($A + $B) * 1000) / 1000',
+        });
+    });
+
+    it('applyWrap "round" to 0 decimals is the one-argument round(x)', () => {
+        const { result } = renderHook(() => useCalculationEngine(['A', 'B']));
+        act(() => result.current.setWrapFunc('round'));
+        act(() => result.current.setWrapValue(0));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: 'round($A + $B)' });
+    });
+
+    it('applyWrap "round" multiplies a single function call without extra parentheses', () => {
+        const { result } = renderHook(() => useCalculationEngine(['A', 'B']));
+        act(() => result.current.setOperationId('abs_diff'));
+        act(() => result.current.setWrapFunc('round'));
+        act(() => result.current.setWrapValue(2));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: 'round(abs($A - $B) * 100) / 100' });
+    });
+
+    it('applyWrap "round" parenthesises max(...) - min(...) (two calls, not one)', () => {
+        const { result } = renderHook(() => useCalculationEngine(['A', 'B', 'C']));
+        act(() => result.current.setOperationId('temp_spread'));
+        act(() => result.current.setWrapFunc('round'));
+        act(() => result.current.setWrapValue(1));
+        expect(result.current.build()).toEqual({
+            kind: 'formula',
+            expression: 'round((max($A, $B, $C) - min($A, $B, $C)) * 10) / 10',
+        });
+    });
+
+    it('applyWrap "round" ignores parentheses inside a braced sensor name', () => {
+        const { result } = renderHook(() => useCalculationEngine(['Flow (m3', 'B']));
+        act(() => result.current.setOperationId('abs_diff'));
+        act(() => result.current.setWrapFunc('round'));
+        act(() => result.current.setWrapValue(2));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: 'round(abs(${Flow (m3} - $B) * 100) / 100' });
+    });
+
+    it('applyWrap "round" clamps the decimal count to a whole number in 0..15', () => {
+        const { result } = renderHook(() => useCalculationEngine(['A', 'B']));
+        act(() => result.current.setWrapFunc('round'));
+        act(() => result.current.setWrapValue(-3));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: 'round($A + $B)' });
+        act(() => result.current.setWrapValue(2.7));
+        expect(result.current.build()).toEqual({ kind: 'formula', expression: 'round(($A + $B) * 100) / 100' });
+        act(() => result.current.setWrapValue(40));
+        expect(result.current.build()).toEqual({
+            kind: 'formula',
+            expression: `round(($A + $B) * 1${'0'.repeat(15)}) / 1${'0'.repeat(15)}`,
         });
     });
 
@@ -305,5 +355,43 @@ describe('useCalculationEngine', () => {
         const seeded = renderHook(() => useCalculationEngine(['A'], undefined));
         const unseeded = renderHook(() => useCalculationEngine(['A']));
         expect(seeded.result.current.build()).toEqual(unseeded.result.current.build());
+    });
+});
+
+// 2026-10-08: what a change of the source list does to the picked calculation
+// (shared by Create's SensorTooling and the Manage tab's SpecialSensorEditor).
+describe('sourceChangeEffect', () => {
+    it('keeps Sum / Average / Median / Spread when a source is added or removed (still 2+)', () => {
+        for (const op of ['sum', 'mean', 'median', 'temp_spread']) {
+            expect(sourceChangeEffect(['A', 'B'], ['A', 'B', 'C'], op, ''), op).toBe('keep');
+            expect(sourceChangeEffect(['A', 'B', 'C'], ['A', 'C'], op, ''), op).toBe('keep');
+        }
+    });
+
+    it('keeps a single-sensor operation when its one source is swapped for another', () => {
+        expect(sourceChangeEffect(['A'], ['B'], 'round', '')).toBe('keep');
+    });
+
+    it('keeps the operator chain (no shortcut) within the multi group', () => {
+        expect(sourceChangeEffect(['A', 'B'], ['A', 'B', 'C'], null, '')).toBe('keep');
+    });
+
+    it('resets everything when the calculation kind changes (one <-> several) or no source is left', () => {
+        expect(sourceChangeEffect(['A'], ['A', 'B'], 'add', '')).toBe('reset-all');
+        expect(sourceChangeEffect(['A', 'B'], ['A'], 'mean', '')).toBe('reset-all');
+        expect(sourceChangeEffect(['A', 'B'], ['A'], null, '')).toBe('reset-all');
+        expect(sourceChangeEffect(['A'], [], 'add', '')).toBe('reset-all');
+    });
+
+    it('resets a two-sensor-only shortcut once a third source is added', () => {
+        expect(sourceChangeEffect(['A', 'B'], ['A', 'B', 'C'], 'abs_diff', '')).toBe('reset-operation');
+        expect(sourceChangeEffect(['A', 'B'], ['A', 'C'], 'abs_diff', '')).toBe('keep');
+    });
+
+    it('resets Efficiency % when its starting value is removed, keeps it when the other sensor is swapped', () => {
+        expect(sourceChangeEffect(['A', 'B'], ['C', 'B'], 'efficiency_pct', 'A')).toBe('reset-operation');
+        expect(sourceChangeEffect(['A', 'B'], ['A', 'C'], 'efficiency_pct', 'A')).toBe('keep');
+        // No explicit base = the first source.
+        expect(sourceChangeEffect(['A', 'B'], ['B', 'C'], 'efficiency_pct', '')).toBe('reset-operation');
     });
 });

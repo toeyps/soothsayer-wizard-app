@@ -119,6 +119,8 @@ vi.mock('../components/windows/SensorTooling', async (importOriginal) => {
                 <button onClick={() => props.onDescriptionChange('My Description')}>set-description</button>
                 <button onClick={() => props.onUnitChange('bar')}>set-unit</button>
                 <button onClick={() => props.onComponentChange('Pump')}>set-component</button>
+                <button onClick={() => props.onFormulaIssueChange?.("Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().")}>report-formula-issue</button>
+                <button onClick={() => props.onFormulaIssueChange?.(null)}>clear-formula-issue</button>
             </div>
         );
     },
@@ -647,6 +649,33 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
     });
 
+    // 2026-10-08: Rust now refuses an unknown function/name at compute time with
+    // a readable error -- it must reach the user, with no "Updated" toast.
+    it('a recompute refused by Rust (unknown function) shows Rust’s message in the editor and no "Updated" toast', async () => {
+        mockInvoke.mockImplementation((cmd: string, args?: any) => {
+            if (cmd === 'extract_formula_refs') {
+                return Promise.resolve((args.formulas as string[]).map((f: string) => (chainRefs as any)[f] ?? ['TAG1']));
+            }
+            if (cmd === 'evaluate_formula') return Promise.reject("Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().");
+            return Promise.resolve([]);
+        });
+        await openManage({ specialSensorRecipes: [chainA] });
+
+        await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'foo($TAG1)' } });
+        fillEditorRequiredFields();
+        await act(async () => {
+            fireEvent.click(screen.getByText('Save changes'));
+            await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        });
+
+        expect(screen.getByRole('alert').textContent).toContain("unknown function 'foo'");
+        expect(screen.queryByText(/Updated A/)).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
+        expect(screen.getByText('Save changes')).toBeTruthy(); // the editor stays open
+        expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
+    });
+
     it('closes the editor and shows the edited recipe in the list after a successful save', async () => {
         mockInvoke.mockImplementation(refsByFormula({ ...chainRefs, '$TAG1 * 5': ['TAG1'] }));
         await openManage({ specialSensorRecipes: [chainA] });
@@ -992,6 +1021,36 @@ describe('AddSensorWindow: create -- name validation, double submit, backend err
         await act(async () => { fireEvent.click(addBtn()); });
         expect(mockInvoke).not.toHaveBeenCalledWith('calculate_new_sensor', expect.anything());
         expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
+    });
+
+    // 2026-10-08: `canAdd` ignored the typed formula's validate_formula result.
+    it('a typed formula whose own check failed keeps Add disabled with a footer hint; fixing it re-enables Add', async () => {
+        mockInvoke.mockImplementation(fakeRust().invoke);
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('submit-formula-special-a'));
+        fillMeta();
+        expect(addBtn().disabled).toBe(false);
+
+        fireEvent.click(screen.getByText('report-formula-issue'));
+        expect(addBtn().disabled).toBe(true);
+        expect(screen.getByText('Fix the formula before adding.')).toBeTruthy();
+        await act(async () => { fireEvent.click(addBtn()); });
+        expect(mockInvoke).not.toHaveBeenCalledWith('evaluate_formula', expect.anything());
+
+        fireEvent.click(screen.getByText('clear-formula-issue'));
+        expect(addBtn().disabled).toBe(false);
+        expect(screen.queryByText('Fix the formula before adding.')).toBeNull();
+    });
+
+    it('a formula issue reported while NOT in formula mode (a button config) does not block Add', async () => {
+        mockInvoke.mockImplementation(fakeRust().invoke);
+        await openWindow();
+        fireEvent.click(screen.getByText('toggle-tag1'));
+        fireEvent.click(screen.getByText('report-formula-issue'));
+        fireEvent.click(screen.getByText('set-config'));
+        fillMeta();
+        expect(addBtn().disabled).toBe(false);
     });
 
     it('D: the check ignores case and surrounding whitespace', async () => {

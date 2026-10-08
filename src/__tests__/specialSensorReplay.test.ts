@@ -99,3 +99,70 @@ describe('replaySpecialSensorRecipes', () => {
         expect(b.calls.some(c => c.cmd === 'extract_formula_refs')).toBe(false);
     });
 });
+
+// 2026-10-08: Rust now REFUSES a formula with an unknown name/function (it
+// used to accept it and silently produce an all-empty sensor). A workspace
+// saved before that can hold such a recipe; on reopen it must fail like any
+// other broken recipe -- with Rust's reason -- not break the load.
+describe('replaySpecialSensorRecipes: a formula Rust now refuses (against the fake Rust gate)', () => {
+    const raw = () => ({ headers: ['timestamp', 'A', 'B'], columns: [[1, 2, 3], [4, 5, 6]] });
+
+    it('reports the recipe as failed with Rust’s message, skips what is built on it, still builds the rest', async () => {
+        const { createFakeRust } = await import('./helpers/fakeRustSession');
+        const rust = createFakeRust(raw());
+        const invoker = (cmd: string, args: Record<string, unknown>) => rust.invoke(cmd, args);
+        const r = await replaySpecialSensorRecipes([
+            formula('Circle', '$A * pi'),
+            formula('Twice', '${Circle} * 2'),
+            formula('Ok', '$A + $B'),
+        ], invoker);
+        expect(r.failed).toEqual(['Circle']);
+        expect(r.skipped).toEqual(['Twice']);
+        expect(r.errors).toEqual({ Circle: "Formula error: unknown name 'pi'. Write pi() for π." });
+        expect(rust.has('Circle')).toBe(false);
+        expect(rust.chartValues('Ok')).toEqual([5, 7, 9]);
+    });
+
+    it('carries no `errors` when everything rebuilt', async () => {
+        const { createFakeRust } = await import('./helpers/fakeRustSession');
+        const rust = createFakeRust(raw());
+        const r = await replaySpecialSensorRecipes([formula('Ok', '$A + $B')], (cmd, args) => rust.invoke(cmd, args));
+        expect(r).toStrictEqual({ failed: [], skipped: [] });
+    });
+});
+
+// The fake session's formula gate must keep matching lib.rs `compile_formula`
+// for the cases frontend tests rely on (the Rust unit tests pin the originals).
+describe('fake Rust formula gate mirrors lib.rs messages', () => {
+    const cases: [string, string | null][] = [
+        ['$A * pi', "Formula error: unknown name 'pi'. Write pi() for π."],
+        ['$A * e', "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…)."],
+        ['$A + x', "Formula error: unknown name 'x'. Write sensors as $Name, or ${Name} when the name has spaces or symbols."],
+        ['sqr($A)', "Formula error: unknown function 'sqr'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()."],
+        ['$A(2)', 'Formula error: $A is a sensor, not a function. Put an operator before the bracket, e.g. $A * (…).'],
+        ['round($A, 2)', 'Formula error: round($A, 2) does not round to 2 decimal places. Write round($A * 100) / 100 instead.'],
+        ['round($A + $B, 1)', 'Formula error: round($A + $B, 1) does not round to 1 decimal place. Write round(($A + $B) * 10) / 10 instead.'],
+        ['round($A, 0)', 'Formula error: round($A, 0) is not supported. Write round($A) to round to a whole number.'],
+        ['round($A)', null],
+        ['round(0.01, $A)', null],
+        ['round($A, $B)', null],
+        ['round(($A + $B) * 100) / 100', null],
+        ['ln($A) + log($B) + $A * pi() + e()', null],
+    ];
+    for (const [f, want] of cases) {
+        it(f, async () => {
+            const { createFakeRust } = await import('./helpers/fakeRustSession');
+            const rust = createFakeRust({ headers: ['timestamp', 'A', 'B'], columns: [[1, 2], [3, 4]] });
+            const v = await rust.invoke('validate_formula', { formula: f }) as { valid: boolean; error: string | null };
+            expect(v.error).toBe(want);
+            expect(v.valid).toBe(want === null);
+            if (want) await expect(rust.invoke('evaluate_formula', { formula: f, customName: 'X' })).rejects.toBe(want);
+        });
+    }
+    it('a parse error carries the "Formula parse error:" prefix', async () => {
+        const { createFakeRust } = await import('./helpers/fakeRustSession');
+        const rust = createFakeRust({ headers: ['timestamp', 'A'], columns: [[1]] });
+        const v = await rust.invoke('validate_formula', { formula: '$A +' }) as { error: string };
+        expect(v.error).toMatch(/^Formula parse error: /);
+    });
+});

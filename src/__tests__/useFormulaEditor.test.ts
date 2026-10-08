@@ -137,4 +137,54 @@ describe('useFormulaEditor', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(300); });
         expect(mockInvoke).toHaveBeenCalledWith('validate_formula', { formula: '$SensorA' });
     });
+
+    // 2026-10-08: the chips used ASCII `\w` without `.` -- `$11PT1214A.PV`
+    // showed as `11PT1214A` (a different real sensor), Thai names not at all.
+    it('lists referenced sensors by the Rust grammar: dotted names, bare Thai names, braced names', () => {
+        const { result } = renderHook(() => useFormulaEditor(sensors));
+        act(() => result.current.setFormula('$11PT1214A.PV - $อุณหภูมิ + ${Flow (m3/h)} * $11PT1214A.PV'));
+        expect(result.current.referencedSensors).toEqual(['11PT1214A.PV', 'อุณหภูมิ', 'Flow (m3/h)']);
+    });
+
+    it('formulaIssue is the error of the CURRENT text’s own check, null otherwise', async () => {
+        mockInvoke.mockResolvedValue({ valid: false, error: "Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().", referenced_sensors: [] });
+        const { result } = renderHook(() => useFormulaEditor(sensors));
+        act(() => result.current.setFormula('foo($SensorA)'));
+        expect(result.current.formulaIssue).toBeNull(); // not checked yet
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+        expect(result.current.formulaIssue).toBe("Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().");
+
+        // A new text is not judged by the old text's result.
+        act(() => result.current.setFormula('abs($SensorA)'));
+        expect(result.current.formulaIssue).toBeNull();
+
+        mockInvoke.mockResolvedValue({ valid: true, error: null, referenced_sensors: ['SensorA'] });
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+        expect(result.current.formulaIssue).toBeNull();
+        expect(result.current.validationResult?.valid).toBe(true);
+    });
+
+    it('a slow reply for an older text does not overwrite the newer text’s result', async () => {
+        let resolveFirst!: (v: unknown) => void;
+        mockInvoke
+            .mockImplementationOnce(() => new Promise(r => { resolveFirst = r; }))
+            .mockResolvedValueOnce({ valid: true, error: null, referenced_sensors: [] });
+        const { result } = renderHook(() => useFormulaEditor(sensors));
+        act(() => result.current.setFormula('bad('));
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); }); // first call in flight
+        act(() => result.current.setFormula('$SensorA'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); }); // second call answered
+        await act(async () => { resolveFirst({ valid: false, error: 'Formula parse error: the formula ends too early (a value or a closing bracket is missing)', referenced_sensors: [] }); });
+        expect(result.current.validationResult).toEqual({ valid: true, error: null, referenced_sensors: [] });
+        expect(result.current.formulaIssue).toBeNull();
+    });
+
+    it('a reply that is not a validation result (old backend / stub) is treated as "no information", not invalid', async () => {
+        mockInvoke.mockResolvedValue([]);
+        const { result } = renderHook(() => useFormulaEditor(sensors));
+        act(() => result.current.setFormula('$SensorA'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+        expect(result.current.validationResult).toBeNull();
+        expect(result.current.formulaIssue).toBeNull();
+    });
 });

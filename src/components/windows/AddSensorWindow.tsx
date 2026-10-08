@@ -146,6 +146,10 @@ export default function AddSensorWindow() {
 
     // Formula mode state
     const [formulaMode, setFormulaMode] = useState(false);
+    // Why the formula typed in the tooling's "Edit as text" box can't be used
+    // (its own `validate_formula` check said so) -- reported up by
+    // SensorTooling, which shows the message inline under the box.
+    const [formulaIssue, setFormulaIssue] = useState<string | null>(null);
     const [formulaExpression, setFormulaExpression] = useState('');
     const [formulaCustomName, setFormulaCustomName] = useState('');
 
@@ -1003,10 +1007,16 @@ export default function AddSensorWindow() {
             !component.trim() && 'a component',
         ].filter((f): f is string => !!f)
         : [];
-    const canAdd = missingCreateFields.length === 0 && !nameError;
+    // A typed formula whose own check failed blocks Add (2026-10-08: it used
+    // to be ignored here, so a bad formula could still be "added").
+    const formulaBlocked = formulaMode && !!formulaIssue;
+    const canAdd = missingCreateFields.length === 0 && !nameError && !formulaBlocked;
     // The one line the footer shows in the Create tab, most actionable first:
-    // a bad name, then what's still blank, then why the last attempt failed.
-    const footerIssue = nameError
+    // a bad formula, a bad name, then what's still blank, then why the last
+    // attempt failed.
+    const footerIssue = formulaBlocked
+        ? 'Fix the formula before adding.'
+        : nameError
         ? 'Fix the name before adding.'
         : (missingCreateFields.length > 0 ? `Fill in ${missingCreateFields.join(', ')} before adding.` : addError);
 
@@ -1348,6 +1358,7 @@ export default function AddSensorWindow() {
                         onUnitChange={setUnit}
                         onComponentChange={setComponent}
                         nameError={nameError}
+                        onFormulaIssueChange={setFormulaIssue}
                     />
                 </div>
             </div>

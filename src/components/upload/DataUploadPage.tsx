@@ -68,14 +68,18 @@ interface DataUploadPageProps {
  * another workspace's data. The caller reloads and retries.
  */
 async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation: number | undefined): Promise<string[]> {
-  const { failed, skipped } = await replaySpecialSensorRecipes(
+  const { failed, skipped, errors } = await replaySpecialSensorRecipes(
     recipes,
     bindToGeneration((cmd, args) => invoke<unknown>(cmd, args), generation),
   );
   if (failed.length + skipped.length > 0) {
     const parts = [
       failed.length > 0
-        ? `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed.join(', ')}.`
+        // Each with the backend's reason (a removed source, or -- since
+        // 2026-10-08 -- a formula Rust now refuses, e.g. `$A * pi`).
+        ? `${failed.length} special sensor${failed.length !== 1 ? 's' : ''} couldn't be restored: ${failed
+            .map(tag => (errors?.[tag] ? `${tag} (${errors[tag]})` : tag))
+            .join(', ')}.`
         : null,
       skipped.length > 0
         ? `Skipped because they are built on a sensor that couldn't be restored: ${skipped.join(', ')}.`
@@ -84,7 +88,7 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
     reportError(
       'special-sensor-restore',
       parts.join(' '),
-      'Their source sensor(s) may have been renamed or removed since they were created. ' +
+      'A source sensor may have been renamed or removed since they were created, or the formula is no longer accepted. ' +
         'They have no data until fixed in Special Sensors > Manage, and are left off the chart.'
     );
   }

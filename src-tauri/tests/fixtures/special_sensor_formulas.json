@@ -1,0 +1,25 @@
+{
+  "_comment": "Shared by src/__tests__/SpecialSensorFormulaContract.integration.test.ts (the TS engine `useCalculationEngine` must BUILD exactly `expression` from the inputs) and src-tauri/tests/internal/qa_special_sensor_internal.rs (Rust must EVALUATE `expression` to the math named by `ref`). Change both sides together.",
+  "cases": [
+    { "ref": "abs_diff", "sensors": ["A", "B"], "operationId": "abs_diff", "chainOps": [], "wrapFunc": null, "wrapValue": 2,
+      "expression": "abs($A - $B)" },
+    { "ref": "spread3", "sensors": ["A", "B", "C"], "operationId": "temp_spread", "chainOps": [], "wrapFunc": null, "wrapValue": 2,
+      "expression": "max($A, $B, $C) - min($A, $B, $C)" },
+    { "ref": "efficiency", "sensors": ["A", "B"], "operationId": "efficiency_pct", "chainOps": [], "wrapFunc": null, "wrapValue": 2,
+      "expression": "($B / $A) * 100" },
+    { "ref": "chain_mixed", "sensors": ["A", "B", "C", "Flow (m3/h)"], "operationId": null, "chainOps": ["−", "×", "÷"], "wrapFunc": null, "wrapValue": 2,
+      "expression": "$A - $B * $C / ${Flow (m3/h)}" },
+    { "ref": "chain_plus", "sensors": ["A", "อุณหภูมิ"], "operationId": null, "chainOps": [], "wrapFunc": null, "wrapValue": 2,
+      "expression": "$A + $อุณหภูมิ" },
+    { "ref": "wrap_round2", "sensors": ["A", "B"], "operationId": null, "chainOps": [], "wrapFunc": "round", "wrapValue": 2,
+      "expression": "round(($A + $B) * 100) / 100" },
+    { "ref": "wrap_round7", "sensors": ["A", "B"], "operationId": null, "chainOps": [], "wrapFunc": "round", "wrapValue": 7,
+      "expression": "round(($A + $B) * 10000000) / 10000000" },
+    { "ref": "wrap_sqrt", "sensors": ["A", "B"], "operationId": null, "chainOps": [], "wrapFunc": "sqrt", "wrapValue": 2,
+      "expression": "sqrt($A + $B)" },
+    { "ref": "wrap_log10", "sensors": ["A", "B"], "operationId": "abs_diff", "chainOps": [], "wrapFunc": "log10", "wrapValue": 2,
+      "expression": "log10(abs($A - $B))" },
+    { "ref": "wrap_exp", "sensors": ["A", "B"], "operationId": null, "chainOps": ["−"], "wrapFunc": "exp", "wrapValue": 2,
+      "expression": "exp($A - $B)" }
+  ]
+}

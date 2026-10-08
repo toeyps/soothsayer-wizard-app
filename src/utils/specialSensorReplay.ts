@@ -23,6 +23,11 @@ import { isSessionLostError } from './staleSession';
 export interface ReplayResult {
     failed: string[];
     skipped: string[];
+    /** Why each `failed` tag failed, in the backend's own words -- e.g. a
+     *  formula Rust accepted before 2026-10-08 (silently producing an empty
+     *  sensor, like `$A * pi`) and now refuses: "Formula error: unknown name
+     *  'pi'. Write pi() for π.". Only present when something failed. */
+    errors?: Record<string, string>;
 }
 
 const key = (tag: string) => tag.trim().toLowerCase();
@@ -58,6 +63,7 @@ export async function replaySpecialSensorRecipes(
 
     const failed: string[] = [];
     const skipped: string[] = [];
+    const errors: Record<string, string> = {};
     const broken = new Set<string>();
 
     for (const recipe of ordered) {
@@ -81,8 +87,9 @@ export async function replaySpecialSensorRecipes(
             if (isSessionLostError(err)) throw err;
             console.warn(`Failed to restore special sensor "${recipe.tag}":`, err);
             failed.push(recipe.tag);
+            errors[recipe.tag] = err instanceof Error ? err.message : String(err);
             broken.add(key(recipe.tag));
         }
     }
-    return { failed, skipped };
+    return failed.length > 0 ? { failed, skipped, errors } : { failed, skipped };
 }

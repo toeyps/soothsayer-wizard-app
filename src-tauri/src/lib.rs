@@ -15,6 +15,10 @@ mod qa_health_internal;
 #[cfg(test)]
 #[path = "../tests/internal/train_test_validation_internal.rs"]
 mod train_test_validation_internal;
+// Special-sensor formula/operation QA sweep (2026-10-08, same arrangement).
+#[cfg(test)]
+#[path = "../tests/internal/qa_special_sensor_internal.rs"]
+mod qa_special_sensor_internal;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
     CsvRecord, MappingData, MappingResult, SensorMetadata, TS_MISSING,
@@ -3837,26 +3841,69 @@ fn rename_formula_refs(formula: String, old_name: String, new_name: String) -> S
 /// The expression is rebuilt from the tokenizer's spans, NOT by
 /// `expr.replace(token, ...)`: a string replace of `$11PT1214A` would also
 /// chew the front of `$11PT1214A.PV` (a real pair of sensor names), turning
-/// it into `__sensor_0.PV`.
+/// it into `_0.PV`.
+///
+/// Variable names are SHORT (`_0`, `_1`, ...; 2026-10-08) so the rewritten
+/// text stays about as long as what the user typed -- the old `__sensor_N`
+/// names pushed formulas under the app's own 4096-char limit past fasteval's
+/// limit on the rewritten text. Two guards keep a short name from ever
+/// meaning something the user did not write:
+///   * the prefix is one `_` longer than the longest run of `_` in the text
+///     OUTSIDE the references, so a bare identifier the user typed (say `_0`)
+///     can never equal a generated name -- it stays an unknown name (an error);
+///   * a space is inserted when a reference touches a letter/digit/`_`/`.`,
+///     so `${A}0` can never fuse into another sensor's name (`_10`) -- it is
+///     a parse error instead, like any other garbage after a value.
 ///
 /// `^` needs no rewriting -- fasteval parses it natively as its exponent
 /// operator (`BinaryOp::EExp`).
 fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
     let chars: Vec<char> = formula.chars().collect();
-    let mut expr = String::with_capacity(formula.len());
+    let spans = scan_sensor_refs(formula);
+
+    let mut longest_run = 0usize;
+    {
+        let mut run = 0usize;
+        let mut pos = 0usize;
+        let mut scan = |seg: &[char], run: &mut usize| {
+            for c in seg {
+                if *c == '_' {
+                    *run += 1;
+                    longest_run = longest_run.max(*run);
+                } else {
+                    *run = 0;
+                }
+            }
+        };
+        for span in &spans {
+            scan(&chars[pos..span.start], &mut run);
+            run = 0; // a reference breaks the run
+            pos = span.end;
+        }
+        scan(&chars[pos..], &mut run);
+    }
+    let prefix = "_".repeat(longest_run + 1);
+
+    let mut expr = String::with_capacity(formula.len() + 8);
     let mut safe_names: Vec<(String, String)> = Vec::new();
     let mut pos = 0;
 
-    for span in scan_sensor_refs(formula) {
+    for span in &spans {
         expr.extend(chars[pos..span.start].iter());
         let idx = match safe_names.iter().position(|(_, n)| *n == span.name) {
             Some(i) => i,
             None => {
-                safe_names.push((format!("__sensor_{}", safe_names.len()), span.name.clone()));
+                safe_names.push((format!("{}{}", prefix, safe_names.len()), span.name.clone()));
                 safe_names.len() - 1
             }
         };
+        if expr.chars().last().is_some_and(is_formula_word_char) {
+            expr.push(' ');
+        }
         expr.push_str(&safe_names[idx].0);
+        if chars.get(span.end).is_some_and(|c| is_formula_word_char(*c)) {
+            expr.push(' ');
+        }
         pos = span.end;
     }
     expr.extend(chars[pos..].iter());
@@ -3864,25 +3911,52 @@ fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
     (expr, safe_names)
 }
 
+/// A character fasteval would glue onto an adjacent name or number.
+fn is_formula_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '.'
+}
+
 /// fasteval's own function set (`abs`/`log`/`round`/`min`/`max`/`ceil`/
-/// `floor`/trig) doesn't include `sqrt`, `exp`, `log10`, or `pow` -- calling
-/// any of those in a formula used to silently fail per-row (the eval
-/// namespace only resolved sensor variables, so an unknown function name
-/// made every row NAN with no error surfaced to the user, even though the
-/// "Formula Syntax Help" panel advertised all four as supported). Handled
-/// here via fasteval's custom-function namespace callback instead of
-/// pre-rewriting the formula text, since `pow`'s two arguments can be
-/// arbitrary sub-expressions that a naive string rewrite can't safely
-/// re-bracket.
+/// `floor`/trig) doesn't include `sqrt`, `exp`, `log10`, `ln` or `pow` --
+/// those are handled here via fasteval's custom-function namespace callback
+/// instead of pre-rewriting the formula text, since `pow`'s two arguments can
+/// be arbitrary sub-expressions that a naive string rewrite can't safely
+/// re-bracket. `log(x)` stays fasteval's BASE-10 log (pinned behaviour);
+/// `ln(x)` is the natural log (added 2026-10-08).
+///
+/// A name/arity not listed here returns `None`, which fasteval reports as
+/// `Error::Undefined` -- `compile_formula` turns that into a refusal (it used
+/// to become an all-empty sensor).
 fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
     match (name, args) {
         ("sqrt", [x]) => Some(x.sqrt()),
         ("exp", [x]) => Some(x.exp()),
         ("log10", [x]) => Some(x.log10()),
+        ("ln", [x]) => Some(x.ln()),
         ("pow", [x, y]) => Some(x.powf(*y)),
         _ => None,
     }
 }
+
+/// `(name, argument count, example)` of every `eval_extra_math_fn` function,
+/// for the wrong-arity error message.
+const EXTRA_MATH_FNS: &[(&str, usize, &str)] = &[
+    ("sqrt", 1, "sqrt($A)"),
+    ("exp", 1, "exp($A)"),
+    ("log10", 1, "log10($A)"),
+    ("ln", 1, "ln($A)"),
+    ("pow", 2, "pow($A, 2)"),
+];
+
+/// fasteval built-ins that take arguments (`pi`/`e` are handled separately).
+const BUILTIN_FORMULA_FNS: &[&str] = &[
+    "int", "ceil", "floor", "abs", "sign", "log", "round", "min", "max", "sin", "cos", "tan",
+    "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+];
+
+/// Shown with "unknown function" -- keep in sync with the Formula Syntax Help.
+const FORMULA_FUNCTION_LIST: &str =
+    "abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()";
 
 #[cfg(test)]
 mod special_sensor_tests {
@@ -4581,15 +4655,198 @@ mod special_sensor_tests {
     #[test]
     fn prepare_rebuilds_the_expression_from_spans_not_string_replace() {
         let (expr, names) = prepare_formula_for_eval("$A + $A.PV * ${x y} - $A");
-        assert_eq!(expr, "__sensor_0 + __sensor_1 * __sensor_2 - __sensor_0");
+        assert_eq!(expr, "_0 + _1 * _2 - _0");
         assert_eq!(
             names,
             vec![
-                ("__sensor_0".to_string(), "A".to_string()),
-                ("__sensor_1".to_string(), "A.PV".to_string()),
-                ("__sensor_2".to_string(), "x y".to_string()),
+                ("_0".to_string(), "A".to_string()),
+                ("_1".to_string(), "A.PV".to_string()),
+                ("_2".to_string(), "x y".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn prepare_prefix_is_longer_than_any_underscore_run_the_user_typed() {
+        // `_0` typed by the user must stay an unknown name, never sensor 0.
+        let (expr, names) = prepare_formula_for_eval("$A + _0");
+        assert_eq!(expr, "__0 + _0");
+        assert_eq!(names[0].0, "__0");
+        let (expr, _) = prepare_formula_for_eval("$A + a__b");
+        assert_eq!(expr, "___0 + a__b");
+        // Underscores INSIDE a reference do not count.
+        let (expr, _) = prepare_formula_for_eval("${a__b} + $c_d");
+        assert_eq!(expr, "_0 + _1");
+    }
+
+    #[test]
+    fn prepare_never_fuses_a_reference_with_adjacent_text() {
+        // `${A}0` must not become `_10`-style text naming another sensor.
+        let (expr, _) = prepare_formula_for_eval("${A}0 + ${B}");
+        assert_eq!(expr, "_0 0 + _1");
+        let (expr, _) = prepare_formula_for_eval("2${A}");
+        assert_eq!(expr, "2 _0");
+        let (expr, _) = prepare_formula_for_eval("${A}${B}");
+        assert_eq!(expr, "_0 _1");
+        let data = dataset();
+        assert!(compute_formula_sensor(&data, "${A}0", Some("Z"), false).unwrap_err().contains("parse error"));
+    }
+
+    // ── compile_formula: refusals, messages, limits ─────────────────
+
+    fn err_of(formula: &str) -> String {
+        compute_formula_sensor(&dataset(), formula, Some("Z"), false).unwrap_err()
+    }
+
+    #[test]
+    fn ln_is_the_natural_log_and_log_stays_base_10() {
+        let data = dataset_with(&["A"], vec![vec![std::f64::consts::E, 100.0, 0.0]]);
+        let (_, col) = compute_formula_sensor(&data, "ln($A)", Some("L"), false).unwrap();
+        assert!((col[0] - 1.0).abs() < 1e-12 && (col[1] - 100f64.ln()).abs() < 1e-12, "{col:?}");
+        assert!(col[2].is_nan(), "ln(0) = -inf -> missing");
+        let (_, col) = compute_formula_sensor(&data, "log($A)", Some("L"), false).unwrap();
+        assert!((col[1] - 2.0).abs() < 1e-12, "{col:?}");
+    }
+
+    #[test]
+    fn unknown_names_and_functions_are_refused_with_exact_messages() {
+        assert_eq!(err_of("$A * pi"), "Formula error: unknown name 'pi'. Write pi() for π.");
+        assert_eq!(
+            err_of("$A * e"),
+            "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…)."
+        );
+        assert_eq!(
+            err_of("$A + x"),
+            "Formula error: unknown name 'x'. Write sensors as $Name, or ${Name} when the name has spaces or symbols."
+        );
+        assert_eq!(
+            err_of("sqr($A)"),
+            format!("Formula error: unknown function 'sqr'. Available functions: {}.", FORMULA_FUNCTION_LIST)
+        );
+        assert_eq!(err_of("sqrt($A, 2)"), "Formula error: sqrt takes 1 value but was given 2. Example: sqrt($A).");
+        assert_eq!(err_of("$A * sqrt"), "Formula error: sqrt takes 1 value but was given none. Example: sqrt($A).");
+        assert_eq!(err_of("pow($A)"), "Formula error: pow takes 2 values but was given 1. Example: pow($A, 2).");
+        assert_eq!(err_of("$A * abs"), "Formula error: abs needs a value in brackets, e.g. abs($A).");
+        assert!(err_of("myround($A, 2)").contains("unknown function 'myround'"));
+    }
+
+    #[test]
+    fn a_sensor_called_like_a_function_is_refused_not_silently_its_value() {
+        let data = dataset_with(&["A", "x y"], vec![vec![1.0], vec![2.0]]);
+        let err = compute_formula_sensor(&data, "$A (1 - ${x y})", Some("Z"), false).unwrap_err();
+        assert_eq!(
+            err,
+            "Formula error: $A is a sensor, not a function. Put an operator before the bracket, e.g. $A * (…)."
+        );
+        let err = compute_formula_sensor(&data, "${x y}(2)", Some("Z"), false).unwrap_err();
+        assert!(err.starts_with("Formula error: ${x y} is a sensor"), "{err}");
+    }
+
+    #[test]
+    fn an_error_hidden_behind_a_condition_still_refuses_the_formula() {
+        // Row values decide whether `nope` is ever reached.
+        let data = dataset_with(&["A"], vec![vec![0.0, 5.0]]);
+        let err = compute_formula_sensor(&data, "($A > 2) && nope($A)", Some("Z"), false).unwrap_err();
+        assert!(err.contains("unknown function 'nope'"), "{err}");
+    }
+
+    #[test]
+    fn non_finite_results_stay_missing_rows_not_errors() {
+        let data = dataset_with(&["A"], vec![vec![-1.0, 4.0, 0.0]]);
+        let (_, col) = compute_formula_sensor(&data, "sqrt($A) + ln($A)", Some("Z"), false).unwrap();
+        assert!(same(&col, &[NAN, 2.0 + 4f64.ln(), NAN]), "{col:?}");
+    }
+
+    #[test]
+    fn parse_errors_show_the_users_own_sensor_names() {
+        assert_eq!(
+            err_of("$A $B"),
+            "Formula parse error: unexpected text at \"$B\" (an operator such as + - * / may be missing)"
+        );
+        assert_eq!(
+            err_of("($A + 1"),
+            "Formula parse error: the formula ends too early (a value or a closing bracket is missing)"
+        );
+        assert_eq!(err_of("abs($A, 1)"), "Formula parse error: abs: expected one arg");
+    }
+
+    #[test]
+    fn round_with_a_sensor_first_and_a_constant_second_is_refused() {
+        assert_eq!(
+            err_of("round($A, 2)"),
+            "Formula error: round($A, 2) does not round to 2 decimal places. Write round($A * 100) / 100 instead."
+        );
+        assert_eq!(
+            err_of("round($A + $B, 1) * 3"),
+            "Formula error: round($A + $B, 1) does not round to 1 decimal place. Write round(($A + $B) * 10) / 10 instead."
+        );
+        assert_eq!(
+            err_of("round($A, 0)"),
+            "Formula error: round($A, 0) is not supported. Write round($A) to round to a whole number."
+        );
+        assert_eq!(
+            err_of("round($A, 0.5)"),
+            "Formula error: round($A, 0.5) is not supported. To round to the nearest step, put the step first: round(0.5, $A)."
+        );
+        // fasteval's other bracket / separator spellings, and nesting.
+        assert!(err_of("ROUND($A, 2)").contains("unknown function 'ROUND'"));
+        assert!(err_of("round [ $A ; 3 ]").contains("round($A, 3) does not round to 3 decimal places"));
+        assert!(err_of("1 + round(round(0.1, $A), 2)").contains("round(round(0.1, $A), 2)"));
+        assert!(err_of("round(min($A, $B), 2)").contains("Write round(min($A, $B) * 100) / 100"));
+        assert!(err_of("round(($A + 1), 2)").contains("Write round(($A + 1) * 100) / 100"));
+        assert!(err_of("round(-$A, 2)").contains("Write round((-$A) * 100) / 100"));
+        assert!(err_of("round(${Flow (m3/h)}, 2)").contains("Sensor not found"), "refs resolved first");
+    }
+
+    #[test]
+    fn documented_round_forms_and_lookalikes_still_evaluate() {
+        let data = dataset_with(
+            &["A", "B", "round", "x round(1, 2)"],
+            vec![vec![1.234], vec![0.5], vec![7.0], vec![9.0]],
+        );
+        let ok = |f: &str| compute_formula_sensor(&data, f, Some("Z"), false).unwrap_or_else(|e| panic!("{f}: {e}")).1[0];
+        assert_eq!(ok("round($A)"), 1.0);
+        assert!((ok("round(0.01, $A)") - 1.23).abs() < 1e-12);
+        assert_eq!(ok("round($B, $A)"), 1.0, "step from a sensor: fasteval semantics kept");
+        assert!((ok("$A + round(1.5, 2)") - (1.234 + 1.5)).abs() < 1e-12, "no sensor on either side: a constant");
+        assert_eq!(ok("$round + 1"), 8.0, "a SENSOR called round is not the function");
+        assert_eq!(ok("${x round(1, 2)} * 2"), 18.0, "text inside braces is a name");
+    }
+
+    #[test]
+    fn spread_over_many_sensors_no_longer_overflows_the_parse_slab() {
+        let n = 80;
+        let headers: Vec<String> = (0..n).map(|i| format!("S{i}")).collect();
+        let hrefs: Vec<&str> = headers.iter().map(String::as_str).collect();
+        let data = dataset_with(&hrefs, (0..n).map(|i| vec![i as f64]).collect());
+        let refs = headers.iter().map(|h| format!("${h}")).collect::<Vec<_>>().join(", ");
+        let (_, col) = compute_formula_sensor(&data, &format!("max({refs}) - min({refs})"), Some("Z"), false).unwrap();
+        assert_eq!(col, vec![(n - 1) as f64]);
+    }
+
+    #[test]
+    fn nesting_up_to_the_apps_own_limit_parses() {
+        let deep = format!("{}$A{}", "(".repeat(MAX_FORMULA_DEPTH as usize), ")".repeat(MAX_FORMULA_DEPTH as usize));
+        let (_, col) = compute_formula_sensor(&dataset(), &deep, Some("Z"), false).unwrap();
+        assert_eq!(col, vec![1.0, 2.0, 3.0]);
+        let signs = format!("{}$A", "-".repeat(MAX_FORMULA_DEPTH as usize));
+        assert!(compute_formula_sensor(&dataset(), &signs, Some("Z"), false).is_ok());
+    }
+
+    #[test]
+    fn validate_gives_the_same_verdict_and_message_as_compute() {
+        let data = dataset();
+        for f in ["$A + $B", "$A * pi", "round($A, 2)", "$A +", "$nope + 1", "ln($A)", "$A(2)"] {
+            let v = validate_formula_against(&data, f);
+            match compute_formula_sensor(&data, f, Some("Z"), false) {
+                Ok(_) => assert!(v.valid && v.error.is_none(), "{f}: {:?}", v.error),
+                Err(e) => {
+                    assert!(!v.valid, "{f}");
+                    assert_eq!(v.error.as_deref(), Some(e.as_str()), "{f}");
+                }
+            }
+        }
+        assert_eq!(validate_formula_against(&data, "$B + $A + $b").referenced_sensors, vec!["B", "A", "b"]);
     }
 
     #[test]
@@ -4846,6 +5103,355 @@ mod check_formula_limits_tests {
     }
 }
 
+/// A formula parsed once and proven to evaluate (see [`compile_formula`]).
+struct CompiledFormula {
+    slab: fasteval::Slab,
+    expr_i: fasteval::ExpressionI,
+    /// `(safe variable name, original sensor name)`, one per distinct sensor,
+    /// in the order `prepare_formula_for_eval` assigned them.
+    safe_names: Vec<(String, String)>,
+}
+
+/// Value every sensor gets for the trial evaluation in [`compile_formula`].
+const FORMULA_TRIAL_VALUE: f64 = 1.0;
+
+/// Parse a formula and prove it evaluates, so a bad formula is REFUSED with a
+/// readable message instead of becoming a sensor whose every row is empty.
+///
+/// The single gate shared by `validate_formula` (the editor's live check) and
+/// `compute_formula_sensor` (create, edit/replace and the reopen replay all
+/// go through it), so "valid" in the editor means "will compute".
+///
+/// 1. Parse with a parser/slab sized for THIS formula: fasteval's defaults
+///    (4096-byte text, 32 levels, 64 sub-expressions) are tighter than the
+///    app's own `check_formula_limits` budget, so formulas the app accepts
+///    (a Spread over 33+ sensors, a long `+` chain, 40 nested brackets) used
+///    to fail with `SlabOverflow` / `TooLong` / `TooDeep`. The callers run
+///    `check_formula_limits` first, which still bounds every size here.
+/// 2. Trial-evaluate with every sensor = 1.0: an unknown name/function or a
+///    wrong argument count is an evaluation ERROR (value-independent), which
+///    the row loop used to turn into "missing" on every row.
+/// 3. Refuse `round(<sensor expr>, <constant>)` -- see
+///    [`check_round_argument_order`].
+fn compile_formula(formula: &str) -> Result<CompiledFormula, String> {
+    let (expr, safe_names) = prepare_formula_for_eval(formula);
+
+    let parser = fasteval::Parser {
+        expr_len_limit: expr.len().max(fasteval::parser::DEFAULT_EXPR_LEN_LIMIT),
+        // fasteval counts unary signs as well as brackets; twice the app's
+        // bracket budget is still a small, safe recursion depth.
+        expr_depth_limit: 2 * MAX_FORMULA_DEPTH as usize,
+    };
+    // Every sub-expression / value consumes at least one byte of the text.
+    let mut slab = fasteval::Slab::with_capacity(expr.len().max(64) + 1);
+    let expr_i = parser
+        .parse(&expr, &mut slab.ps)
+        .map_err(|e| formula_parse_error_message(&e, &safe_names))?;
+
+    let compiled = CompiledFormula { slab, expr_i, safe_names };
+    let trial = vec![FORMULA_TRIAL_VALUE; compiled.safe_names.len()];
+    let mut failed = None;
+    if let Err(e) = eval_compiled(&compiled, &trial, &mut failed) {
+        return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names));
+    }
+
+    check_round_argument_order(formula)?;
+    Ok(compiled)
+}
+
+/// Evaluate a compiled formula with `values[j]` for the j-th sensor. The
+/// first name the namespace could not resolve is recorded in `failed` as
+/// `(name, argument count)` for [`formula_eval_error_message`].
+fn eval_compiled(
+    c: &CompiledFormula,
+    values: &[f64],
+    failed: &mut Option<(String, usize)>,
+) -> Result<f64, fasteval::Error> {
+    let mut ns = |var: &str, args: Vec<f64>| -> Option<f64> {
+        let found = match c.safe_names.iter().position(|(s, _)| s == var) {
+            // A sensor is a value: `$A(2)` is not a call.
+            Some(j) if args.is_empty() => Some(values[j]),
+            Some(_) => None,
+            None => eval_extra_math_fn(var, &args),
+        };
+        if found.is_none() && failed.is_none() {
+            *failed = Some((var.to_string(), args.len()));
+        }
+        found
+    };
+    c.slab.ps.get_expr(c.expr_i).eval(&c.slab, &mut ns)
+}
+
+/// Put the user's own `$A` / `${Name}` back in place of the generated
+/// variable names in a piece of rewritten formula text (for error messages).
+fn restore_sensor_refs(text: &str, safe_names: &[(String, String)]) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_alphanumeric() || chars[i] == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            match safe_names.iter().find(|(s, _)| *s == word) {
+                Some((_, name)) => out.push_str(&sensor_ref_token(name)),
+                None => out.push_str(&word),
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn formula_parse_error_message(err: &fasteval::Error, safe_names: &[(String, String)]) -> String {
+    use fasteval::Error as E;
+    let detail = match err {
+        E::TooDeep => "the formula is nested too deeply".to_string(),
+        E::TooLong | E::SlabOverflow => "the formula is too long".to_string(),
+        E::UnparsedTokensRemaining(rest) => {
+            let rest = restore_sensor_refs(rest.trim(), safe_names);
+            let shown: String = rest.chars().take(40).collect();
+            let more = if rest.chars().count() > 40 { "…" } else { "" };
+            format!(
+                "unexpected text at \"{}{}\" (an operator such as + - * / may be missing)",
+                shown, more
+            )
+        }
+        E::EOF | E::EofWhileParsing(_) => {
+            "the formula ends too early (a value or a closing bracket is missing)".to_string()
+        }
+        E::InvalidValue => "a number, sensor or function was expected".to_string(),
+        E::ParseF64(s) => format!("invalid number \"{}\"", s),
+        E::Expected(s) => format!("expected {}", s),
+        E::WrongArgs(s) => s.clone(),
+        other => format!("{}", other),
+    };
+    format!("Formula parse error: {}", detail)
+}
+
+fn formula_eval_error_message(
+    err: &fasteval::Error,
+    failed: Option<&(String, usize)>,
+    safe_names: &[(String, String)],
+) -> String {
+    let name = match err {
+        fasteval::Error::Undefined(name) => name,
+        other => return format!("Formula error: {}", other),
+    };
+    let nargs = failed.filter(|(n, _)| n == name).map(|(_, k)| *k).unwrap_or(0);
+
+    if let Some((_, sensor)) = safe_names.iter().find(|(s, _)| s == name) {
+        let token = sensor_ref_token(sensor);
+        return format!(
+            "Formula error: {} is a sensor, not a function. Put an operator before the bracket, e.g. {} * (…).",
+            token, token
+        );
+    }
+    if let Some((f, want, example)) = EXTRA_MATH_FNS.iter().find(|(f, _, _)| f == name) {
+        let given = if nargs == 0 { "none".to_string() } else { nargs.to_string() };
+        return format!(
+            "Formula error: {} takes {} value{} but was given {}. Example: {}.",
+            f,
+            want,
+            if *want == 1 { "" } else { "s" },
+            given,
+            example
+        );
+    }
+    match name.as_str() {
+        "pi" => "Formula error: unknown name 'pi'. Write pi() for π.".to_string(),
+        "e" => "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…).".to_string(),
+        n if BUILTIN_FORMULA_FNS.contains(&n) => {
+            format!("Formula error: {} needs a value in brackets, e.g. {}($A).", n, n)
+        }
+        n if nargs > 0 => format!(
+            "Formula error: unknown function '{}'. Available functions: {}.",
+            n, FORMULA_FUNCTION_LIST
+        ),
+        n => format!(
+            "Formula error: unknown name '{}'. Write sensors as $Name, or ${{Name}} when the name has spaces or symbols.",
+            n
+        ),
+    }
+}
+
+/// Refuse `round(<expression with a sensor>, <constant>)`.
+///
+/// fasteval's two-value round is `round(step, x)` -- it rounds `x` to the
+/// nearest multiple of `step` (`round(0.01, $A)` = $A to 2 decimals, the form
+/// the "Round to N decimals" wrap builds). Written the spreadsheet way,
+/// `round($A, 2)` therefore rounds the CONSTANT 2 to a multiple of $A and
+/// stores 0, A or 2A on every row -- silently. Decision (2026-10-08): REFUSE
+/// that shape with a message giving the formula to type, rather than
+/// reinterpret it: a rewrite would make `round(a, b)` mean two different
+/// things depending on which side holds a sensor, while a refusal is never
+/// silent. `round(x)`, `round(step, $A)` and `round($A, $B)` (step taken from
+/// a sensor) are unchanged; a round with no sensor on either side is just a
+/// constant and is left alone.
+fn check_round_argument_order(formula: &str) -> Result<(), String> {
+    let chars: Vec<char> = formula.chars().collect();
+    let len = chars.len();
+    let spans = scan_sensor_refs(formula);
+    let mut in_ref = vec![false; len];
+    for s in &spans {
+        for flag in &mut in_ref[s.start..s.end] {
+            *flag = true;
+        }
+    }
+    let is_word = |i: usize| !in_ref[i] && (chars[i].is_ascii_alphanumeric() || chars[i] == '_');
+    let has_ref = |a: usize, b: usize| spans.iter().any(|s| s.start >= a && s.end <= b);
+    let text = |a: usize, b: usize| chars[a..b].iter().collect::<String>().trim().to_string();
+    const ROUND: [char; 5] = ['r', 'o', 'u', 'n', 'd'];
+
+    let mut i = 0;
+    while i + ROUND.len() <= len {
+        let end = i + ROUND.len();
+        let is_round = !in_ref[i]
+            && chars[i..end] == ROUND
+            && (i == 0 || !is_word(i - 1))
+            && (end == len || !is_word(end));
+        if !is_round {
+            i += 1;
+            continue;
+        }
+        let mut j = end;
+        while j < len && !in_ref[j] && chars[j].is_whitespace() {
+            j += 1;
+        }
+        if j < len && !in_ref[j] && (chars[j] == '(' || chars[j] == '[') {
+            let mut depth = 0i32;
+            let mut args: Vec<(usize, usize)> = Vec::new();
+            let mut arg_start = j + 1;
+            let mut closed = false;
+            for k in j..len {
+                if in_ref[k] {
+                    continue;
+                }
+                match chars[k] {
+                    '(' | '[' => depth += 1,
+                    ')' | ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            args.push((arg_start, k));
+                            closed = true;
+                            break;
+                        }
+                    }
+                    ',' | ';' if depth == 1 => {
+                        args.push((arg_start, k));
+                        arg_start = k + 1;
+                    }
+                    _ => {}
+                }
+            }
+            if closed && args.len() == 2 {
+                let (x, n) = (args[0], args[1]);
+                if has_ref(x.0, x.1) && !has_ref(n.0, n.1) {
+                    let x_text = text(x.0, x.1);
+                    return Err(round_order_message(
+                        &x_text,
+                        &text(n.0, n.1),
+                        is_formula_atom(&chars, &in_ref, &spans, x.0, x.1),
+                    ));
+                }
+            }
+        }
+        i = end;
+    }
+    Ok(())
+}
+
+/// Whether `chars[a..b]` (trimmed) is ONE operand that can be multiplied
+/// without brackets in a suggested formula: a single sensor reference, a
+/// plain number/name, or `name(...)` / `(...)` whose bracket closes at the end.
+fn is_formula_atom(
+    chars: &[char],
+    in_ref: &[bool],
+    spans: &[SensorRefSpan],
+    mut a: usize,
+    mut b: usize,
+) -> bool {
+    while a < b && chars[a].is_whitespace() {
+        a += 1;
+    }
+    while b > a && chars[b - 1].is_whitespace() {
+        b -= 1;
+    }
+    if a >= b {
+        return false;
+    }
+    if spans.iter().any(|s| s.start == a && s.end == b) {
+        return true;
+    }
+    let plain = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
+    if (a..b).all(|i| !in_ref[i] && plain(chars[i])) {
+        return true;
+    }
+    // Optional function name, then a bracket group that must close at `b`.
+    let mut i = a;
+    while i < b && !in_ref[i] && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+        i += 1;
+    }
+    if i >= b || in_ref[i] || !(chars[i] == '(' || chars[i] == '[') {
+        return false;
+    }
+    let mut depth = 0i32;
+    for k in i..b {
+        if in_ref[k] {
+            continue;
+        }
+        match chars[k] {
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return k == b - 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The message for a refused `round(x, n)` -- `x` is the user's expression
+/// and `n` their second value, both as typed; `x_is_simple` says whether `x`
+/// can be multiplied without brackets.
+fn round_order_message(x: &str, n: &str, x_is_simple: bool) -> String {
+    let places = fasteval::ez_eval(n, &mut fasteval::EmptyNamespace)
+        .ok()
+        .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v <= 15.0)
+        .map(|v| v as u32);
+    match places {
+        Some(0) => format!(
+            "Formula error: round({}, {}) is not supported. Write round({}) to round to a whole number.",
+            x, n, x
+        ),
+        Some(p) => {
+            let scale = 10u64.pow(p);
+            let xw = if x_is_simple { x.to_string() } else { format!("({})", x) };
+            format!(
+                "Formula error: round({}, {}) does not round to {} decimal place{}. Write round({} * {}) / {} instead.",
+                x,
+                n,
+                p,
+                if p == 1 { "" } else { "s" },
+                xw,
+                scale,
+                scale
+            )
+        }
+        None => format!(
+            "Formula error: round({}, {}) is not supported. To round to the nearest step, put the step first: round({}, {}).",
+            x, n, n, x
+        ),
+    }
+}
+
 #[tauri::command]
 fn validate_formula(
     formula: String,
@@ -4855,14 +5461,18 @@ fn validate_formula(
 
     let state_lock = state.0.read().map_err(|e| e.to_string())?;
     let session = state_lock.as_ref().ok_or("No data loaded")?;
-    let data = &session.data;
+    Ok(validate_formula_against(&session.data, &formula))
+}
 
+/// Pure core of `validate_formula`: the same checks that
+/// `compute_formula_sensor` applies, so the editor's verdict and message are
+/// exactly what Create / Save would answer.
+fn validate_formula_against(data: &ColumnarData, formula: &str) -> FormulaValidationResult {
     // 1. Extract sensor references (distinct, in order of appearance)
-    let sensor_refs = extract_sensor_refs(&formula);
     let mut referenced_sensors: Vec<String> = Vec::new();
-    for (_, name) in &sensor_refs {
-        if !referenced_sensors.contains(name) {
-            referenced_sensors.push(name.clone());
+    for (_, name) in extract_sensor_refs(formula) {
+        if !referenced_sensors.contains(&name) {
+            referenced_sensors.push(name);
         }
     }
 
@@ -4870,57 +5480,26 @@ fn validate_formula(
     //    resolver `evaluate_formula` uses, so "valid" here means "will run".
     for sensor_name in &referenced_sensors {
         if resolve_sensor(&data.headers, sensor_name).is_none() {
-            return Ok(FormulaValidationResult {
+            return FormulaValidationResult {
                 valid: false,
                 error: Some(format!("Sensor not found: {}", sensor_name)),
                 referenced_sensors,
-            });
+            };
         }
     }
 
-    // 3. Try to parse the expression (with dummy values)
-    let (expr, safe_names) = prepare_formula_for_eval(&formula);
-
-    let parser = fasteval::Parser::new();
-    let mut slab = fasteval::Slab::new();
-
-    match parser.parse(&expr, &mut slab.ps) {
-        Ok(expr_i) => {
-            // Try to evaluate with dummy values to catch runtime issues
-            let mut ns = |name: &str, args: Vec<f64>| -> Option<f64> {
-                for (safe_name, _) in &safe_names {
-                    if name == safe_name {
-                        return Some(1.0); // dummy value
-                    }
-                }
-                eval_extra_math_fn(name, &args)
-            };
-
-            let expr_ref = slab.ps.get_expr(expr_i);
-            match expr_ref.eval(&slab, &mut ns) {
-                Ok(_) => Ok(FormulaValidationResult {
-                    valid: true,
-                    error: None,
-                    referenced_sensors,
-                }),
-                Err(e) => Ok(FormulaValidationResult {
-                    valid: false,
-                    error: Some(format!("Evaluation error: {}", e)),
-                    referenced_sensors,
-                }),
-            }
-        }
-        Err(e) => Ok(FormulaValidationResult {
-            valid: false,
-            error: Some(format!("Parse error: {}", e)),
-            referenced_sensors,
-        }),
+    // 3. Parse + trial-evaluate (the shared gate).
+    match compile_formula(formula) {
+        Ok(_) => FormulaValidationResult { valid: true, error: None, referenced_sensors },
+        Err(e) => FormulaValidationResult { valid: false, error: Some(e), referenced_sensors },
     }
 }
 
 /// Pure core of `evaluate_formula`: validates and evaluates without touching
 /// the session. Returns `(final trimmed name, column)`; a row with ANY missing
-/// (NaN) input, or a non-finite / failed evaluation, is NaN.
+/// (NaN) input, or a NaN / infinite result, is NaN. A formula that cannot be
+/// evaluated at all (unknown name/function, wrong argument count, the
+/// `round($A, 2)` shape) is an `Err` -- never an all-empty column.
 fn compute_formula_sensor(
     data: &ColumnarData,
     formula: &str,
@@ -4934,14 +5513,15 @@ fn compute_formula_sensor(
         return Err("Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.".to_string());
     }
 
-    // 2. Rewrite to fasteval-safe variables and resolve every distinct sensor
-    //    to a column (all of them must exist).
-    let (expr, safe_names) = prepare_formula_for_eval(formula);
-    let mut safe_name_to_idx: Vec<(&str, usize)> = Vec::with_capacity(safe_names.len());
-    for (safe_name, original_name) in &safe_names {
+    // 2. Resolve every distinct sensor to a column (all of them must exist).
+    //    `prepare_formula_for_eval` is deterministic, so these are the same
+    //    sensors, in the same order, that `compile_formula` assigns below.
+    let (_, safe_names) = prepare_formula_for_eval(formula);
+    let mut src_idx: Vec<usize> = Vec::with_capacity(safe_names.len());
+    for (_, original_name) in &safe_names {
         let idx = resolve_sensor(&data.headers, original_name)
             .ok_or_else(|| format!("Sensor not found: {}", original_name))?;
-        safe_name_to_idx.push((safe_name.as_str(), idx));
+        src_idx.push(idx);
     }
 
     // 3. Final name + collision rules.
@@ -4954,7 +5534,7 @@ fn compute_formula_sensor(
     // was saved.
     if replace {
         if let Some(target) = find_column_ci(&data.headers, &name) {
-            if safe_name_to_idx.iter().any(|(_, idx)| *idx == target) {
+            if src_idx.contains(&target) {
                 return Err(format!("'{}' cannot be built from itself", name));
             }
         }
@@ -4963,22 +5543,15 @@ fn compute_formula_sensor(
         return Err(format!("A sensor named '{}' already exists", name));
     }
 
-    // 4. Pre-compile the expression once
-    let parser = fasteval::Parser::new();
-    let mut slab = fasteval::Slab::new();
-    let expr_i = parser
-        .parse(&expr, &mut slab.ps)
-        .map_err(|e| format!("Formula parse error: {}", e))?;
+    // 4. Parse once and prove it evaluates (refuses a bad formula up front).
+    let compiled = compile_formula(formula)?;
 
     // 5. Evaluate for each row (NaN in `new_col` = missing result)
     let n = data.n_rows();
     let mut new_col: Vec<f64> = Vec::with_capacity(n);
-    let var_names: Vec<&str> = safe_name_to_idx.iter().map(|(s, _)| *s).collect();
-    let src_cols: Vec<&[f64]> = safe_name_to_idx
-        .iter()
-        .map(|(_, idx)| data.columns[*idx].as_slice())
-        .collect();
+    let src_cols: Vec<&[f64]> = src_idx.iter().map(|idx| data.columns[*idx].as_slice()).collect();
     let mut row_values: Vec<f64> = vec![0.0; src_cols.len()];
+    let mut failed = None;
 
     for r in 0..n {
         // A missing (NaN) input on any referenced sensor → missing result.
@@ -4989,19 +5562,15 @@ fn compute_formula_sensor(
         for (j, col) in src_cols.iter().enumerate() {
             row_values[j] = col[r];
         }
-
-        let mut ns = |var: &str, args: Vec<f64>| -> Option<f64> {
-            match var_names.iter().position(|s| *s == var) {
-                Some(j) => Some(row_values[j]),
-                None => eval_extra_math_fn(var, &args),
-            }
-        };
-
-        let expr_ref = slab.ps.get_expr(expr_i);
-        match expr_ref.eval(&slab, &mut ns) {
+        match eval_compiled(&compiled, &row_values, &mut failed) {
             Ok(result) if result.is_finite() => new_col.push(result),
-            // NaN / Infinity / eval error → missing
-            _ => new_col.push(f64::NAN),
+            // NaN / Infinity (0/0, 1/0, sqrt of a negative, ...) → missing
+            Ok(_) => new_col.push(f64::NAN),
+            // A name that only fails on some rows (behind `&&` / `||`):
+            // refuse the whole formula rather than empty those rows.
+            Err(e) => {
+                return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names))
+            }
         }
     }
 

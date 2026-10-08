@@ -15,6 +15,10 @@ export function describeRecipe(recipe: SpecialSensorRecipe): string {
         case 'multiply': return `${sources} × ${op.value}`;
         case 'divide': return `${sources} ÷ ${op.value}`;
         case 'power': return `${sources} ^ ${op.value}`;
+        // The decimal count is part of what the sensor IS ("round to 0" and
+        // "round to 3" are different sensors), and the locked editor shows
+        // only this text.
+        case 'round': return `round(${sources}) to ${op.value} decimal${op.value === 1 ? '' : 's'}`;
         default: return `${op.type}(${sources})`;
     }
 }

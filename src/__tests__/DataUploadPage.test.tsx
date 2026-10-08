@@ -952,6 +952,43 @@ describe('F. Load workspace flow', () => {
       expect(stateArg.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['BROKEN1', 'DEP1', 'CALC1']);
     });
 
+    // 2026-10-08: Rust now refuses a formula with an unknown name/function at
+    // compute time. A workspace saved earlier can hold one that used to be
+    // accepted and silently produced an empty sensor (`$A * pi`).
+    it('F35b. a saved formula Rust now refuses (`$sensor_a * pi`) does not break the open: the toast names the sensor WITH Rust’s reason, it is dropped from the plot and its recipe is kept to fix in Manage', async () => {
+      const PI_MSG = "Formula error: unknown name 'pi'. Write pi() for π.";
+      mockLoadWorkspace.mockResolvedValue({
+        ...baseLoadedWs,
+        selectedSensors: ['sensor_a', 'CIRCLE'],
+        visibleSensors: ['sensor_a', 'CIRCLE'],
+        specialSensorRecipes: [
+          { kind: 'formula', tag: 'CIRCLE', formula: '$sensor_a * pi' },
+          { kind: 'formula', tag: 'CALC1', formula: '$sensor_a * 2' },
+        ],
+      });
+      mockInvoke.mockImplementation((cmd: string, args?: any) => {
+        if (cmd === 'load_csv') return Promise.resolve({ headers: ['timestamp', 'sensor_a'], total_rows: 100 });
+        if (cmd === 'evaluate_formula') {
+          if (args?.customName === 'CIRCLE') return Promise.reject(PI_MSG);
+          return Promise.resolve(args.customName);
+        }
+        return Promise.resolve(null);
+      });
+
+      render(<DataUploadPage onDataReady={onDataReady} />);
+      await waitFor(() => screen.getByText('Engine pressure run'));
+      fireEvent.click(screen.getByText('Engine pressure run'));
+      await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
+
+      const errors = getErrors();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].source).toBe('special-sensor-restore');
+      expect(errors[0].message).toContain(`couldn't be restored: CIRCLE (${PI_MSG})`);
+      const stateArg = onDataReady.mock.calls[0][1];
+      expect(stateArg.selectedSensors).toEqual(['sensor_a']);
+      expect(stateArg.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['CIRCLE', 'CALC1']);
+    });
+
     it('F36. recipes are replayed in dependency order, not just array order (an old edit could leave a sensor stored before the one it reads)', async () => {
       mockLoadWorkspace.mockResolvedValue({
         ...baseLoadedWs,

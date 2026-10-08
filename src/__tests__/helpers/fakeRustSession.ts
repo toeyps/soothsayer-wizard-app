@@ -125,6 +125,103 @@ const median = (xs: number[]) => {
 };
 const finite = (v: number) => (Number.isFinite(v) ? v : NaN);
 
+/** lib.rs `FORMULA_FUNCTION_LIST` (shown with "unknown function"). */
+export const FORMULA_FUNCTION_LIST =
+    'abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()';
+
+// fasteval semantics (qa 2026-10-08): `round(x)` = nearest integer, `round(modulus, x)`
+// = nearest multiple of modulus, both half AWAY from zero (Rust `f64::round`, unlike
+// JS `Math.round`); `log(x)` is BASE 10 and `log(base, x)` takes the base first.
+const rustRound = (v: number) => Math.sign(v) * Math.round(Math.abs(v));
+const FORMULA_FNS: Record<string, (...a: number[]) => number> = {
+    abs: Math.abs, sqrt: Math.sqrt, exp: Math.exp, log10: Math.log10, pow: Math.pow,
+    min: Math.min, max: Math.max, ceil: Math.ceil, floor: Math.floor,
+    round: (a: number, b?: number) => (b === undefined ? rustRound(a) : rustRound(b / a) * a),
+    log: (a: number, b?: number) => (b === undefined ? Math.log10(a) : Math.log(b) / Math.log(a)),
+    ln: Math.log, sin: Math.sin, cos: Math.cos, tan: Math.tan,
+    pi: () => Math.PI, e: () => Math.E,
+};
+const FN_NAMES = Object.keys(FORMULA_FNS);
+const FN_VALUES = FN_NAMES.map(n => FORMULA_FNS[n]);
+
+/** lib.rs `prepare_formula_for_eval`: references -> `__v[j]`, one j per distinct name. */
+export function prepareFormula(formula: string): { expr: string; safe: string[] } {
+    const chars = Array.from(formula);
+    const safe: string[] = []; // distinct names, exact
+    let expr = '';
+    let pos = 0;
+    for (const s of rustScanRefs(formula)) {
+        expr += chars.slice(pos, s.start).join('');
+        let i = safe.indexOf(s.name);
+        if (i < 0) { safe.push(s.name); i = safe.length - 1; }
+        expr += `__v[${i}]`;
+        pos = s.end;
+    }
+    expr += chars.slice(pos).join('');
+    return { expr, safe };
+}
+
+/** One braced-or-bare reference to `name` (lib.rs `sensor_ref_token`). */
+const refToken = (name: string) => (/^[\p{Alphabetic}\p{N}_]+$/u.test(name) ? `$${name}` : `\${${name}}`);
+
+/**
+ * lib.rs `compile_formula` (2026-10-08), the ONE gate `validate_formula` and
+ * `evaluate_formula` share: parse, then a trial evaluation with every sensor =
+ * 1 so an unknown name/function is an ERROR (it used to turn every row into
+ * "missing"), then the `round($A, 2)` refusal. Messages mirror Rust's for the
+ * cases tests rely on (prefixes, unknown name/function, pi/e, a sensor used as
+ * a function, round argument order); argument-count checks are not modelled.
+ * `expr` is the formula with every reference replaced by `__v[j]`.
+ */
+export function compileFakeFormula(formula: string, expr: string, safe: string[]): (v: number[]) => number {
+    const js = expr.replace(/\^/g, '**');
+    let fn: (...a: any[]) => number;
+    try {
+        // eslint-disable-next-line no-new-func
+        fn = new Function('__v', ...FN_NAMES, `return (${js});`) as any;
+    } catch {
+        throw 'Formula parse error: unexpected text (an operator such as + - * / may be missing)';
+    }
+    // `pi` / `e` without brackets: JS would see the function object.
+    const bare = /(?<![\w.])(pi|e)\b(?!\s*\()/.exec(js.replace(/__v\[\d+\]/g, '0'));
+    if (bare) {
+        throw bare[1] === 'pi'
+            ? "Formula error: unknown name 'pi'. Write pi() for π."
+            : "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…).";
+    }
+    try {
+        fn(safe.map(() => 1), ...FN_VALUES);
+    } catch (e) {
+        const msg = String((e as Error)?.message ?? e);
+        const undef = /^(\S+) is not defined/.exec(msg);
+        if (undef) {
+            const n = undef[1];
+            const called = new RegExp(String.raw`(?<![\w.])${n}\s*\(`).test(js);
+            throw called
+                ? `Formula error: unknown function '${n}'. Available functions: ${FORMULA_FUNCTION_LIST}.`
+                : `Formula error: unknown name '${n}'. Write sensors as $Name, or \${Name} when the name has spaces or symbols.`;
+        }
+        const notFn = /__v\[(\d+)\] is not a function/.exec(msg);
+        if (notFn) {
+            const t = refToken(safe[Number(notFn[1])]);
+            throw `Formula error: ${t} is a sensor, not a function. Put an operator before the bracket, e.g. ${t} * (…).`;
+        }
+        throw `Formula error: ${msg}`;
+    }
+    // lib.rs `check_round_argument_order`: `round(<sensor expr>, <whole number>)`.
+    const r = /round\(\s*([^,()]*\$[^,()]*?)\s*,\s*(\d+)\s*\)/u.exec(formula);
+    if (r) {
+        const arg = r[1];
+        const n = Number(r[2]);
+        if (n === 0) throw `Formula error: round(${arg}, 0) is not supported. Write round(${arg}) to round to a whole number.`;
+        const operand = rustScanRefs(arg).length === 1 && rustScanRefs(arg)[0].token === arg ? arg : `(${arg})`;
+        const f = `1${'0'.repeat(n)}`;
+        throw `Formula error: round(${arg}, ${n}) does not round to ${n} decimal place${n === 1 ? '' : 's'}. `
+            + `Write round(${operand} * ${f}) / ${f} instead.`;
+    }
+    return (v: number[]) => fn(v, ...FN_VALUES);
+}
+
 /** Allowed argument keys per command, exactly as Tauri v2 deserializes them
  *  for the Rust signatures in lib.rs (camelCase unless `rename_all`). */
 const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = {
@@ -217,18 +314,7 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
     const evalFormula = (formula: string, customName: string | null | undefined, replace: boolean): string => {
         const spans = rustScanRefs(formula);
         if (spans.length === 0) throw 'Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.';
-        const chars = Array.from(formula);
-        const safe: string[] = []; // distinct names, exact
-        let expr = '';
-        let pos = 0;
-        for (const s of spans) {
-            expr += chars.slice(pos, s.start).join('');
-            let i = safe.indexOf(s.name);
-            if (i < 0) { safe.push(s.name); i = safe.length - 1; }
-            expr += `__v[${i}]`;
-            pos = s.end;
-        }
-        expr += chars.slice(pos).join('');
+        const { expr, safe } = prepareFormula(formula);
         const idx = safe.map(n => {
             const i = resolve(n);
             if (i < 0) throw `Sensor not found: ${n}`;
@@ -241,21 +327,13 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
         } else if (findCi(name) >= 0) {
             throw `A sensor named '${name}' already exists`;
         }
-        let fn: (...a: any[]) => number;
-        try {
-            // eslint-disable-next-line no-new-func
-            fn = new Function('__v', 'abs', 'sqrt', 'exp', 'log10', 'pow', 'min', 'max', 'ceil', 'floor', 'round',
-                `return (${expr.replace(/\^/g, '**')});`) as any;
-        } catch (e) {
-            throw `Formula parse error: ${String(e)}`;
-        }
-        const round = (modulus: number, x: number) => Math.round(x / modulus) * modulus;
+        const fn = compileFakeFormula(formula, expr, safe);
         const col: number[] = [];
         for (let r = 0; r < nRows; r++) {
             const v = idx.map(i => columns[i][r]);
             if (v.some(Number.isNaN)) { col.push(NaN); continue; }
             let out: number;
-            try { out = fn(v, Math.abs, Math.sqrt, Math.exp, Math.log10, Math.pow, Math.min, Math.max, Math.ceil, Math.floor, round); }
+            try { out = fn(v); }
             catch { out = NaN; }
             col.push(finite(out));
         }
@@ -441,9 +519,15 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
             case 'validate_formula': {
                 const refs = rustExtractRefs(args.formula);
                 const missing = refs.find(r => resolve(r) < 0);
-                return missing
-                    ? { valid: false, error: `Sensor not found: ${missing}`, referenced_sensors: refs }
-                    : { valid: true, error: null, referenced_sensors: refs };
+                if (missing) return { valid: false, error: `Sensor not found: ${missing}`, referenced_sensors: refs };
+                // The same gate `evaluate_formula` uses (lib.rs `compile_formula`).
+                try {
+                    const { expr, safe } = prepareFormula(args.formula);
+                    compileFakeFormula(args.formula, expr, safe);
+                } catch (e) {
+                    return { valid: false, error: String(e), referenced_sensors: refs };
+                }
+                return { valid: true, error: null, referenced_sensors: refs };
             }
             case 'get_chart_data':
                 return chart(args.filter);

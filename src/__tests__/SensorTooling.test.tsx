@@ -274,6 +274,36 @@ describe('SensorTooling', () => {
         });
     });
 
+    // 2026-10-08: a shortcut that still applies to the new selection is kept
+    // (see `sourceChangeEffect`); it used to be reset on every change.
+    describe('changing the selection keeps an operation that still applies', () => {
+        it('"Average all" stays picked when a third sensor is added', () => {
+            const onConfigChange = vi.fn();
+            const { rerender } = render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'], onConfigChange })} />);
+            fireEvent.click(screen.getByText('Average all'));
+            rerender(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B', 'C'], onConfigChange })} />);
+            expect(onConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'multi', multiOp: { type: 'mean' } }));
+            expect(screen.getByText('Average all').closest('button')!.className).toContain('is-on');
+        });
+
+        it('a single-sensor operation and its value survive swapping the one sensor for another', () => {
+            const onConfigChange = vi.fn();
+            const { rerender } = render(<SensorTooling {...makeProps({ selectedSensors: ['A'], onConfigChange })} />);
+            fireEvent.click(screen.getByText('Add'));
+            fireEvent.change(screen.getByText('Value').closest('div')!.querySelector('input')!, { target: { value: '5' } });
+            rerender(<SensorTooling {...makeProps({ selectedSensors: ['B'], onConfigChange })} />);
+            expect(onConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'single', singleOp: { type: 'add', value: 5 } }));
+        });
+
+        it('"Absolute difference" (two sensors only) is dropped when a third sensor is added', () => {
+            const onFormulaSubmit = vi.fn();
+            const { rerender } = render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'], onFormulaSubmit })} />);
+            fireEvent.click(screen.getByText('Absolute difference'));
+            rerender(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B', 'C'], onFormulaSubmit })} />);
+            expect(onFormulaSubmit).toHaveBeenLastCalledWith('$A + $B + $C', undefined);
+        });
+    });
+
     describe('changing the selection resets the operation', () => {
         it('clears the picked operation when selectedSensors changes', () => {
             const onDescriptionChange = vi.fn();
@@ -423,6 +453,40 @@ describe('SensorTooling', () => {
             expect(screen.queryByText('Supported syntax:')).toBeNull();
             fireEvent.click(screen.getByText('Formula Syntax Help'));
             expect(screen.getByText('Supported syntax:')).toBeTruthy();
+        });
+
+        // 2026-10-08 (QA): the help listed `round` and `log` with no
+        // signature -- `round($A, 2)` silently rounds the CONSTANT 2, and
+        // `log` is base 10, not the natural log.
+        it('the syntax help spells out round, log/ln, pi()/e(), number suffixes and how a leading minus binds', () => {
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A'] })} />);
+            fireEvent.click(screen.getByText('Edit as text instead'));
+            fireEvent.click(screen.getByText('Formula Syntax Help'));
+            const help = screen.getByText('Supported syntax:').parentElement!.textContent!;
+            expect(help).toContain('round(x)');
+            expect(help).toMatch(/round\(x \* 100\) \/ 100\s*= x to 2 decimals/);
+            expect(help).toMatch(/round\(x, 2\)\s*is not accepted/);
+            expect(help).toContain('round(0.01, x)');
+            expect(help).toMatch(/pi\(\)\s*and\s*e\(\)/);
+            expect(help).toMatch(/log\(x\).*base 10/);
+            expect(help).toMatch(/ln\(x\)\s*is the natural log/);
+            expect(help).toMatch(/5k\s*= 5000/);
+            expect(help).toMatch(/-\$A \^ 2\s*= \(−A\)²/);
+        });
+
+        it('reports the typed formula’s validation error up (onFormulaIssueChange) and shows it inline; clears it on switching back to buttons', async () => {
+            vi.useFakeTimers();
+            mockInvoke.mockResolvedValue({ valid: false, error: 'Sensor not found: Z', referenced_sensors: ['Z'] });
+            const onFormulaIssueChange = vi.fn();
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'], onFormulaIssueChange })} />);
+            fireEvent.click(screen.getByText('Edit as text instead'));
+            fireEvent.change(screen.getByPlaceholderText('= $SensorA + $SensorB * 2'), { target: { value: '$Z + 1', selectionStart: 6 } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+            expect(onFormulaIssueChange).toHaveBeenLastCalledWith('Sensor not found: Z');
+            expect(screen.getByText('Sensor not found: Z')).toBeTruthy();
+
+            fireEvent.click(screen.getByText('Use buttons instead'));
+            expect(onFormulaIssueChange).toHaveBeenLastCalledWith(null);
         });
     });
 });

@@ -15,6 +15,38 @@ const LEGACY_MULTI_IDS = new Set(['sum', 'mean', 'median']);
 export const FORMULA_MULTI_IDS = new Set(['abs_diff', 'temp_spread', 'efficiency_pct']);
 /** Multi-sensor ops that need one selected sensor marked as the "starting value". */
 const NEEDS_BASE_SENSOR = new Set(['efficiency_pct']);
+/** Multi-sensor ops that only make sense for exactly two sensors. */
+export const PAIRWISE_ONLY_IDS = new Set(['abs_diff', 'efficiency_pct']);
+
+/**
+ * What a change of the source-sensor list does to the calculation picked for
+ * the OLD list (used by Create's `SensorTooling` and the Manage tab's
+ * `SpecialSensorEditor`):
+ *  - `'keep'`: it still applies -- Sum/Average/Median/Spread of any 2+
+ *    sources, a single-sensor op when one source is swapped for another, the
+ *    operator chain (no shortcut);
+ *  - `'reset-operation'`: the shortcut no longer applies (a two-sensor-only
+ *    shortcut with 3 sources, Efficiency % whose starting value was removed)
+ *    -- back to the operator chain, keeping a "then apply" wrap;
+ *  - `'reset-all'`: the kind of calculation changed (one source <-> several,
+ *    or none left) -- clear the shortcut and the wrap.
+ *
+ * Before 2026-10-08 every source change reset the shortcut, so adding a
+ * sensor to an "Average all" sensor silently saved it as `$A + $B + $C`.
+ */
+export function sourceChangeEffect(
+  prev: string[],
+  next: string[],
+  operationId: string | null,
+  baseSensor: string,
+): 'keep' | 'reset-operation' | 'reset-all' {
+  const group = (n: number) => (n <= 1 ? 'single' : 'multi');
+  if (next.length === 0 || group(prev.length) !== group(next.length)) return 'reset-all';
+  if (operationId === null || group(next.length) === 'single') return 'keep';
+  if (PAIRWISE_ONLY_IDS.has(operationId) && next.length !== 2) return 'reset-operation';
+  if (NEEDS_BASE_SENSOR.has(operationId) && !next.includes(baseSensor || prev[0])) return 'reset-operation';
+  return 'keep';
+}
 
 const CHAIN_SYMBOL_TO_FASTEVAL: Record<string, string> = { '+': '+', '−': '-', '×': '*', '÷': '/' };
 
@@ -66,6 +98,30 @@ export interface UseCalculationEngineReturn {
 // the one implementation. Re-exported for callers that already import from here.
 export { sensorRef };
 
+/** True when `expr` is one function call spanning the whole text
+ *  (`abs($A - $B)`), so it can be multiplied without extra parentheses. */
+function isSingleCall(expr: string): boolean {
+  const m = /^[A-Za-z_]\w*\(/.exec(expr);
+  if (!m) return false;
+  let depth = 0;
+  for (let i = m[0].length - 1; i < expr.length; i++) {
+    if (expr[i] === '$' && expr[i + 1] === '{') {
+      // A braced sensor name may contain parentheses of its own.
+      const close = expr.indexOf('}', i + 2);
+      if (close < 0) return false;
+      i = close;
+      continue;
+    }
+    if (expr[i] === '(') depth++;
+    else if (expr[i] === ')' && --depth === 0) return i === expr.length - 1;
+  }
+  return false;
+}
+
+/** Highest decimal count the "Round to N decimals" wrap honours (beyond ~15
+ *  an f64 has no more decimal digits to keep). */
+const MAX_ROUND_DECIMALS = 15;
+
 /**
  * Wrap an already-built expression with a "Then apply to the result"
  * transform. `sqrt`/`exp`/`log10` are custom functions the Rust side
@@ -82,10 +138,19 @@ function applyWrap(expr: string, funcId: string | null, decimals: number): strin
     case 'floor':
       return `${funcId}(${expr})`;
     case 'round': {
-      // fasteval's round(modulus, x) rounds to the nearest multiple of
-      // modulus, not "N decimal places" -- convert.
-      const modulus = Math.pow(10, -decimals);
-      return `round(${modulus}, ${expr})`;
+      // Round to N decimals as `round(x * 10^N) / 10^N` -- the same math the
+      // single-sensor "Round to decimals" operation does in Rust, so both
+      // store the nearest double to the decimal value (1.13, not the
+      // 1.1300000000000001 fasteval's `round(0.01, x)` gives: it divides by
+      // 0.01 and multiplies back). The factor is written out in full
+      // (`100`, never `1e2`) so the stored formula reads plainly.
+      const n = Number.isFinite(decimals)
+        ? Math.min(MAX_ROUND_DECIMALS, Math.max(0, Math.trunc(decimals)))
+        : 0;
+      if (n === 0) return `round(${expr})`;
+      const factor = `1${'0'.repeat(n)}`;
+      const operand = isSingleCall(expr) ? expr : `(${expr})`;
+      return `round(${operand} * ${factor}) / ${factor}`;
     }
     default:
       return expr;

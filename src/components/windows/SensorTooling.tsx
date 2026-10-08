@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { SensorOperationConfig, SensorMetadata } from "../../types";
-import { useCalculationEngine, FORMULA_MULTI_IDS } from "../../hooks/useCalculationEngine";
+import { useCalculationEngine, FORMULA_MULTI_IDS, PAIRWISE_ONLY_IDS, sourceChangeEffect } from "../../hooks/useCalculationEngine";
 import type { UseCalculationEngineReturn } from "../../hooks/useCalculationEngine";
 import { useFormulaEditor } from "../../hooks/useFormulaEditor";
 import { findOperation, OPERATION_HINTS } from "../../config/operations";
@@ -31,6 +31,11 @@ interface SensorToolingProps {
   // contains "}", ...). Decided by AddSensorWindow, which knows every existing
   // tag; shown inline under the field in place of the usual helper line.
   nameError?: string | null;
+  // Why the formula typed in "Edit as text" can't be used (its own
+  // `validate_formula` check said so), or null. AddSensorWindow keeps "Add
+  // sensor" disabled while it is set; the message itself is shown inline
+  // under the formula box here.
+  onFormulaIssueChange?: (issue: string | null) => void;
 }
 
 const NUMBER_OP_IDS = ["add", "subtract", "multiply", "divide", "power"];
@@ -49,8 +54,6 @@ const CHAIN_OPERATORS = [
   { symbol: "×", label: "Multiply" },
   { symbol: "÷", label: "Divide" },
 ];
-/** Multi-sensor ops that only make sense for exactly two sensors. */
-const PAIRWISE_ONLY_IDS = new Set(["abs_diff", "efficiency_pct"]);
 
 export default function SensorTooling({
   selectedSensors,
@@ -62,6 +65,7 @@ export default function SensorTooling({
   onUnitChange,
   onComponentChange,
   nameError,
+  onFormulaIssueChange,
 }: SensorToolingProps) {
   const engine = useCalculationEngine(selectedSensors);
   // Autocomplete suggests ONLY the checked sensors so users can't reference
@@ -74,9 +78,12 @@ export default function SensorTooling({
   const [unit, setUnit] = useState("");
   const [component, setComponent] = useState("");
 
-  // Reset the chosen operation whenever the sensor selection itself
-  // changes, so an operation picked for a different set of sensors can't
-  // silently carry over (e.g. a "starting value" that's no longer selected).
+  // Reset the chosen operation when the sensor selection changes in a way
+  // that makes it meaningless (one sensor <-> several, a two-sensor-only
+  // shortcut with a third sensor, a "starting value" that's no longer
+  // selected) -- see `sourceChangeEffect`. A shortcut that still applies
+  // (Average/Sum/Median of the new set) is kept (2026-10-08: it used to be
+  // reset on EVERY change, silently turning "Average all" into a sum chain).
   //
   // Description/Unit/Component deliberately do NOT reset on every selection
   // change (they used to, alongside the operation) -- those describe the
@@ -95,13 +102,15 @@ export default function SensorTooling({
   // `selectedSensors` right after a successful Add to clear the picker for
   // the next round; without this, the next sensor's fields would open
   // pre-filled with the PREVIOUS sensor's leftover text.
-  const prevSelectionKey = useRef(selectedSensors.join("|"));
+  const prevSelection = useRef(selectedSensors);
   useEffect(() => {
     const key = selectedSensors.join("|");
-    if (key !== prevSelectionKey.current) {
-      prevSelectionKey.current = key;
-      engine.setOperationId(null);
-      engine.setWrapFunc(null);
+    const prev = prevSelection.current;
+    if (key !== prev.join("|")) {
+      prevSelection.current = selectedSensors;
+      const effect = sourceChangeEffect(prev, selectedSensors, engine.operationId, engine.baseSensor);
+      if (effect !== "keep") engine.setOperationId(null);
+      if (effect === "reset-all") engine.setWrapFunc(null);
       if (key === "") {
         setDescription("");
         setUnit("");
@@ -111,7 +120,14 @@ export default function SensorTooling({
         onComponentChange?.("");
       }
     }
-  }, [selectedSensors, engine.setOperationId, engine.setWrapFunc, onDescriptionChange, onUnitChange, onComponentChange]);
+  }, [selectedSensors, engine.operationId, engine.baseSensor, engine.setOperationId, engine.setWrapFunc, onDescriptionChange, onUnitChange, onComponentChange]);
+
+  // Report the typed formula's validation problem up (only while typing a
+  // formula; the button builder only produces formulas it built itself).
+  const formulaIssue = engine.mode === "formula" ? formulaEditor.formulaIssue : null;
+  useEffect(() => {
+    onFormulaIssueChange?.(formulaIssue);
+  }, [formulaIssue, onFormulaIssueChange]);
 
   // `engine.build` is already a properly-deps'd `useCallback` (stable unless
   // the calculation actually changed), but CALLING it always returns a fresh
@@ -865,8 +881,48 @@ function AdvancedMode({
               <li>
                 <span className="text-[var(--accent-color)]">Functions:</span>{" "}
                 <code className="bg-[var(--card-bg)] px-1 rounded">
-                  abs, sqrt, pow, log, log10, exp, ceil, floor, round, min, max
+                  abs, sqrt, pow(x, y), exp, ceil, floor, min, max, sin, cos, tan
                 </code>
+              </li>
+              <li>
+                <span className="text-[var(--accent-color)]">Constants:</span>{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">pi()</code>{" "}
+                and{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">e()</code>{" "}
+                (with the brackets)
+              </li>
+              <li>
+                <span className="text-[var(--accent-color)]">Logs:</span>{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">log(x)</code>{" "}
+                and{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">log10(x)</code>{" "}
+                are base 10;{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">ln(x)</code>{" "}
+                is the natural log
+              </li>
+              <li>
+                <span className="text-[var(--accent-color)]">Rounding:</span>{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">round(x)</code>{" "}
+                = nearest whole number;{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">round(x * 100) / 100</code>{" "}
+                = x to 2 decimals (
+                <code className="bg-[var(--card-bg)] px-1 rounded">round(x, 2)</code>{" "}
+                is not accepted;{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">round(0.01, x)</code>{" "}
+                also works, step first)
+              </li>
+              <li>
+                <span className="text-[var(--accent-color)]">Numbers:</span>{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">5k</code>{" "}
+                = 5000: a letter right after a number scales it (k or K ×1000,
+                M ×10⁶, G ×10⁹, T ×10¹², m ÷1000, u ÷10⁶, n ÷10⁹, p ÷10¹²)
+              </li>
+              <li>
+                <span className="text-[var(--accent-color)]">Minus sign:</span>{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">-$A ^ 2</code>{" "}
+                = (−A)², always positive; write{" "}
+                <code className="bg-[var(--card-bg)] px-1 rounded">-($A ^ 2)</code>{" "}
+                for −(A²)
               </li>
               <li>
                 <span className="text-[var(--accent-color)]">Example:</span>{" "}

@@ -1,5 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+
+// The formula box is checked with `validate_formula` (debounced) once edited.
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+    invoke: (cmd: string, args?: unknown) => mockInvoke(cmd, args),
+}));
+beforeEach(() => {
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue({ valid: true, error: null, referenced_sensors: [] });
+});
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
 import SpecialSensorEditor from '../components/windows/SpecialSensorEditor';
 
@@ -438,6 +448,98 @@ describe('SpecialSensorEditor', () => {
             expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
             expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
             expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        });
+    });
+
+    // 2026-10-08: the editor never validated; a bad formula could be saved and
+    // the failure only surfaced (if at all) after the recompute.
+    describe('formula validation (validate_formula)', () => {
+        it('shows the check’s error in red under the formula and disables Save until the formula is fixed', async () => {
+            vi.useFakeTimers();
+            try {
+                mockInvoke.mockImplementation(async (_cmd: string, args: any) => (
+                    args.formula.includes('foo(')
+                        ? { valid: false, error: "Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().", referenced_sensors: ['TAG1'] }
+                        : { valid: true, error: null, referenced_sensors: ['TAG1'] }
+                ));
+                renderEditor();
+                fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'foo($TAG1)' } });
+                expect(save().disabled).toBe(false); // not checked yet: Save is not blocked on a pending check
+                await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+
+                expect(mockInvoke).toHaveBeenCalledWith('validate_formula', { formula: 'foo($TAG1)' });
+                expect(screen.getByTestId('formula-error').textContent).toBe("Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().");
+                expect(screen.getByLabelText('Formula').getAttribute('aria-invalid')).toBe('true');
+                expect(save().disabled).toBe(true);
+
+                fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'abs($TAG1)' } });
+                expect(screen.queryByTestId('formula-error')).toBeNull(); // the old text's verdict doesn't stick
+                await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+                expect(screen.queryByTestId('formula-error')).toBeNull();
+                expect(save().disabled).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('does not validate the stored formula just by opening the editor', async () => {
+            vi.useFakeTimers();
+            try {
+                renderEditor();
+                await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+                expect(mockInvoke).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
+    // 2026-10-08: any source change used to clear the picked operation, so
+    // e.g. an "Average all" with one more source was saved as `$A + $B + $C`.
+    describe('changing the sources keeps an operation that still applies', () => {
+        const fill = () => fillRequiredFields();
+        it('Sum all stays Sum all when a source is added', () => {
+            const { props } = renderEditor({ recipe: operationRecipe, sensorMetadata: [] });
+            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'TAG3' } });
+            fill();
+            fireEvent.click(save());
+            expect((props.onSave as any).mock.calls[0][0].recipe).toEqual({
+                kind: 'operation', tag: 'Total flow', sourceSensors: ['TAG1', 'TAG2', 'TAG3'],
+                operationConfig: { mode: 'multi', multiOp: { type: 'sum' }, customName: 'Total flow' },
+            });
+        });
+
+        it('Average all of three stays an average when one source is removed', () => {
+            const avg3: SpecialSensorRecipe = {
+                kind: 'operation', tag: 'Avg', sourceSensors: ['TAG1', 'TAG2', 'TAG3'],
+                operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'Avg' },
+            };
+            const { props } = renderEditor({ recipe: avg3, sensorMetadata: [] });
+            fireEvent.click(screen.getByLabelText('Remove TAG2'));
+            fill();
+            fireEvent.click(save());
+            expect((props.onSave as any).mock.calls[0][0].recipe).toEqual({
+                kind: 'operation', tag: 'Avg', sourceSensors: ['TAG1', 'TAG3'],
+                operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'Avg' },
+            });
+        });
+
+        // (A direct one-for-one swap keeps a single-sensor op -- see
+        // `sourceChangeEffect` and SensorTooling.test.tsx. This form can only
+        // remove then add, which passes through "no source" = start over.)
+        it('removing the only source then adding another starts the single-sensor form fresh, and the new pick is saved', () => {
+            const { props } = renderEditor({ recipe: singleRecipe, availableSensors: ['TAG1', 'TAG2'], sensorMetadata: [] });
+            fireEvent.click(screen.getByLabelText('Remove TAG1')); // none left: the hint replaces the builder
+            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'TAG2' } });
+            expect(screen.queryByText('Value')).toBeNull();
+            fireEvent.click(screen.getByText('Add'));
+            fireEvent.change(valueInput(), { target: { value: '7' } });
+            fill();
+            fireEvent.click(save());
+            expect((props.onSave as any).mock.calls[0][0].recipe).toMatchObject({
+                sourceSensors: ['TAG2'],
+                operationConfig: { mode: 'single', singleOp: { type: 'add', value: 7 } },
+            });
         });
     });
 });
