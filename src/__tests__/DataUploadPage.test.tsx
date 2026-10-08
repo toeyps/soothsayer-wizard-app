@@ -1219,7 +1219,7 @@ describe('J. Onboarding flow', () => {
     renderPage();
 
     expect(screen.getByTestId('home-step')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('See the failure before it happens.');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Abnormal behaviour, found in your history.');
     expect(newProjectButton()).toBeTruthy();
     // Step 2's surface must not be mounted yet…
     expect(screen.queryByText('Sensor data')).toBeNull();
@@ -1584,9 +1584,11 @@ describe('L. Get started page (step 0)', () => {
     it('L1. shows brand, eyebrow, description, the shortcut hint and the hero illustration (variant "hero")', async () => {
       renderPage();
       expect(screen.getByText('Wizard')).toBeTruthy();
-      expect(screen.getByText('Predictive maintenance studio')).toBeTruthy();
-      expect(screen.getByText(/Sensor data → failure models/)).toBeTruthy();
-      expect(screen.getByText(/Import plant sensor CSVs/)).toBeTruthy();
+      expect(screen.getByText('Machine health studio')).toBeTruthy();
+      expect(screen.getByText(/Offline sensor data → machine behaviour/)).toBeTruthy();
+      expect(screen.getByText(/Import the CSVs you already have/)).toBeTruthy();
+      // No forecasting promise anywhere on the welcome screen (DESIGN_SYSTEM §5).
+      expect(screen.getByTestId('home-step').textContent).not.toMatch(/predict|before it happens|forecast/i);
       expect(screen.getByText('Ctrl+N')).toBeTruthy();
       expect(screen.getByTestId('machine-canvas').getAttribute('data-variant')).toBe('hero');
       await act(async () => { await Promise.resolve(); });

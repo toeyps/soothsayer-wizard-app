@@ -112,7 +112,7 @@ export default function HomeStep({
           <div style={{ lineHeight: 1.2 }}>
             <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em', color: T.text }}>Wizard</div>
             <div style={{ fontFamily: mono, fontSize: 10.5, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: T.textFaint, marginTop: 1 }}>
-              Predictive maintenance studio
+              Machine health studio
             </div>
           </div>
         </div>
@@ -124,19 +124,19 @@ export default function HomeStep({
               className="motion-safe:animate-pulse"
               style={{ width: 6, height: 6, borderRadius: '50%', background: T.ok, boxShadow: `0 0 10px ${T.ok}` }}
             />
-            Sensor data → failure models
+            Offline sensor data → machine behaviour
           </div>
-          <h1 style={{ margin: '14px 0 0', fontSize: 44, lineHeight: 1.05, fontWeight: 700, letterSpacing: '-0.035em', color: T.text, textWrap: 'balance' }}>
-            See the failure{' '}
+          <h1 style={{ margin: '14px 0 0', fontSize: 'clamp(36px, 3.4vw, 44px)', lineHeight: 1.05, fontWeight: 700, letterSpacing: '-0.035em', color: T.text, textWrap: 'balance' }}>
+            Abnormal behaviour,{' '}
             <span style={{
               background: `linear-gradient(90deg, ${T.accentHi}, ${T.s1} 45%, ${T.s3})`,
               WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
             }}>
-              before it happens.
+              found in your history.
             </span>
           </h1>
           <p style={{ margin: '16px 0 0', maxWidth: '44ch', fontSize: 14.5, lineHeight: 1.6, color: T.textMuted }}>
-            Import plant sensor CSVs, explore every tag, group failure modes and build health-score models — all on this computer.
+            Import the CSVs you already have, explore every tag, group failure modes and score each period against learned normal — all on this computer.
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 28 }}>
             <button

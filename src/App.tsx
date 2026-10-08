@@ -79,7 +79,7 @@ function App() {
         const title = `Wizard${version ? `\nVersion ${version}` : ''}`;
         try {
             await message(
-                `${title}\n\nA desktop tool for CSV sensor data exploration and predictive modeling.`,
+                `${title}\n\nA desktop tool for exploring CSV sensor data and finding abnormal machine behaviour.`,
                 { title: 'About', kind: 'info' }
             );
         } catch {

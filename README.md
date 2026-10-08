@@ -1,8 +1,9 @@
 # Wizard (Soothsayer-Wizard)
 
-Desktop app for importing sensor CSV data, exploring it, grouping sensors into
-failure groups, and training predictive models — built with Tauri v2, React,
-and a Python sidecar for the relationship-model math.
+Desktop app for importing offline sensor CSV data, exploring it, grouping sensors
+into failure groups, and finding abnormal machine behaviour against a learned normal
+(per-sensor models with a health score) — built with Tauri v2, React, and a Python
+sidecar for the relationship-model math.
 
 For a deeper architectural walkthrough (IPC conventions, security constraints,
 data-flow internals) see [`CLAUDE.md`](CLAUDE.md). For a running log of recent

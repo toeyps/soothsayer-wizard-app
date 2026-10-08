@@ -34,8 +34,8 @@
     "publisher": "Alpha-Com Thailand",
     "copyright": "Copyright © 2026 Alpha-Com Thailand",
     "category": "DeveloperTool",
-    "shortDescription": "Sensor data exploration & predictive modeling workspace",
-    "longDescription": "Wizard is a desktop workspace for importing CSV sensor data, building failure groups, and training predictive models.",
+    "shortDescription": "Sensor data exploration & abnormal behaviour analysis workspace",
+    "longDescription": "Wizard is a desktop workspace for importing CSV sensor data, exploring it, grouping failure modes and finding abnormal machine behaviour against learned normal.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

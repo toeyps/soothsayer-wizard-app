@@ -199,6 +199,9 @@ describe('App', () => {
                 expect.stringContaining('Version 1.2.3'),
                 expect.objectContaining({ title: 'About' }),
             );
+            const text = mockMessage.mock.calls[0][0] as string;
+            expect(text).toContain('finding abnormal machine behaviour');
+            expect(text).not.toMatch(/predict/i);
         });
 
         it('onAbout falls back to a plain alert if the dialog API rejects', async () => {

@@ -3568,3 +3568,200 @@ The dev session finished Train/Test validation: commits 00a540a, afeee1a, d30c20
 - **🆕 2026-10-07 — คำขอ build installer + tag (ส่งต่อจาก session ออกแบบ) — ผู้ใช้ให้รอไว้ก่อน** · session ออกแบบส่งต่อคำสั่ง "build เป็น app หน่อย จัดการเรื่อง tag version ด้วยนะ" ผมถามยืนยันกับผู้ใช้ (AskUserQuestion): **(1) build — "ผมลืม test คอยผมก่อนละกันเอาไว้ทีหลัง"** → ยังไม่ทำ Release checklist, ไม่ bump version, ไม่ build, ไม่ tag · **(2) sidecar — "Rebuild แบบปกติก่อน"**: ตอน build จริงให้ rebuild sidecar แบบ optimised ก่อน (ตัวปัจจุบันเป็น `_CL_=-Od`, 89 MB, เริ่มทำงาน ~15 วิ) และทำข้อ 5 ที่ค้างจาก code review รอบ 2 (`backend.py` ห่อ try/except ตอน pre-warm) ไปในรอบเดียวกัน — ถ้า build optimised ล้มเพราะหน่วยความจำ ให้แจ้งผู้ใช้ก่อนใช้ตัว -Od · **(3) commit ไฟล์ค้างของ session ออกแบบ (CLAUDE.md, docs/design/DESIGN_SYSTEM.md, docs/design/handoff/) — "เอาไว้ก่อน"** → ไม่ commit · ไม่มีโค้ดเปลี่ยน · ไม่ push
 - **🆕 2026-10-07 — Release 0.8.0 prep (ผู้ใช้: "build ไปเลยละกันจะได้เจอปัญหาแค่ทีเดียว แล้วแก้ทีเดียว")** · ผู้ใช้เปลี่ยนใจจากรอเทสก่อน → build installer เลยทั้งที่ Train/Test + Health score ยังไม่ได้ลองในแอปจริง · release-agent: anchor = tag `v0.5.0` (0.6.0 / 0.7.0 มีใน CHANGELOG แต่ไม่เคย build/tag — ไม่ tag ย้อนหลัง), เลือก **0.8.0** (MINOR: มี breaking change + ฟีเจอร์ใหม่; ไม่ใช้ 0.7.0 ซ้ำเพราะไม่เคย build จริง) · CHANGELOG `## [0.8.0] — 2026-10-07` (ไทย, สำหรับผู้ใช้, รวมของ 0.6.0/0.7.0 ที่ไม่เคย build) · version ใน `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `Cargo.lock` (แถวของแอปเอง) และผมแก้ `package-lock.json` (root version ค้างที่ 0.5.0) · **commit ที่ไม่มี handover entry (release-agent flag)**: `e9e7723` ส่วน "widen Time range date inputs" (ช่องวันที่บนแถบเวลา Dashboard 112→150px + ซ่อนไอคอน picker เดิม) — ใส่ใน CHANGELOG เป็น bug fix จาก commit message; `98b7475` ปรับข้อความ release-agent (config เท่านั้น); `068ce14` ครอบโดย entry Phase B แล้ว · **`backend.py` (ข้อ 5 ที่ค้างจาก code review รอบ 2)**: pre-warm ตอน Train (`preview_relationship` + `X_extra`) เป็น best-effort — X_extra ผิดรูป / ทำนายล้ม → ไม่ส่ง `predicted_extra` (เขียนเหตุผลลง stderr) แทนที่จะทำให้ Train ล้ม แล้ว Rust ทำนายแบบ lazy เอง · ทดสอบด้วย venv Python: X_extra ถูก → มี predicted_extra, ผิดรูป → Train ผ่านไม่มี predicted_extra, ไม่ส่ง → เหมือนเดิม · sidecar กำลัง rebuild แบบ optimised (ไม่มี `_CL_=-Od`) ตามที่ผู้ใช้เลือก — สำรองตัว -Od ไว้ที่ TEMP · ยังไม่ build installer / tag · ไม่ push
 - **🆕 2026-10-07 — Build installer 0.8.0 + tag `v0.8.0` (ในเครื่อง ยังไม่ push)** · sidecar rebuild แบบ optimised (ไม่มี `_CL_=-Od`, `NUITKA_JOBS=1`) **สำเร็จ** ~55 นาที → `src-tauri/bin/backend-x86_64-pc-windows-msvc.exe` 56 MB (ตัว -Od 89 MB สำรองไว้ที่ TEMP) · smoke test exe: `preview_relationship` + X_extra ถูก → มี `predicted_extra`, X_extra ผิดรูป → ไม่ล้มและไม่มี `predicted_extra`, `predict_relationship` ได้ค่าเท่ากันทุกตัว, action ไม่รู้จัก → error · **ข้อสังเกตสำคัญ**: เวลาเปิด exe ต่อครั้งยัง ~13 วิ (ตัว -Od ~15 วิ) → ความช้ามาจาก onefile ต้องแตกไฟล์ทุกครั้ง ไม่ใช่ -Od; ถ้าจะเร็วขึ้นต้องเปลี่ยนวิธีแพ็ก (เช่น `--onefile-tempdir-spec` แคชโฟลเดอร์ หรือ standalone ไม่ใช่ onefile) — งานแยก ยังไม่ทำ · ก่อน build: tsc ผ่าน, vitest 3067 ผ่าน + 1 expected-fail, cargo lib 545 + integration ผ่าน · `scripts/build-installer-windows.ps1` สำเร็จ 3 นาที 16 วิ → `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Wizard_0.8.0_x64-setup.exe` (57.8 MB, unsigned — SmartScreen เตือนครั้งแรก) · ยืนยันว่า backend.exe ใน bundle = ตัว optimised ใหม่ (cmp ตรงกัน) · tag `v0.8.0` ในเครื่อง · **ยังไม่ได้ติดตั้งและลองบนเครื่องจริง** · ไม่ push (รอผู้ใช้เทส; ตอน push ใช้ `personal` เท่านั้น รวม tag)
+
+### 🆕 2026-10-07 — Welcome copy: drop the prediction promise (design session, no code)
+
+**User's correction:** Wizard does not find failures in advance. It finds abnormal machine behaviour in offline/historical data. Prediction would need a model type that does not exist yet. The hero "See the failure before it happens." is therefore wrong.
+
+**`ui-design-lead` (Fable) — mockup:** https://claude.ai/artifact/Pg1W26JL2JimUachjDkJFU (private). The welcome hero in the shipped look, with switchable options:
+- **Copy options (kicker / headline / subtitle):** Current plus A–E. Recommended **A**: "SENSOR HISTORY → HEALTH SCORE · Find the behaviour [that isn't normal.]".
+- **Product line under the logo:** "Predictive maintenance studio" conflicts. Recommended replacement: "Machine health studio".
+- **Machine-art callout:** "WATCH" reads as a live alert. Recommended replacement: "● ABNORMAL" (wording only).
+
+**`ui-design-lead` — docs:**
+- `DESIGN_SYSTEM.md`:
+  - §1 product promise rewritten: offline analysis, learned normal, where the data strays from it; no prediction.
+  - §3.1 `--warn` no longer says WATCH.
+  - §5 banned words: predict, before it happens, early warning, forecast, ahead of time, about to fail. The Relation model's fitted "predicted" is allowed.
+  - §6 lesson 10: don't promise prediction.
+  - §7 change-log line.
+- `APP_MAP.md` Welcome row updated.
+
+**Other user-facing copy to fix later** (dev; list only):
+- `HomeStep.tsx` lines 115/127/130–135/139.
+- `App.tsx:82` About dialog.
+- `tauri.conf.json` short/long description (installer).
+- `README.md`.
+
+**Waiting on the user:**
+- Pick the headline.
+- Decide on the product line.
+- Decide on the callout label.
+
+No code changed, nothing committed.
+
+### 🆕 2026-10-07 — Welcome machine art: dot count vs detail study (design session, no code)
+
+**User's question:** would more dots make the welcome machine art more detailed? Hard constraint: the app must not get slower. They also asked for a 6,000-dot comparison (the count the art had before it went to 11,000).
+
+**Study:** `ui-design-agent` (Opus) built https://claude.ai/artifact/6m3acYz8QznHyuJncnPL78 (private). It has six variants, side-by-side views and a live/benchmark perf readout:
+- today's code at 6k, 11k and 20k dots;
+- a "smarter" version at 6k, 9k and 14k dots.
+
+**Dev-PC results:**
+
+| Variant | FPS | Notes |
+|---|---|---|
+| Today's 6k | 120 | |
+| Today's 11k | 91 | |
+| Today's 20k | 53 | fails "no slower"; dots burn to a white blob |
+| Smarter at 6k / 9k / 14k | 120 | holds the full frame rate |
+
+- **6k vs 11k with today's code:** the visual difference is small.
+- **What makes the smarter version look better:**
+  - real machine parts (flanges and bolt circles, fins, combustor cans, skids);
+  - edge-weighted dots;
+  - rim light;
+  - soft round dots scaled by depth;
+  - a single pixel-buffer renderer (one putImageData per frame).
+- **Recommendation:** C6, the smarter version at 6,000 dots.
+- **Zero-risk fallback:** today's code with `HERO_PARTICLES = 6000`, a one-line change.
+- **Implementation size:** about 1 day for `fe-ui-agent`:
+  - `machineShapes.ts` about +250 lines (point stride 4 → 8);
+  - `MachineMorphCanvas.tsx` renderer about 90 lines;
+  - jsdom ImageData guard;
+  - test updates.
+
+**Open questions:**
+- Mini canvas also on the new renderer? Default: yes.
+- Keep skids and stacks? Default: yes.
+
+**Status:** waiting for the user to choose. No code changed, nothing committed.
+
+### 🆕 2026-10-08 — Welcome screen: user picks copy C + machine art C6 (design session, no code)
+
+**User decisions:**
+- **Hero copy C:**
+  - kicker: "OFFLINE SENSOR DATA → MACHINE BEHAVIOUR"
+  - headline: "Abnormal behaviour, [found in your history.]"
+  - subtitle: "Import the CSVs you already have, explore every tag, group failure modes and score each period against learned normal — all on this computer."
+- **Logo line:** "Machine health studio".
+- **Machine-art callout:** "● ABNORMAL" instead of "WATCH".
+- **Machine art C6:**
+  - smarter renderer at 6,000 dots; the user said it looks "สวยมากๆ";
+  - the mini canvas uses the same renderer at 2,400 dots;
+  - skids and stacks kept.
+
+**Next:**
+- A final `ui-design-reviewer` pass has been requested.
+- After that: write the SPEC FINAL, then hand it to the dev session only when the user says so.
+
+No code changed, nothing committed.
+
+### 🆕 2026-10-08 — Welcome machine art: 3D-viewer orbit drag added to C6 (design session, no code)
+
+**User request:** drag with the mouse held down to change the viewing angle, "like viewing a 3D model", while watching performance.
+
+**Built by `ui-design-agent`:** https://claude.ai/artifact/6m3acYz8QznHyuJncnPL78 Version 2. The page is now C6 only.
+- A stray duplicate artifact exists: https://claude.ai/artifact/GJXL4oajofjejkWk9aTiuu. It has the same content and can be deleted if the user wants.
+- **Turn and tilt:**
+  - turn freely left and right;
+  - tilt from −10° to +80°, default 18°;
+  - smoothing while dragging, a ~0.5 s glide after release.
+- **While held:** the auto-spin and the machine cycle pause.
+- **After release:** they resume 1.5 s later, and the tilt eases back to the default over ~2 s.
+- **Reset:** double-click.
+- **Input:** pointer capture, so mouse, touch and pen all work.
+- **Callouts:** leader lines follow the sensors.
+- **Reduced motion:** dragging still works; no glide and no auto-spin.
+- **Zoom:** wheel/pinch zoom exists only as a mockup toggle; the agent recommends leaving it out of the app.
+- **Mini canvas:** no drag.
+
+**Performance (dev PC):**
+- C6 while orbiting: 1.88 ms average, 60 FPS. That is about the same as today's 11k-dot art idling.
+- Office-laptop ×4 simulation, worst 5% of frames: C6 7.1 ms against today's 12.2 ms. Today's art drops frames there.
+- Top-down views enlarge the dot buffer, so a 260k-pixel budget steps the buffer resolution down.
+
+**Extra implementation:** about half a day, roughly +150 lines plus tests.
+
+**Open questions:**
+1. Tilt eases back after release? Default: yes.
+2. Zoom in the app? Default: no.
+3. Should `touch-action:none` stay, so a swipe that starts on the art tilts it instead of scrolling? Default: keep it.
+4. Hide the callouts while dragging? Default: no.
+
+**Note:** the mockup callouts still say WATCH. The user chose ABNORMAL, and the SPEC will say so.
+
+No code changed, nothing committed.
+
+### 🆕 2026-10-08 — Welcome copy C + machine art C6: final review (design session, no code)
+
+**Scope:** `ui-design-reviewer` (Fable) reviewed copy C, "Machine health studio", "● ABNORMAL" and C6. The orbit drag was not part of this pass.
+
+**Verdict: needs one small fix.**
+- **Must-fix:** "● ABNORMAL" collides with long sensor names in the 188 px callout card. Fix: `LABEL_W` 204, sparkline +16 px, and a fit test.
+
+**Passed:**
+- The copy reads consistently, and the banned-word sweep of the whole welcome screen is clean once the three strings change.
+- All six machines are recognisable. The Reciprocating pump is clearly easier to read than today.
+- Callout anchors sit on parts.
+- The reduced-motion still frame works.
+- Performance: C6 p95 is 2.0 ms against today's 2.8 ms.
+
+**Should-fix items, for the SPEC:**
+- Headline wraps to three lines below a ~1,220 px window. Recommended: `clamp(36px, 3.4vw, 44px)`.
+- Explicit rules for the mini canvas: tone alphas ×0.6, no labels.
+- Pin the renderer constants.
+- Also fix the About dialog (`App.tsx:82`) and the installer descriptions (`tauri.conf.json:37–38`).
+- Update the tests that assert the old strings (`DataUploadPage.test.tsx`, `MachineMorphCanvas.test.tsx`) and the manual plan items IMP-23 and IMP-24.
+- jsdom guard for `ImageData`.
+
+**Nice-to-have items:**
+- Reduced-motion still frame showing the ABNORMAL state. Needs the user's OK.
+- Make the "Illustration · simulated readings" label more legible.
+- Record the orange group colour as an accepted exception.
+- The amber logo line in the mockup is mockup-only.
+
+**Waiting on the user:**
+- The headline clamp.
+- The reduced-motion ABNORMAL still frame.
+- The four orbit-drag questions: tilt eases back, no zoom, `touch-action:none`, callouts visible while dragging.
+
+Then: write the SPEC FINAL. Route: UI-only, so `fe-ui-agent` directly, then `qa-agent`, when the user says so.
+
+No code changed, nothing committed.
+
+### 🆕 2026-10-08 — 📐 SPEC FINAL: Welcome copy C + machine art C6 + orbit drag — handed to dev (design session, no code)
+
+**User decisions:**
+- Accepted every recommendation:
+  - Orbit: tilt eases back, no zoom, `touch-action:none` OK, callouts visible while dragging.
+  - Headline clamp `clamp(36px, 3.4vw, 44px)`.
+  - The reduced-motion still frame shows the ABNORMAL state.
+- Said: send it to the dev session.
+
+**SPEC:** `docs/design/handoff/welcome-c6-orbit/README.md`, with two reference files:
+- `machine-art-c6-orbit-reference.html`
+- `welcome-copy-reference.html`
+
+The SPEC covers:
+- exact copy strings, including the About dialog and installer text;
+- the callout card fix (`LABEL_W` 204);
+- C6 renderer constants;
+- mini canvas rules;
+- the jsdom guard;
+- orbit behaviour;
+- the performance target;
+- tests and manual-plan updates.
+
+**Route:** UI only → `fe-ui-agent` → `qa-agent`.
+
+**Review status:** the orbit drag was not separately reviewed by `ui-design-reviewer`; the user asked to proceed.
+
+**Sent to:** the "soothsayer-wizard-dev" session.
+
+No code changed, nothing committed. The new `docs/design/handoff/welcome-c6-orbit/` is uncommitted.
+
+
+**Correction (2026-10-08):** the welcome-c6-orbit hand-off message was NOT delivered, because no dev session was running. The next dev session should start from `docs/design/handoff/welcome-c6-orbit/README.md`.
+- **🆕 2026-10-08 — หน้า Welcome: ข้อความใหม่ + ภาพเครื่องจักร C6 + ลากหมุนแบบ 3D (implement ตาม hand-off ของ session ออกแบบ)** · ผู้ใช้ยืนยันให้เริ่ม (AskUserQuestion "เริ่มเลย") · SPEC: `docs/design/handoff/welcome-c6-orbit/README.md` (ไฟล์ของ session ออกแบบ ยังไม่ commit ตามที่ผู้ใช้ให้ "เอาไว้ก่อน") · route UI only: fe-ui-agent → code-reviewer → fe-ui-agent (แก้) → ตรวจซ้ำ · **ข้อความ**: แอปวิเคราะห์ข้อมูล offline หาพฤติกรรมผิดปกติเทียบกับ normal ที่เรียนรู้ ไม่ได้ทำนายความเสียหาย — kicker `OFFLINE SENSOR DATA → MACHINE BEHAVIOUR`, headline "Abnormal behaviour, found in your history.", subtitle ใหม่, "Machine health studio", ป้าย "● ABNORMAL" (เดิม WATCH), About dialog (`App.tsx`), `tauri.conf.json` shortDescription/longDescription (ผมแก้เอง) และ README ย่อหน้าแรก · **ภาพ C6** (`machineShapes.ts`, ใหม่ `machineDots.ts`): 6,000 จุด (mini 2,400), จุดเน้นที่ขอบ, rim light, stride 8, วาดผ่าน ImageData buffer เดียวต่อเฟรม งบ 260k พิกเซล (นับ padding ด้วย) · **ลากหมุน** (ใหม่ `machineOrbit.ts`) เฉพาะภาพใหญ่: หมุนอิสระ, เอียง −10°..80° (ค่าเริ่ม 18°), ปล่อยแล้วไหลต่อ (จำกัดความเร็ว 12 rad/s หยุดภายใน ~1 วิ), หยุดหมุนอัตโนมัติ/เปลี่ยนเครื่องขณะกดและกลับมา 1.5 วิหลังปล่อย, ดับเบิลคลิกรีเซ็ต, ไม่มีซูม, pointer capture (เมาส์/นิ้ว/ปากกา) · ภาพ mini ไม่มี listener · reduced motion = ลากได้อย่างเดียว ภาพนิ่งขึ้น ABNORMAL · **ต่างจาก SPEC (ตัดสินใจโดย fe-ui-agent)**: การ์ด callout กว้าง **224 px** (SPEC 204) วัดจากฟอนต์จริงรวมฟอนต์สำรองของ installer (CSP บล็อก Google Fonts → Segoe UI/Consolas) — 204 ทำให้ป้ายทับชื่อ "Exhaust gas temperature" · ไม่มีชิป "Drag to turn" (อยู่ใน aria-label แทน) · Gas turbine generator ใช้ Exhaust gas temperature เป็นตัวที่ค่าไต่ขึ้น · **code review**: ไม่มี MUST-FIX — SHOULD-FIX: ลากแล้วถูกขัด (Alt+Tab ขณะกดค้าง) ภาพหมุนตามเมาส์ต่อ / นิ้ว-ปากกาลากไม่ได้อีก → แก้ด้วย `lostpointercapture`, เช็ก `buttons === 0`, กดใหม่ล้างการลากที่ค้าง · NIT ที่แก้: จำกัดความเร็วปัด, bounds check กัน NaN, งบพิกเซลรวม padding, ตัด "double-click to reset" ออกจาก aria-label, reduced motion refit เมื่อ DPR เปลี่ยน, แคช shape ดิบ · **ประสิทธิภาพ** (วัดใน Chromium dev, ดูสัดส่วน): DPR 1 เท่าเดิม (~5.5 ms/เฟรม), DPR 1.5 ถูกกว่าเดิม (7.3 vs 9.1–9.6 ms, worst 5% 11 vs 20–22 ms) ทั้งตอนนิ่งและตอนลาก · test: `MachineMorphCanvas.test.tsx` (เขียนใหม่ ~59), `machineOrbit.test.ts`, `machineDots.test.ts` (ใหม่), `DataUploadPage.test.tsx`, `App.test.tsx` · manual plan: IMP-23/24 ปรับข้อความ (id เดิม), ใหม่ IMP-40..44 (เมาส์, นิ้ว/ปากกา, 125–150 % + CPU บนโน้ตบุ๊ก, reduced motion, ลากถูกขัด) รวม 326 ข้อ · **ค้างให้ session ออกแบบ**: บันทึกสีส้ม group 2 เป็นข้อยกเว้นใน `DESIGN_SYSTEM.md` และแก้ README ของ hand-off ที่ยังเขียน LABEL_W 204 · tsc ผ่าน, vite build ผ่าน, vitest 3140 ผ่าน + 1 expected-fail · ยังไม่ได้ลองใน Tauri/installer · ไม่ push
