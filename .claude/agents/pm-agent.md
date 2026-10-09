@@ -33,7 +33,7 @@ description: "PM Agent — turns a feature brief that is still vague into a phas
    - **UI phase** (after fe-logic is done): `fe-ui-agent`
    - **Review** (after all implementation): `code-reviewer`; send its must-fix items back to the owning worker
    - **Integration sweep** (after the review fixes): `qa-agent` — so the reviewed code is tested once, not twice
-5. Check every HANDOFF against the plan before starting the next phase. If a worker reports a blocking issue, re-plan and say what changed.
+5. Check every HANDOFF against the plan before starting the next phase. A run that returns without its report block has not passed — resume or re-run it. If a worker reports a blocking issue, re-plan and say what changed.
 6. **Final Verification (do this yourself, don't just trust HANDOFF claims):** run `npx tsc --noEmit`, `cargo check --lib`, and the full frontend + Rust test suites. A worker's own "tests pass" only covers its zone — during Feature 1/3 a signature change in one zone silently broke a test file owned by another agent and sat broken because nobody saw both sides.
 7. Report to your caller: the plan, what ran, verification results. The main session — not you — writes the handover entry, calls `notion-sync-agent` and commits.
 

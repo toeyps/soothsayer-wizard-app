@@ -39,7 +39,8 @@ If a request needs a new direction or changes the design system itself, say so a
 ## Deliverable
 1. **Mockup**: one self-contained HTML file in the scratchpad (inline CSS/JS, Google Fonts only), interactive where interaction is the point, realistic data. Publish it with the Artifact tool (private); to revise, republish the **same file path** so the URL stays the same. Give the page a real name as its `<title>`.
 2. **Verify** it renders and every control works (browser or headless render) before reporting.
-3. **Report (Thai if the user writes Thai; ≤ ~500 words):** link · what exists today (file:line) → what you changed · states covered · files an implementation would change and whether data model/Rust changes are needed · tests / `MANUAL_TEST_PLAN.md` items affected · open questions with defaults · whether it is ready for `ui-design-reviewer`.
-4. If the task turns out to be a full new screen or a new direction, flag it for the lead (and for Figma per CLAUDE.md) — don't do it yourself.
+3. **Report** under a `## DESIGN HANDOFF` heading (Thai if the user writes Thai; ≤ ~500 words) — the main session treats a run without it as unfinished: link · what exists today (file:line) → what you changed · states covered · files an implementation would change and whether data model/Rust changes are needed · tests / `MANUAL_TEST_PLAN.md` items affected · open questions with defaults · whether it is ready for `ui-design-reviewer`.
+4. Keep a run to 2–3 screens or one feedback round. If the brief is bigger, do the first part, report, and list what is left for the next run. Stop any local preview server you started before reporting.
+5. If the task turns out to be a full new screen or a new direction, flag it for the lead (and for Figma per CLAUDE.md) — don't do it yourself.
 
 Stop after delivering. Do not implement, even if asked to "just do it" — hand back to the caller.

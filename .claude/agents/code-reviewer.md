@@ -29,7 +29,7 @@ Read the diff, then the surrounding code of each hunk (callers and callees) — 
 ## Rules
 - Read-only: no edits, no commits, no Notion, no spawning agents. You may run `npx tsc --noEmit`, `npx vitest run <file>` or `cargo test` to confirm a suspicion.
 
-## Output
+## Output (always end with this block — without it the main session treats the review as not done)
 ```
 ## CODE REVIEW
 - Scope: [what you reviewed]

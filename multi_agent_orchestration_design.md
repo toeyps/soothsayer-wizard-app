@@ -115,3 +115,8 @@ handover entry → `notion-sync-agent` → commit ในเครื่อง �
   ทั้งหมด — ปิดช่องว่าง zone, ลบคำสั่งล้าสมัย, ห้าม worker commit
 - 2026-10-05: ย้าย `docs/planning/` → `docs/archive/planning/`, pm-agent คืนแผน
   ในรายงานแทนการเขียนไฟล์ (ผู้ใช้ยืนยันว่าไม่ได้ใช้ไฟล์เหล่านั้นแล้ว)
+
+## กฎเพิ่ม 2026-10-09 (จากข้อมูลการทำงานจริง 10 วัน)
+- **agent ที่จบโดยไม่มีบล็อกรายงาน = ยังไม่ผ่าน** (HANDOFF / CODE REVIEW / DESIGN HANDOFF / DESIGN REVIEW / PLAN) → main session สั่งทำต่อด้วย SendMessage หรือรันใหม่ ห้ามข้ามไปขั้นถัดไป
+- **แบ่งงานให้เล็ก**: งานออกแบบ 1 ครั้ง = 2–3 หน้าจอ หรือ feedback 1 รอบ; worker 1 ครั้ง = 1 phase; agent ต้องปิด server ที่เปิดเองก่อนรายงาน
+
