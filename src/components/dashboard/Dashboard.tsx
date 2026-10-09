@@ -2690,7 +2690,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             }}>
                                 {chartType === 'scatter'
                                     ? 'Scatter Plot: pick the X/Y sensor pair from the dropdowns above the chart. Colour points by value or highlight them by time from the Highlights tab.'
-                                    : 'Pair Plot: lasso-select points in any cell to brush a colored cluster — recolor or delete clusters from the panel under the chart.'}
+                                    : 'Pair Plot: lasso-select points in any cell to brush a colored cluster — pick a cluster colour or remove a cluster from the chips above the matrix.'}
                             </div>
                         )}
                         {selectedSensors.map((sensor) => {

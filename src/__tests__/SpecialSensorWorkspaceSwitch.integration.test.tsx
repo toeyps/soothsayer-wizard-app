@@ -187,7 +187,6 @@ vi.mock('../workspaceManager', () => {
         deleteWorkspace: async () => {},
         renameWorkspaceFile: async () => {},
         duplicateWorkspace: async () => {},
-        writeUserTextFile: async () => {},
     };
 });
 

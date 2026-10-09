@@ -79,14 +79,10 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-describe('writeUserTextFile', () => {
-    it('encodes a UTF-8 string and bridges through write_user_file', async () => {
-        const { writeUserTextFile } = await freshModule();
-        await writeUserTextFile('C:/out.txt', 'hi');
-        expect(mockInvoke).toHaveBeenCalledWith('write_user_file', {
-            path: 'C:/out.txt',
-            contents: Array.from(new TextEncoder().encode('hi')),
-        });
+describe('user-picked file exports', () => {
+    it('no longer exports writeUserTextFile (its last caller, the Pair Plot CSV export, was removed 2026-10-09)', async () => {
+        const mod = await freshModule();
+        expect('writeUserTextFile' in mod).toBe(false);
     });
 });
 

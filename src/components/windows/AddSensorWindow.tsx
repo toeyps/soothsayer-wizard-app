@@ -1492,7 +1492,7 @@ export default function AddSensorWindow() {
         // through the window's metadata + the special sensors' ƒ / Σ badges.
         <SensorMetaProvider metadata={sensorMetadata} special={recipes}>
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', position: 'relative' }}>
-            {/* Header — matches View Table dialog (.pair-regl-modal-header) */}
+            {/* Header — 12px 16px padding + bottom border, the app's dialog header shape */}
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
                 <div className="flex items-center" style={{ gap: '14px' }}>
                     <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Special Sensors</h2>

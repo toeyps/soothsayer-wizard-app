@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
-import { Download, Lasso, Move, RotateCcw, Table2, X, Search, Trash2 } from 'lucide-react';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeUserTextFile } from '../../workspaceManager';
+import { Lasso, Move, RotateCcw, X, Search } from 'lucide-react';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import AxisLabel from './AxisLabel';
-import ColourPicker from '../sensor/ColourPicker';
+import ClusterLegend from './ClusterLegend';
+import { nextClusterColour, nextClusterName } from './pairPlotClusters';
 import { SensorInline } from '../sensor/SensorLabel';
 import { SensorMetaContext, fmtNum, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
@@ -13,14 +12,6 @@ import { ACCENT_HEX, CANVAS_BG_HEX, correlationGradientHex, hexToRgba, hexToRgba
 import { pearsonCorrelation } from './pairPlotStats';
 
 type Tool = 'lasso' | 'pan';
-
-/** Max rows rendered in the dialog table at once. Keeps the DOM cheap and
- *  the scroll responsive on huge lassos; the full set is still in memory
- *  and exportable via the in-dialog CSV button. */
-const TABLE_PAGE = 500;
-
-/** Width of the row-label column at the very left. */
-const HEAD_W = 0;
 
 /** Colour used by every scatter cell — keeps the matrix visually cohesive so
  *  the user reads density / shape rather than chasing per-cell hue. Derived
@@ -31,19 +22,6 @@ const POINT_COLOR: [number, number, number, number] = hexToRgba(ACCENT_HEX, 0.55
 /** Must match PairPlotCell's AXIS_PAD so the diagonal histogram's frame
  *  has the exact same inset as every scatter cell. */
 const CELL_PAD = { left: 36, right: 4, top: 14, bottom: 18 };
-
-/** Default colour palette for newly-spawned clusters. Cycles when the user
- *  brushes more than 8 clusters; per-cluster colour picker can override. */
-const CLUSTER_PALETTE: Array<[number, number, number, number]> = [
-    [0.99, 0.75, 0.18, 1.0],  // amber
-    [0.20, 0.83, 0.60, 1.0],  // emerald
-    [0.86, 0.40, 0.97, 1.0],  // fuchsia
-    [0.99, 0.45, 0.45, 1.0],  // rose
-    [0.40, 0.85, 0.99, 1.0],  // sky
-    [0.99, 0.55, 0.27, 1.0],  // orange
-    [0.65, 0.85, 0.40, 1.0],  // lime
-    [0.78, 0.66, 0.99, 1.0],  // violet
-];
 
 /** Compact diagonal histogram — pure SVG so the cell doesn't burn a WebGL
  *  context just to draw 20 bars. Uses the same pixel padding as PairPlotCell
@@ -214,11 +192,24 @@ function CorrelationCell({
     );
 }
 
+/** True when the WebGL cells would draw `a` and `b` identically — same ids,
+ *  colours and row sets (labels are not drawn). */
+function sameForCells(a: Cluster[], b: Cluster[]): boolean {
+    return a.length === b.length && a.every((c, i) =>
+        c.id === b[i].id && c.color === b[i].color && c.rowIndices === b[i].rowIndices);
+}
+
+/** Focus the first control of a toolbox (the legend's focus fallback). */
+function focusFirstTool(el: HTMLElement | null) {
+    el?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+}
+
 function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     // Customer item 3: axis hover cards and the hover tooltip resolve labels through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     /** Ordered list of brushed clusters. Each lasso pushes a new entry; the
-     *  user can recolour or delete any cluster from the bottom panel. */
+     *  user can recolour, rename or remove any cluster from the legend chips
+     *  above the matrix. Session-only — clusters are never persisted. */
     const [clusters, setClusters] = useState<Cluster[]>([]);
     /** Counter for unique cluster IDs (Date.now would collide if two lassos
      *  fire in the same ms while React batches state updates). */
@@ -232,12 +223,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
      *  `sc.reset()` once when it changes. Lets the toolbox broadcast a
      *  reset action to every WebGL canvas without holding refs to them all. */
     const [resetTick, setResetTick] = useState(0);
-    /** Dialog open state — drives the in-app review modal that replaced
-     *  the immediate CSV download. */
-    const [tableOpen, setTableOpen] = useState(false);
-    /** Cluster IDs currently visible in the View Table dialog. Reset to "all
-     *  enabled" every time the dialog opens — see the `openTable` helper. */
-    const [tableFilter, setTableFilter] = useState<Set<string>>(new Set());
     /** Inspect-mode toggle. When true every cell shows an overlay that
      *  intercepts clicks → opens the enlarged view dialog. Auto-disabled
      *  after one click so the cursor returns to normal interactions. */
@@ -252,80 +237,63 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
 
     const n = sensors.length;
 
-    /** Lasso completed → spawn a new cluster with the next palette colour. */
+    /** Lasso completed → spawn a new cluster: the smallest free "Cluster N"
+     *  name and the first palette colour no cluster uses yet. */
     const handleLasso = useCallback((rows: number[]) => {
         if (rows.length === 0) return;
-        setClusters(prev => {
-            const id = `c-${++clusterSeqRef.current}`;
-            const color = CLUSTER_PALETTE[prev.length % CLUSTER_PALETTE.length];
-            return [...prev, {
-                id,
-                label: `Cluster ${prev.length + 1}`,
-                color,
-                rowIndices: new Set(rows),
-            }];
-        });
+        setClusters(prev => [...prev, {
+            id: `c-${++clusterSeqRef.current}`,
+            label: nextClusterName(prev),
+            color: nextClusterColour(prev),
+            rowIndices: new Set(rows),
+        }]);
     }, []);
 
     const handleDeleteCluster = useCallback((id: string) => {
         setClusters(cs => cs.filter(c => c.id !== id));
     }, []);
 
+    /** Rename / recolour return the SAME array when nothing changes (e.g.
+     *  picking the colour a cluster already has), so nothing re-renders. */
+    const handleRename = useCallback((id: string, name: string) => {
+        setClusters(cs => cs.some(c => c.id === id && c.label !== name)
+            ? cs.map(c => c.id === id ? { ...c, label: name } : c)
+            : cs);
+    }, []);
+
     const handleRecolour = useCallback((id: string, hex: string) => {
-        const rgba = hexToRgba(hex);
-        setClusters(cs => cs.map(c => c.id === id ? { ...c, color: rgba } : c));
+        const want = hex.toLowerCase();
+        setClusters(cs => cs.some(c => c.id === id && rgbaToHex(c.color) !== want)
+            ? cs.map(c => c.id === id ? { ...c, color: hexToRgba(want) } : c)
+            : cs);
     }, []);
 
-    /** Union of every cluster's rows — used for the View Table dialog +
-     *  the bottom panel count. */
-    const allClusterRows = useMemo(() => {
-        const s = new Set<number>();
-        for (const c of clusters) for (const r of c.rowIndices) s.add(r);
-        return s;
-    }, [clusters]);
+    /** What the WebGL cells draw from. A rename only changes a label, which
+     *  the cells never read, so this keeps the previous array (same
+     *  reference) unless an id, colour or row set changed — PairPlotCell is
+     *  memoised, so renaming re-renders the legend and nothing else. */
+    const [cellClusters, setCellClusters] = useState<Cluster[]>(clusters);
+    if (cellClusters !== clusters && !sameForCells(cellClusters, clusters)) {
+        // "Adjust state while rendering" (React docs): re-renders this
+        // component before any child, no ref read during render.
+        setCellClusters(clusters);
+    }
 
-    /** Maps each row index to the cluster it belongs to — for the View
-     *  Table's per-row colour swatch column. */
-    const rowToCluster = useMemo(() => {
-        const m = new Map<number, Cluster>();
-        for (const c of clusters) for (const r of c.rowIndices) m.set(r, c);
-        return m;
-    }, [clusters]);
-
-    /** Rows visible in the table after applying the active filter chips.
-     *  Sorted ascending so the table reads top→bottom by source position. */
-    const tableRows = useMemo(() => {
-        const arr: number[] = [];
-        for (const r of allClusterRows) {
-            const c = rowToCluster.get(r);
-            if (c && tableFilter.has(c.id)) arr.push(r);
-        }
-        return arr.sort((a, b) => a - b);
-    }, [allClusterRows, rowToCluster, tableFilter]);
-
-    /** Open the dialog with every cluster's filter enabled. Toggling chips
-     *  from there narrows the view; closing + reopening resets to "all on". */
-    const openTable = useCallback(() => {
-        setTableFilter(new Set(clusters.map(c => c.id)));
-        setTableOpen(true);
-    }, [clusters]);
-
-    const toggleClusterFilter = useCallback((id: string) => {
-        setTableFilter(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    }, []);
-
-    /** Reset every cell's camera back to the full data extent + drop ALL
-     *  clusters. Bumping `resetTick` propagates the camera reset to each
-     *  PairPlotCell via its own effect. */
-    const handleReset = useCallback(() => {
+    /** Toolbox reset = every cell's camera only (bumping `resetTick`
+     *  propagates it to each PairPlotCell). Clusters stay — removing them is
+     *  the legend's own × / Clear: two intents, two controls. */
+    const handleResetView = useCallback(() => {
         setResetTick(t => t + 1);
+    }, []);
+
+    const handleClearClusters = useCallback(() => {
         setClusters([]);
     }, []);
+
+    const toolboxRef = useRef<HTMLDivElement>(null);
+    const expandToolboxRef = useRef<HTMLDivElement>(null);
+    const focusToolbox = useCallback(() => focusFirstTool(toolboxRef.current), []);
+    const focusExpandToolbox = useCallback(() => focusFirstTool(expandToolboxRef.current), []);
 
     // Pre-extract each sensor's column once for the diagonal histograms — saves
     // doing it inside the diagonal component each render.
@@ -349,50 +317,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
         }
         return map;
     }, [sensorVals, sensors.length]);
-
-    const handleExportCsv = useCallback(async () => {
-        // Export reflects the dialog's current filter — what you see is what
-        // you get. Enable every chip first if you want the full set.
-        if (tableRows.length === 0) return;
-
-        // Native save dialog: user picks destination + filename. Cancelling
-        // returns null → bail without writing.
-        let filePath: string | null = null;
-        try {
-            filePath = await save({
-                filters: [{ name: 'CSV Files', extensions: ['csv'] }],
-                defaultPath: `pair-plot-clusters-${new Date().toISOString().slice(0, 10)}.csv`,
-            });
-        } catch (err) {
-            console.error('Save dialog failed:', err);
-            return;
-        }
-        if (!filePath) return;
-
-        const cols = ['cluster', 'rowIndex', 'timestamp', ...sensors];
-        const escape = (v: string) => /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-        const lines = [cols.map(escape).join(',')];
-        for (const r of tableRows) {
-            const row = data[r];
-            if (!row) continue;
-            const cluster = rowToCluster.get(r);
-            lines.push([
-                cluster?.label ?? '',
-                String(r),
-                row.timestamp ?? '',
-                ...sensors.map(s => {
-                    const idx = headers.indexOf(s);
-                    return idx >= 0 && row.values[idx] != null ? String(row.values[idx]) : '';
-                }),
-            ].map(escape).join(','));
-        }
-
-        try {
-            await writeUserTextFile(filePath, lines.join('\n'));
-        } catch (err) {
-            console.error('CSV write failed:', err);
-        }
-    }, [tableRows, rowToCluster, data, sensors, headers]);
 
     if (n < 2) {
         return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
@@ -421,7 +345,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
         <div className="pair-regl-wrap">
             {/* Global toolbox — Lasso / Pan-zoom are mutually exclusive, shared
                 by every cell in the matrix (and the enlarged-view dialog). */}
-            <div className="pair-regl-toolbox">
+            <div className="pair-regl-toolbox" ref={toolboxRef}>
                 <button
                     onClick={() => setTool('lasso')}
                     className={`scatter-regl-tool${tool === 'lasso' ? ' active' : ''}`}
@@ -447,13 +371,25 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                     <Search size={13} />
                 </button>
                 <button
-                    onClick={handleReset}
+                    onClick={handleResetView}
                     className="scatter-regl-tool"
-                    title="Reset view + clear selection"
+                    title="Reset view (zoom and pan) — clusters stay"
                 >
                     <RotateCcw size={13} />
                 </button>
             </div>
+
+            {/* Cluster legend — chips in the strip above the matrix, left of
+                the toolbox, so it never covers a data point. */}
+            <ClusterLegend
+                clusters={clusters}
+                onRecolour={handleRecolour}
+                onRename={handleRename}
+                onRemove={handleDeleteCluster}
+                onClear={handleClearClusters}
+                focusFallback={focusToolbox}
+                className="pp-legend-top"
+            />
 
             <div className="pair-regl-grid" style={gridTemplate}>
                 {Array.from({ length: n }, (_, i) => {
@@ -498,7 +434,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         showXLabel={false}
                                         showYLabel={false}
                                         tool={tool}
-                                        clusters={clusters}
+                                        clusters={cellClusters}
                                         onLasso={handleLasso}
                                         onHover={setHover}
                                         pointColor={POINT_COLOR}
@@ -551,7 +487,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                 showXLabel={false}
                                 showYLabel={false}
                                 tool={tool}
-                                clusters={clusters}
+                                clusters={cellClusters}
                                 onLasso={handleLasso}
                                 onHover={setHover}
                                 pointColor={POINT_COLOR}
@@ -614,64 +550,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                 </div>
             )}
 
-            {/* Cluster list — shown once at least one lasso has run. Each
-                row is a colour swatch (clickable colour picker) + label +
-                point count + delete. Header summarises totals and exposes
-                View Table + Reset for bulk actions. */}
-            {clusters.length > 0 && (
-                <div className="pair-regl-cluster-panel" style={{ left: HEAD_W + 10 }}>
-                    <div className="pair-regl-cluster-panel-head">
-                        <span>
-                            <b>{clusters.length}</b> cluster{clusters.length === 1 ? '' : 's'}
-                            <span className="pair-regl-cluster-sep"> · </span>
-                            <b>{allClusterRows.size.toLocaleString()}</b> rows
-                        </span>
-                        <div className="scatter-regl-actions">
-                            <button
-                                onClick={openTable}
-                                className="scatter-regl-btn"
-                                title="View brushed rows in a table"
-                            >
-                                <Table2 size={12} /> View Table
-                            </button>
-                            <button
-                                onClick={handleReset}
-                                className="scatter-regl-btn scatter-regl-btn-icon"
-                                title="Reset view + drop all clusters"
-                            >
-                                <RotateCcw size={12} />
-                            </button>
-                        </div>
-                    </div>
-                    <ul className="pair-regl-cluster-list">
-                        {clusters.map(c => (
-                            <li key={c.id} className="pair-regl-cluster-row">
-                                {/* Customer item 4: the shared ColourPicker replaces the OS
-                                    colour dialog (unthemed, could not mark colours in use). */}
-                                <ColourPicker
-                                    color={rgbaToHex(c.color)}
-                                    onChange={hex => handleRecolour(c.id, hex)}
-                                    used={clusters.filter(o => o.id !== c.id).map(o => rgbaToHex(o.color))}
-                                    label={c.label}
-                                    title="Cluster colour"
-                                />
-                                <span className="pair-regl-cluster-label">{c.label}</span>
-                                <span className="pair-regl-cluster-count">
-                                    {c.rowIndices.size.toLocaleString()} rows
-                                </span>
-                                <button
-                                    onClick={() => handleDeleteCluster(c.id)}
-                                    className="scatter-regl-btn scatter-regl-btn-icon"
-                                    title={`Delete ${c.label}`}
-                                >
-                                    <Trash2 size={11} />
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
             {/* Enlarged view dialog — opens when the magnifier picks a cell.
                 Reuses the same components (PairPlotCell / DiagonalHistogram)
                 at full dialog size + a mini toolbox (no magnifier here so
@@ -687,7 +565,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                 {expanded.kind === 'scatter' && `${expanded.sensorX} × ${expanded.sensorY}`}
                                 {expanded.kind === 'time' && `${expanded.sensorY} × Time`}
                             </div>
-                            <div className="pair-regl-expand-toolbox">
+                            <div className="pair-regl-expand-toolbox" ref={expandToolboxRef}>
                                 {expanded.kind !== 'diagonal' && (
                                     <>
                                         <button
@@ -709,17 +587,9 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     </>
                                 )}
                                 <button
-                                    onClick={openTable}
+                                    onClick={handleResetView}
                                     className="scatter-regl-tool"
-                                    title="View brushed rows"
-                                    disabled={allClusterRows.size === 0}
-                                >
-                                    <Table2 size={13} />
-                                </button>
-                                <button
-                                    onClick={handleReset}
-                                    className="scatter-regl-tool"
-                                    title="Reset view + drop all clusters"
+                                    title="Reset view (zoom and pan) — clusters stay"
                                 >
                                     <RotateCcw size={13} />
                                 </button>
@@ -751,7 +621,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     showXLabel
                                     showYLabel
                                     tool={tool}
-                                    clusters={clusters}
+                                    clusters={cellClusters}
                                     onLasso={handleLasso}
                                     onHover={setHover}
                                     pointColor={POINT_COLOR}
@@ -760,149 +630,23 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                             )}
                         </div>
                         <div className="pair-regl-expand-footer">
-                            {allClusterRows.size > 0
-                                ? <span><b>{clusters.length}</b> cluster{clusters.length === 1 ? '' : 's'} · <b>{allClusterRows.size.toLocaleString()}</b> rows — synced with the matrix behind</span>
+                            {clusters.length > 0
+                                ? (
+                                    <ClusterLegend
+                                        clusters={clusters}
+                                        onRecolour={handleRecolour}
+                                        onRename={handleRename}
+                                        onRemove={handleDeleteCluster}
+                                        onClear={handleClearClusters}
+                                        focusFallback={focusExpandToolbox}
+                                    />
+                                )
                                 : <span>Drag to lasso · scroll to zoom · each lasso creates a new cluster</span>}
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Modal dialog — table view of the currently-selected rows.
-                Click the backdrop or the X button to dismiss. CSV export
-                survives as a secondary action inside the dialog header. */}
-            {tableOpen && allClusterRows.size > 0 && (
-                <div className="pair-regl-modal-backdrop" onClick={() => setTableOpen(false)}>
-                    <div className="pair-regl-modal" onClick={e => e.stopPropagation()}>
-                        <div className="pair-regl-modal-header">
-                            <div className="pair-regl-modal-title">
-                                Brushed rows
-                                <span className="pair-regl-modal-count">
-                                    {tableRows.length.toLocaleString()}
-                                    {tableRows.length !== allClusterRows.size && (
-                                        <span style={{ opacity: 0.7, marginLeft: 4 }}>
-                                            / {allClusterRows.size.toLocaleString()}
-                                        </span>
-                                    )}
-                                </span>
-                            </div>
-                            <div className="pair-regl-modal-actions">
-                                <button onClick={handleExportCsv} className="scatter-regl-btn" title="Download visible rows as CSV" disabled={tableRows.length === 0}>
-                                    <Download size={12} /> CSV
-                                </button>
-                                <button
-                                    onClick={() => setTableOpen(false)}
-                                    className="scatter-regl-btn scatter-regl-btn-icon"
-                                    title="Close"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </div>
-                        </div>
-                        {/* Cluster filter chip bar — click a chip to toggle that
-                            cluster's rows in/out of the visible set + CSV export. */}
-                        <div className="pair-regl-modal-filter">
-                            <span className="pair-regl-modal-filter-label">Filter:</span>
-                            {clusters.map(c => {
-                                const active = tableFilter.has(c.id);
-                                return (
-                                    <button
-                                        key={c.id}
-                                        type="button"
-                                        onClick={() => toggleClusterFilter(c.id)}
-                                        className={`pair-regl-filter-chip${active ? ' active' : ''}`}
-                                        aria-pressed={active}
-                                        title={active ? `Hide ${c.label}` : `Show ${c.label}`}
-                                    >
-                                        <span
-                                            className="pair-regl-filter-chip-dot"
-                                            style={{ background: rgbaToHex(c.color) }}
-                                        />
-                                        {c.label}
-                                        <span className="pair-regl-filter-chip-count">
-                                            {c.rowIndices.size.toLocaleString()}
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                            <div className="pair-regl-modal-filter-spacer" />
-                            <button
-                                type="button"
-                                onClick={() => setTableFilter(new Set(clusters.map(c => c.id)))}
-                                className="pair-regl-filter-mini"
-                                title="Enable every cluster"
-                                disabled={tableFilter.size === clusters.length}
-                            >
-                                All
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setTableFilter(new Set())}
-                                className="pair-regl-filter-mini"
-                                title="Disable every cluster"
-                                disabled={tableFilter.size === 0}
-                            >
-                                None
-                            </button>
-                        </div>
-                        <div className="pair-regl-modal-body">
-                            <table className="pair-regl-modal-table">
-                                <thead>
-                                    <tr>
-                                        <th>Cluster</th>
-                                        <th>#</th>
-                                        <th>Timestamp</th>
-                                        {sensors.map(s => <th key={s}>{s}</th>)}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {tableRows.slice(0, TABLE_PAGE).map(r => {
-                                        const row = data[r];
-                                        if (!row) return null;
-                                        const cluster = rowToCluster.get(r);
-                                        return (
-                                            <tr key={r}>
-                                                <td>
-                                                    {cluster && (
-                                                        <span className="pair-regl-cluster-chip">
-                                                            <span
-                                                                className="pair-regl-cluster-chip-dot"
-                                                                style={{ background: rgbaToHex(cluster.color) }}
-                                                            />
-                                                            {cluster.label}
-                                                        </span>
-                                                    )}
-                                                </td>
-                                                <td>{r}</td>
-                                                <td>{row.timestamp || ''}</td>
-                                                {sensors.map(s => {
-                                                    const idx = headers.indexOf(s);
-                                                    const v = idx >= 0 ? row.values[idx] : null;
-                                                    return (
-                                                        <td key={s}>
-                                                            {v != null ? Number(v).toFixed(4) : '—'}
-                                                        </td>
-                                                    );
-                                                })}
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                            {tableRows.length > TABLE_PAGE && (
-                                <div className="pair-regl-modal-more">
-                                    Showing first {TABLE_PAGE.toLocaleString()} of {tableRows.length.toLocaleString()} rows — use CSV to export all
-                                </div>
-                            )}
-                            {tableRows.length === 0 && (
-                                <div className="pair-regl-modal-more">
-                                    No rows visible — enable at least one cluster chip above.
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
         </SensorMetaContext.Provider>
     );

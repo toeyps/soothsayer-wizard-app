@@ -229,7 +229,6 @@ describe('CSS contract: the same semantic element renders the same on every refr
             '.pm-chart-modal-backdrop',     // Build Model: expand-chart modal (Phase 4)
             '.pm-preview-modal-backdrop',   // Build Model: Sub-models modal (Phase 4)
             '.pk-scrim',                    // shared SensorPicker multi modal (customer item 3, 2026-10-09)
-            '.pair-regl-modal-backdrop',    // Dashboard: Pair Plot table modal (pre-existing)
             '.pair-regl-expand-backdrop',   // Dashboard: Pair Plot expanded cell (pre-existing)
         ];
         for (const sel of backdrops) {

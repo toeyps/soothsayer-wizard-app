@@ -1,6 +1,5 @@
 import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, remove as removeFile, rename, BaseDirectory } from '@tauri-apps/plugin-fs';
-import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
 import { migrateHealthSetPoints } from './utils/workspaceMigrations';
@@ -10,26 +9,6 @@ import { withFailureGroupState } from './utils/failureGroupState';
 import { logToFile } from './errorReporter';
 
 const STORE_FILE = 'settings.json';
-
-// ─────────────────────────────────────────────────────────────────────────
-// FS bridge helper — for writing user-picked paths (CSV / JSON exports).
-// Goes through a Rust command instead of the fs plugin so it's not
-// blocked by tightened fs scope (Phase 2 will limit fs plugin to $APPDATA/**).
-// ─────────────────────────────────────────────────────────────────────────
-
-/**
- * Write a UTF-8 string to a user-picked file path.
- * Use this for CSV / JSON / text exports where the user chose the path via
- * the native save() dialog. Internally bridges through Rust to bypass fs
- * plugin scope restrictions.
- */
-export async function writeUserTextFile(path: string, content: string): Promise<void> {
-    const bytes = new TextEncoder().encode(content);
-    await invoke<void>('write_user_file', {
-        path,
-        contents: Array.from(bytes),
-    });
-}
 
 let storeInstance: any = null;
 let storePromise: Promise<any> | null = null;

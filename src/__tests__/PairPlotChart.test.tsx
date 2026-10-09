@@ -1,9 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
+
+/** Render count of the legend's ColourPicker swatches — the legend's only
+ *  children that render on every legend render, so "the legend did not
+ *  re-render" = this count did not move. */
+let colourPickerRenders = 0;
+vi.mock('../components/sensor/ColourPicker', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../components/sensor/ColourPicker')>();
+    const { createElement } = await import('react');
+    return {
+        ...actual,
+        default: (props: Parameters<typeof actual.default>[0]) => {
+            colourPickerRenders++;
+            return createElement(actual.default, props);
+        },
+    };
+});
 
 const cellCalls: any[] = [];
-vi.mock('../components/charts/PairPlotCell', () => ({
-    default: (props: any) => {
+// memo'd like the real PairPlotCell, so "does this re-render the WebGL cells?" is observable.
+vi.mock('../components/charts/PairPlotCell', async () => ({
+    default: (await import('react')).memo((props: any) => {
         cellCalls.push(props);
         const key = `${props.sensorY}-${props.sensorX ?? 'time'}`;
         return (
@@ -28,17 +45,7 @@ vi.mock('../components/charts/PairPlotCell', () => ({
                 </button>
             </div>
         );
-    },
-}));
-
-const mockSave = vi.fn();
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-    save: (...args: unknown[]) => mockSave(...args),
-}));
-
-const mockWriteUserTextFile = vi.fn().mockResolvedValue(undefined);
-vi.mock('../workspaceManager', () => ({
-    writeUserTextFile: (...args: unknown[]) => mockWriteUserTextFile(...args),
+    }),
 }));
 
 class MockResizeObserver {
@@ -48,6 +55,8 @@ class MockResizeObserver {
 }
 
 import PairPlotChart from '../components/charts/PairPlotChart';
+import ClusterLegend from '../components/charts/ClusterLegend';
+import { hexToRgba } from '../components/charts/pairPlotColors';
 
 const headers = ['A', 'B'];
 const data = [
@@ -61,8 +70,6 @@ let origClientHeight: PropertyDescriptor | undefined;
 
 beforeEach(() => {
     cellCalls.length = 0;
-    mockSave.mockReset();
-    mockWriteUserTextFile.mockReset().mockResolvedValue(undefined);
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
 
     origClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
@@ -340,60 +347,466 @@ describe('PairPlotChart', () => {
         expect(cellCalls.length).toBeGreaterThan(0);
     });
 
-    it('a completed lasso spawns a labeled cluster with the first palette color', () => {
-        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-        fireEvent.click(screen.getByText('lasso-A-B'));
+    describe('cluster legend (customer batch phase 2) — chips above the matrix', () => {
+        const swatchBg = (name: string, i = 0) =>
+            (screen.getAllByRole('button', { name: `Cluster colour: ${name}` })[i].querySelector('.cp-swatch') as HTMLElement).style.background;
+        const nameBtn = (name: string) => screen.getByRole('button', { name: `${name}, rename` });
+        const chipNames = (root: ParentNode = document) =>
+            Array.from(root.querySelectorAll('.pp-legend-top .pp-chip-name')).map(el => el.textContent);
 
-        expect(screen.getByText('Cluster 1')).toBeTruthy();
-        expect(screen.getByText('2 rows')).toBeTruthy();
-        // Customer item 4: the shared ColourPicker swatch (no native colour input).
-        const swatch = screen.getByRole('button', { name: 'Cluster colour: Cluster 1' });
-        expect((swatch.querySelector('.cp-swatch') as HTMLElement).style.background).toBe('rgb(252, 191, 46)'); // CLUSTER_PALETTE[0] amber, rounded
-        expect(document.querySelector('input[type="color"]')).toBeNull();
-    });
+        it('renders nothing before the first lasso', () => {
+            const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            expect(container.querySelector('.pp-legend')).toBeNull();
+        });
 
-    it('successive lassos cycle through the palette with incrementing labels', () => {
-        const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-        fireEvent.click(screen.getByText('lasso-A-B'));
-        fireEvent.click(screen.getByText('lasso-B-time'));
+        it('a completed lasso adds a chip in the strip above the matrix: ColourPicker swatch (first palette colour) + name + ×, no row count', () => {
+            const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
 
-        expect(screen.getByText('Cluster 1')).toBeTruthy();
-        expect(screen.getByText('Cluster 2')).toBeTruthy();
-        const head = container.querySelector('.pair-regl-cluster-panel-head')!;
-        expect(head.textContent).toContain('2');
-        expect(head.textContent).toContain('clusters');
-    });
+            const legend = container.querySelector('.pp-legend.pp-legend-top') as HTMLElement;
+            expect(legend).toBeTruthy();
+            expect(legend.closest('.pair-regl-grid')).toBeNull(); // never inside (over) the matrix
+            expect(within(legend).getByRole('list', { name: 'Clusters' })).toBeTruthy();
+            expect(chipNames()).toEqual(['Cluster 1']);
+            // Customer item 4 / SPEC §2: the default is the matching ColourPicker PALETTE swatch (amber #f59e0b).
+            expect(swatchBg('Cluster 1')).toBe('rgb(245, 158, 11)');
+            expect(within(legend).getByRole('button', { name: 'Remove Cluster 1' })).toBeTruthy();
+            expect(document.querySelector('input[type="color"]')).toBeNull();
+            expect(screen.queryByText(/rows/)).toBeNull(); // row counts are gone
+        });
 
-    it('deleting a cluster removes it from the panel', () => {
-        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-        fireEvent.click(screen.getByText('lasso-A-B'));
-        fireEvent.click(screen.getByTitle('Delete Cluster 1'));
-        expect(screen.queryByText('Cluster 1')).toBeNull();
-    });
+        it('the default colour is a palette swatch, so the picker opens with a check on it (not on "Custom colour")', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
+            const checked = document.querySelector('.cp-pop .cp-sw[aria-checked="true"]') as HTMLElement;
+            expect(checked.getAttribute('title')).toBe('#f59e0b');
+            expect(document.querySelector('.cp-adv')).toBeNull(); // custom section stays folded
+        });
 
-    it('recoloring a cluster from the ColourPicker palette updates its swatch; other clusters\u2019 colours are marked in use', () => {
-        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-        fireEvent.click(screen.getByText('lasso-A-B'));
-        fireEvent.click(screen.getByText('lasso-B-time'));
-        fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
-        const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
-        expect(sw('#f43f5e')).toBeTruthy();
-        fireEvent.click(sw('#f43f5e'));
-        const swatch = screen.getByRole('button', { name: 'Cluster colour: Cluster 1' });
-        expect((swatch.querySelector('.cp-swatch') as HTMLElement).style.background).toBe('rgb(244, 63, 94)');
-    });
+        it('successive lassos take "Cluster 2" and the next unused palette colour (emerald)', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByText('lasso-B-time'));
+            expect(chipNames()).toEqual(['Cluster 1', 'Cluster 2']);
+            expect(swatchBg('Cluster 2')).toBe('rgb(16, 185, 129)');
+        });
 
-    it('Reset clears all clusters and bumps resetTick on every child cell', () => {
-        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-        fireEvent.click(screen.getByText('lasso-A-B'));
-        expect(screen.getByText('Cluster 1')).toBeTruthy();
+        it('"Clear" is hidden with one cluster and shown from two', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            expect(screen.queryByRole('button', { name: 'Clear all clusters' })).toBeNull();
+            fireEvent.click(screen.getByText('lasso-B-time'));
+            expect(screen.getByRole('button', { name: 'Clear all clusters' })).toBeTruthy();
+        });
 
-        cellCalls.length = 0;
-        fireEvent.click(screen.getByTitle('Reset view + drop all clusters'));
+        it('× removes just that cluster; the next lasso reuses the freed name and colour', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByText('lasso-B-time'));
+            fireEvent.click(screen.getByRole('button', { name: 'Remove Cluster 1' }));
+            expect(chipNames()).toEqual(['Cluster 2']);
 
-        expect(screen.queryByText('Cluster 1')).toBeNull();
-        expect(cellCalls.length).toBeGreaterThan(0);
-        expect(cellCalls.every((c) => c.resetTick === 1)).toBe(true);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            expect(chipNames()).toEqual(['Cluster 2', 'Cluster 1']);
+            expect(swatchBg('Cluster 1')).toBe('rgb(245, 158, 11)'); // amber is free again
+        });
+
+        it('Clear removes every cluster and the legend disappears', () => {
+            const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByText('lasso-B-time'));
+            cellCalls.length = 0;
+            fireEvent.click(screen.getByRole('button', { name: 'Clear all clusters' }));
+            expect(container.querySelector('.pp-legend')).toBeNull();
+            expect(cellCalls.length).toBeGreaterThan(0);
+            expect(cellCalls.every((c) => c.clusters.length === 0)).toBe(true);
+        });
+
+        it('toolbox ↺ resets the view only — clusters stay, every cell gets the bumped resetTick', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+
+            cellCalls.length = 0;
+            fireEvent.click(screen.getByTitle('Reset view (zoom and pan) — clusters stay'));
+
+            expect(chipNames()).toEqual(['Cluster 1']);
+            expect(cellCalls.length).toBeGreaterThan(0);
+            expect(cellCalls.every((c) => c.resetTick === 1)).toBe(true);
+            expect(cellCalls.every((c) => c.clusters.length === 1)).toBe(true);
+        });
+
+        it('recolouring from the ColourPicker palette updates the swatch and the cells; other clusters’ colours are marked in use', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByText('lasso-B-time'));
+            fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
+            const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+            expect(sw('#10b981').getAttribute('title')).toContain('in use on this chart'); // Cluster 2's emerald
+            cellCalls.length = 0;
+            fireEvent.click(sw('#f43f5e'));
+            expect(swatchBg('Cluster 1')).toBe('rgb(244, 63, 94)');
+            expect(cellCalls.length).toBeGreaterThan(0);
+            const [r, g, b] = cellCalls[cellCalls.length - 1].clusters[0].color;
+            expect([Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)]).toEqual([0xf4, 0x3f, 0x5e]);
+        });
+
+        it('picking the colour a cluster already has does not re-render the WebGL cells', () => {
+            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
+            cellCalls.length = 0;
+            fireEvent.click(document.querySelector('.cp-pop .cp-sw[title^="#f59e0b"]') as HTMLElement);
+            expect(cellCalls.length).toBe(0);
+        });
+
+        describe('rename in place', () => {
+            const setup = () => {
+                const utils = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                return utils;
+            };
+            const field = () => screen.getByRole('textbox', { name: 'Rename Cluster 1' }) as HTMLInputElement;
+
+            it('clicking the name turns it into a field with the whole text selected', () => {
+                setup();
+                fireEvent.click(nameBtn('Cluster 1'));
+                const input = field();
+                expect(document.activeElement).toBe(input);
+                expect(input.value).toBe('Cluster 1');
+                expect(input.selectionStart).toBe(0);
+                expect(input.selectionEnd).toBe('Cluster 1'.length);
+                expect(input.maxLength).toBe(40);
+            });
+
+            it('Enter saves the new name and focus returns to the name', () => {
+                setup();
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: 'Pump trip' } });
+                fireEvent.keyDown(field(), { key: 'Enter' });
+                expect(chipNames()).toEqual(['Pump trip']);
+                expect(document.activeElement).toBe(nameBtn('Pump trip'));
+                // Every chip control follows the new name.
+                expect(screen.getByRole('button', { name: 'Remove Pump trip' })).toBeTruthy();
+                expect(screen.getByRole('button', { name: 'Cluster colour: Pump trip' })).toBeTruthy();
+            });
+
+            it('Esc cancels the edit and focus returns to the name', () => {
+                setup();
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: 'Discarded' } });
+                fireEvent.keyDown(field(), { key: 'Escape' });
+                expect(chipNames()).toEqual(['Cluster 1']);
+                expect(document.activeElement).toBe(nameBtn('Cluster 1'));
+            });
+
+            it('leaving the field (blur) saves', () => {
+                setup();
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: 'Startup' } });
+                fireEvent.blur(field());
+                expect(chipNames()).toEqual(['Startup']);
+            });
+
+            it('an empty or whitespace-only name reverts to the old one', () => {
+                setup();
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: '   ' } });
+                fireEvent.keyDown(field(), { key: 'Enter' });
+                expect(chipNames()).toEqual(['Cluster 1']);
+            });
+
+            it('trims the name and caps it at 40 characters', () => {
+                setup();
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: `  ${'x'.repeat(50)}  ` } });
+                fireEvent.keyDown(field(), { key: 'Enter' });
+                expect(chipNames()).toEqual(['x'.repeat(40)]);
+            });
+
+            it('F2 or Enter on the focused name starts editing (keyboard path)', () => {
+                setup();
+                fireEvent.keyDown(nameBtn('Cluster 1'), { key: 'F2' });
+                fireEvent.keyDown(field(), { key: 'Escape' });
+                fireEvent.keyDown(nameBtn('Cluster 1'), { key: 'Enter' });
+                expect(field()).toBeTruthy();
+            });
+
+            it('Enter/Esc inside the field do not bubble to listeners above (e.g. a dialog’s Esc)', () => {
+                setup();
+                const outer = vi.fn();
+                document.addEventListener('keydown', outer);
+                try {
+                    fireEvent.click(nameBtn('Cluster 1'));
+                    fireEvent.keyDown(field(), { key: 'Escape' });
+                    expect(outer).not.toHaveBeenCalled();
+                } finally {
+                    document.removeEventListener('keydown', outer);
+                }
+            });
+
+            it('renders a typed name as plain text (no HTML) and keeps the full name in title', () => {
+                setup();
+                const long = '<b>Cavitation</b> at low flow & high temp, pump B';
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: long } });
+                fireEvent.keyDown(field(), { key: 'Enter' });
+                const saved = long.slice(0, 40);
+                const el = document.querySelector('.pp-legend-top .pp-chip-name') as HTMLElement;
+                expect(el.textContent).toBe(saved);
+                expect(el.querySelector('b')).toBeNull();
+                expect(el.getAttribute('title')).toBe(`${saved} — click to rename`);
+            });
+
+            it('duplicate names are allowed', () => {
+                render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                fireEvent.click(screen.getByText('lasso-B-time'));
+                fireEvent.click(nameBtn('Cluster 2'));
+                const input = screen.getByRole('textbox', { name: 'Rename Cluster 2' });
+                fireEvent.change(input, { target: { value: 'Cluster 1' } });
+                fireEvent.keyDown(input, { key: 'Enter' });
+                expect(chipNames()).toEqual(['Cluster 1', 'Cluster 1']);
+            });
+
+            it('a renamed cluster frees its number: the next lasso is "Cluster 1" with the first unused colour', () => {
+                render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                fireEvent.click(screen.getByText('lasso-B-time'));
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: 'Pump trip' } });
+                fireEvent.keyDown(field(), { key: 'Enter' });
+
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                expect(chipNames()).toEqual(['Pump trip', 'Cluster 2', 'Cluster 1']);
+                expect(swatchBg('Cluster 1')).toBe('rgb(217, 70, 239)'); // amber + emerald in use → fuchsia
+            });
+
+            it('renaming does not re-render the WebGL cells (they never read the name)', () => {
+                setup();
+                cellCalls.length = 0;
+                fireEvent.click(nameBtn('Cluster 1'));
+                fireEvent.change(field(), { target: { value: 'Pump trip' } });
+                fireEvent.keyDown(field(), { key: 'Enter' });
+                expect(chipNames()).toEqual(['Pump trip']);
+                expect(cellCalls.length).toBe(0);
+            });
+        });
+
+        it('the chip row gets the right-edge fade class when it overflows', () => {
+            const orig = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+            Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 900 });
+            try {
+                const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                expect(container.querySelector('.pp-legend-top .pp-legend-chips')!.className).toContain('is-overflow');
+            } finally {
+                if (orig) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', orig);
+                else delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+            }
+        });
+
+        it('no overflow fade when the chips fit', () => {
+            const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            expect(container.querySelector('.pp-legend-top .pp-legend-chips')!.className).not.toContain('is-overflow');
+        });
+
+        describe('enlarged view', () => {
+            const openEnlarged = (container: HTMLElement) => {
+                fireEvent.click(screen.getByTitle('Magnifier — click a cell to open an enlarged view'));
+                fireEvent.click(container.querySelector('.pair-regl-inspect-overlay') as HTMLElement);
+                return container.querySelector('.pair-regl-expand-modal') as HTMLElement;
+            };
+
+            it('shows the hint text until there is a cluster, then the same chips in its footer, in sync with the strip', () => {
+                const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                const modal = openEnlarged(container);
+                const footer = modal.querySelector('.pair-regl-expand-footer') as HTMLElement;
+                expect(footer.textContent).toContain('each lasso creates a new cluster');
+
+                // Lasso inside the dialog's own cell (last rendered lasso-A-B).
+                const lassos = screen.getAllByText('lasso-A-B');
+                fireEvent.click(lassos[lassos.length - 1]);
+                const footerNames = () => Array.from(footer.querySelectorAll('.pp-chip-name')).map(el => el.textContent);
+                expect(footerNames()).toEqual(['Cluster 1']);
+                expect(chipNames()).toEqual(['Cluster 1']);
+
+                // Rename from the footer → the strip above the matrix follows.
+                fireEvent.click(within(footer).getByRole('button', { name: 'Cluster 1, rename' }));
+                const input = within(footer).getByRole('textbox', { name: 'Rename Cluster 1' });
+                fireEvent.change(input, { target: { value: 'Surge' } });
+                fireEvent.keyDown(input, { key: 'Enter' });
+                expect(footerNames()).toEqual(['Surge']);
+                expect(chipNames()).toEqual(['Surge']);
+
+                // × in the footer removes it everywhere.
+                fireEvent.click(within(footer).getByRole('button', { name: 'Remove Surge' }));
+                expect(container.querySelector('.pp-legend')).toBeNull();
+                expect(footer.textContent).toContain('each lasso creates a new cluster');
+            });
+
+            it('its ↺ also resets the view only', () => {
+                const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                const modal = openEnlarged(container);
+                fireEvent.click(within(modal).getByTitle('Reset view (zoom and pan) — clusters stay'));
+                expect(chipNames()).toEqual(['Cluster 1']);
+            });
+        });
+
+        describe('review fixes', () => {
+            it('Space on the focused name starts the rename (role=button) and is prevented, so the strip does not scroll', () => {
+                render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                const notPrevented = fireEvent.keyDown(nameBtn('Cluster 1'), { key: ' ' });
+                expect(notPrevented).toBe(false);
+                expect(screen.getByRole('textbox', { name: 'Rename Cluster 1' })).toBeTruthy();
+            });
+
+            it('Clear is announced as "Clear all clusters"', () => {
+                render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                fireEvent.click(screen.getByText('lasso-B-time'));
+                const clear = screen.getByRole('button', { name: 'Clear all clusters' });
+                expect(clear.textContent).toBe('Clear');
+            });
+
+            describe('save/cancel guards (legend on its own, with a spy)', () => {
+                const one = [{ id: 'c-1', label: 'Cluster 1', color: hexToRgba('#f59e0b'), rowIndices: new Set([0]) }];
+                const renderLegend = () => {
+                    const onRename = vi.fn();
+                    render(<ClusterLegend clusters={one} onRecolour={vi.fn()} onRename={onRename} onRemove={vi.fn()} onClear={vi.fn()} />);
+                    fireEvent.click(screen.getByRole('button', { name: 'Cluster 1, rename' }));
+                    const input = screen.getByRole('textbox', { name: 'Rename Cluster 1' });
+                    fireEvent.change(input, { target: { value: 'Typed' } });
+                    return { onRename, input };
+                };
+
+                // Both events in one act: the field is still mounted when the blur
+                // arrives, as when a browser blurs the field it is removing.
+                it('Esc then blur keeps the old name and saves nothing', () => {
+                    const { onRename, input } = renderLegend();
+                    act(() => {
+                        fireEvent.keyDown(input, { key: 'Escape' });
+                        fireEvent.blur(input);
+                    });
+                    expect(onRename).not.toHaveBeenCalled();
+                    expect(screen.getByRole('button', { name: 'Cluster 1, rename' })).toBeTruthy();
+                });
+
+                it('Enter then blur saves exactly once', () => {
+                    const { onRename, input } = renderLegend();
+                    act(() => {
+                        fireEvent.keyDown(input, { key: 'Enter' });
+                        fireEvent.blur(input);
+                    });
+                    expect(onRename).toHaveBeenCalledTimes(1);
+                    expect(onRename).toHaveBeenCalledWith('c-1', 'Typed');
+                });
+            });
+
+            it('a hover move re-renders the chart but not the cluster legend (memoised)', () => {
+                const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                const before = colourPickerRenders;
+                fireEvent.click(screen.getByText('hover-A-B'));
+                expect(container.querySelector('.scatter-regl-tooltip')).toBeTruthy(); // the chart did re-render
+                fireEvent.click(screen.getByText('hover-B-time'));
+                expect(colourPickerRenders).toBe(before);
+            });
+
+            describe('focus after removing (never falls to <body>)', () => {
+                const lassoTimes = (k: number) => {
+                    for (let i = 0; i < k; i++) fireEvent.click(screen.getByText(i % 2 ? 'lasso-B-time' : 'lasso-A-B'));
+                };
+                const lassoTool = () => screen.getByTitle('Lasso select — drag to draw a polygon, rows inside light up across every cell');
+
+                it('× on a middle chip → the next chip’s name', () => {
+                    render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                    lassoTimes(3);
+                    fireEvent.click(screen.getByRole('button', { name: 'Remove Cluster 2' }));
+                    expect(document.activeElement).toBe(nameBtn('Cluster 3'));
+                });
+
+                it('× on the last chip → the previous chip’s name', () => {
+                    render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                    lassoTimes(3);
+                    fireEvent.click(screen.getByRole('button', { name: 'Remove Cluster 3' }));
+                    expect(document.activeElement).toBe(nameBtn('Cluster 2'));
+                });
+
+                it('× on the only chip → the toolbox', () => {
+                    render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                    lassoTimes(1);
+                    fireEvent.click(screen.getByRole('button', { name: 'Remove Cluster 1' }));
+                    expect(document.activeElement).toBe(lassoTool());
+                });
+
+                it('Clear → the toolbox', () => {
+                    render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                    lassoTimes(2);
+                    fireEvent.click(screen.getByRole('button', { name: 'Clear all clusters' }));
+                    expect(document.activeElement).toBe(lassoTool());
+                });
+
+                it('in the enlarged view, × on the last footer chip and Clear in the footer → the enlarged view’s toolbox', () => {
+                    const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                    lassoTimes(1);
+                    fireEvent.click(screen.getByTitle('Magnifier — click a cell to open an enlarged view'));
+                    fireEvent.click(container.querySelector('.pair-regl-inspect-overlay') as HTMLElement);
+                    const modal = container.querySelector('.pair-regl-expand-modal') as HTMLElement;
+                    const footer = modal.querySelector('.pair-regl-expand-footer') as HTMLElement;
+                    // First control of the enlarged view's own toolbox (the first overlay is a
+                    // diagonal cell, which has no lasso — its first tool is ↺).
+                    const modalFirstTool = modal.querySelector('.pair-regl-expand-toolbox button') as HTMLElement;
+                    expect(modalFirstTool).toBeTruthy();
+
+                    fireEvent.click(within(footer).getByRole('button', { name: 'Remove Cluster 1' }));
+                    expect(document.activeElement).toBe(modalFirstTool);
+                    expect(footer.querySelector('.pp-legend')).toBeNull(); // footer legend gone, focus still inside the dialog
+
+                    lassoTimes(2);
+                    fireEvent.click(within(footer).getByRole('button', { name: 'Clear all clusters' }));
+                    expect(document.activeElement).toBe(modalFirstTool);
+                    expect(document.activeElement).not.toBe(document.body);
+                });
+            });
+
+            it('the overflow fade is re-checked while the rename field is typed in', () => {
+                const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+                fireEvent.click(screen.getByText('lasso-A-B'));
+                const chips = () => container.querySelector('.pp-legend-top .pp-legend-chips')!;
+                expect(chips().className).not.toContain('is-overflow');
+                fireEvent.click(nameBtn('Cluster 1'));
+                const orig = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+                Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 900 });
+                try {
+                    fireEvent.change(screen.getByRole('textbox', { name: 'Rename Cluster 1' }), { target: { value: 'A much longer name' } });
+                    expect(chips().className).toContain('is-overflow');
+                } finally {
+                    if (orig) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', orig);
+                    else delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+                }
+            });
+        });
+
+        it('View Table, the brushed-rows table and its CSV export are gone (SPEC §2 "Removed")', () => {
+            const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+            fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByText('lasso-B-time'));
+            expect(screen.queryByText('View Table')).toBeNull();
+            expect(screen.queryByTitle(/View brushed rows/)).toBeNull();
+            expect(screen.queryByTitle(/CSV/)).toBeNull();
+            expect(screen.queryByTitle('Delete Cluster 1')).toBeNull(); // old trash button
+            expect(container.querySelector('.pair-regl-cluster-panel, .pair-regl-modal, .pair-regl-modal-backdrop, table')).toBeNull();
+
+            // Same inside the enlarged view.
+            fireEvent.click(screen.getByTitle('Magnifier — click a cell to open an enlarged view'));
+            fireEvent.click(container.querySelector('.pair-regl-inspect-overlay') as HTMLElement);
+            expect(screen.queryByTitle(/View brushed rows/)).toBeNull();
+            expect(container.querySelector('table')).toBeNull();
+        });
     });
 
     it('shows a hover tooltip with a plain formatted value for a non-time cell (regression: row id used to be shown too but is not user-meaningful, so it was dropped)', () => {
@@ -437,81 +850,4 @@ describe('PairPlotChart', () => {
         expect(Number(tooltip.style.zIndex)).toBeGreaterThan(150);
     });
 
-    describe('View Table dialog', () => {
-        it('opens with every brushed row visible by default', () => {
-            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            fireEvent.click(screen.getByText('lasso-A-B'));
-            fireEvent.click(screen.getByTitle('View brushed rows in a table'));
-
-            const modal = document.querySelector('.pair-regl-modal') as HTMLElement;
-            expect(modal.querySelector('.pair-regl-modal-count')!.textContent).toBe('2');
-            expect(within(modal).getAllByRole('row')).toHaveLength(3); // header + 2 rows
-        });
-
-        it('toggling a filter chip off hides that cluster from the table', () => {
-            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            fireEvent.click(screen.getByText('lasso-A-B'));
-            fireEvent.click(screen.getByTitle('View brushed rows in a table'));
-
-            fireEvent.click(screen.getByTitle('Hide Cluster 1'));
-            const modal = document.querySelector('.pair-regl-modal') as HTMLElement;
-            expect(within(modal).getAllByRole('row')).toHaveLength(1); // header only
-            expect(within(modal).getByText('No rows visible — enable at least one cluster chip above.')).toBeTruthy();
-        });
-
-        it('"None" then "All" toggles every cluster chip at once', () => {
-            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            fireEvent.click(screen.getByText('lasso-A-B'));
-            fireEvent.click(screen.getByTitle('View brushed rows in a table'));
-
-            fireEvent.click(screen.getByTitle('Disable every cluster'));
-            let modal = document.querySelector('.pair-regl-modal') as HTMLElement;
-            expect(within(modal).getAllByRole('row')).toHaveLength(1);
-
-            fireEvent.click(screen.getByTitle('Enable every cluster'));
-            modal = document.querySelector('.pair-regl-modal') as HTMLElement;
-            expect(within(modal).getAllByRole('row')).toHaveLength(3);
-        });
-
-        it('closes on backdrop click', () => {
-            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            fireEvent.click(screen.getByText('lasso-A-B'));
-            fireEvent.click(screen.getByTitle('View brushed rows in a table'));
-            expect(document.querySelector('.pair-regl-modal')).toBeTruthy();
-
-            fireEvent.click(document.querySelector('.pair-regl-modal-backdrop')!);
-            expect(document.querySelector('.pair-regl-modal')).toBeNull();
-        });
-    });
-
-    describe('CSV export', () => {
-        it('does nothing when the save dialog is cancelled', async () => {
-            mockSave.mockResolvedValue(null);
-            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            fireEvent.click(screen.getByText('lasso-A-B'));
-            fireEvent.click(screen.getByTitle('View brushed rows in a table'));
-
-            fireEvent.click(screen.getByTitle('Download visible rows as CSV'));
-            await Promise.resolve();
-            expect(mockWriteUserTextFile).not.toHaveBeenCalled();
-        });
-
-        it('writes a CSV of only the currently-filtered rows', async () => {
-            mockSave.mockResolvedValue('C:/out.csv');
-            render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            fireEvent.click(screen.getByText('lasso-A-B'));
-            fireEvent.click(screen.getByTitle('View brushed rows in a table'));
-
-            fireEvent.click(screen.getByTitle('Download visible rows as CSV'));
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(mockWriteUserTextFile).toHaveBeenCalledTimes(1);
-            const [path, content] = mockWriteUserTextFile.mock.calls[0];
-            expect(path).toBe('C:/out.csv');
-            const lines = (content as string).split('\n');
-            expect(lines[0]).toBe('cluster,rowIndex,timestamp,A,B');
-            expect(lines).toHaveLength(3); // header + 2 rows
-        });
-    });
 });

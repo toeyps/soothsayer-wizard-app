@@ -2508,308 +2508,152 @@ body {
     user-select: none;
 }
 
-/* Cluster list panel (themed) ----------------------------------------- */
-.pair-regl-cluster-panel {
-    position: absolute;
-    bottom: 10px;
-    right: 12px;
-    width: 340px;
-    max-height: 60%;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    z-index: 12;
-    font-size: 11px;
-    color: var(--text-primary);
-    overflow: hidden;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-
-.pair-regl-cluster-panel-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-secondary);
-    flex: 0 0 auto;
-}
-
-.pair-regl-cluster-panel-head b {
-    color: var(--text-primary);
-    font-weight: 600;
-}
-
-.pair-regl-cluster-sep {
-    color: var(--text-secondary);
-    opacity: 0.4;
-    margin: 0 2px;
-}
-
-.pair-regl-cluster-list {
-    list-style: none;
-    margin: 0;
-    padding: 4px 0;
-    overflow-y: auto;
-    flex: 1 1 auto;
-}
-
-.pair-regl-cluster-row {
+/* Cluster legend strip (customer batch phase 2, 2026-10-09) ------------
+   Chips in the 36px strip above the matrix, left of the toolbox — never over
+   the plot. One chip per cluster: ColourPicker swatch + name (renamable in
+   place) + x. "Clear" shows at 2+ clusters. On overflow the chip row scrolls
+   sideways with a fade on the right; Clear and the toolbox stay visible. */
+.pp-legend {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 10px;
-    transition: background 0.1s;
+    min-width: 0;
 }
 
-.pair-regl-cluster-row:hover {
-    background: var(--hover-bg);
+.pp-legend-top {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    right: 150px;            /* clears .pair-regl-toolbox (4 tools) */
+    height: 26px;
+    z-index: 11;
 }
 
-.pair-regl-cluster-label {
-    flex: 1 1 auto;
+.pp-legend-chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.pp-legend-chips::-webkit-scrollbar { display: none; }
+
+.pp-legend-chips.is-overflow {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+.pp-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 2px 0 1px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--card-bg);
+    font-size: 11.5px;
     color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.pp-chip-name {
+    padding: 0 2px 0 1px;
+    font-weight: 500;
+    max-width: 160px;        /* longer names ellipsize; the full name is in title */
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    border-radius: 4px;
+    cursor: text;
 }
 
-.pair-regl-cluster-count {
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-    font-size: 10px;
-    flex: 0 0 auto;
+.pp-chip-name:hover { background: var(--hover-bg); }
+.pp-chip-name:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-color); }
+
+/* Inline rename field: a hidden copy of the text sizes the grid cell, so the
+   input grows with what is typed (capped by max-width). */
+.pp-chip-edit {
+    display: inline-grid;
+    max-width: 220px;
+    margin: 0 1px;
 }
 
-/* Inline chip used inside the View Table dialog for the Cluster column */
-.pair-regl-cluster-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 6px;
-    border-radius: 999px;
-    background: var(--hover-bg);
-    font-size: 10px;
-    color: var(--text-primary);
+.pp-chip-edit::after,
+.pp-chip-input {
+    grid-area: 1 / 1;
+    font: inherit;
+    font-weight: 500;
+    padding: 1px 4px;
+    min-width: 3ch;
 }
 
-.pair-regl-cluster-chip-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex: 0 0 auto;
-}
-
-/* View Table cluster filter chips (themed) ----------------------------- */
-.pair-regl-modal-filter {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 7px 14px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-primary);
-    flex-wrap: wrap;
-    flex: 0 0 auto;
-}
-
-.pair-regl-modal-filter-label {
-    color: var(--text-secondary);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-right: 2px;
-}
-
-.pair-regl-modal-filter-spacer {
-    flex: 1 1 auto;
-    min-width: 8px;
-}
-
-.pair-regl-filter-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 9px 3px 7px;
-    border-radius: 999px;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-family: Inter, system-ui, sans-serif;
-    cursor: pointer;
-    opacity: 0.55;
-    transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease;
-    line-height: 1;
-}
-
-.pair-regl-filter-chip:hover {
-    opacity: 0.9;
-    background: var(--hover-bg);
-}
-
-.pair-regl-filter-chip.active {
-    opacity: 1;
-    background: var(--hover-bg);
-    border-color: var(--accent-color);
-    color: var(--text-primary);
-}
-
-.pair-regl-filter-chip-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    flex: 0 0 auto;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
-}
-
-.pair-regl-filter-chip-count {
-    color: inherit;
-    opacity: 0.65;
-    font-variant-numeric: tabular-nums;
-    font-size: 9px;
-}
-
-.pair-regl-filter-mini {
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    font-size: 10px;
-    padding: 3px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: all 0.1s ease;
-    line-height: 1;
-}
-
-.pair-regl-filter-mini:hover:not(:disabled) {
-    border-color: var(--accent-color);
-    color: var(--text-primary);
-    background: var(--hover-bg);
-}
-
-.pair-regl-filter-mini:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-/* Selection review dialog (themed to match AddSensorWindow) ------------ */
-.pair-regl-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(2px);
-    z-index: 200;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-}
-
-.pair-regl-modal {
-    width: 100%;
-    max-width: 960px;
-    max-height: 80vh;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+.pp-chip-edit::after {
+    content: attr(data-value);
+    visibility: hidden;
+    border: 1px solid transparent;
+    white-space: pre;
     overflow: hidden;
-    font-family: Inter, system-ui, sans-serif;
-    color: var(--text-primary);
 }
 
-.pair-regl-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-primary);
-    flex: 0 0 auto;
-}
-
-.pair-regl-modal-title {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.pair-regl-modal-count {
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    background: var(--hover-bg);
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-}
-
-.pair-regl-modal-actions {
-    display: flex;
-    gap: 6px;
-}
-
-.pair-regl-modal-body {
-    flex: 1 1 auto;
-    overflow: auto;
-    background: var(--bg-secondary);
-}
-
-.pair-regl-modal-table {
+.pp-chip-input {
     width: 100%;
-    border-collapse: collapse;
-    font-variant-numeric: tabular-nums;
-    font-size: 11px;
-}
-
-.pair-regl-modal-table thead {
-    position: sticky;
-    top: 0;
-    z-index: 1;
+    border: 1px solid var(--accent-color);
+    border-radius: 4px;
     background: var(--bg-primary);
-}
-
-.pair-regl-modal-table th {
-    padding: 7px 10px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--text-secondary);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 10px;
-}
-
-.pair-regl-modal-table td {
-    padding: 5px 10px;
-    border-bottom: 1px solid var(--border);
     color: var(--text-primary);
-    white-space: nowrap;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-muted);
 }
 
-.pair-regl-modal-table tbody tr:hover {
+.pp-chip-x {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    margin-left: 2px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+}
+
+.pp-chip-x:hover,
+.pp-chip-x:focus-visible {
     background: var(--hover-bg);
+    color: var(--text-primary);
+    outline: none;
 }
 
-.pair-regl-modal-more {
-    padding: 10px 16px;
-    text-align: center;
+.pp-chip-x:focus-visible { box-shadow: 0 0 0 2px var(--accent-color); }
+
+.pp-legend-clear {
+    flex: 0 0 auto;
+    padding: 3px 4px;
+    border: 0;
+    background: none;
     color: var(--text-secondary);
-    font-style: italic;
-    background: var(--bg-primary);
-    border-top: 1px solid var(--border);
-    font-size: 11px;
+    font-size: 11.5px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 4px;
 }
+
+.pp-legend-clear:hover,
+.pp-legend-clear:focus-visible {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    outline: none;
+}
+
+.pair-regl-expand-footer .pp-legend { min-height: 26px; }
 
 /* Magnifier click-to-inspect overlay --------------------------------- */
 .pair-regl-inspect-overlay {
@@ -2927,15 +2771,6 @@ body {
     font-size: 11px;
     color: var(--text-secondary);
     flex: 0 0 auto;
-}
-
-.pair-regl-expand-footer b {
-    color: var(--text-primary);
-}
-
-.scatter-regl-actions {
-    display: flex;
-    gap: 6px;
 }
 
 .scatter-regl-btn {
