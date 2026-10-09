@@ -1,50 +1,28 @@
-# Docs index
+# เอกสารของโปรเจกต์ Wizard — เริ่มอ่านที่นี่
 
-This folder was reorganized on 2026-09-15 into categories. Two files stay at
-the root on purpose — see below.
+## อ่านตามลำดับนี้
 
-## Root (kept flat — continuity files, don't reorganize)
+| # | อ่าน | เมื่อไร |
+|---|---|---|
+| 1 | [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) | **ทุกครั้งที่กลับมาทำงาน** — แอปคืออะไร, สถานะตอนนี้, อะไรรอทดสอบ/รอ push, วิธีรัน (อ่านจบใน 5 นาที, เขียนทับให้เป็นปัจจุบันเสมอ) |
+| 2 | [`release/CHANGELOG.md`](release/CHANGELOG.md) | อยากรู้ว่าแต่ละเวอร์ชันเปลี่ยนอะไร (เขียนให้ผู้ใช้อ่าน) |
+| 3 | [`BACKLOG.md`](BACKLOG.md) | งานค้าง / ปัญหาที่รู้แล้วแต่ยังไม่ได้แก้ |
+| 4 | [`handover/`](handover/README.md) | ประวัติละเอียดรายงาน แยกไฟล์ละเดือน — เปิดเมื่ออยากรู้ว่างานไหนทำอย่างไรและทำไม |
 
-- [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md) — dated project history, one
-  `🆕 YYYY-MM-DD` entry per finished task. The primary source of truth for
-  what happened and why; stands in for chat history across machines/sessions
-  (see its own header and `CLAUDE.md`). Append-only by convention — don't
-  restructure it.
-- [`BACKLOG.md`](BACKLOG.md) — confirmed issues and follow-ups not yet picked
-  up. Also append-only by convention.
-- [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md) — kept here rather than under
-  `planning/` specifically because `BACKLOG.md` links to it by relative path
-  and that file is frozen — moving this would have silently broken that link.
+## แผนที่โฟลเดอร์
 
-## [`archive/planning/`](archive/planning/) — history only (archived 2026-10-05)
+| โฟลเดอร์ / ไฟล์ | มีอะไร | ใครดูแล |
+|---|---|---|
+| [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) | สถานะปัจจุบัน (เขียนทับ) | ทุก session แก้เมื่อสถานะเปลี่ยน |
+| [`handover/`](handover/README.md) | บันทึกงานรายเดือน `YYYY-MM.md` (ต่อท้ายอย่างเดียว) | ทุก session — 1 งาน 1 บันทึก |
+| [`BACKLOG.md`](BACKLOG.md) | งานค้างที่ยืนยันแล้ว | ทุก session |
+| [`PERSISTENCE_PLAN.md`](PERSISTENCE_PLAN.md) | แผนการบันทึก workspace (อยู่ที่ root เพราะ `BACKLOG.md` ลิงก์ถึงด้วย path นี้) | — |
+| [`release/`](release/) | `CHANGELOG.md` — section ใหม่ทุกครั้งที่ build installer | `release-agent` |
+| [`testing/`](testing/) | `MANUAL_TEST_PLAN.md` (ต้นฉบับ) → `manual-test-plan.html` (สร้างจาก .md ด้วย `scripts/build-manual-test-html.py`, เปิดในเบราว์เซอร์ได้เลย), `MANUAL_TEST_NEW_SINCE_2026-10-02.md` (รายการทดสอบเฉพาะของใหม่), `RELEASE_0.5.0_TEST_REPORT.md` | `qa-agent` / ผู้ทดสอบ |
+| [`design/`](design/) | `DESIGN_SYSTEM.md`, `APP_MAP.md` และ `handoff/` (สเปกที่ส่งจากทีมออกแบบให้ทีม dev ทีละงาน) | `ui-design-lead` |
+| [`reference/`](reference/) | `tech-stack.html` (สรุป stack หน้าเดียว), `figma/` (SVG mockup รุ่นเก่า **ไม่ได้อัปเดตตามโค้ด** — อย่าแก้) | — |
+| [`onboarding/`](onboarding/) | คู่มือ + ตัวอย่างงานสำหรับน้องฝึกงาน BA/SA | — |
+| [`archive/`](archive/) | ประวัติที่ไม่ใช้แล้ว: `planning/` (requirements / task / contracts ของ Feature 1–4), `handover-overview-2026-08.md` (ภาพรวมฉบับเก่า) | ห้ามแก้ |
+| [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md) | ป้ายบอกว่าย้ายไปที่ไหน (ไฟล์เดิมแยกเป็นรายเดือนเมื่อ 2026-10-09) | — |
 
-- `requirements*.md`, `task.md`, `contracts/` — requirements, phased task
-  breakdowns and FE↔BE contracts from Features 1–4 (the early `pm-agent` era).
-- **Not updated any more.** Work now comes through the chat prompt, and specs
-  and plans are recorded as entries in `PROJECT_HANDOVER.md`.
-
-## [`design/`](design/) — design system
-
-- `DESIGN_SYSTEM.md`, `APP_MAP.md` — owned by `ui-design-lead`
-
-## [`reference/`](reference/) — stable technical reference
-
-- `tech-stack.html` — one-page stack summary, sourced from `package.json` /
-  `Cargo.toml` / `lib.rs`
-- `figma/` — static SVG mockups from earlier design rounds; explicitly **not**
-  kept in sync with code changes (don't touch unprompted, per `CLAUDE.md`)
-
-## [`testing/`](testing/) — manual QA
-
-- `MANUAL_TEST_PLAN.md` / `manual-test-plan.html` — 184-item manual test
-  checklist (the `.html` is a standalone file, open it directly in a browser)
-
-## [`release/`](release/) — shipped versions
-
-- `CHANGELOG.md` — per-version changelog; a new section is required in the
-  same pass as every installer build (`CLAUDE.md` § Release checklist)
-
-## [`onboarding/`](onboarding/) — non-engineering onboarding material
-
-- `INTERN_BA_SA_GUIDE.md`, `INTERN_BA_SA_EXAMPLES.md` — guide + worked
-  examples for a BA/SA intern
+กติกาการทำงานทั้งหมด (agent, การ push, release, เทสต์) อยู่ที่ [`../CLAUDE.md`](../CLAUDE.md)

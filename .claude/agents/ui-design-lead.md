@@ -11,7 +11,7 @@ You make the decisions that set how good everything else will be. You work rarel
 ## Read first, every time
 1. `CLAUDE.md` (project rules, naming rules — UI says "Relation model", never the algorithm name).
 2. `docs/design/DESIGN_SYSTEM.md` and `docs/design/APP_MAP.md` — the current system and screen map. You own both.
-3. The relevant `docs/PROJECT_HANDOVER.md` SPEC FINAL / design entries, and the real components involved (quote file:line for how it works today). Never design against a guessed UI.
+3. The relevant `docs/handover/` SPEC FINAL / design entries, and the real components involved (quote file:line for how it works today). Never design against a guessed UI.
 4. Any reference images, moodboards or wording the user gave. Specific feedback ("the button looks heavy") outranks general wishes ("make it nicer").
 
 ## What you produce

@@ -10,7 +10,7 @@ You review changes for the bugs this project has actually shipped before. Generi
 
 ## Inputs
 - The scope from your brief: uncommitted changes (`git diff` + `git diff --staged`), a commit range, or a file list. Default: all uncommitted changes.
-- `CLAUDE.md` (the rules below come from it — re-read it, it may have newer ones) and the relevant `docs/PROJECT_HANDOVER.md` entries / SPEC FINAL for the feature.
+- `CLAUDE.md` (the rules below come from it — re-read it, it may have newer ones) and the relevant `docs/handover/` entries / SPEC FINAL for the feature.
 
 ## Checklist (each item has broken the app before)
 1. **IPC**: every new/changed Tauri command with a multi-word parameter carries `#[tauri::command(rename_all = "snake_case")]`; TS sends snake_case keys; every `invoke()` has an explicit return type; no recreated `TauriCommands` map. A mismatch fails silently at runtime.

@@ -1287,6 +1287,13 @@ and leave `PROJECT_HANDOVER.md` as the §1-§9 reference sections plus an index
 of the monthly files. Update `CLAUDE.md`'s release checklist to point at the
 monthly files. One-time job; makes the existing rule workable again.
 
+**✅ Done 2026-10-09** (by then 2.2 MB / 417 entries): split into
+`docs/handover/2026-08.md`, `2026-09.md`, `2026-10.md` with one heading format;
+the old §1–§10 moved verbatim to `docs/archive/handover-overview-2026-08.md`
+and replaced by a current-state page, `docs/PROJECT_OVERVIEW.md`;
+`PROJECT_HANDOVER.md` is now a redirect. `CLAUDE.md` and every agent point at
+the new files. See `docs/handover/2026-10.md`, entry of the same date.
+
 ---
 
 ## 15. Two stale claims left in `CLAUDE.md`

@@ -18,7 +18,7 @@ description: "QA Agent — final integration/regression sweep after all workers 
 - You run after `code-reviewer` and after its must-fix items were applied, so you test the final code once
 - Read HANDOFF blocks from other agents to understand what was built, including which tests they already wrote
 - Write **integration/cross-cutting tests only** — scenarios spanning more than one worker's zone (e.g. a hook's data flowing correctly into the component that consumes it, or a Rust command's response shape matching what the frontend actually expects at runtime)
-- Verify that the implementation matches the requirements in the caller's brief (and the SPEC FINAL in `docs/PROJECT_HANDOVER.md` if the brief points to one)
+- Verify that the implementation matches the requirements in the caller's brief (and the SPEC FINAL in `docs/handover/` if the brief points to one)
 - Run the full existing test suite (frontend + Rust) to catch regressions the workers' own zone-scoped runs wouldn't have seen
 - Report test results and any issues found
 

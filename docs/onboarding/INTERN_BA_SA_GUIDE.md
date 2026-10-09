@@ -15,7 +15,7 @@
 3. จัดกลุ่ม Failure Group
 4. เทรน Predictive Model (Individual / Relationship / Clustering)
 
-รายละเอียดเชิงลึกอ่านที่ [`docs/PROJECT_HANDOVER.md`](../PROJECT_HANDOVER.md) — ไม่ต้องอ่านทั้งหมด แต่ให้รู้ว่ามีไฟล์นี้อยู่ เผลอ ๆ คำตอบของคำถามที่สงสัยอยู่ในนั้นแล้ว
+รายละเอียดเชิงลึกอ่านที่ [`docs/PROJECT_OVERVIEW.md`](../PROJECT_OVERVIEW.md) (สถานะปัจจุบัน) และ [`docs/handover/`](../handover/README.md) (ประวัติรายเดือน) — ไม่ต้องอ่านทั้งหมด แต่ให้รู้ว่ามีไฟล์นี้อยู่ เผลอ ๆ คำตอบของคำถามที่สงสัยอยู่ในนั้นแล้ว
 
 เอกสารอื่นที่ควรรู้จักไว้:
 - [`docs/BACKLOG.md`](../BACKLOG.md) — ของค้างที่รู้อยู่แล้วทั้งหมด (อย่าไปรายงานซ้ำ)

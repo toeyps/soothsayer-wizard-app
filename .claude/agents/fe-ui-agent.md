@@ -14,7 +14,7 @@ description: "Frontend UI Agent — builds and modifies React UI components (App
 - **Write or update the tests for every component you touch, in the same pass** — don't defer this to qa-agent. qa-agent's job is a cross-cutting integration sweep afterward, not being the sole author of your unit tests.
 
 ## Design source of truth
-- Before any visible UI change, read `docs/design/DESIGN_SYSTEM.md` (tokens, patterns, §6 lessons) and the approved mockup linked from `docs/design/APP_MAP.md` / the SPEC FINAL in `docs/PROJECT_HANDOVER.md`. Build to that mockup; use the real `src/App.css` tokens (add "Studio additions" tokens to `App.css` `:root` when a Studio screen ships, and note it in your HANDOFF).
+- Before any visible UI change, read `docs/design/DESIGN_SYSTEM.md` (tokens, patterns, §6 lessons) and the approved mockup linked from `docs/design/APP_MAP.md` / the SPEC FINAL in `docs/handover/`. Build to that mockup; use the real `src/App.css` tokens (add "Studio additions" tokens to `App.css` `:root` when a Studio screen ships, and note it in your HANDOFF).
 - If the mockup and the design system disagree, or a spec detail is missing, ask the caller instead of inventing a new look. Don't restyle screens you weren't asked to touch.
 
 ## Tech Context
