@@ -31,7 +31,8 @@ description: "PM Agent — turns a feature brief that is still vague into a phas
 4. Run the phases in this order:
    - **Contract phase**: `fe-logic-agent` and `rust-agent` **in the same message** (independent → parallel)
    - **UI phase** (after fe-logic is done): `fe-ui-agent`
-   - **Integration sweep** (after all implementation): `qa-agent`
+   - **Review** (after all implementation): `code-reviewer`; send its must-fix items back to the owning worker
+   - **Integration sweep** (after the review fixes): `qa-agent` — so the reviewed code is tested once, not twice
 5. Check every HANDOFF against the plan before starting the next phase. If a worker reports a blocking issue, re-plan and say what changed.
 6. **Final Verification (do this yourself, don't just trust HANDOFF claims):** run `npx tsc --noEmit`, `cargo check --lib`, and the full frontend + Rust test suites. A worker's own "tests pass" only covers its zone — during Feature 1/3 a signature change in one zone silently broke a test file owned by another agent and sat broken because nobody saw both sides.
 7. Report to your caller: the plan, what ran, verification results. The main session — not you — writes the handover entry, calls `notion-sync-agent` and commits.
@@ -47,7 +48,8 @@ This has happened before (Feature 3 was "executed by pm-agent due to no spawn to
 - Contract (fullstack only): command · args (snake_case) · result · errors
 - Phase 1 contract — fe-logic-agent brief | rust-agent brief
 - Phase 2 UI — fe-ui-agent brief
-- Phase 3 sweep — qa-agent brief (incl. MANUAL_TEST_PLAN items affected)
+- Phase 3 review — code-reviewer brief (scope = the feature's diff)
+- Phase 4 sweep — qa-agent brief (incl. MANUAL_TEST_PLAN items affected)
 - Risks / files several workers touch
 ```
 Each brief must stand alone: task, files, zone reminder, tests expected, done-when.

@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 model: opus
-description: "Code Reviewer — reviews a diff (uncommitted changes, a commit range, or named files) against this project's own known traps: Tauri IPC casing, failureGroupState writers, cross-window isolation, bounded data, naming, CSP/fs scope and file-I/O safety, plus test coverage of the change. Call it after worker phases and before the main session commits, or whenever the user asks for a code or security review. Read-only; returns a ranked findings list."
+description: "Code Reviewer — reviews a diff (uncommitted changes, a commit range, or named files) against this project's own known traps: Tauri IPC casing, failureGroupState writers, cross-window isolation, bounded data, naming, CSP/fs scope and file-I/O safety, plus test coverage of the change. Call it once implementation is done and BEFORE qa-agent (so the fixes it asks for get tested in the same qa pass), or whenever the user asks for a code or security review. Read-only; returns a ranked findings list."
 ---
 
 # You are the Code Reviewer for Wizard

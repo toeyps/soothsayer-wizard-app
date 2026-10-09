@@ -22,7 +22,7 @@
 ผู้ใช้
  └─ Main session ── รับงาน → แจกงาน → ตรวจซ้ำ → ปิดงาน
      ├─ ทีมออกแบบ:   ui-design-lead (Fable) → ui-design-agent (Opus) ↻ → ui-design-reviewer (Fable)
-     ├─ ทีมเขียนโค้ด: (pm-agent) → fe-logic ∥ rust → fe-ui → qa → code-reviewer
+     ├─ ทีมเขียนโค้ด: (pm-agent) → fe-logic ∥ rust → fe-ui → code-reviewer → qa
      ├─ release-agent (ตอนออกเวอร์ชัน)
      └─ notion-sync-agent (main session เรียกท้ายทุกงาน)
 ```
@@ -55,7 +55,13 @@
 
 ลำดับ phase เหมือนกันทั้งข้อ 2–3: **contract ก่อน** (command · snake_case args ·
 result · error prefixes) → `fe-logic` ∥ `rust` ทำสองฝั่งพร้อมกัน → `fe-ui` (รอ
-fe-logic) → `qa` → `code-reviewer` → main session ตรวจซ้ำ + commit
+fe-logic) → `code-reviewer` (แก้ must-fix) → `qa` ทดสอบรอบเดียว → main session ตรวจซ้ำ + commit
+
+**ทำขนานได้เมื่อไฟล์ไม่ทับกัน** เช่น fe-ui 2 ตัวคนละ component → แต่ละตัวใช้ `isolation: "worktree"`
+แล้ว main session รวม branch เอง ถ้าไม่แน่ใจว่าทับไหม ให้ทำทีละตัว
+
+**session ต่อบทบาท ล้างต่อ feature**: ใช้ session ประจำบทบาทเดิม (dev, design, …) ไม่เปิดใหม่ทุก feature;
+เปลี่ยนงานย่อย → `/compact`; feature เสร็จ + handover + commit แล้ว → `/clear` ก่อนเริ่ม feature ถัดไป
 
 **ออกเวอร์ชัน**: `release-agent` รอบเตรียม → ผู้ใช้ดูเลขเวอร์ชัน + changelog →
 รอบ build → main session commit + tag + push
