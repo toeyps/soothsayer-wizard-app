@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import FailureGroupsPanel from '../components/dashboard/FailureGroupsPanel';
+import * as fgSummary from '../utils/failureGroupSummary';
+
+// Pass-through spy: lets the memo test count how often the summary is computed.
+vi.mock('../utils/failureGroupSummary', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../utils/failureGroupSummary')>();
+    return { ...actual, summarizeFailureGroups: vi.fn(actual.summarizeFailureGroups) };
+});
 import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata } from '../types';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { ALL_TIME_TRAIN } from './helpers/trainTestFixture';
@@ -51,9 +58,13 @@ const expandAll = () => {
 const modelLabels = () => screen.queryAllByTitle('Delete model').map(b => b.previousElementSibling!.textContent);
 
 describe('FailureGroupsPanel', () => {
-    it('shows the empty state when there are no real groups', () => {
+    it('shows the "No failure groups yet" landing callout when there are no real groups (customer batch 2026-10, item 5)', () => {
         render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup], fgModels: [] })} />);
-        expect(screen.getByText('No failure groups yet')).toBeTruthy();
+        const callout = screen.getByTestId('fg-callout');
+        expect(callout.textContent).toContain('No failure groups yet.');
+        expect(callout.textContent).toContain('Failure groups come first: create one below, then assign the sensors that show it.');
+        // said once — the old bottom "No failure groups yet" line is gone
+        expect(screen.getAllByText(/No failure groups yet/)).toHaveLength(1);
     });
 
     it('renders the "Not in Group" card even with no models yet, same as a real group (2026-08-31: it used to hide until it held a model, which meant there was never a way to add the first one)', () => {
@@ -97,12 +108,36 @@ describe('FailureGroupsPanel', () => {
     // complete" summary chip, matching the approved prototype's `.selchip`
     // (SPEC FINAL 2026-09-30's locked "search -> summary chip -> group
     // rows" structure) — see FailureGroupsPanel.tsx's render for the chip.
-    it('shows a "N of M models complete" summary chip in the header (no completion % anymore — status lives only in Build Model)', () => {
+    it('shows "N groups · M sensors assigned · x of y models complete" in the header chip (customer batch 2026-10, item 5)', () => {
         const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
         const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
         const chip = container.querySelector('.fg-summary-chip')!;
-        expect(chip.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 of 2 models complete');
-        expect(chip.querySelector('b')!.textContent).toBe('1');
+        expect(chip.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 group · 1 sensor assigned · 1 of 2 models complete');
+        expect([...chip.querySelectorAll('b')].map(b => b.textContent)).toEqual(['1', '1', '1']);
+    });
+
+    it('the summary counts each sensor once across groups and kinds, and leaves "Not in Group"-only sensors out', () => {
+        const fgModels = [
+            makeModel({ id: 'a', groupNos: [1, 2], targetSensor: 'TAG1' }),
+            makeModel({ id: 'b', groupNos: [2], kind: 'relationship', targetSensor: 'TAG1' }),
+            makeModel({ id: 'c', groupNos: [2], targetSensor: 'TAG2' }),
+            makeModel({ id: 'd', groupNos: [0], targetSensor: 'TAG3' }),
+        ];
+        render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels })} />);
+        expect(screen.getByTestId('fg-summary').textContent?.replace(/\s+/g, ' ').trim())
+            .toBe('2 groups · 2 sensors assigned · 0 of 4 models complete');
+    });
+
+    it('the summary is memoised: a re-render with the same Failure Group data (e.g. a chart pan) does not recompute it', () => {
+        const props = makeProps();
+        const spy = vi.mocked(fgSummary.summarizeFailureGroups);
+        const { rerender } = render(<FailureGroupsPanel {...props} />);
+        const before = spy.mock.calls.length;
+        rerender(<FailureGroupsPanel {...props} />);
+        rerender(<FailureGroupsPanel {...props} getGroupColor={() => 'amber'} />);
+        expect(spy.mock.calls.length).toBe(before);
+        rerender(<FailureGroupsPanel {...props} fgModels={[...props.fgModels]} />);
+        expect(spy.mock.calls.length).toBe(before + 1);
     });
 
     it('each group row shows its own "done / total" models-complete count', () => {
@@ -211,14 +246,14 @@ describe('FailureGroupsPanel', () => {
             it('a Complete model with a fresh train record keeps its green dot and counts as complete', () => {
                 const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [complete()], runningConditionFg: rc })} />);
                 expect(dotOn(badgeFor('I'))!.className).toContain('f4-kb-dot--complete');
-                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 of 1 models complete');
+                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/· 1 of 1 models complete$/);
             });
 
             it('status:true but the target sensor changed since training -> no green dot, not counted complete (summary chip and group count)', () => {
                 const stale = { ...complete(), targetSensor: 'TAG2' };
                 const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [stale], runningConditionFg: rc })} />);
                 expect(dotOn(badgeFor('I'))).toBeNull();
-                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('0 of 1 models complete');
+                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/· 0 of 1 models complete$/);
                 expect(screen.getByText('FG-1').closest('.fg-row')!.querySelector('.fg-row-count')!.textContent).toBe('0 / 1');
             });
 
@@ -227,7 +262,7 @@ describe('FailureGroupsPanel', () => {
                 const customMode = complete({ id: 'b', targetSensor: 'TAG2', runningConditionMode: 'custom', customRunningConditionNoneConfirmed: true });
                 const changedRc: Partial<FailureGroupStateSlice> = { runningConditionNoneConfirmed: true, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionCombine: 'or' };
                 const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels: [wsMode, customMode], runningConditionFg: changedRc })} />);
-                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toBe('1 of 2 models complete');
+                expect(container.querySelector('.fg-summary-chip')!.textContent?.replace(/\s+/g, ' ').trim()).toMatch(/· 1 of 2 models complete$/);
             });
         });
 
@@ -460,12 +495,44 @@ describe('FailureGroupsPanel', () => {
         });
     });
 
-    it('shows "No models yet" for an empty group', () => {
-        // 2026-08-31: the "Not in Group" card now also always renders, so
-        // an empty workspace shows "No models yet" twice (Group A + Not in
-        // Group) rather than once.
+    it('an empty group says "No sensors yet" with "Assign sensors →"; the always-shown "Not in Group" card still says "No models yet"', () => {
+        const onAssignSensors = vi.fn();
+        render(<FailureGroupsPanel {...makeProps({ fgModels: [], onAssignSensors })} />);
+        expect(screen.getAllByText('No models yet')).toHaveLength(1);
+        expect(screen.getByText('No sensors yet')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Assign sensors to Group A' }));
+        expect(onAssignSensors).toHaveBeenCalledWith(1);
+    });
+
+    it('"Assign sensors →" appears on every empty group only, and not at all without an onAssignSensors handler', () => {
+        const fgModels = [makeModel({ groupNos: [1] })];
+        const { unmount } = render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels, onAssignSensors: vi.fn() })} />);
+        expect(screen.queryByRole('button', { name: 'Assign sensors to Group A' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Assign sensors to Group B' })).toBeTruthy();
+        unmount();
         render(<FailureGroupsPanel {...makeProps({ fgModels: [] })} />);
-        expect(screen.getAllByText('No models yet')).toHaveLength(2);
+        expect(screen.queryByText('Assign sensors →')).toBeNull();
+    });
+
+    it('the "ready" callout shows while any group is empty, names the Failure groups button (no emoji), and goes once every group has a sensor', () => {
+        const { rerender } = render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [makeModel()] })} />);
+        const callout = screen.getByTestId('fg-callout');
+        expect(callout.textContent).toContain('Your failure groups are ready.');
+        expect(callout.textContent).toContain('use the Failure groups button');
+        expect(callout.textContent).not.toContain('📁');
+        expect(callout.querySelector('svg')).toBeTruthy();
+        rerender(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels: [makeModel(), makeModel({ id: 'm2', groupNos: [2] })] })} />);
+        expect(screen.queryByTestId('fg-callout')).toBeNull();
+    });
+
+    it('"Build Model →" is disabled with the reason as its tooltip while there is no model at all', () => {
+        const onOpenBuildModel = vi.fn();
+        render(<FailureGroupsPanel {...makeProps({ fgModels: [], onOpenBuildModel })} />);
+        const btn = screen.getByText('Build Model →').closest('button') as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toBe('No models yet — assign sensors to a failure group first');
+        fireEvent.click(btn);
+        expect(onOpenBuildModel).not.toHaveBeenCalled();
     });
 
     it('does not show a description preview (reverted per user feedback)', () => {
@@ -489,7 +556,10 @@ describe('FailureGroupsPanel', () => {
     it('the bottom "Build Model →" button opens the Build Model window (2026-10-02 reskin: label gained a trailing arrow, matching the approved prototype)', () => {
         const onOpenBuildModel = vi.fn();
         render(<FailureGroupsPanel {...makeProps({ onOpenBuildModel })} />);
-        fireEvent.click(screen.getByText('Build Model →'));
+        const btn = screen.getByText('Build Model →').closest('button') as HTMLButtonElement;
+        expect(btn.disabled).toBe(false);
+        expect(btn.title).toBe('');
+        fireEvent.click(btn);
         expect(onOpenBuildModel).toHaveBeenCalledTimes(1);
     });
 

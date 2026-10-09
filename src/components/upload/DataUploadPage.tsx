@@ -17,12 +17,15 @@ import { formatDateTime } from "../../utils/dateFormat";
 import { reportError } from "../../errorReporter";
 import { replaySpecialSensorRecipes } from "../../utils/specialSensorReplay";
 import { bindToGeneration, StaleSessionError } from "../../utils/staleSession";
+import { withFailureGroupState } from "../../utils/failureGroupState";
+import { buildInitialFailureGroups } from "../dashboard/failureGroupOps";
 import { DARK, mono } from "./uploadTheme";
 import HomeStep from "./HomeStep";
 import SetupRail from "./SetupRail";
 import ProjectNameStep from "./ProjectNameStep";
 import SensorDataPanel from "./SensorDataPanel";
 import TagNamesPanel from "./TagNamesPanel";
+import FailureGroupsStep, { type DraftGroup } from "./FailureGroupsStep";
 import { BackButton, PrimaryButton } from "./SetupPrimitives";
 import { useCsvLoadProgress } from "./useCsvLoadProgress";
 import { PROJECT_NAME_MAX, formatCount } from "./setupHelpers";
@@ -122,14 +125,31 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
   // Onboarding: (0) choose new-vs-recent, (1) name the project, (2) add the
-  // sensor data (+ optional tag names). Name/description live in local state
-  // until "Open Dashboard" on step 2 persists them into the WorkspaceState.
-  // Step 0 is skipped only by picking a recent workspace (handleLoadWorkspace
-  // never touches `step` — it navigates away from this page entirely).
-  const [step, setStep] = useState<0 | 1 | 2>(0);
+  // sensor data (+ optional tag names), (3) name the failure groups (customer
+  // batch 2026-10, item 5; skippable), then (4) "Opening the Dashboard…" — a
+  // rail-only state for the moment the new workspace is saved and handed off.
+  // Name/description/groups live in local state until "Open Dashboard" (or
+  // "Skip for now") on step 3 persists them into the WorkspaceState. Step 0 is
+  // left only by New project or by picking a recent workspace — and
+  // handleLoadWorkspace never touches `step` (a reopened project is never
+  // walked through step 3; it navigates away from this page entirely).
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [draftGroups, setDraftGroups] = useState<DraftGroup[]>([]);
+  const [groupsSkipped, setGroupsSkipped] = useState(false);
+  // A step-3 card shows a duplicate name it could not save: Open Dashboard
+  // waits until it is fixed (or Esc'd back), so the old name is never saved
+  // silently in its place. Skip stays available — it saves no groups at all.
+  const [groupsInvalid, setGroupsInvalid] = useState(false);
   const canCreateProject = projectName.trim().length > 0;
+  const continuingRef = useRef(false);
+  const startNewProject = () => {
+    continuingRef.current = false;
+    setDraftGroups([]);
+    setGroupsSkipped(false);
+    setStep(1);
+  };
 
   const refreshWorkspaces = () => {
     getRecentWorkspaces()
@@ -242,17 +262,19 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, mapping.mappingData, mapping.keyColumn]);
 
-  const handleContinue = async () => {
-    if (!report) return;
-    // Same loading overlay handleLoadWorkspace uses for "open recent
-    // workspace" — that path feels smooth because re-parsing the CSVs
-    // takes long enough (hundreds of ms) for the overlay to actually
-    // register. Saving a fresh workspace's JSON is near-instant (<50ms),
-    // so without a floor the overlay flickers past unnoticed and the swap
-    // still reads as abrupt. MIN_TRANSITION_MS forces the same bridging
-    // pause the "smooth" path gets for free.
+  // Step 3's "Open Dashboard" (skip = false) and "Skip for now" (skip = true).
+  const handleContinue = async (skip: boolean) => {
+    // One save per click: a second click before the re-render must not create a second workspace.
+    if (!report || continuingRef.current) return;
+    continuingRef.current = true;
+    // The rail stays on screen with step 4 current ("Opening the Dashboard…")
+    // while the new workspace is saved. Saving a fresh workspace's JSON is
+    // near-instant (<50ms), so without a floor the swap flickers past and
+    // reads as abrupt; MIN_TRANSITION_MS is the same bridging pause the
+    // overlay used to give this path (not longer — nothing may get slower).
     const MIN_TRANSITION_MS = 500;
-    setLoadingWorkspace(true);
+    setGroupsSkipped(skip);
+    setStep(4);
     try {
       const workspaceId = `ws_${Date.now()}`;
       const metadata: CsvMetadata = {
@@ -262,11 +284,13 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         // pinned to it (see `utils/staleSession.ts`).
         generation: report.generation,
       };
-      const state: WorkspaceState = {
+      const base: WorkspaceState = {
         id: workspaceId,
         name: projectName.trim() || `Workspace ${formatDateTime(new Date())}`,
         description: projectDescription.trim() || undefined,
-        lastRoute: "dashboard",
+        // The Dashboard opens on its Failure Groups tab, where sensors are
+        // assigned to the groups just named (or the first group is created).
+        lastRoute: "failure-group",
         dataFilePaths: dataUpload.selectedFiles,
         metadataFilePath: null,
         selectedSensors: [],
@@ -275,6 +299,13 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         mappingFilePath: mapping.mappingFilePath,
         mappingKeyColumn: mapping.keyColumn,
       };
+      // Groups built by the same helpers the Dashboard's FG tab uses, so they
+      // are identical in shape to ones created there ("Not in Group" first,
+      // FG-1 … in the order typed). Skip → only "Not in Group": the recent
+      // project then reads "No failure groups" (count 0), not "no chip".
+      const state = withFailureGroupState(base, {
+        groups: buildInitialFailureGroups(skip ? [] : draftGroups),
+      });
       await Promise.all([
         saveWorkspaceData(state),
         new Promise((resolve) => setTimeout(resolve, MIN_TRANSITION_MS)),
@@ -282,7 +313,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       onDataReady(metadata, state, mapping.sensorMetadata);
     } catch (err) {
       setWorkspaceError(String(err));
-      setLoadingWorkspace(false);
+      setGroupsSkipped(false);
+      setStep(3);
+      continuingRef.current = false;
     }
   };
 
@@ -469,7 +502,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   useEffect(() => {
     if (newProjectSignal === seenNewProjectSignalRef.current) return;
     seenNewProjectSignalRef.current = newProjectSignal;
-    if (stepRef.current === 0 && !loadingWorkspaceRef.current) setStep(1);
+    if (stepRef.current === 0 && !loadingWorkspaceRef.current) startNewProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newProjectSignal]);
 
   /* ----------------- Render ----------------- */
@@ -532,7 +566,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           activeWorkspaceId={activeWorkspaceId}
           busy={loadingWorkspace}
           error={workspaceError}
-          onNewProject={() => setStep(1)}
+          onNewProject={startNewProject}
           onOpenWorkspace={handleLoadWorkspace}
           onRenameWorkspace={handleRenameWorkspace}
           onDeleteWorkspace={handleDeleteWorkspace}
@@ -544,10 +578,20 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
 
   const mappedCount = mapping.mappingResult?.matched.length ?? 0;
   const rowsText = formatCount(report?.total_rows);
+  // Sensor columns read (the first column is the timestamp).
+  const tagCount = report?.headers?.length ? report.headers.length - 1 : 0;
+  // "2 files · 159,264 rows · 132 tags" — may wrap to a second rail line.
   const dataSummary = isReady
-    ? [`${files.length} file${files.length === 1 ? "" : "s"}`, rowsText ? `${rowsText} rows` : null]
-        .filter(Boolean).join(" · ")
+    ? [
+        `${files.length} file${files.length === 1 ? "" : "s"}`,
+        rowsText ? `${rowsText} rows` : null,
+        tagCount > 0 ? `${formatCount(tagCount)} tag${tagCount === 1 ? "" : "s"}` : null,
+      ].filter(Boolean).join(" · ")
     : null;
+  const groupCount = draftGroups.length;
+  const groupsSummary = groupsSkipped
+    ? "Skipped · 0 groups"
+    : `${groupCount} group${groupCount === 1 ? "" : "s"}`;
 
   const statusStyle: CSSProperties = {
     display: "inline-flex", alignItems: "center", gap: 7,
@@ -557,22 +601,12 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   return (
     <div style={pageStyle}>
       <div style={{ display: "grid", gridTemplateColumns: "268px minmax(0, 1fr)", background: T.bg, flex: 1, minHeight: 0 }}>
-        <SetupRail
-          T={T}
-          step={step}
-          projectName={projectName}
-          dataSummary={dataSummary}
-          onStepClick={(s) => {
-            // Only ever navigate BACKWARD by clicking a step — step 2 requires
-            // a project name, so forward navigation always goes through the
-            // Continue button's validation.
-            if (s < step) setStep(s);
-          }}
-          onAllProjects={() => setStep(0)}
-        />
-
-        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "34px 40px 24px" }}>
+        {/* The step (content + footer) comes FIRST in DOM order and the rail
+            after it, placed back into the left column by the grid — so on
+            every step Tab reaches the step's own controls before the rail
+            (customer batch 2026-10, item 5). */}
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gridColumn: 2, gridRow: 1 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "34px 40px 24px", display: "flex", flexDirection: "column" }}>
             {workspaceError && (
               <div style={{
                 marginBottom: 16, padding: "10px 14px", borderRadius: 8,
@@ -600,7 +634,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
             {step === 2 && (
               <div data-testid="sensor-data-step">
                 <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 500, letterSpacing: "0.12em", textTransform: "uppercase", color: T.textFaint }}>
-                  Step 2 of 2 · {projectName.trim().slice(0, PROJECT_NAME_MAX)}
+                  Step 2 of 3 · {projectName.trim().slice(0, PROJECT_NAME_MAX)}
                 </div>
                 <h2 style={{ margin: "8px 0 0", fontSize: 28, fontWeight: 700, letterSpacing: "-0.025em", color: T.text }}>
                   Add your sensor data
@@ -629,6 +663,27 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                 </div>
               </div>
             )}
+
+            {step === 3 && (
+              <FailureGroupsStep
+                T={T}
+                projectName={projectName}
+                groups={draftGroups}
+                onChange={setDraftGroups}
+                onInvalidChange={setGroupsInvalid}
+              />
+            )}
+
+            {step === 4 && (
+              <div className="fg-step-opening" data-testid="opening-dashboard" role="status" aria-live="polite">
+                <span className="fg-step-spin" aria-hidden="true" />
+                <b>Opening the Dashboard…</b>
+                <span>{projectName.trim()} · {formatCount(tagCount) ?? "0"} sensor{tagCount === 1 ? "" : "s"}</span>
+                <span className="fg-step-opening-note">
+                  It opens on the Failure Groups tab, so the first group is one click away.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Action bar */}
@@ -645,7 +700,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                 <BackButton T={T} onClick={() => setStep(0)} />
                 <PrimaryButton T={T} enabled={canCreateProject} onClick={() => setStep(2)}>Continue</PrimaryButton>
               </>
-            ) : (
+            ) : step === 2 ? (
               <>
                 <span style={{ ...statusStyle, color: isReady ? T.ok : T.textFaint }}>
                   {isReady && <Check size={12} />}
@@ -659,10 +714,47 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
                 </span>
                 <div style={{ flex: 1 }} />
                 <BackButton T={T} onClick={() => setStep(1)} />
-                <PrimaryButton T={T} enabled={isReady} onClick={handleContinue}>Open Dashboard</PrimaryButton>
+                <PrimaryButton T={T} enabled={isReady} onClick={() => setStep(3)}>Continue</PrimaryButton>
               </>
+            ) : step === 3 ? (
+              <>
+                {/* --text-secondary, never green: naming groups is optional. */}
+                <span style={{ ...statusStyle, color: groupsInvalid ? T.danger : T.textMuted }} data-testid="fg-step-status">
+                  {groupsInvalid
+                    ? "Fix the duplicate group name (or press Esc on it) to open the Dashboard"
+                    : groupCount > 0
+                    ? `${groupCount} failure group${groupCount === 1 ? "" : "s"} · sensors are assigned in the Dashboard`
+                    : "Add at least one failure group, or skip for now"}
+                </span>
+                <div style={{ flex: 1 }} />
+                <BackButton T={T} onClick={() => setStep(2)} />
+                <button type="button" className="fg-step-skip" onClick={() => void handleContinue(true)}>
+                  Skip for now
+                </button>
+                <PrimaryButton T={T} enabled={groupCount > 0 && !groupsInvalid} onClick={() => void handleContinue(false)}>Open Dashboard</PrimaryButton>
+              </>
+            ) : (
+              <span style={statusStyle}>Opening the Dashboard…</span>
             )}
           </div>
+        </div>
+
+        <div style={{ gridColumn: 1, gridRow: 1, display: "grid", minHeight: 0 }}>
+          <SetupRail
+            T={T}
+            step={step}
+            projectName={projectName}
+            dataSummary={dataSummary}
+            groupsSummary={groupsSummary}
+            groupsSkipped={groupsSkipped}
+            onStepClick={(s) => {
+              // Only ever navigate BACKWARD by clicking a step — every later
+              // step is gated by its own Continue — and never while the
+              // Dashboard is opening.
+              if (s < step && step !== 4) setStep(s);
+            }}
+            onAllProjects={() => { if (step !== 4) setStep(0); }}
+          />
         </div>
       </div>
 

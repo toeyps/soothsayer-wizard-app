@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
+import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -90,12 +91,8 @@ const DEFAULT_CLUSTER_RANGES = [
     { min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 },
 ];
 
-// Mirrors Dashboard.tsx's own FG_GROUP_PALETTE/getFgGroupColor exactly
-// (duplicated, not imported — sub-windows don't share a components module)
-// so a group renders the same color here as it does on the Dashboard tab.
-const FG_GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
-const getFgGroupColor = (no: number): string =>
-    no === 0 ? 'slate' : FG_GROUP_PALETTE[(no - 1) % FG_GROUP_PALETTE.length];
+// A group's colour comes from `getFgGroupColor` (utils/failureGroupColor.ts),
+// the one rule the Dashboard and the Import page's recent-project chip use too.
 
 // Same oklch values as .fg-group-color-{name} in App.css, kept as plain JS
 // here rather than relied on via CSS inheritance.

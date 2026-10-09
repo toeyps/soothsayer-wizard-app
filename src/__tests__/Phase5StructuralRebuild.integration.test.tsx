@@ -102,6 +102,7 @@ vi.mock('../workspaceManager', () => ({
 vi.mock('../errorReporter', () => ({ reportError: vi.fn() }));
 
 import Dashboard from '../components/dashboard/Dashboard';
+import { showSensorTab } from './helpers/dashboardLanding';
 import SensorSelection from '../components/dashboard/SensorSelection';
 import AddSensorWindow from '../components/windows/AddSensorWindow';
 
@@ -210,7 +211,10 @@ function renderDashboard(overrides: Partial<WorkspaceState> = {}) {
         selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], operationConfig: null,
         ...overrides,
     };
-    return render(<Dashboard metadata={metadata} sensorMetadata={sensorMetadata} onBack={vi.fn()} initialState={initialState} />);
+    const utils = render(<Dashboard metadata={metadata} sensorMetadata={sensorMetadata} onBack={vi.fn()} initialState={initialState} />);
+    // No failure groups -> the Dashboard lands on the FG tab; these tests start on the Sensor tab.
+    showSensorTab(utils.container);
+    return utils;
 }
 
 /** Chart-type buttons — their labels ("Scatter", "Pair Plot") also appear as

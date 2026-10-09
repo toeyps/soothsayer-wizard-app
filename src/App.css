@@ -980,6 +980,11 @@ tr:hover {
         --perf-muted, but named without --perf's "Performance category"
         meaning -- for the new Complete/Trained status dot below and any
         future success pill outside the Performance/Condition axis */
+    /* Customer batch 2026-10 (item 5): the blue "next step" callout / assign
+     * bar — the accent hue at a hairline and a wash strength (the mockup's
+     * oklch(.68 .17 245 / .35) and / .08). */
+    --accent-line: oklch(0.68 0.17 245 / 0.35);
+    --accent-wash: oklch(0.68 0.17 245 / 0.08);
     --dot-empty: #26262c; /* neutral "no status yet" fill for the new
         kind-badge corner dot below -- not meaningful outside that one use,
         so it isn't generalised into a broader token */
@@ -6040,3 +6045,151 @@ body {
 .ss-src-chip .sl-inline-wrap { max-width: 220px; }
 .ss-src-chip--base .sl-desc,
 .ss-src-chip--base .sl-tag { color: inherit; }
+
+/* =====================================================================
+   Customer batch 2026-10, item 5 — Failure groups as Import step 3
+   (docs/design/handoff/customer-batch-2026-10/README.md §3, DESIGN_SYSTEM
+   §4.1). Step 3 screen, recent-project chip, Dashboard landing callout and
+   the "Assign sensors" mode. Tokens only; group colours come from the
+   `.fg-group-color-*` family (--fg-dot / --fg-tint).
+   ===================================================================== */
+
+/* -- Import step 3 ("Which failures should Wizard look for?") -- */
+.fg-step-quick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; max-width: 640px; }
+.fg-step-input {
+    height: 36px; width: 100%; box-sizing: border-box; padding: 0 12px;
+    background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 9px;
+    color: var(--text-primary); font: inherit; font-size: 13px; outline: none;
+}
+.fg-step-input:focus { border-color: var(--accent-color); box-shadow: 0 0 0 3px var(--accent-muted); }
+.fg-step-input.is-bad,
+.fg-step-name.is-bad { border-color: var(--danger); }
+.fg-step-btn {
+    height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid var(--border-strong);
+    background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+}
+.fg-step-btn:hover:not(:disabled) { background: var(--hover-bg); border-color: rgba(255, 255, 255, 0.18); }
+.fg-step-btn:disabled { opacity: 0.45; cursor: default; }
+.fg-step-hint { font-size: 11.5px; color: var(--text-faint); margin: 6px 0 18px; }
+.fg-step-hint.is-bad { color: var(--danger); }
+.fg-step-hint--card { margin: 2px 0 0; }
+.fg-step-kbd {
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary);
+    border: 1px solid var(--border-strong); border-radius: 4px; padding: 0 5px;
+}
+.fg-step-list { display: grid; gap: 8px; max-width: 760px; }
+.fg-step-card {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px 12px; align-items: start;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px 12px 12px;
+}
+.fg-step-card.is-new { animation: fg-step-pop 0.18s ease-out; }
+@keyframes fg-step-pop { from { transform: translateY(-4px); opacity: 0; } to { transform: none; opacity: 1; } }
+.fg-step-dot { width: 10px; height: 10px; border-radius: 3px; margin-top: 11px; }
+.fg-step-nm { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fg-step-no { font-family: var(--mono); font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
+.fg-step-name {
+    flex: 1; min-width: 0; margin-left: -8px; padding: 4px 8px;
+    background: none; border: 1px solid transparent; border-radius: 7px; outline: none;
+    color: var(--text-primary); font-family: inherit; font-size: 14px; font-weight: 600;
+}
+.fg-step-name:hover { border-color: var(--border); }
+.fg-step-name:focus { border-color: var(--accent-color); background: var(--input-bg); }
+.fg-step-fields { display: grid; gap: 6px; margin-top: 6px; }
+.fg-step-field { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 10px; align-items: start; }
+.fg-step-field label {
+    padding-top: 7px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint);
+}
+.fg-step-ta {
+    width: 100%; min-height: 30px; box-sizing: border-box; padding: 6px 9px; overflow: hidden; resize: none;
+    background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; outline: none;
+    color: var(--text-primary); font: inherit; font-size: 12.5px; line-height: 1.4;
+}
+.fg-step-ta:focus { border-color: var(--accent-color); }
+.fg-step-ta::placeholder { color: var(--text-faint); }
+.fg-step-remove {
+    width: 26px; height: 26px; margin-top: 4px; display: grid; place-items: center;
+    border: 0; border-radius: 7px; background: none; color: var(--text-faint); cursor: pointer;
+}
+.fg-step-remove:hover,
+.fg-step-remove:focus-visible { background: var(--input-bg); color: var(--danger); }
+.fg-step-empty {
+    max-width: 760px; box-sizing: border-box; padding: 26px 22px; text-align: center;
+    border: 1px dashed var(--border-strong); border-radius: 12px; color: var(--text-secondary);
+}
+.fg-step-empty b { display: block; margin-bottom: 4px; font-size: 14px; color: var(--text-primary); }
+.fg-step-empty p { margin: 0; font-size: 12.5px; }
+.fg-step-empty p.fg-step-example { margin-top: 10px; font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
+/* "Skip for now": a real button styled as a text link, never a primary. */
+.fg-step-skip {
+    padding: 6px 8px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+    color: var(--text-secondary); font: inherit; font-size: 12.5px;
+    text-decoration: underline; text-underline-offset: 3px;
+}
+.fg-step-skip:hover { color: var(--text-primary); }
+/* Step 4: the moment the Dashboard opens. */
+.fg-step-opening {
+    flex: 1; display: grid; place-items: center; align-content: center; gap: 10px;
+    text-align: center; font-size: 12.5px; color: var(--text-secondary);
+}
+.fg-step-opening b { font-size: 15px; color: var(--text-primary); }
+.fg-step-opening-note { max-width: 46ch; font-size: 12px; color: var(--text-faint); }
+.fg-step-spin {
+    width: 22px; height: 22px; margin: 0 auto; border-radius: 50%;
+    border: 2px solid var(--accent-muted); border-top-color: var(--accent-hi);
+    animation: fg-step-spin 0.8s linear infinite;
+}
+@keyframes fg-step-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .fg-step-card.is-new { animation: none; }
+    .fg-step-spin { animation: none; }
+}
+
+/* -- Recent-project chip (Get started) -- */
+/* The card's columns live here, not inline, so the narrow-list query below can drop one. */
+.fg-recent-list { container-type: inline-size; }
+.fg-recent-card { grid-template-columns: 38px minmax(0, 1fr) auto; }
+.fg-recent-card--chip { grid-template-columns: 38px minmax(0, 1fr) auto auto; }
+.fg-count-cell { position: relative; z-index: 1; pointer-events: none; display: flex; }
+.fg-count-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; white-space: nowrap;
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    font-size: 11px; color: var(--text-secondary);
+}
+/* Zero groups: neutral and dashed; having none is not a warning. */
+.fg-count-chip--zero { border-style: dashed; color: var(--text-faint); }
+.fg-count-chip-sw { display: inline-flex; gap: 2px; }
+.fg-count-chip-sw i { width: 6px; height: 6px; border-radius: 2px; background: var(--fg-dot); }
+@container (max-width: 470px) {
+    .fg-recent-card--chip { grid-template-columns: 38px minmax(0, 1fr) auto; }
+    .fg-recent-card--chip .fg-count-cell { grid-column: 2; grid-row: 2; margin-top: -6px; }
+}
+
+/* -- Dashboard: landing callout, empty groups, assign mode -- */
+.fg-callout {
+    padding: 9px 11px; border: 1px solid var(--accent-line); border-radius: 10px; background: var(--accent-wash);
+    font-size: 12px; line-height: 1.45; color: var(--text-secondary);
+}
+.fg-callout b,
+.fg-assignbar b { color: var(--text-primary); }
+.fg-callout-icon { display: inline-block; vertical-align: -2px; }
+.fg-empty-line { display: flex; align-items: center; gap: 8px; font-size: 12px; font-style: italic; color: var(--text-faint); }
+.fg-assign-link {
+    padding: 0; border: 0; background: none; cursor: pointer;
+    font: inherit; font-size: 11.5px; font-style: normal; font-weight: 600; color: var(--accent-hi);
+}
+.fg-assign-link:hover { text-decoration: underline; }
+.fg-assignbar {
+    display: flex; align-items: center; gap: 8px; margin: 8px 8px 0; padding: 7px 8px 7px 11px;
+    border: 1px solid var(--accent-line); border-radius: 10px; background: var(--accent-wash);
+    font-size: 12px; color: var(--text-secondary);
+}
+.fg-assignbar-text { flex: 1; min-width: 0; }
+.fg-assignbar .fg-sheet-btn { height: 26px; padding: 0 10px; font-weight: 600; }
+/* The group an "Assign sensors" run is filling, pinned first in the sheet. */
+.fg-sheet-row--pinned { background: var(--accent-muted); box-shadow: inset 0 0 0 1px var(--accent-line); border-radius: 8px; }
+.fg-sheet-assigning {
+    flex-shrink: 0; width: fit-content; padding: 0 6px; border: 1px solid var(--accent-line); border-radius: 999px;
+    font-size: 10px; font-weight: 600; color: var(--accent-hi);
+}
+.fg-sheet-hint { padding: 0 14px 8px; margin-top: -4px; font-size: 0.68rem; color: var(--text-faint); }

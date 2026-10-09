@@ -1050,3 +1050,95 @@ describe('renameWorkspaceFile', () => {
         expect(savedFiles()).toContainEqual(['workspaces/ws1.json', JSON.stringify({ id: 'ws1', name: 'New Name' })]);
     });
 });
+
+describe('recent-project Failure Group fields (customer batch 2026-10, item 5)', () => {
+    /** A store whose `recent_workspaces` actually persists between calls. */
+    function liveStore(initial: any[]) {
+        let recent = initial;
+        mockStoreGet.mockImplementation(async () => recent);
+        mockStoreSet.mockImplementation(async (_k: string, v: any[]) => { recent = v; });
+        return () => recent;
+    }
+    /** A disk where every read returns the last write. */
+    function liveDisk(initial: object) {
+        let disk = JSON.stringify(initial);
+        mockReadTextFile.mockImplementation(async () => disk);
+        mockWriteTextFile.mockImplementation(async (_p: string, json: string) => { disk = json; });
+        mockRename.mockImplementation(async () => undefined);
+    }
+    const entry = (extra: object = {}) => ({ id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json', ...extra });
+    const groups = (...nos: number[]) => nos.map(no => ({ no, name: no === 0 ? 'Not in Group' : `G${no}` }));
+
+    it('saveWorkspaceData writes the count of real groups (Not in Group excluded) and the first three numbers in group-number order', async () => {
+        const recent = liveStore([]);
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0, 5, 2, 1, 4), models: [] } } as any);
+        expect(recent()[0]).toMatchObject({ id: 'ws1', failureGroupCount: 4, failureGroupNos: [1, 2, 4] });
+    });
+
+    it('a workspace with a Failure Group slice but no groups gets an explicit 0 (the "No failure groups" chip)', async () => {
+        const recent = liveStore([]);
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0), models: [] } } as any);
+        expect(recent()[0].failureGroupCount).toBe(0);
+        expect(recent()[0].failureGroupNos).toEqual([]);
+    });
+
+    it('a workspace with NO Failure Group slice never gets a default 0 — an old entry stays without the fields (no chip)', async () => {
+        const recent = liveStore([entry()]);
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData({ id: 'ws1', name: 'Renamed' } as any);
+        expect(recent()[0].name).toBe('Renamed');
+        expect('failureGroupCount' in recent()[0]).toBe(false);
+        expect('failureGroupNos' in recent()[0]).toBe(false);
+    });
+
+    it('a brand-new workspace saved without a slice has no fields either', async () => {
+        const recent = liveStore([]);
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData({ id: 'ws1', name: 'A' } as any);
+        expect('failureGroupCount' in recent()[0]).toBe(false);
+    });
+
+    it('a write without a slice keeps the entry\'s previously known count rather than dropping it', async () => {
+        const recent = liveStore([entry({ failureGroupCount: 2, failureGroupNos: [1, 2] })]);
+        const { saveWorkspaceData } = await freshModule();
+        await saveWorkspaceData({ id: 'ws1', name: 'A' } as any);
+        expect(recent()[0]).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
+    });
+
+    it('updateWorkspaceData (Dashboard FG edits, Build Model window) keeps the count in step as groups are added and removed', async () => {
+        const recent = liveStore([entry({ failureGroupCount: 1, failureGroupNos: [1] })]);
+        liveDisk({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0, 1), models: [] } });
+        const { updateWorkspaceData } = await freshModule();
+        const { withFailureGroupState } = await import('../utils/failureGroupState');
+
+        await updateWorkspaceData('ws1', s => withFailureGroupState(s, { groups: [...s.failureGroupState!.groups, { no: 2, name: 'G2' }, { no: 3, name: 'G3' }, { no: 4, name: 'G4' }] }));
+        expect(recent()[0]).toMatchObject({ failureGroupCount: 4, failureGroupNos: [1, 2, 3] });
+
+        await updateWorkspaceData('ws1', s => withFailureGroupState(s, { groups: s.failureGroupState!.groups.filter(g => g.no !== 1 && g.no !== 3) }));
+        expect(recent()[0]).toMatchObject({ failureGroupCount: 2, failureGroupNos: [2, 4] });
+
+        await updateWorkspaceData('ws1', s => withFailureGroupState(s, { groups: groups(0) }));
+        expect(recent()[0]).toMatchObject({ failureGroupCount: 0, failureGroupNos: [] });
+    });
+
+    it('an unrelated write (no FG change) adds no extra store write — the entry is rewritten once per save, as before', async () => {
+        liveStore([entry()]);
+        liveDisk({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0, 1), models: [] } });
+        const { updateWorkspaceData } = await freshModule();
+        await updateWorkspaceData('ws1', s => ({ ...s, lastRoute: 'dashboard' } as any));
+        expect(mockStoreSet).toHaveBeenCalledTimes(1);
+        expect(mockStoreSave).toHaveBeenCalledTimes(1);
+    });
+
+    it('renameWorkspaceFile and duplicateWorkspace carry the count from the workspace on disk', async () => {
+        const recent = liveStore([entry()]);
+        liveDisk({ id: 'ws1', name: 'A', failureGroupState: { groups: groups(0, 1, 2), models: [] } });
+        const { renameWorkspaceFile, duplicateWorkspace } = await freshModule();
+        await renameWorkspaceFile('ws1', 'B');
+        expect(recent().find(w => w.id === 'ws1')).toMatchObject({ name: 'B', failureGroupCount: 2, failureGroupNos: [1, 2] });
+        const copy = await duplicateWorkspace('ws1');
+        expect(recent().find(w => w.id === copy!.id)).toMatchObject({ failureGroupCount: 2, failureGroupNos: [1, 2] });
+    });
+});

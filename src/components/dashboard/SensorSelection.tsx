@@ -39,6 +39,13 @@ interface SensorSelectionProps {
     /** Which alarm setpoint lines are toggled on, per sensor tag. */
     alarmLinesEnabled: Record<string, AlarmLevel[]>;
     onToggleAlarmLine: (tag: string, level: AlarmLevel) => void;
+    /** "Assign sensors →" on a Failure Groups card (customer batch 2026-10,
+     *  item 5): the group being filled. A bar names it, component counts read
+     *  "assigned / total" for it, and the assignment sheet pins it first.
+     *  `null`/omitted = the ordinary Sensor tab. */
+    assignGroupNo?: number | null;
+    /** The bar's Done — the Dashboard goes back to the Failure Groups tab. */
+    onAssignDone?: () => void;
 }
 
 const UNCATEGORIZED = 'Uncategorized';
@@ -68,6 +75,8 @@ export default function SensorSelection({
     onDeleteGroup,
     alarmLinesEnabled,
     onToggleAlarmLine,
+    assignGroupNo = null,
+    onAssignDone,
 }: SensorSelectionProps) {
     const [searchTerm, setSearchTerm] = useState('');
     // Component groups the user has manually expanded. Everything starts
@@ -97,6 +106,14 @@ export default function SensorSelection({
     const rootRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const rowEls = useRef(new Map<string, HTMLElement>());
+    // Each row's Failure groups button, so closing the sheet from the keyboard
+    // (Esc / ✕ / Done) can hand focus back to the button that opened it.
+    const fgButtonEls = useRef(new Map<string, HTMLButtonElement>());
+    // The group an "Assign sensors" run is filling; gone (bar hides) if it was
+    // deleted meanwhile.
+    const assignGroup = assignGroupNo !== null && assignGroupNo !== 0
+        ? fgGroups.find(g => g.no === assignGroupNo) ?? null
+        : null;
     // A sensor the list should scroll to once its row has rendered (set by the
     // sheet's ‹ › buttons, which may have just expanded its component).
     const [scrollToSensor, setScrollToSensor] = useState<string | null>(null);
@@ -296,6 +313,34 @@ export default function SensorSelection({
 
     const sheetIndex = fgSheetFor ? allSensorsInOrder.indexOf(fgSheetFor) : -1;
 
+    // "Assign sensors →" moves keyboard focus to the bar's Done (the FG card
+    // that had it is gone), so the run starts somewhere visible, not on <body>.
+    const assignDoneRef = useRef<HTMLButtonElement>(null);
+    const assignGroupNoShown = assignGroup?.no ?? null;
+    useEffect(() => {
+        if (assignGroupNoShown !== null) assignDoneRef.current?.focus();
+    }, [assignGroupNoShown]);
+
+    const closeSheet = (opts?: { returnFocus?: boolean }) => {
+        const tag = fgSheetFor;
+        setFgSheetFor(null);
+        if (opts?.returnFocus && tag) fgButtonEls.current.get(tag)?.focus();
+    };
+
+    // Assign mode: per component, how many of its sensors already have a model
+    // in the group being filled ("assigned / total" on the component header).
+    // Only built while a run is active, from the membership index above.
+    const assignedInGroup = useMemo(() => {
+        if (!assignGroup) return null;
+        const assigned = new Set<string>();
+        for (const m of fgModels) {
+            if (!m.groupNos.includes(assignGroup.no)) continue;
+            const key = modelSensorKey(m);
+            if (key) assigned.add(key);
+        }
+        return assigned;
+    }, [assignGroup, fgModels]);
+
     const renderSensorRow = (sensor: string) => {
         const meta = getMetadata(sensor);
         // This sensor's own membership keys, straight out of the index
@@ -374,6 +419,7 @@ export default function SensorSelection({
                             </button>
                         )}
                         <button
+                            ref={(el) => { if (el) fgButtonEls.current.set(sensor, el); else fgButtonEls.current.delete(sensor); }}
                             onClick={(e) => {
                                 e.stopPropagation();
                                 // Clicking the open sensor's own 📁 closes the sheet;
@@ -479,6 +525,24 @@ export default function SensorSelection({
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
         <div className="sensor-selection-widget h-full flex flex-col" ref={rootRef}>
+            {assignGroup && (
+                <div className={`fg-assignbar fg-group-color-${getGroupColor(assignGroup.no)}`} role="status" data-testid="fg-assignbar">
+                    <span className="fg-group-dot" aria-hidden="true" />
+                    <span className="fg-assignbar-text">
+                        Assigning to <b>FG-{assignGroup.no} · {assignGroup.name}</b>. Use the Failure groups button
+                        {' '}<FolderPlus size={12} className="fg-callout-icon" aria-hidden="true" />{' '}
+                        on a sensor row.
+                    </span>
+                    <button
+                        ref={assignDoneRef}
+                        type="button"
+                        className="fg-sheet-btn"
+                        onClick={() => { setFgSheetFor(null); onAssignDone?.(); }}
+                    >
+                        Done
+                    </button>
+                </div>
+            )}
             <div className="widget-header flex-shrink-0" style={{ flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
                 <input
                     type="text"
@@ -517,6 +581,11 @@ export default function SensorSelection({
                     // (a bare total reads the same as "nothing selected
                     // yet" without needing the extra "0 /" noise).
                     const selectedInGroup = compSensors.filter(s => selectedSensors.includes(s)).length;
+                    // Assign mode: "assigned / total" for the group being filled
+                    // (always with the prefix, 0 included — that number IS the task).
+                    const assignedHere = assignedInGroup
+                        ? compSensors.filter(s => assignedInGroup.has(normalizeSensorTag(s))).length
+                        : null;
                     return (
                         <div key={component}>
                             <div
@@ -525,9 +594,19 @@ export default function SensorSelection({
                             >
                                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 <span style={{ flex: 1 }}>{component}</span>
-                                <span className="component-group-count">
-                                    {selectedInGroup > 0 ? <><b>{selectedInGroup}</b> / {compSensors.length}</> : compSensors.length}
-                                </span>
+                                {assignedHere !== null && assignGroup ? (
+                                    <span
+                                        className="component-group-count"
+                                        title={`Sensors in ${assignGroup.name} / sensors in this component`}
+                                        data-testid={`assign-count-${component}`}
+                                    >
+                                        <b>{assignedHere}</b> / {compSensors.length}
+                                    </span>
+                                ) : (
+                                    <span className="component-group-count">
+                                        {selectedInGroup > 0 ? <><b>{selectedInGroup}</b> / {compSensors.length}</> : compSensors.length}
+                                    </span>
+                                )}
                             </div>
                             {expanded && compSensors.map(sensor => renderSensorRow(sensor))}
                         </div>
@@ -552,10 +631,11 @@ export default function SensorSelection({
                     canStepPrev={sheetIndex > 0}
                     canStepNext={sheetIndex >= 0 && sheetIndex < allSensorsInOrder.length - 1}
                     onStep={stepSheet}
-                    onClose={() => setFgSheetFor(null)}
+                    onClose={closeSheet}
                     getHostEl={getHostEl}
                     getRowEl={getSheetRowEl}
                     getListEl={getListEl}
+                    pinnedGroupNo={assignGroup?.no ?? null}
                 />
             )}
         </div>

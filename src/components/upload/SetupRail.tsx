@@ -2,22 +2,30 @@ import { Check, ChevronLeft } from 'lucide-react';
 import { mono, type Tokens } from './uploadTheme';
 import MachineMorphCanvas from './MachineMorphCanvas';
 
+/** 1 = Name the project, 2 = Add sensor data, 3 = Failure groups,
+ *  4 = Explore in Dashboard (current only while the Dashboard opens). */
+export type SetupRailStep = 1 | 2 | 3 | 4;
+
 interface SetupRailProps {
   T: Tokens;
-  /** Current setup step: 1 = Name the project, 2 = Add sensor data. */
-  step: 1 | 2;
+  /** Current setup step. */
+  step: SetupRailStep;
   /** The project name typed on step 1 (shown under that step once it is done). */
   projectName: string;
-  /** One-line summary of the data read on step 2 ("2 files · 159,264 rows"); null until the files have been read. */
+  /** Summary of the data read on step 2 ("2 files · 159,264 rows · 132 tags"); null until the files have been read. May wrap to two lines. */
   dataSummary: string | null;
+  /** Value under step 3 once it is current or done ("2 groups", "Skipped · 0 groups"). */
+  groupsSummary?: string | null;
+  /** Step 3 was skipped: a dashed hollow "–" marker and a dashed connector, never a ✓. */
+  groupsSkipped?: boolean;
   /** Clicking a COMPLETED step goes back to it; later steps are not shortcuts. */
-  onStepClick: (s: 1 | 2) => void;
+  onStepClick: (s: 1 | 2 | 3) => void;
   /** Back to the Get-started page (step 0). */
   onAllProjects: () => void;
 }
 
 interface RailStep {
-  n: 1 | 2 | 3;
+  n: SetupRailStep;
   title: string;
   sub: string;
 }
@@ -25,16 +33,24 @@ interface RailStep {
 const STEPS: RailStep[] = [
   { n: 1, title: 'Name the project', sub: 'What this workspace is about' },
   { n: 2, title: 'Add sensor data', sub: 'CSV files + optional tag names' },
-  { n: 3, title: 'Explore in Dashboard', sub: 'Charts, filters, failure groups' },
+  { n: 3, title: 'Failure groups', sub: 'The failures you want to find' },
+  { n: 4, title: 'Explore in Dashboard', sub: 'Charts, assign sensors, build models' },
 ];
 
 /**
- * Left rail of setup steps 1-2 (replaces the old "Find workspace / Recent"
- * sidebar): the three steps vertically, a summary of what was entered under the
+ * Left rail of setup steps 1-3 (replaces the old "Find workspace / Recent"
+ * sidebar): the four steps vertically, a summary of what was entered under the
  * completed ones, a faint non-interactive machine illustration, and an
  * "All projects" button back to the Get-started page.
+ *
+ * Step 4 is never clickable: it becomes current only for the moment the
+ * Dashboard opens after step 3 (Open Dashboard / Skip), and nothing in the rail
+ * is clickable then. The page renders the rail AFTER the step in DOM order, so
+ * Tab reaches the step's own controls first (customer batch 2026-10, item 5).
  */
-export default function SetupRail({ T, step, projectName, dataSummary, onStepClick, onAllProjects }: SetupRailProps) {
+export default function SetupRail({
+  T, step, projectName, dataSummary, groupsSummary = null, groupsSkipped = false, onStepClick, onAllProjects,
+}: SetupRailProps) {
   return (
     <aside
       data-testid="setup-rail"
@@ -63,33 +79,42 @@ export default function SetupRail({ T, step, projectName, dataSummary, onStepCli
 
       <ol style={{ listStyle: 'none', margin: '30px 0 0', padding: 0, display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
         {STEPS.map((s, i) => {
-          const done = s.n < step;
+          const skipped = s.n === 3 && groupsSkipped && step > 3;
+          const done = s.n < step && !skipped;
           const now = s.n === step;
-          const clickable = done && s.n !== 3;
+          // Back-navigation only while setting up; never to step 4, never while
+          // the Dashboard is opening.
+          const clickable = done && s.n !== 4 && step !== 4;
           const value =
             s.n === 1 && done ? (projectName.trim() || null)
-            : s.n === 2 && done ? dataSummary
-            : s.n === 2 && now ? dataSummary
+            : s.n === 2 && (done || now) ? dataSummary
+            : s.n === 3 && (done || now || skipped) ? groupsSummary
             : null;
+          // The step-2 summary may wrap to a second line; the others ellipsise.
+          const wraps = s.n === 2;
           const last = i === STEPS.length - 1;
           const content = (
             <>
               <span
                 aria-hidden="true"
+                data-testid={`rail-marker-${s.n}`}
+                data-state={skipped ? 'skipped' : done ? 'done' : now ? 'now' : 'todo'}
                 style={{
                   width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', flexShrink: 0,
                   fontFamily: mono, fontSize: 12, fontWeight: 600, position: 'relative', zIndex: 1,
-                  background: done ? T.ok : now ? T.accent : T.surfaceHi,
-                  color: done ? T.bg : now ? '#fff' : T.textFaint,
-                  border: `1px solid ${done || now ? 'transparent' : T.borderStrong}`,
+                  boxSizing: 'border-box',
+                  background: skipped ? T.bg : done ? T.ok : now ? T.accent : T.surfaceHi,
+                  color: skipped ? T.textMuted : done ? T.bg : now ? '#fff' : T.textFaint,
+                  border: skipped ? `1.5px dashed ${T.textFaint}` : `1px solid ${done || now ? 'transparent' : T.borderStrong}`,
                   boxShadow: now ? `0 0 0 5px ${T.accentMuted}` : 'none',
                 }}
               >
-                {done ? <Check size={13} strokeWidth={3} /> : s.n}
+                {done ? <Check size={13} strokeWidth={3} /> : skipped ? '–' : s.n}
               </span>
               <span style={{ minWidth: 0, textAlign: 'left' }}>
-                <span style={{ display: 'block', marginTop: 4, fontSize: 13, fontWeight: 600, color: done || now ? T.text : T.textFaint }}>
+                <span style={{ display: 'block', marginTop: 4, fontSize: 13, fontWeight: 600, color: done || now || skipped ? T.text : T.textFaint }}>
                   {s.title}
+                  {skipped && <span className="sr-only"> (skipped)</span>}
                 </span>
                 <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, lineHeight: 1.4, color: T.textFaint }}>
                   {s.sub}
@@ -98,8 +123,10 @@ export default function SetupRail({ T, step, projectName, dataSummary, onStepCli
                   <span
                     data-testid={`rail-value-${s.n}`}
                     style={{
-                      display: 'block', marginTop: 5, fontFamily: mono, fontSize: 11, color: T.textMuted,
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      marginTop: 5, fontFamily: mono, fontSize: 11, lineHeight: 1.4, color: T.textMuted, overflow: 'hidden',
+                      ...(wraps
+                        ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }
+                        : { display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }),
                     }}
                   >
                     {value}
@@ -119,14 +146,16 @@ export default function SetupRail({ T, step, projectName, dataSummary, onStepCli
                   aria-hidden="true"
                   style={{
                     position: 'absolute', left: 13, top: 28, bottom: 2, width: 2, borderRadius: 2,
-                    background: done ? T.ok : T.borderStrong,
+                    background: skipped
+                      ? `repeating-linear-gradient(180deg, ${T.borderStrong} 0 4px, transparent 4px 7px)`
+                      : done ? T.ok : T.borderStrong,
                   }}
                 />
               )}
               {clickable ? (
                 <button
                   type="button"
-                  onClick={() => onStepClick(s.n as 1 | 2)}
+                  onClick={() => onStepClick(s.n as 1 | 2 | 3)}
                   aria-label={`Go back to ${s.title}`}
                   style={{ ...rowStyle, width: '100%', cursor: 'pointer', fontFamily: 'inherit', color: 'inherit' }}
                 >

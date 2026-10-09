@@ -193,13 +193,26 @@ const renderPage = () => render(<DataUploadPage onDataReady={onDataReady} />);
 
 const newProjectButton = () => screen.getByRole('button', { name: /New project/ });
 
-/** Step 1's primary button. */
+/** The primary button of step 1 and of step 2 (customer batch 2026-10, item 5:
+ *  step 2 says "Continue" again — it leads to step 3, Failure groups). */
 const continueButton = () =>
   screen.getByText('Continue').closest('button') as HTMLButtonElement;
 
-/** Step 2's primary button (was "Continue" before the 2026-10-04 redesign). */
+/** Step 3's primary button (it was step 2's until step 3 existed). */
 const openDashboardButton = () =>
   screen.getByText('Open Dashboard').closest('button') as HTMLButtonElement;
+
+/** Step 3's text-link "Skip for now". */
+const skipButton = () => screen.getByRole('button', { name: 'Skip for now' }) as HTMLButtonElement;
+
+/** Step 3's quick-add field. */
+const quickAddInput = () => screen.getByLabelText('New failure group name') as HTMLInputElement;
+
+/** Type a name in step 3's quick-add field and press Enter. */
+function addGroup(name: string) {
+  fireEvent.change(quickAddInput(), { target: { value: name } });
+  fireEvent.keyDown(quickAddInput(), { key: 'Enter' });
+}
 
 /** Render and advance to step 1 ("Name your project"). */
 function renderAtStep1() {
@@ -223,6 +236,15 @@ function renderAtStep2({
       target: { value: description },
     });
   }
+  fireEvent.click(continueButton());
+  return utils;
+}
+
+/** Render and advance to step 3 ("Which failures should Wizard look for?").
+ *  The data hook must already report a ready dataset (step 2's Continue is
+ *  gated on it). */
+function renderAtStep3(opts: { name?: string; description?: string } = {}) {
+  const utils = renderAtStep2(opts);
   fireEvent.click(continueButton());
   return utils;
 }
@@ -610,18 +632,17 @@ describe('D. Tag names panel', () => {
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('E. Open Dashboard button', () => {
-  it('E24. Open Dashboard is disabled until dataset is ready', () => {
+  it('E24. step 2 Continue is disabled until the dataset is ready (and there is no Open Dashboard on step 2)', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/x.csv'] }));
 
     renderAtStep2();
 
-    const btn = openDashboardButton();
-    expect(btn.disabled).toBe(true);
-    // the old step-2 label is gone
-    expect(screen.queryByText('Continue')).toBeNull();
+    expect(continueButton().disabled).toBe(true);
+    // Open Dashboard moved to step 3 (customer batch 2026-10, item 5)
+    expect(screen.queryByText('Open Dashboard')).toBeNull();
   });
 
-  it('E25. clicking Open Dashboard saves a WorkspaceState with dashboard route', async () => {
+  it('E25. Open Dashboard on step 3 saves a WorkspaceState that lands on the FG tab, with the named groups', async () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({ selectedFiles: ['/a.csv', '/b.csv'], loadReport: FAKE_REPORT })
     );
@@ -630,15 +651,29 @@ describe('E. Open Dashboard button', () => {
     );
     mockSaveWorkspace.mockResolvedValue(undefined);
 
-    // Name + description come from step 1 and are persisted by step 2's
-    // Continue — this is the only place they get written to disk.
-    renderAtStep2({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
+    // Name + description come from step 1 and the groups from step 3; Open
+    // Dashboard on step 3 is the only place any of them get written to disk.
+    renderAtStep3({ name: 'Line 3 baseline', description: 'Q3 compressor run' });
+    expect(mockSaveWorkspace).not.toHaveBeenCalled();
+    addGroup('Bearing overheating');
+    addGroup('Lube oil pressure low');
+    fireEvent.change(screen.getAllByPlaceholderText('What failure mode does this group track?')[0], {
+      target: { value: 'NDE bearing runs hot' },
+    });
     fireEvent.click(openDashboardButton());
 
     await waitFor(() => expect(mockSaveWorkspace).toHaveBeenCalledTimes(1));
     const saved = mockSaveWorkspace.mock.calls[0][0] as WorkspaceState;
+    expect(saved.failureGroupState).toEqual({
+      groups: [
+        { no: 0, name: 'Not in Group' },
+        { no: 1, name: 'Bearing overheating', description: 'NDE bearing runs hot', recommendation: '' },
+        { no: 2, name: 'Lube oil pressure low' },
+      ],
+      models: [],
+    });
     expect(saved).toMatchObject({
-      lastRoute: 'dashboard',
+      lastRoute: 'failure-group',
       dataFilePaths: ['/a.csv', '/b.csv'],
       mappingFilePath: '/lookup/sensors.csv',
       mappingKeyColumn: 'tag',
@@ -668,7 +703,8 @@ describe('E. Open Dashboard button', () => {
     useMappingDataMock.mockReturnValue(makeMapping({ sensorMetadata: sm }));
     mockSaveWorkspace.mockResolvedValue(undefined);
 
-    renderAtStep2();
+    renderAtStep3();
+    addGroup('Bearing overheating');
     fireEvent.click(openDashboardButton());
 
     // handleContinue holds a 500 ms MIN_TRANSITION_MS floor before handing off.
@@ -678,8 +714,275 @@ describe('E. Open Dashboard button', () => {
       headers: FAKE_REPORT.headers,
       total_rows: FAKE_REPORT.total_rows,
     });
-    expect(stateArg.lastRoute).toBe('dashboard');
+    expect(stateArg.lastRoute).toBe('failure-group');
+    expect(stateArg.failureGroupState.groups.map((g: { name: string }) => g.name)).toEqual(['Not in Group', 'Bearing overheating']);
     expect(smArg).toBe(sm);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// S. Step 3 "Failure groups" (customer batch 2026-10, item 5)
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('S. Step 3 "Failure groups"', () => {
+  beforeEach(() => {
+    useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: FAKE_REPORT }));
+    mockSaveWorkspace.mockResolvedValue(undefined);
+  });
+
+  it('S1. arriving: heading + eyebrow, the cursor in the quick-add field, rail step 3 current with "0 groups", Open Dashboard disabled, Skip is a link', () => {
+    renderAtStep3({ name: 'GT-11 Generator' });
+
+    expect(screen.getByRole('heading', { name: 'Which failures should Wizard look for?' })).toBeTruthy();
+    expect(screen.getByText('Step 3 of 3 · GT-11 Generator')).toBeTruthy();
+    expect(document.activeElement).toBe(quickAddInput());
+    expect(screen.getByTestId('fg-step-empty').textContent).toContain('No failure groups yet');
+
+    const rail = within(screen.getByTestId('setup-rail'));
+    expect(rail.getByText('Failure groups').closest('[aria-current="step"]')).toBeTruthy();
+    expect(screen.getByTestId('rail-value-3').textContent).toBe('0 groups');
+    // steps 1 and 2 are done and can be gone back to; 4 is never a shortcut
+    expect(rail.getByRole('button', { name: 'Go back to Add sensor data' })).toBeTruthy();
+    expect(rail.queryByRole('button', { name: /Explore in Dashboard/ })).toBeNull();
+
+    expect(openDashboardButton().disabled).toBe(true);
+    expect(screen.getByTestId('fg-step-status').textContent).toBe('Add at least one failure group, or skip for now');
+    expect(skipButton().className).toBe('fg-step-skip');
+  });
+
+  it('S2. Enter adds a group, clears the field and keeps the cursor there; the rail, footer and FG-n follow', () => {
+    renderAtStep3();
+    addGroup('  Bearing overheating  ');
+
+    expect(quickAddInput().value).toBe('');
+    expect(document.activeElement).toBe(quickAddInput());
+    expect((screen.getByLabelText('Name of FG-1') as HTMLInputElement).value).toBe('Bearing overheating');
+    expect(screen.getByTestId('fg-step-live').textContent).toBe('Added Bearing overheating. 1 group.');
+
+    addGroup('Lube oil pressure low');
+    expect(screen.getAllByTestId('fg-step-card')).toHaveLength(2);
+    expect(screen.getByLabelText('Name of FG-2')).toBeTruthy();
+    expect(screen.getByTestId('rail-value-3').textContent).toBe('2 groups');
+    expect(screen.getByTestId('fg-step-status').textContent).toBe('2 failure groups · sensors are assigned in the Dashboard');
+    expect(openDashboardButton().disabled).toBe(false);
+  });
+
+  it('S3. a duplicate name (any case) turns the field red, says why, and adds nothing', () => {
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    fireEvent.change(quickAddInput(), { target: { value: 'BEARING overheating' } });
+
+    expect(quickAddInput().getAttribute('aria-invalid')).toBe('true');
+    expect(quickAddInput().className).toContain('is-bad');
+    expect(screen.getByRole('alert').textContent).toBe('A failure group named "BEARING overheating" already exists.');
+    expect((screen.getByRole('button', { name: '+ Add group' }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.keyDown(quickAddInput(), { key: 'Enter' });
+    expect(screen.getAllByTestId('fg-step-card')).toHaveLength(1);
+    expect(quickAddInput().value).toBe('BEARING overheating');
+  });
+
+  it('S4. a card name: Enter saves, a duplicate stays red with its message, Esc puts the old name back', () => {
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    addGroup('Cooling water loss');
+    const second = screen.getByLabelText('Name of FG-2') as HTMLInputElement;
+
+    fireEvent.change(second, { target: { value: 'bearing OVERHEATING' } });
+    fireEvent.keyDown(second, { key: 'Enter' });
+    expect(second.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByRole('alert').textContent).toBe('A failure group named "bearing OVERHEATING" already exists');
+
+    fireEvent.keyDown(second, { key: 'Escape' });
+    expect(second.value).toBe('Cooling water loss');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    fireEvent.change(second, { target: { value: 'Cooling water flow low' } });
+    fireEvent.keyDown(second, { key: 'Enter' });
+    expect(screen.getByLabelText('Name of FG-2')).toHaveProperty('value', 'Cooling water flow low');
+  });
+
+  it('S5. ✕ removes a group with a 7 s Undo toast; Undo puts it back in the same place', () => {
+    renderAtStep3();
+    addGroup('A group');
+    addGroup('B group');
+    addGroup('C group');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove B group' }));
+    expect(screen.getAllByTestId('fg-step-card')).toHaveLength(2);
+    expect(screen.getByTestId('fg-undo-toast').textContent).toContain('Removed B group');
+    expect(screen.getByTestId('fg-step-live').textContent).toBe('Removed B group.');
+
+    fireEvent.click(within(screen.getByTestId('fg-undo-toast')).getByRole('button', { name: 'Undo' }));
+    expect(screen.queryByTestId('fg-undo-toast')).toBeNull();
+    expect(screen.getAllByLabelText(/^Name of FG-/).map(i => (i as HTMLInputElement).value))
+      .toEqual(['A group', 'B group', 'C group']);
+  });
+
+  it('S6. the Undo toast expires after 7 seconds', () => {
+    vi.useFakeTimers();
+    try {
+      renderAtStep3();
+      addGroup('Only group');
+      fireEvent.click(screen.getByRole('button', { name: 'Remove Only group' }));
+      expect(screen.getByTestId('fg-undo-toast')).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(6900); });
+      expect(screen.getByTestId('fg-undo-toast')).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(screen.queryByTestId('fg-undo-toast')).toBeNull();
+      expect(screen.getByTestId('fg-step-empty')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('S7. Skip for now: step 4 "Opening the Dashboard…" with a dashed "Skipped · 0 groups" step 3 (never a ✓), then a workspace with only "Not in Group"', async () => {
+    renderAtStep3({ name: 'CW-3 pump' });
+    addGroup('Typed but skipped');
+    fireEvent.click(skipButton());
+
+    expect(screen.getByTestId('opening-dashboard').textContent).toContain('Opening the Dashboard…');
+    expect(screen.getByTestId('opening-dashboard').textContent).toContain('CW-3 pump · 2 sensors');
+    expect(screen.getByTestId('rail-marker-3').getAttribute('data-state')).toBe('skipped');
+    expect(screen.getByTestId('rail-marker-3').textContent).toBe('–');
+    expect(screen.getByTestId('rail-value-3').textContent).toBe('Skipped · 0 groups');
+    const rail = within(screen.getByTestId('setup-rail'));
+    expect(rail.getByText('Explore in Dashboard').closest('[aria-current="step"]')).toBeTruthy();
+    // nothing in the rail is clickable while the Dashboard opens
+    expect(rail.queryByRole('button', { name: /Go back to/ })).toBeNull();
+
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    const saved = mockSaveWorkspace.mock.calls[0][0] as WorkspaceState;
+    expect(saved.lastRoute).toBe('failure-group');
+    expect(saved.failureGroupState).toEqual({ groups: [{ no: 0, name: 'Not in Group' }], models: [] });
+  });
+
+  it('S8. Open Dashboard: step 3 shows a ✓ and its group count while the Dashboard opens; a second click saves nothing more', async () => {
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    fireEvent.click(openDashboardButton());
+    expect(screen.getByTestId('rail-marker-3').getAttribute('data-state')).toBe('done');
+    expect(screen.getByTestId('rail-value-3').textContent).toBe('1 group');
+    expect(screen.queryByRole('button', { name: 'Open Dashboard' })).toBeNull();
+
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(mockSaveWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it('S9. a failed save goes back to step 3 with the error and the typed groups kept', async () => {
+    mockSaveWorkspace.mockRejectedValue(new Error('disk full'));
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    fireEvent.click(openDashboardButton());
+
+    await waitFor(() => expect(screen.getByText('Error: disk full')).toBeTruthy());
+    expect(screen.getByTestId('failure-groups-step')).toBeTruthy();
+    expect((screen.getByLabelText('Name of FG-1') as HTMLInputElement).value).toBe('Bearing overheating');
+    expect(onDataReady).not.toHaveBeenCalled();
+    expect(openDashboardButton().disabled).toBe(false);
+  });
+
+  it('S10. Back (or the rail) returns to step 2 and keeps the typed groups; a NEW project starts with none', () => {
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    fireEvent.click(screen.getByText('‹ Back'));
+    expect(screen.getByText('Add your sensor data')).toBeTruthy();
+    fireEvent.click(continueButton());
+    expect((screen.getByLabelText('Name of FG-1') as HTMLInputElement).value).toBe('Bearing overheating');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to Add sensor data' }));
+    expect(screen.getByText('Add your sensor data')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }));
+    fireEvent.click(newProjectButton());
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Another' } });
+    fireEvent.click(continueButton());
+    fireEvent.click(continueButton());
+    expect(screen.getByTestId('fg-step-empty')).toBeTruthy();
+  });
+
+  it('S12. remove the last group -> add one -> Undo: the two cards keep separate ids (editing one never touches the other)', () => {
+    renderAtStep3();
+    addGroup('A group');
+    addGroup('B group');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove B group' }));
+    addGroup('C group');
+    fireEvent.click(within(screen.getByTestId('fg-undo-toast')).getByRole('button', { name: 'Undo' }));
+
+    const names = () => screen.getAllByLabelText(/^Name of FG-/).map(i => (i as HTMLInputElement).value);
+    expect(names()).toEqual(['A group', 'B group', 'C group']);
+    const descs = screen.getAllByPlaceholderText('What failure mode does this group track?') as HTMLTextAreaElement[];
+    expect(new Set(descs.map(d => d.id)).size).toBe(3);
+
+    fireEvent.change(descs[2], { target: { value: 'only C' } });
+    const after = screen.getAllByPlaceholderText('What failure mode does this group track?') as HTMLTextAreaElement[];
+    expect(after.map(d => d.value)).toEqual(['', '', 'only C']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove C group' }));
+    expect(names()).toEqual(['A group', 'B group']);
+  });
+
+  it('S13. a card name that could not be saved (duplicate) blocks Open Dashboard with the reason until fixed; the fixed name is what gets saved', async () => {
+    renderAtStep3();
+    addGroup('Bearing overheating');
+    addGroup('Seal leak');
+    const second = screen.getByLabelText('Name of FG-2') as HTMLInputElement;
+    fireEvent.change(second, { target: { value: 'bearing overheating' } });
+    fireEvent.blur(second);
+
+    expect(openDashboardButton().disabled).toBe(true);
+    expect(screen.getByTestId('fg-step-status').textContent).toBe('Fix the duplicate group name (or press Esc on it) to open the Dashboard');
+    // Skip saves no groups at all, so it stays available
+    expect(skipButton().disabled).toBe(false);
+
+    fireEvent.change(second, { target: { value: 'Seal leak (DE)' } });
+    fireEvent.keyDown(second, { key: 'Enter' });
+    expect(openDashboardButton().disabled).toBe(false);
+    fireEvent.click(openDashboardButton());
+    await waitFor(() => expect(mockSaveWorkspace).toHaveBeenCalledTimes(1));
+    const saved = mockSaveWorkspace.mock.calls[0][0] as WorkspaceState;
+    expect(saved.failureGroupState!.groups.map(g => g.name)).toEqual(['Not in Group', 'Bearing overheating', 'Seal leak (DE)']);
+    await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  });
+
+  it('S14. Esc on the bad card name, or removing that card, unblocks Open Dashboard; "Not in Group" is never a name you can add', () => {
+    renderAtStep3();
+    addGroup('A group');
+    addGroup('B group');
+    const b = screen.getByLabelText('Name of FG-2') as HTMLInputElement;
+    fireEvent.change(b, { target: { value: 'A GROUP' } });
+    fireEvent.blur(b);
+    expect(openDashboardButton().disabled).toBe(true);
+    fireEvent.keyDown(b, { key: 'Escape' });
+    expect(openDashboardButton().disabled).toBe(false);
+
+    fireEvent.change(b, { target: { value: 'a group' } });
+    fireEvent.blur(b);
+    expect(openDashboardButton().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove B group' }));
+    expect(openDashboardButton().disabled).toBe(false);
+
+    fireEvent.change(quickAddInput(), { target: { value: ' not in GROUP ' } });
+    expect(quickAddInput().getAttribute('aria-invalid')).toBe('true');
+    fireEvent.keyDown(quickAddInput(), { key: 'Enter' });
+    expect(screen.getAllByTestId('fg-step-card')).toHaveLength(1);
+  });
+
+  it('S11. on every setup step the step\'s own controls come before the rail in Tab (DOM) order', () => {
+    const railFollows = (control: HTMLElement) =>
+      // eslint-disable-next-line no-bitwise
+      (control.compareDocumentPosition(screen.getByTestId('setup-rail')) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+    renderAtStep1();
+    expect(railFollows(screen.getByPlaceholderText(NAME_PLACEHOLDER))).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'P' } });
+    expect(railFollows(continueButton())).toBe(true);
+    fireEvent.click(continueButton());
+    expect(railFollows(continueButton())).toBe(true);
+    fireEvent.click(continueButton());
+    expect(railFollows(quickAddInput())).toBe(true);
+    expect(railFollows(skipButton())).toBe(true);
+    expect(railFollows(openDashboardButton())).toBe(true);
   });
 });
 
@@ -1081,7 +1384,7 @@ describe('I. Stale-report state', () => {
     expect(screen.getByText('Parse files')).toBeTruthy();
   });
 
-  it('I38. stale report → Open Dashboard is disabled', () => {
+  it('I38. stale report → step 2 Continue is disabled', () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({
         selectedFiles: ['/a.csv'],
@@ -1092,7 +1395,7 @@ describe('I. Stale-report state', () => {
 
     renderAtStep2();
 
-    const btn = openDashboardButton();
+    const btn = continueButton();
     expect(btn.disabled).toBe(true);
   });
 
@@ -1228,7 +1531,7 @@ describe('I. Stale-report state', () => {
     }
   });
 
-  it('I42. removing all files after parse → Open Dashboard disabled, no Parse button (nothing to parse)', () => {
+  it('I42. removing all files after parse → step 2 Continue disabled, no Parse button (nothing to parse)', () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({
         selectedFiles: [],                  // user removed everything
@@ -1239,7 +1542,7 @@ describe('I. Stale-report state', () => {
 
     renderAtStep2();
 
-    const continueBtn = openDashboardButton();
+    const continueBtn = continueButton();
     expect(continueBtn.disabled).toBe(true);
     // hasFiles=false → Parse button can't show even though stale
     expect(screen.queryByText('Parse files')).toBeNull();
@@ -1317,10 +1620,11 @@ describe('J. Onboarding flow', () => {
     expect(screen.getByText('Name your project')).toBeTruthy();
     expect(screen.getByPlaceholderText(NAME_PLACEHOLDER)).toBeTruthy();
     expect(screen.getByPlaceholderText(DESC_PLACEHOLDER)).toBeTruthy();
-    // The rail lists all three steps from step 1 onwards
+    // The rail lists all four steps from step 1 onwards
     const rail = within(screen.getByTestId('setup-rail'));
     expect(rail.getByText('Name the project')).toBeTruthy();
     expect(rail.getByText('Add sensor data')).toBeTruthy();
+    expect(rail.getByText('Failure groups')).toBeTruthy();
     expect(rail.getByText('Explore in Dashboard')).toBeTruthy();
     expect(rail.getByRole('button', { name: 'All projects' })).toBeTruthy();
     expect(screen.queryByPlaceholderText('Find workspace…')).toBeNull();
@@ -1485,13 +1789,13 @@ describe('K. dataset generation and latest-click-wins', () => {
     expect(getErrors()).toHaveLength(0);
   });
 
-  it('K2. Open Dashboard hands the Dashboard the generation of the Parse that produced the dataset', async () => {
+  it('K2. Open Dashboard (via step 3) hands the Dashboard the generation of the Parse that produced the dataset', async () => {
     useDataUploadMock.mockReturnValue(
       makeDataUpload({ selectedFiles: ['/a.csv'], loadReport: { ...FAKE_REPORT, generation: 21 } })
     );
     mockSaveWorkspace.mockResolvedValue(undefined);
-    renderAtStep2();
-    fireEvent.click(openDashboardButton());
+    renderAtStep3();
+    fireEvent.click(skipButton());
     await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
     expect((onDataReady.mock.calls[0][0] as CsvMetadata).generation).toBe(21);
   });
@@ -1701,6 +2005,37 @@ describe('L. Get started page (step 0)', () => {
       expect(screen.queryByText('Open recent project')).toBeNull();
       expect(screen.queryByText('Create new project')).toBeNull();
       expect(screen.queryByText('Pick an option above to get started')).toBeNull();
+    });
+
+    it('L8. failure-group chip: "n failure groups" with a colour per group (max 3), a neutral dashed "No failure groups" at 0, nothing for a project saved before the count existed', async () => {
+      mockGetRecent.mockResolvedValue([
+        { id: 'ws_a', name: 'GT-11 Generator', lastModified: Date.now(), filePath: '/a.json', failureGroupCount: 4, failureGroupNos: [1, 2, 3] },
+        { id: 'ws_b', name: 'BFP-2A pump', lastModified: Date.now(), filePath: '/b.json', failureGroupCount: 1, failureGroupNos: [2] },
+        { id: 'ws_c', name: 'CW-3 pump', lastModified: Date.now(), filePath: '/c.json', failureGroupCount: 0, failureGroupNos: [] },
+        { id: 'ws_d', name: 'ID fan B', lastModified: Date.now(), filePath: '/d.json' },
+      ] satisfies WorkspaceMetadata[]);
+      renderPage();
+      await waitFor(() => screen.getByText('GT-11 Generator'));
+
+      const chipOf = (name: string) => within(cardOf(name)).queryByTestId('project-fg-chip');
+
+      const four = chipOf('GT-11 Generator')!;
+      expect(four.textContent).toBe('4 failure groups');
+      expect([...four.querySelectorAll('.fg-count-chip-sw i')].map(i => i.className))
+        .toEqual(['fg-group-color-amber', 'fg-group-color-violet', 'fg-group-color-green']);
+      expect(cardOf('GT-11 Generator').className).toContain('fg-recent-card--chip');
+
+      const one = chipOf('BFP-2A pump')!;
+      expect(one.textContent).toBe('1 failure group');
+      expect([...one.querySelectorAll('.fg-count-chip-sw i')].map(i => i.className)).toEqual(['fg-group-color-violet']);
+
+      const zero = chipOf('CW-3 pump')!;
+      expect(zero.textContent).toBe('No failure groups');
+      expect(zero.className).toBe('fg-count-chip fg-count-chip--zero');
+      expect(zero.querySelector('.fg-count-chip-sw')).toBeNull();
+
+      expect(chipOf('ID fan B')).toBeNull();
+      expect(cardOf('ID fan B').className).toBe('fg-recent-card');
     });
   });
 
@@ -1995,6 +2330,8 @@ const FULL_REPORT: CsvLoadReport = {
 };
 
 const TWO_FILES = ['/d/run-01.csv', '/d/run-02.csv'];
+/** Sensor columns in FULL_REPORT (its headers minus the timestamp). */
+const TAGS_IN_READY_REPORT = FAKE_REPORT.headers.length - 1;
 
 const readyTwoFiles = (report: CsvLoadReport = FULL_REPORT) =>
   makeDataUpload({ selectedFiles: TWO_FILES, loadReport: report });
@@ -2027,7 +2364,7 @@ describe('M. Setup rail (steps 1-2)', () => {
     expect(rail.queryByRole('button', { name: /Explore in Dashboard/ })).toBeNull();
   });
 
-  it('M3. once the files are read the rail summarises them ("N files · rows"); nothing before that', () => {
+  it('M3. once the files are read the rail summarises them ("N files · rows · tags", may wrap to two lines); nothing before that', () => {
     useDataUploadMock.mockReturnValue(makeDataUpload({ selectedFiles: TWO_FILES }));
     const { unmount } = renderAtStep2();
     expect(screen.queryByTestId('rail-value-2')).toBeNull();
@@ -2036,7 +2373,11 @@ describe('M. Setup rail (steps 1-2)', () => {
 
     useDataUploadMock.mockReturnValue(readyTwoFiles());
     renderAtStep2();
-    expect(screen.getByTestId('rail-value-2').textContent).toBe(`2 files · ${(159264).toLocaleString()} rows`);
+    const value = screen.getByTestId('rail-value-2');
+    expect(value.textContent).toBe(`2 files · ${(159264).toLocaleString()} rows · ${TAGS_IN_READY_REPORT} tags`);
+    // the step-2 value may wrap to a second line (clamped at two); it never ellipsises on one
+    expect(value.style.whiteSpace).not.toBe('nowrap');
+    expect(value.style.webkitLineClamp).toBe('2');
   });
 
   it('M4. the rail summary pluralises ("1 file") and drops a row count that is not a number', () => {
@@ -2044,7 +2385,7 @@ describe('M. Setup rail (steps 1-2)', () => {
       makeDataUpload({ selectedFiles: ['/d/a.csv'], loadReport: { ...FAKE_REPORT, total_rows: Number.NaN } }),
     );
     renderAtStep2();
-    expect(screen.getByTestId('rail-value-2').textContent).toBe('1 file');
+    expect(screen.getByTestId('rail-value-2').textContent).toBe('1 file · 2 tags');
   });
 
   it('M5. clicking the completed "Name the project" step goes back and keeps what was typed', () => {
@@ -2071,7 +2412,7 @@ describe('M. Setup rail (steps 1-2)', () => {
 describe('N. Step 1 "Name your project"', () => {
   it('N1. shows the step heading, a name counter that starts at 0/80 and follows typing', () => {
     renderAtStep1();
-    expect(screen.getByText('Step 1 of 2')).toBeTruthy();
+    expect(screen.getByText('Step 1 of 3')).toBeTruthy();
     expect(screen.getByTestId('name-counter').textContent).toBe('0/80');
     fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: 'Pump A' } });
     expect(screen.getByTestId('name-counter').textContent).toBe('6/80');
@@ -2148,7 +2489,7 @@ describe('N. Step 1 "Name your project"', () => {
 describe('O. Step 2 "Sensor data" panel', () => {
   it('O1. empty: a large dropzone with the three conditions as chips and the step eyebrow with the project name', () => {
     renderAtStep2({ name: 'Line 3 baseline' });
-    expect(screen.getByText('Step 2 of 2 · Line 3 baseline')).toBeTruthy();
+    expect(screen.getByText('Step 2 of 3 · Line 3 baseline')).toBeTruthy();
     expect(screen.getByText('Drop CSV files here')).toBeTruthy();
     expect(screen.getByText('First column is date/time')).toBeTruthy();
     expect(screen.getByText('Unique column names')).toBeTruthy();
@@ -2673,9 +3014,9 @@ describe('R. Tag names panel (step 2, right)', () => {
     expect(screen.getByText(/Showing the first 200 of 250/)).toBeTruthy();
   });
 
-  it('R13. Open Dashboard stays enabled when no tag names were added (the panel is optional)', () => {
+  it('R13. step 2 Continue stays enabled when no tag names were added (the panel is optional)', () => {
     useDataUploadMock.mockReturnValue(readyUpload());
     renderAtStep2();
-    expect(openDashboardButton().disabled).toBe(false);
+    expect(continueButton().disabled).toBe(false);
   });
 });

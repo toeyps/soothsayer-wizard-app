@@ -26,6 +26,9 @@ import SensorSelection from './SensorSelection';
 import UndoToastStack from './UndoToastStack';
 import { KIND_LABEL, UNDO_SECONDS } from './FailureGroupAssignSheet';
 import FailureGroupsPanel from './FailureGroupsPanel';
+import { NOT_IN_GROUP, appendFailureGroup, applyFailureGroupDetails, isDuplicateFailureGroupName } from './failureGroupOps';
+import { getFgGroupColor } from '../../utils/failureGroupColor';
+import { realFailureGroups } from '../../utils/failureGroupSummary';
 import HighlightsPanel from './HighlightsPanel';
 import ColourPicker from '../sensor/ColourPicker';
 import { SensorLabel } from '../sensor/SensorLabel';
@@ -54,12 +57,6 @@ const PANELS = {
     data: { id: 'data', label: 'Control Chart', icon: LineChartIcon }
 } as const;
 
-// Mirrors `getGroupColor`/`GROUP_PALETTE` in FailureGroupCreation.tsx exactly
-// (duplicated, not imported, since the two windows don't share a components
-// module) so a group assigned from either window renders the same color.
-const FG_GROUP_PALETTE = ['amber', 'violet', 'green', 'blue'] as const;
-const getFgGroupColor = (no: number): string =>
-    no === 0 ? 'slate' : FG_GROUP_PALETTE[(no - 1) % FG_GROUP_PALETTE.length];
 
 /** Tag comparison is case-insensitive everywhere else this file matches a
  *  sensor tag (see the `byTag` maps in the `add-sensor-selection` listener
@@ -396,7 +393,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // so membership is "does tag's individual model's groupNos include
     // groupNo" — one individual model per tag, not one per (tag, groupNo).
     const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
-        initialState?.failureGroupState?.groups ?? [{ no: 0, name: 'Not in Group' }]
+        initialState?.failureGroupState?.groups ?? [NOT_IN_GROUP]
     );
     const [fgModels, setFgModels] = useState<FailureModel[]>(
         initialState?.failureGroupState?.models ?? []
@@ -593,7 +590,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }), [getSensorMeta]);
 
     const isDuplicateGroupName = useCallback((name: string, excludeNo?: number) =>
-        fgGroups.some(g => g.no !== 0 && g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase()),
+        isDuplicateFailureGroupName(fgGroups, name, excludeNo),
     [fgGroups]);
 
     // A sensor's per-kind, per-group toggle (SensorSelection's FolderPlus
@@ -724,10 +721,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         // Pure over (groups, models) so it can run against the mirror (instant
         // UI) and again against disk inside the write.
         const build = (groups: FailureGroup[], models: FailureModel[]) => {
-            const newGroupNo = Math.max(...groups.map(g => g.no), 0) + 1;
+            const nextGroups = appendFailureGroup(groups, trimmed);
+            const newGroupNo = nextGroups[nextGroups.length - 1].no;
             const existing = findKindIn(models, tag, 'individual');
             return {
-                groups: [...groups, { no: newGroupNo, name: trimmed }],
+                groups: nextGroups,
                 models: existing
                     ? models.map(m => m === existing
                         ? { ...m, groupNos: [...new Set([...m.groupNos.filter(n => n !== 0), newGroupNo])] }
@@ -773,7 +771,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const updateGroupDetails = useCallback((groupNo: number, name: string, description: string, recommendation: string) => {
         const trimmed = name.trim();
         if (!trimmed) return;
-        const apply = (groups: FailureGroup[]) => groups.map(g => g.no === groupNo ? { ...g, name: trimmed, description, recommendation } : g);
+        const apply = (groups: FailureGroup[]) => applyFailureGroupDetails(groups, groupNo, trimmed, description, recommendation);
         setFgGroups(apply(fgGroups));
         persistFailureGroupStateFrom(disk => ({ groups: apply(disk.groups), models: disk.models }));
     }, [fgGroups, persistFailureGroupStateFrom]);
@@ -806,14 +804,56 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // persistFailureGroupState above; toggleSensorGroupKind/
     // createGroupForSensor (also above) remain the entry points used by
     // SensorSelection.tsx's per-sensor quick-assign, unchanged.
-    const [activeSensorTab, setActiveSensorTab] = useState<'sensor' | 'failure-groups'>(
-        initialState?.lastRoute === 'failure-group' ? 'failure-groups' : 'sensor'
+    //
+    // Customer batch 2026-10 (item 5): the Dashboard lands on the Failure
+    // Groups tab right after Import step 3 (`lastRoute: 'failure-group'`) AND
+    // whenever the project has no failure groups yet (a skipped step 3, or a
+    // project reopened from Recent with zero groups) — failure groups come
+    // first. Decided once, at mount; afterwards the user's tab clicks rule.
+    const [activeSensorTab, setActiveSensorTab] = useState<'sensor' | 'failure-groups'>(() =>
+        initialState?.lastRoute === 'failure-group'
+            || realFailureGroups(initialState?.failureGroupState?.groups).length === 0
+            ? 'failure-groups' : 'sensor'
     );
+    // "Assign sensors →" on a Failure Groups card: the group the Sensor tab is
+    // filling (its bar names it, the assignment sheet pins it first). `null` =
+    // ordinary Sensor tab. Cleared by Done and by switching back to the FG tab.
+    const [assignGroupNo, setAssignGroupNo] = useState<number | null>(null);
+    const startAssignSensors = useCallback((groupNo: number) => {
+        setAssignGroupNo(groupNo);
+        setActiveSensorTab('sensor');
+    }, []);
+    // Where keyboard focus goes after Done: back to that group's "Assign
+    // sensors →" link if it is still there (the group is still empty), else to
+    // the Failure Groups tab button — never <body>. Applied once the FG tab has
+    // rendered (effect below).
+    const sensorsSectionRef = useRef<HTMLDivElement>(null);
+    const fgTabButtonRef = useRef<HTMLButtonElement>(null);
+    const focusAfterAssignRef = useRef<number | null>(null);
+    const finishAssignSensors = useCallback(() => {
+        focusAfterAssignRef.current = assignGroupNo ?? 0;
+        setAssignGroupNo(null);
+        setActiveSensorTab('failure-groups');
+    }, [assignGroupNo]);
+    useEffect(() => {
+        const no = focusAfterAssignRef.current;
+        if (no === null || activeSensorTab !== 'failure-groups') return;
+        focusAfterAssignRef.current = null;
+        const link = sensorsSectionRef.current?.querySelector<HTMLElement>(`[data-assign-group="${no}"]`);
+        (link ?? fgTabButtonRef.current)?.focus();
+    }, [activeSensorTab]);
+    // The group being filled was deleted (from the sheet's ⋯ or the FG tab):
+    // end the run, so a group created later that reuses its number does not
+    // bring the bar and the pinned "Assigning" row back for a group the user
+    // never chose.
+    useEffect(() => {
+        if (assignGroupNo !== null && !fgGroups.some(g => g.no === assignGroupNo)) setAssignGroupNo(null);
+    }, [fgGroups, assignGroupNo]);
 
     const createEmptyGroup = useCallback((name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
-        const add = (groups: FailureGroup[]) => [...groups, { no: Math.max(...groups.map(g => g.no), 0) + 1, name: trimmed }];
+        const add = (groups: FailureGroup[]) => appendFailureGroup(groups, trimmed);
         setFgGroups(add(fgGroups));
         persistFailureGroupStateFrom(disk => ({ groups: add(disk.groups), models: disk.models }));
     }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);
@@ -2826,13 +2866,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     );
 
     const renderSensorsContent = () => (
-        <div className="widget-section">
+        <div className="widget-section" ref={sensorsSectionRef}>
             <div className="section-header collapsible-header">
                 <div className="section-header-left" style={{ gap: '4px' }}>
                     {(['sensor', 'failure-groups'] as const).map(tab => (
                         <button
                             key={tab}
-                            onClick={() => setActiveSensorTab(tab)}
+                            ref={tab === 'failure-groups' ? fgTabButtonRef : undefined}
+                            onClick={() => {
+                                setActiveSensorTab(tab);
+                                // Leaving for the FG tab ends an "Assign sensors" run.
+                                if (tab === 'failure-groups') setAssignGroupNo(null);
+                            }}
                             style={{
                                 background: 'none', border: 'none',
                                 borderBottom: activeSensorTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
@@ -2870,6 +2915,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onDeleteGroup={deleteGroup}
                         alarmLinesEnabled={alarmLinesEnabled}
                         onToggleAlarmLine={toggleAlarmLine}
+                        assignGroupNo={assignGroupNo}
+                        onAssignDone={finishAssignSensors}
                     />
                 ) : (
                     <FailureGroupsPanel
@@ -2884,6 +2931,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onCreateEmptyGroup={createEmptyGroup}
                         onDeleteModel={deleteModel}
                         onOpenBuildModel={spawnBuildModel}
+                        onAssignSensors={startAssignSensors}
                     />
                 )}
             </div>

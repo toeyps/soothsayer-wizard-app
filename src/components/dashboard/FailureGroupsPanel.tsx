@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
-import { Plus, Trash2, Play, ChevronRight, Check } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata } from '../../types';
 import { SensorLabel } from '../sensor/SensorLabel';
 import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
 import type { RunningConditionFg } from '../../utils/runningCondition';
 import { isModelComplete, modelDotState, modelSetPointFlag } from '../../utils/modelStatus';
+import { summarizeFailureGroups } from '../../utils/failureGroupSummary';
+import { isDuplicateFailureGroupName } from './failureGroupOps';
 
 // Same kind labels as BuildModelWindow.tsx / SensorSelection.tsx — used
 // for the model-kind badge's tooltip (see renderModelRow below).
@@ -52,10 +54,14 @@ interface FailureGroupsPanelProps {
      *  detail (category, notes, predictors, cluster ranges, kind, …) and
      *  training it. Cards themselves still don't open anything on click. */
     onOpenBuildModel: () => void;
+    /** "Assign sensors →" on a group with no sensors yet (customer batch
+     *  2026-10, item 5): the Dashboard switches to the Sensor tab in assign
+     *  mode for that group. Omitted = no link. */
+    onAssignSensors?: (groupNo: number) => void;
 }
 
-const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: number) =>
-    groups.some(g => g.no !== excludeNo && g.name.trim().toLowerCase() === name.trim().toLowerCase());
+// The same duplicate rule as the Dashboard's own group writers and Import step 3.
+const isDuplicateName = isDuplicateFailureGroupName;
 
 /**
  * Group-centric "preview" view for the Dashboard's Sensor panel — Failure
@@ -93,7 +99,7 @@ const isDuplicateName = (groups: FailureGroup[], name: string, excludeNo?: numbe
  */
 export default function FailureGroupsPanel({
     fgGroups, fgModels, sensorMetadata, runningConditionFg, datasetHeaders, getGroupColor,
-    onUpdateGroupDetails, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel,
+    onUpdateGroupDetails, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel, onAssignSensors,
 }: FailureGroupsPanelProps) {
     // "Edit details" panel — Name + Description + Recommendation together,
     // one group expanded at a time. Mirrors Build Model window's own
@@ -322,11 +328,22 @@ export default function FailureGroupsPanel({
     };
 
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
-    const totalModels = fgModels.length;
-    // "N of M models complete" summary chip (2026-10-02 reskin) — `status`
-    // is the exact same boolean the group-row/footer "done / total"
-    // counters and `dotStatusFor`'s 'complete' case already read.
-    const doneModels = fgModels.filter(isDone).length;
+    // "N groups · M sensors assigned · x of y models complete" (customer batch
+    // 2026-10, item 5; it was "x of y models complete" since the 2026-10-02
+    // reskin). Memoised on the Failure Group data alone, so a Dashboard
+    // re-render from a chart hover/pan never re-walks the models. `x` uses
+    // `isModelComplete`, the same rule as `isDone` and the per-group counters.
+    const summary = useMemo(
+        () => summarizeFailureGroups(fgGroups, fgModels, { ...runningConditionFg, models: fgModels }),
+        [fgGroups, fgModels, runningConditionFg],
+    );
+    // Real groups that no model belongs to yet: they get "Assign sensors →",
+    // and while one exists the landing callout keeps pointing at that step.
+    const emptyGroupNos = useMemo(() => {
+        const used = new Set<number>();
+        for (const m of fgModels) for (const no of m.groupNos) used.add(no);
+        return new Set(fgGroups.filter(g => g.no !== 0 && !used.has(g.no)).map(g => g.no));
+    }, [fgGroups, fgModels]);
     // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
     // for models built against a sensor that isn't part of any failure
     // mode. Always rendered as its own card now (2026-08-31 fix — it used
@@ -423,8 +440,12 @@ export default function FailureGroupsPanel({
                     onChange={e => setFgSearch(e.target.value)}
                     className="search-input-compact"
                 />
-                <div className="fg-summary-chip">
-                    <b>{doneModels}</b> of {totalModels} models complete
+                <div className="fg-summary-chip" data-testid="fg-summary">
+                    <span>
+                        <b>{summary.groupCount}</b> group{summary.groupCount === 1 ? '' : 's'}
+                        {' · '}<b>{summary.assignedSensorCount}</b> sensor{summary.assignedSensorCount === 1 ? '' : 's'} assigned
+                        {' · '}<b>{summary.completeModelCount}</b> of {summary.totalModelCount} models complete
+                    </span>
                 </div>
                 <div className="fg-legend">
                     {/* No dot here on purpose — matches what an actual
@@ -441,6 +462,20 @@ export default function FailureGroupsPanel({
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {/* Landing callout (customer batch 2026-10, item 5): after Import
+                    step 3, and on any project that still has no groups or an
+                    empty group. Names the lucide button, never an emoji. */}
+                {realGroups.length === 0 ? (
+                    <div className="fg-callout" data-testid="fg-callout">
+                        <b>No failure groups yet.</b> Failure groups come first: create one below, then assign the sensors that show it. You can explore the charts meanwhile.
+                    </div>
+                ) : emptyGroupNos.size > 0 ? (
+                    <div className="fg-callout" data-testid="fg-callout">
+                        <b>Your failure groups are ready.</b> Next, assign the sensors that show each failure: open the <b>Sensor</b> tab and use the Failure groups button
+                        {' '}<FolderPlus size={12} className="fg-callout-icon" aria-hidden="true" />{' '}
+                        on a sensor row, or click <b>Assign sensors</b> on a group.
+                    </div>
+                ) : null}
                 {realGroups.map(group => {
                     const groupModels = fgModels.filter(m => m.groupNos.includes(group.no));
                     const doneInGroup = groupModels.filter(isDone).length;
@@ -528,7 +563,20 @@ export default function FailureGroupsPanel({
 
                             <div style={{ padding: '0 8px 8px 20px', fontSize: '0.7rem' }}>
                                 {sensorGroups.length === 0 ? (
-                                    <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No models yet</div>
+                                    <div className="fg-empty-line">
+                                        No sensors yet
+                                        {onAssignSensors && (
+                                            <button
+                                                type="button"
+                                                className="fg-assign-link"
+                                                data-assign-group={group.no}
+                                                onClick={() => onAssignSensors(group.no)}
+                                                aria-label={`Assign sensors to ${group.name}`}
+                                            >
+                                                Assign sensors →
+                                            </button>
+                                        )}
+                                    </div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                         {sensorGroups.map(sg => renderSensorRow(group.no, sg))}
@@ -574,9 +622,6 @@ export default function FailureGroupsPanel({
                     </div>
                 )}
 
-                {realGroups.length === 0 && (
-                    <div className="no-results">No failure groups yet</div>
-                )}
             </div>
 
             {/* Panel footer: create-group + "Build Model ->" together
@@ -615,9 +660,14 @@ export default function FailureGroupsPanel({
                     </button>
                 )}
 
+                {/* The only entry to the Build Model window (the Dashboard header
+                    has none). With no model to build it stays visible but
+                    disabled, the reason as its tooltip. */}
                 <button
                     className="fg-build-model-btn"
                     onClick={onOpenBuildModel}
+                    disabled={fgModels.length === 0}
+                    title={fgModels.length === 0 ? 'No models yet — assign sensors to a failure group first' : undefined}
                 >
                     <Play size={12} /> Build Model →
                 </button>

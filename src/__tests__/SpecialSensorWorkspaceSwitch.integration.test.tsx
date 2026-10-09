@@ -35,6 +35,7 @@ import { render, fireEvent, act, cleanup, within } from '@testing-library/react'
 import type { SensorMetadata, WorkspaceState, SpecialSensorRecipe } from '../types';
 import { createFakeRust, STALE_SESSION_ERROR, type FakeRust, type RawCsv } from './helpers/fakeRustSession';
 import { mk } from './helpers/failureModelFixture';
+import { showSensorTab } from './helpers/dashboardLanding';
 
 // ── Shared fake Tauri: event bus, windows, workspace disk, dialogs ───────
 
@@ -308,6 +309,8 @@ async function openRecent(name: string, opts: { settle?: boolean } = {}) {
     if (opts.settle === false) { await flush(); return; }
     await flush(40);
     await tick(800);
+    // A project with no failure groups lands on the FG tab; these tests drive the Sensor tab.
+    showSensorTab(app!.container);
     await tick(300); // Dashboard's first chart fetch
 }
 
@@ -1109,9 +1112,13 @@ describe('5. "New project" right after working in A', () => {
         await flush();
         await act(async () => { fireEvent.click(A().getByText('Parse files').closest('button')!); });
         await flush(20);
-        await act(async () => { fireEvent.click(A().getByText('Open Dashboard').closest('button')!); });
+        // Step 2 Continue -> step 3 (Failure groups) -> Skip for now.
+        await act(async () => { fireEvent.click(A().getByText('Continue').closest('button')!); });
+        await flush();
+        await act(async () => { fireEvent.click(A().getByRole('button', { name: 'Skip for now' })); });
         await tick(600);
         await flush(20);
+        showSensorTab(app!.container);
         await tick(400);
 
         expect(onDashboard()).toBe(true);
@@ -1202,6 +1209,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
         gB.release();
         await flush(40);
         await tick(800);
+        showSensorTab(app!.container); // B has no failure groups: it lands on the FG tab
         await tick(400);
         // B -- the workspace clicked LAST -- is what is on screen ...
         expect(onDashboard()).toBe(true);

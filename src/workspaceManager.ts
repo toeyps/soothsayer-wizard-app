@@ -6,6 +6,7 @@ import { migrateHealthSetPoints } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
 import { applyIncompleteRule } from './utils/incompleteRule';
 import { withFailureGroupState } from './utils/failureGroupState';
+import { failureGroupMetaFields } from './utils/failureGroupSummary';
 import { logToFile } from './errorReporter';
 
 const STORE_FILE = 'settings.json';
@@ -139,6 +140,23 @@ async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
         };
 
         const existingIdx = recent.findIndex(w => w.id === state.id);
+        // Customer batch 2026-10 (item 5): the recent-project chip's Failure
+        // Group count + colours. Derived from the groups being written HERE —
+        // every save and every `updateWorkspaceData` (Dashboard autosave and FG
+        // edits, Build Model window writes, rename, duplicate) funnels through
+        // this function and already rewrites this entry, so the chip can never
+        // go stale and keeping it current costs no extra disk write. A state
+        // with no Failure Group slice keeps the entry's previous values (so a
+        // project saved before these fields existed stays `undefined` = no
+        // chip, rather than turning into a fake "No failure groups").
+        const fgMeta = failureGroupMetaFields(state.failureGroupState?.groups);
+        const previous = existingIdx >= 0 ? recent[existingIdx] : undefined;
+        if (fgMeta) {
+            Object.assign(meta, fgMeta);
+        } else if (previous?.failureGroupCount !== undefined) {
+            meta.failureGroupCount = previous.failureGroupCount;
+            if (previous.failureGroupNos !== undefined) meta.failureGroupNos = previous.failureGroupNos;
+        }
         if (existingIdx >= 0) {
             recent[existingIdx] = meta;
         } else {

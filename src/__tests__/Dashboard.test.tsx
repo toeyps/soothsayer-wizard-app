@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-libra
 import { createRef } from 'react';
 import type { CsvMetadata, SensorMetadata, WorkspaceState } from '../types';
 import type { DashboardRef } from '../components/dashboard/Dashboard';
+import { showSensorTab } from './helpers/dashboardLanding';
 
 // ── Child component mocks — capture props, expose trigger buttons ─────────
 
@@ -51,6 +52,7 @@ vi.mock('../components/dashboard/SensorSelection', () => ({
                 <button onClick={() => props.onRenameGroup(1, 'Renamed')}>rename-group</button>
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group</button>
                 <button onClick={() => props.onToggleAlarmLine('TAG1', 'H')}>toggle-alarm</button>
+                <button onClick={() => props.onAssignDone?.()}>assign-done</button>
             </div>
         );
     },
@@ -67,6 +69,11 @@ vi.mock('../components/dashboard/FailureGroupsPanel', () => ({
                 <button onClick={() => props.onDeleteGroup(1)}>delete-group-fg</button>
                 <button onClick={() => props.onDeleteModel('m1')}>delete-model-fg</button>
                 <button onClick={() => props.onOpenBuildModel()}>open-build-model</button>
+                {/* Like the real panel: the group's link is a focus target only while the group is empty. */}
+                <button
+                    data-assign-group={props.fgModels.some((m: any) => m.groupNos.includes(1)) ? undefined : 1}
+                    onClick={() => props.onAssignSensors?.(1)}
+                >assign-sensors-fg1</button>
             </div>
         );
     },
@@ -235,14 +242,27 @@ function makeInitialState(overrides: Partial<WorkspaceState> = {}): WorkspaceSta
     };
 }
 
-function renderDashboard(props: Partial<React.ComponentProps<typeof Dashboard>> = {}, ref?: React.Ref<DashboardRef>) {
+/**
+ * Customer batch 2026-10 (item 5): a project with no failure groups (most
+ * fixtures here) now LANDS on the Failure Groups tab. The tests in this file
+ * were written for the Sensor tab, so by default this opens it with one click,
+ * the way the user would; `{ landing: true }` keeps the tab the Dashboard
+ * chose, for the tests about the landing itself.
+ */
+function renderDashboard(
+    props: Partial<React.ComponentProps<typeof Dashboard>> = {},
+    ref?: React.Ref<DashboardRef>,
+    opts: { landing?: boolean } = {},
+) {
     const defaultProps = {
         metadata: makeMetadata(),
         sensorMetadata,
         onBack: vi.fn(),
         initialState: makeInitialState(),
     };
-    return render(<Dashboard {...defaultProps} {...props} ref={ref} />);
+    const utils = render(<Dashboard {...defaultProps} {...props} ref={ref} />);
+    if (!opts.landing) showSensorTab(utils.container);
+    return utils;
 }
 
 beforeEach(() => {
@@ -3546,5 +3566,112 @@ describe('Dashboard: dataset generation and leaving the workspace (2026-10-03)',
             await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
             expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
         });
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Customer batch 2026-10, item 5: Failure groups come first — where the
+// Dashboard lands, and the "Assign sensors" mode.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('Dashboard landing tab and "Assign sensors" mode (customer batch 2026-10, item 5)', () => {
+    const NONE = { no: 0, name: 'Not in Group' };
+    const onFgTab = () => !!screen.queryByTestId('fg-panel') && !screen.queryByTestId('sensor-selection');
+    const onSensorTab = () => !!screen.queryByTestId('sensor-selection') && !screen.queryByTestId('fg-panel');
+
+    it('a project with no Failure Group slice at all lands on the Failure Groups tab', () => {
+        renderDashboard({ initialState: makeInitialState({ failureGroupState: undefined }) }, undefined, { landing: true });
+        expect(onFgTab()).toBe(true);
+    });
+
+    it('a project whose only group is "Not in Group" (a skipped step 3) lands on the Failure Groups tab', () => {
+        renderDashboard({ initialState: makeInitialState({ failureGroupState: { groups: [NONE], models: [] } }) }, undefined, { landing: true });
+        expect(onFgTab()).toBe(true);
+    });
+
+    it('right after Import step 3 (lastRoute "failure-group") it lands on the Failure Groups tab even with groups', () => {
+        renderDashboard({
+            initialState: makeInitialState({ lastRoute: 'failure-group', failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }], models: [] } }),
+        }, undefined, { landing: true });
+        expect(onFgTab()).toBe(true);
+    });
+
+    it('a reopened project that has failure groups lands on the Sensor tab, as before', () => {
+        renderDashboard({
+            initialState: makeInitialState({ lastRoute: 'dashboard', failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }], models: [] } }),
+        }, undefined, { landing: true });
+        expect(onSensorTab()).toBe(true);
+        expect(last(sensorSelectionProps).assignGroupNo).toBeNull();
+    });
+
+    it('"Assign sensors →" on a group switches to the Sensor tab in assign mode for that group; Done goes back to the FG tab', () => {
+        renderDashboard({
+            initialState: makeInitialState({ lastRoute: 'failure-group', failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }], models: [] } }),
+        }, undefined, { landing: true });
+        fireEvent.click(screen.getByText('assign-sensors-fg1'));
+        expect(onSensorTab()).toBe(true);
+        expect(last(sensorSelectionProps).assignGroupNo).toBe(1);
+        // the sheet colours/pins the group through the shared helper
+        expect(last(sensorSelectionProps).getGroupColor(1)).toBe('amber');
+
+        fireEvent.click(screen.getByText('assign-done'));
+        expect(onFgTab()).toBe(true);
+        fireEvent.click(screen.getByText(/^Sensor \(/));
+        expect(last(sensorSelectionProps).assignGroupNo).toBeNull();
+    });
+
+    it('Done returns keyboard focus to the group\'s "Assign sensors →" link, or to the Failure Groups tab once the group has sensors', async () => {
+        const initial = makeInitialState({ lastRoute: 'failure-group', failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }], models: [] } });
+        seedDisk(initial);
+        renderDashboard({ initialState: initial }, undefined, { landing: true });
+        fireEvent.click(screen.getByText('assign-sensors-fg1'));
+        fireEvent.click(screen.getByText('assign-done'));
+        expect(document.activeElement).toBe(screen.getByText('assign-sensors-fg1'));
+
+        fireEvent.click(screen.getByText('assign-sensors-fg1'));
+        fireEvent.click(screen.getByText('toggle-group')); // TAG1 -> group 1: no longer empty
+        await act(async () => { await Promise.resolve(); });
+        fireEvent.click(screen.getByText('assign-done'));
+        expect(document.activeElement).toBe(screen.getByText('Failure Groups'));
+    });
+
+    it('deleting the group being filled ends the run, so a new group that reuses its number does not bring "Assigning" back', async () => {
+        const initial = makeInitialState({ lastRoute: 'failure-group', failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }], models: [] } });
+        // A disk that keeps each write, so the delete really frees number 1.
+        let disk: any = { id: initial.id, failureGroupState: initial.failureGroupState };
+        mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => (disk = patch(disk)));
+        renderDashboard({ initialState: initial }, undefined, { landing: true });
+        fireEvent.click(screen.getByText('assign-sensors-fg1'));
+        expect(last(sensorSelectionProps).assignGroupNo).toBe(1);
+
+        fireEvent.click(screen.getByText('delete-group')); // the sheet's ⋯ -> Delete on FG-1
+        await act(async () => { await Promise.resolve(); });
+        expect(last(sensorSelectionProps).assignGroupNo).toBeNull();
+
+        fireEvent.click(screen.getByText('create-group-for-sensor')); // reuses number 1
+        await act(async () => { await Promise.resolve(); });
+        expect(last(sensorSelectionProps).fgGroups.some((g: any) => g.no === 1 && g.name === 'New Group')).toBe(true);
+        expect(last(sensorSelectionProps).assignGroupNo).toBeNull();
+    });
+
+    it('switching to the FG tab by hand also ends an "Assign sensors" run', () => {
+        renderDashboard({
+            initialState: makeInitialState({ lastRoute: 'failure-group', failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }], models: [] } }),
+        }, undefined, { landing: true });
+        fireEvent.click(screen.getByText('assign-sensors-fg1'));
+        expect(last(sensorSelectionProps).assignGroupNo).toBe(1);
+        fireEvent.click(screen.getByText('Failure Groups'));
+        fireEvent.click(screen.getByText(/^Sensor \(/));
+        expect(last(sensorSelectionProps).assignGroupNo).toBeNull();
+    });
+
+    it('a group created on the FG tab gets the next number through the same helper Import step 3 uses', async () => {
+        const initial = makeInitialState({ failureGroupState: { groups: [NONE, { no: 1, name: 'Bearing' }, { no: 4, name: 'Seal' }], models: [] } });
+        seedDisk(initial);
+        renderDashboard({ initialState: initial });
+        fireEvent.click(screen.getByText('Failure Groups'));
+        fireEvent.click(screen.getByText('create-empty-group'));
+        const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+        expect(state.failureGroupState.groups).toEqual([NONE, { no: 1, name: 'Bearing' }, { no: 4, name: 'Seal' }, { no: 5, name: 'Empty Group' }]);
     });
 });

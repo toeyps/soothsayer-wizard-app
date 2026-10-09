@@ -62,6 +62,19 @@ export interface WorkspaceMetadata {
     description?: string;
     lastModified: number;
     filePath: string;
+    /** Number of the user's Failure Groups ("Not in Group" excluded), for the
+     *  recent-project chip (customer batch 2026-10, item 5). Refreshed by EVERY
+     *  workspace write from the `failureGroupState.groups` being written (see
+     *  `writeWorkspaceFile` in `workspaceManager.ts`), so it follows the
+     *  Dashboard's and the Build Model window's edits. `undefined` = an entry
+     *  written before this field existed (or a workspace that has never had a
+     *  Failure Group slice): the card shows NO chip. `0` = the neutral
+     *  "No failure groups" chip. */
+    failureGroupCount?: number;
+    /** Numbers of the first `FG_CHIP_MAX_SWATCHES` (3) Failure Groups, in
+     *  group-number order — the chip's colour squares (`getFgGroupColor(no)`).
+     *  Set and left undefined together with `failureGroupCount`. */
+    failureGroupNos?: number[];
 }
 
 export interface WorkspaceSensorFilter {

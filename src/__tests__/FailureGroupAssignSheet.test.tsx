@@ -488,6 +488,25 @@ describe('FailureGroupAssignSheet', () => {
             fireEvent.click(createBtn());
             expect(props.onCreateGroupForSensor).not.toHaveBeenCalled();
             expect(screen.getByRole('alert').textContent).toBe('A failure group named "group a" already exists');
+            // the error takes the hint's place
+            expect(screen.queryByTestId('fg-sheet-hint')).toBeNull();
+        });
+
+        it('refuses "Not in Group" as a new name with the inline error (the Dashboard would refuse it too)', () => {
+            const { props } = renderSheet();
+            fireEvent.change(input(), { target: { value: ' not in group' } });
+            fireEvent.keyDown(input(), { key: 'Enter' });
+            expect(props.onCreateGroupForSensor).not.toHaveBeenCalled();
+            expect(screen.getByRole('alert').textContent).toBe('A failure group named "not in group" already exists');
+        });
+
+        it('the footer hint says exactly what Enter does: it creates the group with this sensor\'s Individual model in it', () => {
+            renderSheet();
+            // Enter -> commitCreate -> onCreateGroupForSensor (the Dashboard\'s
+            // createGroupForSensor puts the sensor\'s Individual model, reused or
+            // new, into the new group — nothing else).
+            expect(screen.getByTestId('fg-sheet-hint').textContent)
+                .toBe('Enter creates the group and adds this sensor\u2019s Individual model to it.');
         });
 
         it('once the Dashboard adds the group, it appears under Assigned, flashes, is scrolled into view, and the flash ends', () => {
@@ -529,12 +548,15 @@ describe('FailureGroupAssignSheet', () => {
     });
 
     describe('closing', () => {
-        it('Esc, ✕ and Done call onClose', () => {
+        it('Esc, ✕ and Done call onClose and ask for focus to go back to the button that opened the sheet', () => {
             const { props } = renderSheet();
             fireEvent.keyDown(document, { key: 'Escape' });
             fireEvent.click(screen.getByRole('button', { name: 'Close' }));
             fireEvent.click(screen.getByRole('button', { name: 'Done' }));
             expect(props.onClose).toHaveBeenCalledTimes(3);
+            expect(vi.mocked(props.onClose).mock.calls).toEqual([
+                [{ returnFocus: true }], [{ returnFocus: true }], [{ returnFocus: true }],
+            ]);
         });
 
         it('a mousedown outside the sheet and outside the host panel closes it; inside the host panel does not', () => {
@@ -549,6 +571,8 @@ describe('FailureGroupAssignSheet', () => {
                 expect(props.onClose).not.toHaveBeenCalled();
                 fireEvent.mouseDown(outside);
                 expect(props.onClose).toHaveBeenCalledTimes(1);
+                // focus belongs to whatever was clicked, not the folder button
+                expect(props.onClose).toHaveBeenCalledWith({ returnFocus: false });
             } finally {
                 host.remove(); outside.remove();
             }
@@ -560,6 +584,43 @@ describe('FailureGroupAssignSheet', () => {
             fireEvent.keyDown(document, { key: 'Escape' });
             fireEvent.mouseDown(document.body);
             expect(props.onClose).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('"Assign sensors" mode: the group being filled is pinned first (customer batch 2026-10, item 5)', () => {
+        it('pins the group above both sections, highlighted and tagged "Assigning" instead of its FG number', () => {
+            renderSheet({ pinnedGroupNo: 2 });
+            expect(rowOrder()).toEqual(['Group B', 'Group A', 'Group C']);
+            expect(row(2).className).toContain('fg-sheet-row--pinned');
+            expect(within(row(2)).getByText('Assigning')).toBeTruthy();
+            expect(within(row(2)).queryByText('FG-2')).toBeNull();
+            // the other rows keep their FG number and are not highlighted
+            expect(within(row(1)).getByText('FG-1')).toBeTruthy();
+            expect(row(1).className).not.toContain('fg-sheet-row--pinned');
+            // Group B was "assigned" (Relationship) — it is not listed twice
+            expect(screen.getAllByTestId('fg-sheet-row-2')).toHaveLength(1);
+        });
+
+        it('stays visible in the Assigned view even when the sensor is not in it yet', () => {
+            renderSheet({ tag: 'TAG2', info: { tag: 'TAG2', description: 'Pump Temp', unit: 'C' }, pinnedGroupNo: 1 });
+            fireEvent.click(screen.getByRole('button', { name: /^Assigned/ }));
+            expect(rowOrder()).toEqual(['Group A', 'Group C']);
+            expect(within(row(1)).getByText('Assigning')).toBeTruthy();
+        });
+
+        it('a search that does not match hides it like any row; its cells toggle that group', () => {
+            const { props } = renderSheet({ pinnedGroupNo: 3 });
+            fireEvent.click(cell('Clustering', 'Group C'));
+            expect(props.onToggleSensorGroupKind).toHaveBeenCalledWith('TAG1', 3, 'clustering');
+            fireEvent.change(screen.getByLabelText('Search failure groups'), { target: { value: 'group a' } });
+            expect(rowOrder()).toEqual(['Group A']);
+        });
+
+        it('no pin (or a deleted group) changes nothing', () => {
+            renderSheet({ pinnedGroupNo: 9 });
+            expect(rowOrder()).toEqual(['Group A', 'Group B', 'Group C']);
+            expect(document.querySelector('.fg-sheet-row--pinned')).toBeNull();
+            expect(screen.queryByText('Assigning')).toBeNull();
         });
     });
 
@@ -594,7 +655,12 @@ describe('FailureGroupAssignSheet', () => {
         let css = '';
         beforeEach(() => { css = readFileSync('src/App.css', 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ''); });
 
-        it('covers the base state, a row menu, a rename, a delete confirm and a create error', () => {
+        it('covers the base state, a pinned row, a row menu, a rename, a delete confirm and a create error', () => {
+            renderSheet({ pinnedGroupNo: 3 });
+            const pinnedClasses = new Set<string>();
+            document.querySelectorAll('.fg-sheet, .fg-sheet *').forEach(el => el.classList.forEach(c => pinnedClasses.add(c)));
+            expect([...pinnedClasses].filter(c => c.startsWith('fg-sheet') && !new RegExp(`\\.${c}(?![\\w-])`).test(css))).toEqual([]);
+            cleanup();
             renderSheet();
             fireEvent.change(screen.getByLabelText('New failure group name'), { target: { value: 'group a' } });
             fireEvent.click(screen.getByRole('button', { name: /Create/ }));

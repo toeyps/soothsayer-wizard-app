@@ -508,6 +508,33 @@ describe('SensorSelection', () => {
                 expect(sheet()).toBeNull();
             });
 
+            it('Esc, ✕ and Done hand focus back to the Failure groups button that opened it; a click outside does not steal it', () => {
+                const chart = document.createElement('button');
+                document.body.appendChild(chart);
+                try {
+                    render(<SensorSelection {...makeProps()} />);
+                    expandPump();
+                    for (const close of [
+                        () => fireEvent.keyDown(document, { key: 'Escape' }),
+                        () => fireEvent.click(within(sheet()!).getByRole('button', { name: 'Close' })),
+                        () => fireEvent.click(within(sheet()!).getByRole('button', { name: 'Done' })),
+                    ]) {
+                        fireEvent.click(folder()[1]);
+                        (document.body as HTMLElement).focus();
+                        close();
+                        expect(sheet()).toBeNull();
+                        expect(document.activeElement).toBe(folder()[1]);
+                    }
+                    fireEvent.click(folder()[0]);
+                    chart.focus();
+                    fireEvent.mouseDown(chart);
+                    expect(sheet()).toBeNull();
+                    expect(document.activeElement).toBe(chart);
+                } finally {
+                    chart.remove();
+                }
+            });
+
             it('typing in the sensor search box', () => {
                 render(<SensorSelection {...makeProps()} />);
                 expandPump();
@@ -683,6 +710,68 @@ describe('SensorSelection', () => {
                 expect(screen.queryByTestId('fg-sheet-notch')).toBeNull();
                 expect(sheet()).not.toBeNull();
             });
+        });
+    });
+
+    describe('"Assign sensors" mode (customer batch 2026-10, item 5)', () => {
+        const groupB: FailureGroup = { no: 2, name: 'Group B' };
+        const assignProps = (over: Partial<React.ComponentProps<typeof SensorSelection>> = {}) =>
+            makeProps({ fgGroups: [{ no: 0, name: 'Not in Group' }, groupA, groupB], assignGroupNo: 2, onAssignDone: vi.fn(), ...over });
+
+        it('shows a bar naming the group being filled, the Failure groups button by name (no emoji), and Done', () => {
+            const props = assignProps();
+            render(<SensorSelection {...props} />);
+            const bar = screen.getByTestId('fg-assignbar');
+            expect(bar.textContent).toContain('Assigning to FG-2 · Group B.');
+            expect(bar.textContent).toContain('Use the Failure groups button');
+            expect(bar.textContent).not.toContain('📁');
+            expect(bar.querySelector('svg')).toBeTruthy();
+            expect(bar.className).toContain('fg-group-color-blue');
+            fireEvent.click(within(bar).getByRole('button', { name: 'Done' }));
+            expect(props.onAssignDone).toHaveBeenCalledTimes(1);
+        });
+
+        it('starting a run puts keyboard focus on the bar\'s Done (never left on <body>)', () => {
+            render(<SensorSelection {...assignProps()} />);
+            expect(document.activeElement).toBe(within(screen.getByTestId('fg-assignbar')).getByRole('button', { name: 'Done' }));
+        });
+
+        it('no bar without an assign group, or when that group no longer exists', () => {
+            const { unmount } = render(<SensorSelection {...makeProps()} />);
+            expect(screen.queryByTestId('fg-assignbar')).toBeNull();
+            unmount();
+            render(<SensorSelection {...assignProps({ assignGroupNo: 7 })} />);
+            expect(screen.queryByTestId('fg-assignbar')).toBeNull();
+        });
+
+        it('component counts read "assigned / total" for the group being filled, 0 included', () => {
+            const inB: FailureModel = { ...modelTag1InGroupA, id: 'm2', groupNos: [2], kind: 'relationship' };
+            const { rerender } = render(<SensorSelection {...assignProps()} />);
+            expect(screen.getByTestId('assign-count-Pump').textContent).toBe('0 / 2');
+            expect(screen.getByTestId('assign-count-Uncategorized').textContent).toBe('0 / 1');
+            rerender(<SensorSelection {...assignProps({ fgModels: [modelTag1InGroupA, inB] })} />);
+            expect(screen.getByTestId('assign-count-Pump').textContent).toBe('1 / 2');
+            expect(screen.getByTestId('assign-count-Pump').querySelector('b')!.textContent).toBe('1');
+        });
+
+        it('the Failure groups button opens the sheet with that group pinned first and tagged "Assigning"', () => {
+            render(<SensorSelection {...assignProps()} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
+            const pinned = screen.getByTestId('fg-sheet-row-2');
+            expect(pinned.className).toContain('fg-sheet-row--pinned');
+            expect(within(pinned).getByText('Assigning')).toBeTruthy();
+            const names = Array.from(document.querySelectorAll('.fg-sheet-list > .fg-sheet-row .fg-sheet-gname')).map(e => e.textContent);
+            expect(names[0]).toBe('Group B');
+        });
+
+        it('Done also closes an open sheet', () => {
+            render(<SensorSelection {...assignProps()} />);
+            expandPump();
+            fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
+            expect(screen.getByTestId('fg-sheet')).toBeTruthy();
+            fireEvent.click(within(screen.getByTestId('fg-assignbar')).getByRole('button', { name: 'Done' }));
+            expect(screen.queryByTestId('fg-sheet')).toBeNull();
         });
     });
 });

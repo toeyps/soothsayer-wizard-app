@@ -111,6 +111,7 @@ import BuildModelWindow from '../components/windows/BuildModelWindow';
 import AddSensorWindow from '../components/windows/AddSensorWindow';
 import { dismissAllErrors } from '../errorReporter';
 import { pickSingle, rowTag } from './helpers/sensorPicker';
+import { showSensorTab } from './helpers/dashboardLanding';
 
 vi.setConfig({ testTimeout: 120_000 });
 
@@ -235,7 +236,9 @@ async function renderApp() {
 
 const onDashboard = () => !!document.querySelector('button[title="Back to Import"]');
 
-/** Import page: New project -> name -> Continue -> browse -> Parse files -> Open Dashboard. */
+/** Import page: New project -> name -> Continue -> browse -> Parse files -> Continue -> step 3
+ *  "Skip for now" (no failure groups; the journeys create theirs from the FG sheet) -> Dashboard,
+ *  which then lands on its Failure Groups tab -> open the Sensor tab. */
 async function importProject(name: string, path: string) {
     await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
@@ -247,9 +250,12 @@ async function importProject(name: string, path: string) {
     await settle(20);
     await act(async () => { fireEvent.click(app().getByText('Parse files')); });
     await settle(50);
-    await act(async () => { fireEvent.click(app().getByText('Open Dashboard')); });
+    await act(async () => { fireEvent.click(app().getByText('Continue')); });
+    await settle();
+    await act(async () => { fireEvent.click(app().getByRole('button', { name: 'Skip for now' })); });
     await settle(700);
     await waitFor(() => expect(onDashboard()).toBe(true), { timeout: 5000 });
+    showSensorTab();
     await settle(400);
 }
 
@@ -264,6 +270,7 @@ async function openRecent(name: string) {
     await act(async () => { fireEvent.click(app().getAllByText(name)[0]); });
     await settle(900);
     await waitFor(() => expect(onDashboard()).toBe(true), { timeout: 5000 });
+    showSensorTab(); // a project with no failure groups lands on the FG tab
     await settle(400);
 }
 

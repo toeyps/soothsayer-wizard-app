@@ -227,7 +227,9 @@ export default function HomeStep({
                   />
                 </label>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: 4 }}>
+              {/* `.fg-recent-list` is the size container the cards' failure-group
+                  chip reads (it moves under the description when the list is narrow). */}
+              <div className="fg-recent-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: 4 }}>
                 {shown.map((w) => (
                   <RecentProjectCard
                     key={w.id}

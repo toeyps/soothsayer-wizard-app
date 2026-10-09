@@ -18,7 +18,8 @@ interface ProjectNameStepProps {
 const NEXT_ITEMS: { mark: string; bold: string; rest: string }[] = [
   { mark: '02', bold: 'Add sensor CSVs', rest: ' — first column must be the timestamp' },
   { mark: '+', bold: 'Tag-name file', rest: ' (optional) adds names, units, components and alarm limits' },
-  { mark: '03', bold: 'Open the Dashboard', rest: ' and start exploring' },
+  { mark: '03', bold: 'Name the failure groups', rest: ' — the ways this machine can fail (optional)' },
+  { mark: '04', bold: 'Open the Dashboard', rest: ' and assign sensors to each group' },
 ];
 
 /** Step 1 of the Import page: "Name your project". */
@@ -35,7 +36,7 @@ export default function ProjectNameStep({
   return (
     <div data-testid="project-name-step">
       <div style={{ fontFamily: mono, fontSize: 11, fontWeight: 500, letterSpacing: '0.12em', textTransform: 'uppercase', color: T.textFaint }}>
-        Step 1 of 2
+        Step 1 of 3
       </div>
       <h2 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 700, letterSpacing: '-0.025em', color: T.text }}>
         Name your project

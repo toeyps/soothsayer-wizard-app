@@ -27,6 +27,7 @@ import { render, fireEvent, act, cleanup, within } from '@testing-library/react'
 import type { SensorMetadata, WorkspaceState, SpecialSensorRecipe } from '../types';
 import { createFakeRust, rustRefToken, rustScanRefs, type FakeRust } from './helpers/fakeRustSession';
 import { mk } from './helpers/failureModelFixture';
+import { showSensorTab } from './helpers/dashboardLanding';
 
 // ── Shared fake Tauri: event bus, workspace disk, dialogs ────────────────
 
@@ -262,6 +263,8 @@ async function openDashboard(state: WorkspaceState, sensorMetadata: SensorMetada
             />,
         );
     });
+    // A project with no failure groups lands on the FG tab; these tests drive the Sensor tab.
+    showSensorTab(dash!.container);
     await flush();
     await tick(300); // first chart fetch
     return dash!;
@@ -1092,6 +1095,7 @@ async function reopenWorkspace() {
     await act(async () => {
         dash = render(<Dashboard metadata={metadata} sensorMetadata={sm ?? RAW_META} onBack={() => {}} initialState={state} />);
     });
+    showSensorTab(dash!.container);
     await flush();
     await tick(300);
     return state as WorkspaceState;

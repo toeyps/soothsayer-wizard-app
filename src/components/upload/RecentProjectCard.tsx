@@ -3,10 +3,15 @@ import { Check, Pencil, Trash2, TriangleAlert, X } from 'lucide-react';
 import type { WorkspaceMetadata } from '../../types';
 import { mono, type Tokens } from './uploadTheme';
 import { formatRelativeTime, projectColor, projectInitials } from './homeHelpers';
+import { recentProjectFgChip } from '../../utils/failureGroupSummary';
+import { getFgGroupColor } from '../../utils/failureGroupColor';
 
 interface RecentProjectCardProps {
   T: Tokens;
-  project: Pick<WorkspaceMetadata, 'id' | 'name' | 'description' | 'lastModified'>;
+  /** `failureGroupCount` / `failureGroupNos` drive the failure-group chip;
+   *  left undefined (a project saved before they existed) = no chip. */
+  project: Pick<WorkspaceMetadata, 'id' | 'name' | 'description' | 'lastModified'>
+    & Partial<Pick<WorkspaceMetadata, 'failureGroupCount' | 'failureGroupNos'>>;
   /**
    * Static, non-interactive rendering of the SAME card ("Shows in recent
    * projects as" on the Name step): no open / rename / delete, "just now" for the
@@ -35,6 +40,28 @@ export default function RecentProjectCard({ T, project, preview = false, active 
 }
 
 const noop = () => {};
+
+/**
+ * "n failure groups" with a colour square per group (up to three, the
+ * Dashboard's own group colours), or a neutral dashed "No failure groups" —
+ * never amber, having none is not a warning (customer batch 2026-10, item 5).
+ * Nothing at all for a project saved before the count was recorded; it
+ * appears after that project's next save.
+ */
+function FailureGroupChip({ project }: { project: RecentProjectCardProps['project'] }) {
+  const chip = recentProjectFgChip(project);
+  if (!chip) return null;
+  return (
+    <span className={`fg-count-chip${chip.count === 0 ? ' fg-count-chip--zero' : ''}`} data-testid="project-fg-chip">
+      {chip.nos.length > 0 && (
+        <span className="fg-count-chip-sw" aria-hidden="true">
+          {chip.nos.map(no => <i key={no} className={`fg-group-color-${getFgGroupColor(no)}`} />)}
+        </span>
+      )}
+      {chip.label}
+    </span>
+  );
+}
 
 /** The look of a card without any behaviour -- see `preview` above. */
 function ProjectCardPreview({ T, project }: { T: Tokens; project: RecentProjectCardProps['project'] }) {
@@ -139,6 +166,7 @@ function InteractiveProjectCard({
   };
 
   const showActions = !editing && !confirming && (hover || focusWithin);
+  const hasFgChip = recentProjectFgChip(project) !== null;
   const highlighted = active || hover || focusWithin;
 
   const iconBtn: CSSProperties = {
@@ -150,6 +178,9 @@ function InteractiveProjectCard({
     <div
       data-testid="project-card"
       data-project-id={project.id}
+      // Grid columns live in App.css (`.fg-recent-card`), not inline, so the
+      // narrow-list container query can drop the chip's column.
+      className={`fg-recent-card${hasFgChip ? ' fg-recent-card--chip' : ''}`}
       onClick={() => { if (!editing && !confirming) onOpen(); }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -159,7 +190,7 @@ function InteractiveProjectCard({
       }}
       style={{
         position: 'relative',
-        display: 'grid', gridTemplateColumns: '38px minmax(0, 1fr) auto', gap: 12, alignItems: 'center',
+        display: 'grid', gap: 12, alignItems: 'center',
         padding: '10px 12px', borderRadius: 12,
         border: `1px solid ${highlighted ? T.borderStrong : T.border}`,
         background: highlighted ? T.surfaceHi : T.surface,
@@ -224,6 +255,14 @@ function InteractiveProjectCard({
           </div>
         ) : null}
       </div>
+
+      {/* Failure-group chip: its own cell between the text and the time; in a
+          narrow list (App.css container query) it moves under the description. */}
+      {hasFgChip && (
+        <span className="fg-count-cell">
+          <FailureGroupChip project={project} />
+        </span>
+      )}
 
       {/* Time and actions share one cell: actions take over on hover/focus,
           but stay in the DOM (and the tab order) the whole time. */}

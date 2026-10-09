@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import Portal from '../Portal';
 
+/** How long an "… — Undo" toast stays up, in seconds (the Dashboard's model
+ *  deletion and Import step 3's group removal). */
+export const UNDO_SECONDS = 7;
+
 export interface UndoToastItem {
     id: string;
     message: string;

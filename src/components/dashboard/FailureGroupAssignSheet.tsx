@@ -7,6 +7,8 @@ import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import type { FailureGroup, FailureModel, ModelKind } from '../../types';
 import { modelSensorKey } from '../../utils/modelGrouping';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { UNDO_SECONDS } from './UndoToastStack';
+import { isDuplicateFailureGroupName } from './failureGroupOps';
 
 export const KIND_LETTER: Record<ModelKind, string> = {
     individual: 'I',
@@ -20,9 +22,11 @@ export const KIND_LABEL: Record<ModelKind, string> = {
 };
 export const ALL_KINDS: ModelKind[] = ['individual', 'relationship', 'clustering'];
 
-/** How long the "model deleted — Undo" toast (Dashboard.tsx) stays up. Lives
- *  here only because this sheet's last-group cell tooltip promises it. */
-export const UNDO_SECONDS = 7;
+/** How long the "model deleted — Undo" toast (Dashboard.tsx) stays up; this
+ *  sheet's last-group cell tooltip promises it. Defined with the toast itself
+ *  (UndoToastStack.tsx) so the Import page can share it without pulling this
+ *  sheet into the start-up bundle; re-exported here for existing importers. */
+export { UNDO_SECONDS };
 
 // Sheet geometry (px). The sheet docks to the LEFT edge of the Sensors panel,
 // full height of that panel, and extends over the chart area to its left.
@@ -54,7 +58,14 @@ export interface FailureGroupAssignSheetProps {
     canStepPrev: boolean;
     canStepNext: boolean;
     onStep: (direction: -1 | 1) => void;
-    onClose: () => void;
+    /** `returnFocus` is true when the user closed it from the keyboard or the
+     *  sheet's own buttons (Esc, ✕, Done) — the caller puts focus back on the
+     *  button that opened it. A click outside the sheet passes false: focus
+     *  belongs to whatever was clicked. */
+    onClose: (opts?: { returnFocus?: boolean }) => void;
+    /** "Assign sensors →" (customer batch 2026-10, item 5): the group being
+     *  filled. Its row is pinned first, highlighted and tagged "Assigning". */
+    pinnedGroupNo?: number | null;
     /** The Sensors panel — the sheet docks to its left edge, and a click
      *  anywhere inside it never closes the sheet. */
     getHostEl: () => HTMLElement | null;
@@ -160,7 +171,7 @@ export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetPr
             if (sheetRef.current?.contains(target)) return;
             if (live.current.getHostEl()?.contains(target)) return;
             if (target instanceof Element && target.closest('[data-fg-sheet-keep]')) return;
-            live.current.onClose();
+            live.current.onClose({ returnFocus: false });
         };
         document.addEventListener('mousedown', onDown, true);
         return () => document.removeEventListener('mousedown', onDown, true);
@@ -195,7 +206,7 @@ export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetPr
 function SheetBody({
     tag, info, fgGroups, fgModels, getGroupColor,
     onToggleSensorGroupKind, onCreateGroupForSensor, onRenameGroup, onDeleteGroup,
-    canStepPrev, canStepNext, onStep, onClose,
+    canStepPrev, canStepNext, onStep, onClose, pinnedGroupNo = null,
 }: FailureGroupAssignSheetProps) {
     const tagKey = normalizeSensorTag(tag);
     const listRef = useRef<HTMLDivElement>(null);
@@ -228,17 +239,22 @@ function SheetBody({
     const realGroups = fgGroups.filter(g => g.no !== 0);
     const assignedNow = realGroups.filter(g => isInAny(g.no)).length;
 
-    const hasName = (name: string, exceptNo?: number) =>
-        fgGroups.some(g => g.no !== 0 && g.no !== exceptNo && g.name.trim().toLowerCase() === name.trim().toLowerCase());
+    // The shared rule (also refuses "Not in Group"), so the sheet says why the
+    // Dashboard would refuse a name instead of silently creating nothing.
+    const hasName = (name: string, exceptNo?: number) => isDuplicateFailureGroupName(fgGroups, name, exceptNo);
 
     const q = query.trim().toLowerCase();
     const matches = (g: FailureGroup) => !q || g.name.toLowerCase().includes(q) || `fg-${g.no}`.includes(q);
 
+    // The group an "Assign sensors" run is filling: pinned above both sections
+    // (whatever the All/Assigned view says), so it is never hunted for.
+    const pinned = pinnedGroupNo ? realGroups.find(g => g.no === pinnedGroupNo) ?? null : null;
+    const showPinned = !!pinned && matches(pinned);
     const assignedRows = snapshot
         .map(no => realGroups.find(g => g.no === no))
-        .filter((g): g is FailureGroup => !!g && matches(g));
+        .filter((g): g is FailureGroup => !!g && g !== pinned && matches(g));
     const otherRows = realGroups
-        .filter(g => !snapshot.includes(g.no) && (view !== 'assigned' || isInAny(g.no)) && matches(g));
+        .filter(g => g !== pinned && !snapshot.includes(g.no) && (view !== 'assigned' || isInAny(g.no)) && matches(g));
 
     // A kind's column header: how many groups the sensor's model of that kind
     // belongs to right now (not filtered by the search box).
@@ -262,7 +278,7 @@ function SheetBody({
             if (s.renameFor !== null) { setRenameFor(null); setRenameError(''); }
             else if (s.confirmFor !== null) setConfirmFor(null);
             else if (s.menuFor !== null) setMenuFor(null);
-            else onCloseRef.current();
+            else onCloseRef.current({ returnFocus: true });
         };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
@@ -371,7 +387,8 @@ function SheetBody({
     const renderRow = (g: FailureGroup) => {
         const colorClass = `fg-group-color-${getGroupColor(g.no)}`;
         const inRow = isInAny(g.no);
-        const rowClass = `fg-sheet-row fg-sheet-grid ${colorClass}${inRow ? ' fg-sheet-row--in' : ''}${flashNo === g.no ? ' fg-sheet-row--flash' : ''}`;
+        const isPinned = g === pinned;
+        const rowClass = `fg-sheet-row fg-sheet-grid ${colorClass}${inRow ? ' fg-sheet-row--in' : ''}${flashNo === g.no ? ' fg-sheet-row--flash' : ''}${isPinned ? ' fg-sheet-row--pinned' : ''}`;
 
         if (renameFor === g.no) {
             return (
@@ -403,7 +420,9 @@ function SheetBody({
                 <span className="fg-group-dot fg-sheet-dot" />
                 <div className="fg-sheet-name">
                     <span className="fg-sheet-gname" title={g.name}>{g.name}</span>
-                    <span className="fg-sheet-gno">FG-{g.no}</span>
+                    {isPinned
+                        ? <span className="fg-sheet-assigning" title={`FG-${g.no}`}>Assigning</span>
+                        : <span className="fg-sheet-gno">FG-{g.no}</span>}
                 </div>
                 {menuOpen ? (
                     <>
@@ -457,7 +476,7 @@ function SheetBody({
     };
 
     const none = { no: 0, name: 'Not in Group' };
-    const nothingToShow = assignedRows.length === 0 && otherRows.length === 0;
+    const nothingToShow = assignedRows.length === 0 && otherRows.length === 0 && !showPinned;
 
     return (
         <>
@@ -470,7 +489,7 @@ function SheetBody({
                     <button type="button" className="row-action-btn" title="Previous sensor" aria-label="Previous sensor" disabled={!canStepPrev} onClick={() => onStep(-1)}>‹</button>
                     <button type="button" className="row-action-btn" title="Next sensor" aria-label="Next sensor" disabled={!canStepNext} onClick={() => onStep(1)}>›</button>
                 </div>
-                <button type="button" className="row-action-btn" title="Close (Esc)" aria-label="Close" onClick={onClose}>
+                <button type="button" className="row-action-btn" title="Close (Esc)" aria-label="Close" onClick={() => onClose({ returnFocus: true })}>
                     <X size={15} />
                 </button>
             </div>
@@ -513,6 +532,7 @@ function SheetBody({
                     <span />
                 </div>
 
+                {showPinned && renderRow(pinned!)}
                 {assignedRows.length > 0 && (
                     <>
                         <div className="fg-sheet-sec">Assigned</div>
@@ -563,9 +583,14 @@ function SheetBody({
                 <button type="button" className="fg-sheet-btn" disabled={!newName.trim()} onClick={commitCreate}>
                     <Plus size={13} />Create
                 </button>
-                <button type="button" className="fg-sheet-btn fg-sheet-btn--primary" onClick={onClose}>Done</button>
+                <button type="button" className="fg-sheet-btn fg-sheet-btn--primary" onClick={() => onClose({ returnFocus: true })}>Done</button>
             </div>
-            {createError && <div className="fg-sheet-err" role="alert">{createError}</div>}
+            {/* Says exactly what Enter (and Create) do — `commitCreate` →
+                the Dashboard's `createGroupForSensor`, which puts THIS sensor's
+                Individual model (reused or new) in the new group; nothing else. */}
+            {createError
+                ? <div className="fg-sheet-err" role="alert">{createError}</div>
+                : <div className="fg-sheet-hint" data-testid="fg-sheet-hint">Enter creates the group and adds this sensor&rsquo;s Individual model to it.</div>}
         </>
     );
 }
