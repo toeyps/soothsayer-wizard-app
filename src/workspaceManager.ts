@@ -275,13 +275,13 @@ const DEFAULT_PM_SLICE = {
     relModelName: '',
     relStiffness: 100_000,
     clusterModelName: '',
-    numClusters: 3,
+    // 2026-10-09: one cluster by default — 2+ clusters need a criteria
+    // sensor (Rust refuses n_clusters > 1 without one), so the old default of
+    // 3 with no criteria showed "1 to fix" on a model nobody had touched yet.
+    // Picking a criteria sensor still lets the stepper raise the count.
+    numClusters: 1,
     criteriaSensor: '',
-    clusterRanges: [
-        { min: 0, max: 33 },
-        { min: 33, max: 66 },
-        { min: 66, max: 100 },
-    ],
+    clusterRanges: [],
     filterTimePeriods: [] as TimePeriod[],
     runningConditionMode: 'workspace' as 'workspace' | 'custom',
     customRunningConditionFilters: [] as WorkspaceSensorFilter[],

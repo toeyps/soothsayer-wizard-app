@@ -566,7 +566,9 @@ describe('loadWorkspaceData', () => {
             expect(matched.predictorSensors).toEqual(['TAG9']);
             expect(matched.numClusters).toBe(5);
             expect(unmatched.relModelName).toBe('');
-            expect(unmatched.numClusters).toBe(3);
+            // 2026-10-09: a defaulted model starts with ONE cluster (2+ need a criteria sensor).
+            expect(unmatched.numClusters).toBe(1);
+            expect(unmatched.clusterRanges).toEqual([]);
             expect(unmatched.predictorSensors).toEqual([]);
         });
     });

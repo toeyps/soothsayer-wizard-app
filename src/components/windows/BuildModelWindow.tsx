@@ -593,8 +593,11 @@ export default function BuildModelWindow() {
      *  [min, max] bounds) — scoped to whichever model is currently active,
      *  refetched whenever its (draft-aware) criteria sensor or effective
      *  training-scope filter changes. Mirrors PredictiveModelBuild.tsx's own
-     *  `criteriaStats` effect; `null` while unset/loading, same as there. */
-    const [criteriaStats, setCriteriaStats] = useState<SensorStats | null>(null);
+     *  `criteriaStats` effect; `null` while unset/loading, same as there.
+     *  Stored with the key it was fetched for (model + criteria sensor +
+     *  filter); the `criteriaStats` read further down is only non-null when
+     *  that key matches what is selected NOW (2026-10-09). */
+    const [criteriaStatsEntry, setCriteriaStatsEntry] = useState<{ key: string; stats: SensorStats } | null>(null);
     /** Cluster-range boundary being typed (2026-10-09): `idx` = the boundary between cluster
      *  idx+1 and idx+2. `initial` is the text the box showed on focus (an unchanged box
      *  commits nothing, so a rounded readout of a dragged value is never written back). */
@@ -2187,6 +2190,18 @@ export default function BuildModelWindow() {
         return JSON.stringify(buildPreviewFilterPayload(eff, gateHeaders));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionNoneConfirmed, gateHeaders]);
+    // 🆕 2026-10-09: the stats only count for the model + criteria sensor + filter they were
+    // fetched for. The reset below runs in an effect, i.e. AFTER the render that switched the
+    // criteria sensor A -> B, so in that render the state still held A's stats — the auto-divide
+    // effect read them as B's, divided B's ranges over A's [min, max] and locked that result
+    // (a wrong training scope). Deriving per render means stats for another key read as "not
+    // arrived yet", so the divide waits for B's own stats.
+    const criteriaStatsKey = (activeModel && activeModel.kind === 'clustering' && criteriaSensorForActive)
+        ? `${activeModel.id}::${criteriaSensorForActive}::${criteriaFilterKey}`
+        : '';
+    const criteriaStats: SensorStats | null = (criteriaStatsEntry && criteriaStatsEntry.key === criteriaStatsKey)
+        ? criteriaStatsEntry.stats
+        : null;
     useEffect(() => {
         // 🆕 2026-09-30 QA fix (bug 1): `criteriaStats` is ONE piece of state
         // shared by every model (scoped to whichever model is active, not
@@ -2199,18 +2214,19 @@ export default function BuildModelWindow() {
         // at the top, before the early-return AND before kicking off a new
         // fetch, so every model/sensor change shows the loading state until
         // its OWN stats resolve.
-        setCriteriaStats(null);
+        setCriteriaStatsEntry(null);
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) {
             return;
         }
         let cancelled = false;
+        const key = criteriaStatsKey;
         const filter = criteriaFilterKey ? JSON.parse(criteriaFilterKey) : null;
         invoke<SensorStats>('compute_sensor_stats', { sensor: criteriaSensorForActive, filter })
-            .then(s => { if (!cancelled) setCriteriaStats(s); })
-            .catch(() => { if (!cancelled) setCriteriaStats(null); });
+            .then(s => { if (!cancelled) setCriteriaStatsEntry({ key, stats: s }); })
+            .catch(() => { if (!cancelled) setCriteriaStatsEntry(null); });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey]);
+    }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey, criteriaStatsKey]);
 
     // ---- Clustering auto-divide (2026-09-30 QA fix, bug 2) -----------------
     // The PM page auto-divides `clusterRanges` across the criteria sensor's
@@ -2261,7 +2277,13 @@ export default function BuildModelWindow() {
         // no valid range set to show in the meantime for a mismatch, so it
         // can't wait (same tradeoff the PM page's own effect makes).
         if (!criteriaStats && !lengthMismatch) return;
-        prevClusterDivisionKeyRef.current[activeModel.id] = divisionKey;
+        // Only a division over the REAL [min, max] settles the key. A length
+        // fix made before the stats arrive (0-100 placeholder) leaves it open,
+        // so the stats landing re-divides over the real range — otherwise a new
+        // 1-cluster model (2026-10-09 default: `clusterRanges: []`, so the draft
+        // holds 3 placeholder ranges) picking a criteria sensor kept a single
+        // 0-100 range, and Train filtered the criteria sensor to 0-100.
+        if (criteriaStats) prevClusterDivisionKeyRef.current[activeModel.id] = divisionKey;
         const lo = criteriaStats?.min ?? 0;
         const hi = criteriaStats?.max ?? 100;
         const step = (hi - lo) / numClustersForActive;

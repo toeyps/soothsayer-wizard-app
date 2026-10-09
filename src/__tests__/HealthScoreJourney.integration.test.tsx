@@ -276,6 +276,7 @@ describe('Clustering: the whole journey', () => {
         await createViaSheet('TAG3', 'Clustering');
         const id = readDisk().failureGroupState.models[0].id;
         expect(readDisk().failureGroupState.models[0].healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
+        expect(readDisk().failureGroupState.models[0]).toMatchObject({ numClusters: 1, clusterRanges: [] });
         await waitFor(() => expect(bmw().getByTestId('sensor-list-row-fg:1-tag3')).toBeTruthy());
         selectSensor('tag3');
         await act(async () => { fireEvent.click(bmw().getByRole('button', { name: /Performance/i })); });
@@ -288,7 +289,8 @@ describe('Clustering: the whole journey', () => {
         await pickInModal('criteria sensor', ['TAG4'], true);
         await settle(100);
         openSettings();
-        fireEvent.click(bmw().getByRole('button', { name: 'Fewer clusters' }));
+        // A new Clustering model starts with ONE cluster (2026-10-09), so + takes it to 2.
+        fireEvent.click(bmw().getByRole('button', { name: 'More clusters' }));
         await settle(100);
         await train();
         expect(pill()).toBe('Trained');

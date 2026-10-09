@@ -1433,6 +1433,15 @@ describe('Dashboard', () => {
             expect(created(box, 'clustering').healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
         });
 
+        it('a new Clustering model starts with ONE cluster and no ranges (2+ clusters need a criteria sensor)', async () => {
+            const initial = stateFor([]);
+            const box = statefulDisk(initial);
+            renderDashboard({ initialState: initial, sensorMetadata: withAlarms });
+            toggle('TAG1', 1, 'clustering');
+            await flush();
+            expect(created(box, 'clustering')).toMatchObject({ xSensor: 'TAG1', criteriaSensor: '', numClusters: 1, clusterRanges: [] });
+        });
+
         it('"create group for this sensor" seeds the Individual model it creates', async () => {
             const initial = stateFor([]);
             const box = statefulDisk(initial);
