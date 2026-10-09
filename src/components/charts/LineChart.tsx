@@ -3,7 +3,7 @@ import { Tag, Trash2, Search, ZoomIn, ZoomOut } from 'lucide-react';
 import ResponsiveECharts from './ResponsiveECharts';
 import { ChartProps } from './ChartTypes';
 import { formatDate, formatDateTime } from '../../utils/dateFormat';
-import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { fmtNum, sensorInlineHtml, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { hexToRgbaCss, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import type { LineTaggedPoint } from '../../types';
 import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
@@ -87,6 +87,11 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
     return palette[Math.abs(hash) % palette.length];
 }
 
+/** Tag-point box fonts: the stacks the installed app really renders with (DESIGN_SYSTEM §3.2 —
+ *  the CSP blocks the web fonts, so Windows draws Segoe UI / Consolas). */
+const TAG_MONO = '"JetBrains Mono", Consolas, ui-monospace, monospace';
+const TAG_SANS = 'Inter, "Segoe UI", system-ui, sans-serif';
+
 function LineChart({
     data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange,
     sensorMetadata, timeHighlights,
@@ -96,10 +101,10 @@ function LineChart({
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
 
-    // Unit lookup for the hover tooltip — covers both mapping-CSV sensors
-    // and runtime "special" (calculated) sensors, since Dashboard.tsx merges
-    // both into the same `sensorMetadata` array before it reaches here.
-    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    // Label + unit lookup for the hover tooltip and the tag-point boxes — covers both mapping-CSV
+    // sensors and runtime "special" (calculated) sensors, since Dashboard.tsx merges both into the
+    // same `sensorMetadata` array before it reaches here (customer item 3: description first).
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
     // Tag Point — pin 2+ points on the chart to compare their values.
     // Seeded from the persisted prop on mount, same reasoning as
@@ -549,10 +554,16 @@ function LineChart({
                     // at a fabricated y value.
                     if (anchorValue == null) return null;
                     const badge = TAG_BADGES[order % TAG_BADGES.length];
-                    const lines = [`${badge}  ${formatDateTime(new Date(xData[idx] ?? ''))}`];
+                    // Customer item 3 (review ruling a): ECharts rich text — a description segment
+                    // (200 px, truncates), the tag as its own segment, then value + unit in a
+                    // fixed right-aligned column; the box stays about 330 px wide. The hover
+                    // tooltip carries the full name. `{ } |` would break the rich-text syntax.
+                    const rt = (t: string) => t.replace(/[{}|]/g, ' ');
+                    const lines = [`{h|${badge}  ${formatDateTime(new Date(xData[idx] ?? ''))}}`];
                     perSensor.forEach(({ sensor, value }) => {
-                        const unit = sensorMetaMap.get(normalizeSensorTag(sensor))?.unit;
-                        lines.push(`${sensor}: ${value == null ? '—' : value.toFixed(3)}${unit ? ` ${unit}` : ''}`);
+                        const info = sensorLookup(sensor);
+                        const label = info.description ? `{d|${rt(info.description)}}{t|${rt(sensor)}}` : `{dm|${rt(sensor)}}`;
+                        lines.push(`${label}{v|${value == null ? '—' : fmtNum(value, true)}${info.unit ? ` ${rt(info.unit)}` : ''}}`);
                     });
 
                     // Flip the callout away from whichever edge it's closest
@@ -690,8 +701,15 @@ function LineChart({
                                 borderRadius: 6,
                                 padding: [6, 8],
                                 fontSize: 10,
-                                fontFamily: 'JetBrains Mono, monospace',
+                                fontFamily: TAG_MONO,
                                 lineHeight: 15,
+                                rich: {
+                                    h: { fontFamily: TAG_MONO, fontSize: 10, color: txtSecondary, lineHeight: 17 },
+                                    d: { fontFamily: TAG_SANS, fontSize: 10.5, fontWeight: 500, color: txtPrimary, width: 200, overflow: 'truncate', ellipsis: '…' },
+                                    dm: { fontFamily: TAG_MONO, fontSize: 10.5, color: txtPrimary, width: 256, overflow: 'truncate', ellipsis: '…' },
+                                    t: { fontFamily: TAG_MONO, fontSize: 9.5, color: txtSecondary, width: 56, overflow: 'truncate', ellipsis: '…', padding: [0, 0, 0, 4] },
+                                    v: { fontFamily: TAG_MONO, fontSize: 10, fontWeight: 600, color: txtPrimary, width: 76, align: 'right', overflow: 'truncate', ellipsis: '…' },
+                                },
                             },
                         },
                     }
@@ -727,7 +745,7 @@ function LineChart({
                     // time axis (e.g. "10:32"), not something `new Date()`
                     // can parse back.
                     const dateStr = formatDateTime(new Date(pList[0].axisValue));
-                    let content = `<div style="font-weight:bold; margin-bottom:5px;">${dateStr}</div>`;
+                    let content = `<div class="tt-head">${dateStr}</div>`;
                     const maxItems = 10;
                     pList.slice(0, maxItems).forEach((p: any) => {
                         // Time axis: `p.value` is the whole data point
@@ -739,18 +757,15 @@ function LineChart({
                         const rawValue = Array.isArray(p.value) ? p.value[1] : p.value;
                         // Aggregated values (Avg etc.) are raw floating-point
                         // divisions with no rounding applied upstream — fix
-                        // the tooltip display to 3 decimals regardless of
-                        // sensor or aggregation method.
-                        const displayValue = typeof rawValue === 'number' ? rawValue.toFixed(3) : rawValue;
-                        // Unit from master data — covers both mapping-CSV
-                        // sensors and runtime "special" (calculated) ones,
-                        // since Dashboard.tsx merges both before this prop
-                        // reaches the chart. Absent unit → omit, not "undefined".
-                        const unit = sensorMetaMap.get(normalizeSensorTag(p.seriesName))?.unit;
-                        content += `<div style="display:flex; align-items:center; gap:5px;">
-                            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${p.color};"></span>
-                            <span>${p.seriesName}: ${displayValue}${unit ? ` ${unit}` : ''}</span>
-                        </div>`;
+                        // the tooltip display to 3 decimals (with thousands
+                        // separators, customer item 3) regardless of sensor or
+                        // aggregation method.
+                        const displayValue = typeof rawValue === 'number' ? fmtNum(rawValue, true) : String(rawValue ?? '—');
+                        // Customer item 3: inline label left (description then
+                        // tag), value + unit right in the series colour. Unit
+                        // from master data — absent unit → omitted.
+                        const info = sensorLookup(String(p.seriesName));
+                        content += sensorInlineHtml(info, typeof p.color === 'string' ? p.color : undefined, `${displayValue}${info.unit ? ` ${info.unit}` : ''}`);
                     });
                     return content;
                 }
@@ -870,7 +885,7 @@ function LineChart({
             }),
             series: baseSeries,
         };
-    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorMetaMap, timeHighlights, xData, taggedPoints, rangeChanged]);
+    }, [data, columnar, sensors, headers, containerH, markLines, hideYSplitLine, sensorColors, sensorAxisRange, sensorLookup, timeHighlights, xData, taggedPoints, rangeChanged]);
 
     return (
         <div ref={wrapperRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>

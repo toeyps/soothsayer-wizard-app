@@ -8,6 +8,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
 import WorkbenchStepBar, { workbenchStepLooks, STEP_ORDER, type StepInput, type StepKey, type StepLook } from '../components/windows/workbench/WorkbenchStepBar';
 import { PageSwitch, StaleBanner } from '../components/windows/workbench/WorkbenchShellParts';
 import ChartCard, { LegendItem } from '../components/windows/workbench/ChartCard';
+import { SensorPickerSingle } from '../components/sensor/SensorPicker';
 
 afterEach(cleanup);
 
@@ -178,6 +179,20 @@ describe('ChartCard', () => {
         expect(screen.getByTestId('custom').textContent).toBe('small');
         fireEvent.click(screen.getByTestId('chart-expand-d'));
         expect(within(screen.getByTestId('chart-overlay-d')).getByTestId('custom').textContent).toBe('big');
+    });
+
+    it('an Esc that reaches the document while a sensor picker is open inside the expanded chart closes only the picker', () => {
+        const render_ = (big: boolean) => (big ? <SensorPickerSingle sensors={['A', 'B']} value="A" onSelect={vi.fn()} ariaLabel="X sensor" /> : <div />);
+        render(<ChartCard id="p" title="P" render={render_} />);
+        fireEvent.click(screen.getByTestId('chart-expand-p'));
+        fireEvent.click(screen.getByRole('button', { name: 'X sensor' }));
+        expect(document.querySelector('.pk-pop')).not.toBeNull();
+        fireEvent.keyDown(document.body, { key: 'Escape' }); // focus outside the picker's search box
+        expect(document.querySelector('.pk-pop')).toBeNull();
+        expect(screen.getByTestId('chart-overlay-p')).toBeTruthy();
+        fireEvent.keyDown(document.body, { key: 'Escape' });
+        expect(screen.queryByTestId('chart-overlay-p')).toBeNull();
+        document.getElementById('wizard-portal-root')?.remove();
     });
 
     it('Expand opens a large copy of the same chart; Esc, the backdrop and X close it; clicking the card does not', () => {

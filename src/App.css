@@ -843,11 +843,6 @@ tr:hover {
         transform: translateX(0);
     }
 }
-/* ── Sensor Autocomplete (SensorPickers.tsx) ── */
-.sensor-autocomplete {
-    position: relative;
-    width: 100%;
-}
 
 .sensor-autocomplete-input-wrap {
     position: relative;
@@ -883,346 +878,6 @@ tr:hover {
 .sensor-autocomplete-input:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-}
-
-.sensor-autocomplete-clear {
-    position: absolute;
-    right: 0.35rem;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 0.15rem;
-    border-radius: 0.2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.6;
-    transition: opacity 0.15s, background 0.15s;
-}
-
-.sensor-autocomplete-clear:hover {
-    opacity: 1;
-    background: var(--hover-bg);
-}
-
-.sensor-autocomplete-list {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    max-height: 280px;
-    overflow-y: auto;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
-    z-index: 50;
-    padding: 0.2rem;
-}
-
-.sensor-autocomplete-item {
-    width: 100%;
-    padding: 0.35rem 0.5rem;
-    background: none;
-    border: none;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-    border-radius: 0.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.1rem;
-    align-items: flex-start;
-    transition: background 0.12s;
-}
-
-.sensor-autocomplete-item:hover {
-    background: var(--hover-bg);
-}
-
-.sensor-autocomplete-item.selected {
-    background: rgba(59, 130, 246, 0.15);
-}
-
-.sensor-autocomplete-item-tag {
-    font-weight: 600;
-    font-size: 0.78rem;
-    line-height: 1.2;
-    color: var(--text-primary);
-}
-
-.sensor-autocomplete-item-desc {
-    font-size: 0.7rem;
-    color: var(--text-secondary);
-    opacity: 0.85;
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
-}
-
-/* Component-group header inside the dropdown (opt-in via the
-   `getComponent` prop) -- sits above each component's own items, not
-   itself a selectable row. */
-.sensor-autocomplete-group-header {
-    padding: 0.4rem 0.5rem 0.2rem;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.75;
-}
-
-.sensor-autocomplete-empty {
-    padding: 0.75rem;
-    text-align: center;
-    color: var(--text-secondary);
-    font-size: 0.78rem;
-    opacity: 0.7;
-}
-
-/* ── Predictor Picker popup (added 2026-09-22) ─────────────────────
-   Multi-select replacement for SensorAutocomplete on the two predictor
-   fields (SensorPickers.tsx; used by BuildModelWindow.tsx's Relationship form) — search + collapsible
-   per-component groups + checkboxes, staged until OK. Mirrors
-   .pm-chart-modal-* backdrop/card conventions but sized as a compact
-   dialog instead of a full-viewport chart expand. */
-.predictor-picker-trigger {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 0.4rem 0.6rem;
-    background: var(--card-bg);
-    border: 1px dashed var(--border-strong, var(--border));
-    border-radius: 0.35rem;
-    color: var(--text-secondary);
-    font-size: 0.78rem;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-}
-.predictor-picker-trigger:hover {
-    border-color: var(--accent-color);
-    color: var(--text-primary);
-}
-.predictor-picker-trigger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-.predictor-picker-trigger:disabled:hover {
-    border-color: var(--border-strong, var(--border));
-    color: var(--text-secondary);
-}
-
-/* Single-select trigger — looks like a real input (solid border), unlike
-   the multi-select trigger's dashed "add more" affordance, since there's
-   always exactly one value here, same as the SensorAutocomplete/native
-   <select> it replaces. */
-.sensor-picker-trigger-single {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 0.4rem 0.6rem;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    color: var(--text-primary);
-    font-size: 0.8rem;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color 0.15s;
-}
-.sensor-picker-trigger-single:hover {
-    border-color: var(--accent-color);
-}
-.sensor-picker-trigger-single:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-.sensor-picker-trigger-single:disabled:hover {
-    border-color: var(--border);
-}
-.sensor-picker-trigger-label {
-    /* min-width: 0 overrides the flex-item default of `auto`, which would
-       otherwise refuse to shrink below the text's natural width and force
-       the row to wrap onto a second line instead of truncating — most
-       visible in a narrow row (e.g. a Custom condition row sharing space
-       with an operator select, value input and remove button) with a long
-       sensor description. */
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.sensor-picker-trigger-placeholder {
-    color: var(--text-faint, var(--text-secondary));
-    opacity: 0.75;
-}
-.sensor-picker-trigger-icon {
-    color: var(--text-secondary);
-    opacity: 0.7;
-    flex-shrink: 0;
-}
-
-.predictor-picker-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    /* 🆕 2026-10-02 [visual refresh Phase 4, look only]: rgba(0,0,0,.55) +
-       blur(2px) matches the prototype's `.scrim` and the same glass-backdrop
-       pattern Phase 3 already applied to `.bmw-modal-backdrop` — was a
-       slightly blue-tinted rgba(2,6,23,.55) + heavier blur(4px) before. */
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
-    animation: pm-chart-modal-fade 0.14s ease-out;
-}
-.predictor-picker-modal {
-    width: 100%;
-    max-width: 440px;
-    max-height: min(560px, 80vh);
-    background: var(--bg-surface, var(--bg-secondary));
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    animation: pm-chart-modal-pop 0.16s ease-out;
-}
-.predictor-picker-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 16px 16px 12px;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    flex-shrink: 0;
-}
-.predictor-picker-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    flex-shrink: 0;
-}
-.predictor-picker-close:hover {
-    background: var(--hover-bg);
-    color: var(--text-primary);
-}
-.predictor-picker-search {
-    margin: 12px 16px;
-    flex-shrink: 0;
-}
-.predictor-picker-list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    border-top: 1px solid var(--border);
-}
-.predictor-picker-group {
-    border-bottom: 1px solid var(--border);
-}
-.predictor-picker-group:last-child { border-bottom: none; }
-.predictor-picker-group-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 8px 12px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-secondary);
-    text-align: left;
-}
-.predictor-picker-group-header:hover { color: var(--text-primary); }
-.predictor-picker-group-name { flex: 1; }
-.predictor-picker-group-count {
-    font-size: 10.5px;
-    font-weight: 500;
-    color: var(--text-faint, var(--text-secondary));
-    text-transform: none;
-    letter-spacing: normal;
-}
-.predictor-picker-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 12px 6px 30px;
-    cursor: pointer;
-    font-size: 0.78rem;
-    /* Reset native <button> chrome — this class renders on a <label> in
-       multi-select mode and a <button> in single-select mode (a row click
-       selects and closes immediately, no checkbox), and both must look
-       identical. */
-    border: none;
-    background: transparent;
-    text-align: left;
-    font-family: inherit;
-    color: inherit;
-}
-.predictor-picker-item:hover { background: var(--hover-bg); }
-.predictor-picker-item.checked { background: var(--accent-muted); }
-.predictor-picker-item--none {
-    padding-left: 12px;
-    color: var(--text-faint, var(--text-secondary));
-}
-.predictor-picker-item input[type="checkbox"] {
-    flex-shrink: 0;
-    accent-color: var(--accent-color);
-    cursor: pointer;
-}
-.predictor-picker-item-tag {
-    font-weight: 600;
-    color: var(--text-primary);
-    font-family: var(--mono);
-    flex-shrink: 0;
-}
-.predictor-picker-item-desc {
-    color: var(--text-secondary);
-    opacity: 0.8;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-.predictor-picker-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-}
-.predictor-picker-count {
-    font-size: 11.5px;
-    color: var(--text-secondary);
-    font-family: var(--mono);
 }
 
 /* Sensor list panel items with description */
@@ -1287,7 +942,9 @@ tr:hover {
      * card's kind icon and category chip never share a color. */
     --kind-clu: oklch(0.72 0.12 200);
     --kind-clu-muted: oklch(0.72 0.12 200 / 0.16);
-    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* Consolas named explicitly (DESIGN_SYSTEM §3.2): the installed app renders the fallback,
+     * so the fallback is the one designed for (customer items 3 + 4, 2026-10-09). */
+    --mono: 'JetBrains Mono', Consolas, ui-monospace, SFMono-Regular, Menlo, monospace;
 
     /* ---- Visual refresh Phase 0 (2026-10-02) ----
      * Added for the Dashboard/Build-Model visual refresh (see
@@ -2369,26 +2026,6 @@ body {
     border: 1px solid var(--border-strong);
 }
 
-.scatter-regl-select {
-    background: var(--input-bg);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 3px;
-    cursor: pointer;
-    /* Wide enough that a real description ("description (tag)", the same
-       convention used everywhere else a sensor is shown) isn't clipped —
-       2026-09-22, replacing the old bare "tag (X)"/"tag (Y)" option text
-       that fit in a much narrower box. */
-    min-width: 120px;
-    max-width: 320px;
-}
-
-.scatter-regl-select:hover {
-    border-color: var(--accent-color);
-}
-
 .scatter-regl-vs {
     color: var(--text-secondary);
     margin: 0 2px;
@@ -2550,28 +2187,6 @@ body {
     margin-bottom: 4px;
     border-bottom: 1px solid var(--border);
     padding-bottom: 3px;
-}
-
-.scatter-regl-tooltip-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    padding: 1px 0;
-}
-
-.scatter-regl-tooltip-label {
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100px;
-}
-
-.scatter-regl-tooltip-value {
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-primary);
 }
 
 .scatter-regl-tooltip-ts {
@@ -2954,34 +2569,6 @@ body {
     background: var(--hover-bg);
 }
 
-.pair-regl-cluster-swatch {
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    border: 1px solid var(--border);
-    cursor: pointer;
-    position: relative;
-    overflow: hidden;
-    flex: 0 0 auto;
-    transition: transform 0.1s, border-color 0.1s;
-}
-
-.pair-regl-cluster-swatch:hover {
-    transform: scale(1.15);
-    border-color: var(--accent-color);
-}
-
-/* Hide the actual color input — it overlays the swatch */
-.pair-regl-cluster-swatch input[type="color"] {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-    border: none;
-}
-
 .pair-regl-cluster-label {
     flex: 1 1 auto;
     color: var(--text-primary);
@@ -3274,19 +2861,6 @@ body {
     visibility: visible;
 }
 
-.pair-regl-axis-tooltip-tag {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 9px;
-    color: var(--text-secondary);
-}
-
-.pair-regl-axis-tooltip-desc {
-    font-size: 11px;
-    color: var(--text-primary);
-    font-weight: 500;
-    margin-top: 1px;
-}
-
 /* Enlarged-view dialog (one cell big, themed) ------------------------- */
 .pair-regl-expand-backdrop {
     position: fixed;
@@ -3448,12 +3022,6 @@ body {
     color: var(--cond);
 }
 
-.model-chip--component {
-    background: var(--surface-hi);
-    color: var(--text-secondary);
-    border: 1px solid var(--border);
-}
-
 .model-status-pill {
     font-size: 0.7rem;
     font-weight: 600;
@@ -3597,9 +3165,7 @@ body {
 .f4-cond { display: flex; gap: 6px; align-items: center; min-width: 0; padding: 6px 8px; background: var(--chip-bg); border: 1px solid var(--border); border-radius: 6px; }
 .f4-cond--compact { padding: 4px 5px; gap: 4px; }
 .f4-cond-s { flex: 1; min-width: 0; }
-.f4-cond .sensor-picker-trigger-single { background: var(--bg-primary); border-color: var(--border-strong); border-radius: 5px; padding: 5px 8px; font-size: 11.5px; }
-.f4-cond--compact .sensor-picker-trigger-single { padding: 4px 6px; font-size: 10.5px; }
-.sensor-picker-tag { font-style: normal; color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; }
+
 .f4-cond-o { -webkit-appearance: none; appearance: none; field-sizing: content; min-width: 34px; padding: 4px 8px; text-align: center; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.25); color: var(--accent-color); border-radius: 4px; font-family: var(--mono); font-size: 11px; flex-shrink: 0; outline: none; }
 .f4-cond-v { width: 56px; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 5px; padding: 5px 6px; font-family: var(--mono); font-size: 11px; color: var(--text-primary); flex-shrink: 0; outline: none; min-width: 0; }
 .f4-cond--compact .f4-cond-v { width: 44px; padding: 4px; }
@@ -3644,7 +3210,7 @@ body {
 /* sensor identity (shared by the Workbench's left-list rows and detail
    header — see .bmw-srow/.bmw-dhead below for the layout those sit in). */
 .f4-sr-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.f4-sr-tag { font-family: var(--mono); font-size: 0.7rem; color: var(--text-secondary); flex-shrink: 0; }
+
 .f4-kinds { display: flex; gap: 4px; }
 .f4-kb { position: relative; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 0.62rem; font-weight: 700; flex-shrink: 0; }
 /* Build Model Workbench Phase B: small status dot in the kind badge's
@@ -3695,11 +3261,7 @@ body {
     .f4-tabs { padding: 0 6px; }
 }
 .f4-move-note { font-size: 0.66rem; color: var(--accent-hi); background: var(--accent-muted); border-radius: 6px; padding: 6px 8px; }
-.f4-pchips { display: flex; flex-wrap: wrap; gap: 4px; }
-.f4-ppill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; font-size: 0.68rem; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--chip-bg); border: 1px solid var(--border); }
-.f4-ppill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.f4-ppill button { background: none; border: 0; color: var(--text-secondary); cursor: pointer; padding: 1px; display: flex; border-radius: 50%; }
-.f4-ppill button:hover { color: var(--text-primary); background: var(--hover-bg); }
+
 /* Sticky per-model footer, reused unchanged by the Workbench's detail pane
    (see .bmw-detail below) -- still sticky/bottom-radiused for the same
    reason it always was: a tall panel above it must not push the footer's
@@ -3719,7 +3281,6 @@ body {
 .f4-notice li + li { margin-top: 2px; }
 .f4-notice-x { align-self: start; font-size: 0.7rem; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-hi); color: var(--text-primary); cursor: pointer; }
 .f4-strike { text-decoration: line-through; color: var(--text-faint); }
-.sensor-picker-trigger--req { border-color: oklch(0.78 0.14 75 / 0.6) !important; }
 
 /* ── Build Model Workbench (Phase A layout, 2026-09-29) ──
    Replaces the old "Group by Failure Group / Component / Model Type"
@@ -4069,15 +3630,6 @@ body {
 }
 .sensor-list-row:hover {
     background: var(--hover-bg);
-}
-
-/* Small mono tag line under a sensor's name (just the bare tag, e.g.
- * "11FQ1603.PV") — the unit now lives in `.unit-badge` next to the name
- * instead of being repeated here. */
-.sensor-row-tag {
-    font-family: var(--mono);
-    font-size: 0.68rem;
-    color: var(--text-faint);
 }
 
 /* "Add to failure group" / alarm popovers' own internal rows — same
@@ -4482,19 +4034,7 @@ body {
     gap: 8px;
     align-items: center;
 }
-.filter-row-sensor {
-    width: 100%;
-    min-width: 0;
-    padding: 0 8px;
-    height: 30px;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text-primary);
-    font-size: 0.72rem;
-    outline: none;
-    cursor: pointer;
-}
+
 .filter-op-seg {
     display: inline-flex;
     background: var(--input-bg);
@@ -4725,15 +4265,7 @@ body {
     background: var(--input-bg);
     border: 1px solid var(--border);
 }
-.highlights-chip-swatch {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 1px solid rgba(0, 0, 0, 0.25);
-    cursor: pointer;
-    flex-shrink: 0;
-    padding: 0;
-}
+
 .highlights-chip-body {
     flex: 1;
     min-width: 0;
@@ -4926,13 +4458,7 @@ body {
     align-items: baseline;
     gap: 8px;
 }
-.special-sensor-row-name {
-    font-size: 0.76rem;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+
 .special-sensor-added-pill {
     display: inline-flex;
     align-items: center;
@@ -5170,14 +4696,7 @@ body {
     color: var(--text-faint);
     font-weight: 600;
 }
-.fg-sheet-sensor {
-    font-size: 0.9rem;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-top: 2px;
-}
+
 .fg-sheet-step {
     display: flex;
     gap: 2px;
@@ -5600,8 +5119,7 @@ body {
 .rcm-cond { display: grid; grid-template-columns: minmax(0, 1fr) auto 150px 28px; gap: 8px; align-items: center; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
 .rcm-cond--incomplete { border-color: var(--warn-line); }
 .rcm-cond-s { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.rcm-cond .sensor-picker-trigger-single { height: 34px; background: var(--bg-primary); border-color: var(--border-strong); border-radius: 8px; padding: 0 10px; font-size: 12px; }
-.rcm-cond-comp { font: 10px var(--mono); color: var(--text-faint); padding-left: 2px; }
+
 .rcm-ops { display: inline-flex; background: var(--bg-primary); border: 1px solid var(--border-strong); border-radius: 8px; padding: 2px; gap: 2px; height: 34px; }
 .rcm-ops button { border: 0; background: none; color: var(--text-secondary); border-radius: 6px; font: 600 12px var(--mono); padding: 0 9px; cursor: pointer; }
 .rcm-ops button:hover:not(.on) { color: var(--text-primary); }
@@ -5987,3 +5505,703 @@ body {
 .vt-fail > span { flex: 1 1 220px; min-width: 0; }
 .vt-fail b { display: block; font-weight: 600; color: var(--warn); }
 .vt-fail small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); }
+
+/* =====================================================================
+   Customer items 3 + 4 (2026-10-09, SPEC FINAL
+   docs/design/handoff/customer-batch-2026-10/README.md §1; DESIGN_SYSTEM §4):
+   the ONE sensor label (`src/components/sensor/SensorLabel.tsx`), the ONE
+   sensor picker (`SensorPicker.tsx`) and the ONE colour picker
+   (`ColourPicker.tsx`), folded in from the mockup's scratch merge-a.css /
+   merge-a2.css onto this file's tokens. Fonts use the explicit stacks the
+   installed app really renders with (DESIGN_SYSTEM §3.2: Segoe UI / Consolas).
+   ===================================================================== */
+
+/* ── Sensor label: Stacked (`.sl`) and Inline (`.sl-inline`) ── */
+.sl {
+    min-width: 0;
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+    text-align: left;
+}
+.sl-l1,
+.sl-l2 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.sl-desc {
+    min-width: 0;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The tag line is --text-secondary (review must-fix 6: --text-faint is only for
+   placeholders and separators). */
+.sl-tag {
+    flex-shrink: 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.sl--notag .sl-desc { font-family: var(--mono); }
+.sl--lg .sl-desc { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+.sl--lg .sl-tag { font-size: 11.5px; }
+.sl--sm .sl-desc { font-size: 11.5px; }
+.sl--sm .sl-tag { font-size: 10px; }
+.sl--muted .sl-desc { color: var(--text-secondary); font-weight: 400; }
+.sl-unit { font-family: var(--mono); }
+.sl-fx {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    font-size: 10.5px;
+    font-weight: 700;
+    font-style: normal;
+}
+.sl-fx--f { color: var(--accent-hi); }
+.sl-fx--s { color: var(--kind-clu); }
+.sl-inline-wrap {
+    min-width: 0;
+    max-width: 100%;
+    display: inline-flex;
+    vertical-align: bottom;
+}
+.sl-inline {
+    min-width: 0;
+    max-width: 100%;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+}
+.sl-inline .sl-fx { align-self: center; }
+/* Trigger / row context: the tag hides below ~150 px of label width (it stays
+   in `title` and in the picker rows). */
+.sl-fit {
+    flex: 1;
+    display: block;
+    overflow: hidden;
+    container-type: inline-size;
+}
+.sl-fit .sl-inline { display: flex; }
+@container (max-width: 150px) {
+    .sl-fit .sl-tag { display: none; }
+}
+/* Component outside a grouped list: a small outlined chip after the tag. */
+.comp-chip {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    padding: 0 6px;
+    white-space: nowrap;
+}
+
+/* ── Sensor picker: single trigger + anchored popover ── */
+.pk-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    height: 30px;
+    padding: 0 8px 0 9px;
+    box-sizing: border-box;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.pk-trigger:hover:not(:disabled),
+.pk-trigger[aria-expanded="true"] { border-color: var(--accent-color); }
+.pk-trigger:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 1px; }
+.pk-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.pk-trigger.req { border: 1px dashed var(--warn); }
+.pk-trigger.warn { border-color: var(--warn); }
+.pk-chev { flex-shrink: 0; margin-left: auto; color: var(--text-faint); }
+.pk-ph {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* A chosen "None" reads as a value, not a placeholder (non-italic). */
+.pk-ph--none { color: var(--text-secondary); }
+.pk-trigger--sm { height: 24px; padding: 0 6px; border-radius: 6px; font-size: 11px; }
+.pk-trigger--sm .sl-desc { font-size: 11px; }
+.pk-trigger--sm .sl-tag { font-size: 10px; }
+.pk-pop {
+    display: flex;
+    flex-direction: column;
+    max-height: min(380px, 70vh);
+}
+/* Opened above its trigger: AnchoredPopover reserves the list's full height, so fill it — the
+   search box then stays put while the user types or opens groups. */
+.sensor-popover[data-placement="above"] > .pk-pop { height: 100%; }
+.pk-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-faint);
+}
+.pk-search input {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: 0;
+    outline: none;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+}
+.pk-search input::placeholder { color: var(--text-faint); }
+.pk-scope {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+}
+.pk-list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 4px 0;
+    container-type: inline-size;
+}
+.pk-g {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    background: none;
+    border: 0;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+}
+.pk-g:hover,
+.pk-g.kb { color: var(--text-primary); background: var(--hover-bg); }
+.pk-g.kb { box-shadow: inset 2px 0 0 var(--accent-color); }
+.pk-car { flex-shrink: 0; transition: transform 0.15s; }
+.pk-g[aria-expanded="true"] .pk-car { transform: rotate(90deg); }
+.pk-badge {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    background: var(--accent-muted);
+    color: var(--accent-hi);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+.pk-gname { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-gcount {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-faint);
+}
+.pk-gcount.on { color: var(--accent-hi); }
+.pk-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    padding: 6px 10px 6px 16px;
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.pk-item:hover,
+.pk-item.kb { background: var(--hover-bg); }
+.pk-item.kb { box-shadow: inset 2px 0 0 var(--accent-color); }
+.pk-item.on { background: var(--accent-muted); }
+.pk-item--none { padding-left: 10px; color: var(--text-secondary); font-size: 12px; }
+.pk-item .sl-desc { font-size: 12px; }
+.pk-mark {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    display: grid;
+    place-items: center;
+    color: var(--accent-hi);
+}
+.pk-cbx {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    background: var(--input-bg);
+}
+.pk-item.on .pk-cbx { background: var(--accent-color); border-color: var(--accent-color); color: #04101e; }
+/* Rows narrower than ~320 px drop the unit chip (still searchable, still in `title`). */
+@container (max-width: 320px) {
+    .pk-unit { display: none; }
+}
+.pk-empty {
+    display: grid;
+    gap: 4px;
+    padding: 14px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.pk-empty small { font-size: 11px; color: var(--text-faint); }
+
+/* ── Sensor picker: multi (chips + "Add…" + modal) ── */
+.pk-multi { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
+.pk-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 0 4px 0 8px;
+    border-radius: 6px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    font-size: 11.5px;
+}
+.pk-chip .sl-inline-wrap { max-width: 240px; }
+.pk-chip--locked { padding-right: 8px; }
+.pk-chip-x {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--text-faint);
+    cursor: pointer;
+}
+.pk-chip-x:hover,
+.pk-chip-x:focus-visible { color: var(--text-primary); background: var(--hover-bg); }
+.pk-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 9px;
+    border-radius: 6px;
+    border: 1px dashed var(--border-strong);
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+.pk-add:hover:not(:disabled) { border-color: var(--accent-color); color: var(--text-primary); }
+.pk-add.req { border-color: var(--warn); color: var(--warn); }
+.pk-add:disabled { cursor: not-allowed; opacity: 0.75; border-style: solid; }
+.pk-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px); /* the one glass scrim every modal backdrop uses */
+}
+.pk-modal {
+    width: min(520px, 100%);
+    max-height: min(600px, 84vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--card-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+.pk-mh {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.pk-mh button {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.pk-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+}
+.pk-count { font-size: 11.5px; color: var(--text-secondary); }
+.pk-foot-btns { display: flex; gap: 8px; }
+.pk-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.pk-btn--pri { background: var(--accent-color); border-color: transparent; color: #fff; }
+
+/* ── Colour picker ── */
+.cp-hit {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+}
+.cp-hit:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 0; }
+.cp-hit:disabled { cursor: not-allowed; opacity: 0.5; }
+.cp-swatch {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    transition: transform 0.15s, border-color 0.15s;
+}
+.cp-hit:hover:not(:disabled) .cp-swatch { border-color: var(--accent-color); transform: scale(1.12); }
+.cp-pop { display: grid; gap: 8px; padding: 10px; }
+.cp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.cp-head-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-head-hex {
+    flex-shrink: 0;
+    font-family: var(--mono);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-faint);
+}
+.cp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.cp-sw {
+    position: relative;
+    aspect-ratio: 1;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    cursor: pointer;
+    outline: none;
+}
+.cp-sw:hover { transform: scale(1.08); }
+/* "Current" ring = box-shadow, so `outline` stays free for :focus-visible
+   (review must-fix 4). */
+.cp-sw.sel { box-shadow: 0 0 0 2px var(--text-primary); }
+.cp-sw:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+.cp-chk { position: absolute; inset: 0; display: grid; place-items: center; color: #0b0b0d; }
+.cp-used,
+.cp-legend i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pop);
+    border: 1.5px solid rgba(255, 255, 255, 0.85);
+}
+.cp-used { position: absolute; right: 2px; bottom: 2px; }
+.cp-legend { display: flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-faint); }
+.cp-legend i { display: inline-block; }
+.cp-custom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 0 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+.cp-custom:hover { color: var(--text-primary); }
+.cp-car { transition: transform 0.15s; }
+.cp-custom[aria-expanded="true"] .cp-car { transform: rotate(90deg); }
+.cp-adv { display: grid; gap: 8px; }
+.cp-hexrow { display: flex; align-items: center; gap: 6px; }
+.cp-hexrow input {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    padding: 0 8px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    outline: none;
+}
+.cp-hexrow input:focus { border-color: var(--accent-color); }
+.cp-hexrow input.bad { border-color: var(--danger); }
+.cp-prev { flex-shrink: 0; width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border-strong); }
+.cp-err { font-size: 11px; color: var(--danger); }
+
+/* ── Tooltip / value-box rows (line chart HTML tooltip, scatter + pair plot
+   hover, scatter tag callouts): inline label left, value + unit right. ── */
+.tt-head { margin-bottom: 4px; font-family: var(--mono); font-size: 11px; color: var(--text-secondary); }
+.tt-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    max-width: 360px;
+    font-size: 11.5px;
+    line-height: 1.55;
+}
+.tt-sw { flex-shrink: 0; align-self: center; width: 8px; height: 8px; border-radius: 2px; }
+.tt-label { flex: 1; min-width: 0; max-width: 260px; display: flex; align-items: baseline; gap: 5px; }
+.tt-desc {
+    min-width: 0;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.tt-mono { font-family: var(--mono); }
+.tt-tag { flex-shrink: 0; font-family: var(--mono); font-size: 10px; color: var(--text-secondary); }
+.tt-val {
+    margin-left: auto;
+    padding-left: 10px;
+    font-family: var(--mono);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.scatter-regl-tooltip .tt-row { min-width: 200px; }
+.scatter-tag-callout .tt-row { font-size: 10.5px; }
+
+/* ── Per-screen rollout ── */
+/* Dashboard › Sensor tab rows: the label takes the room so ellipsis works. */
+.sensor-list-row .checkbox-wrapper { flex: 1; min-width: 0; }
+.sensor-row-label { flex: 1; min-width: 0; display: grid; cursor: pointer; }
+/* Failure Groups tab rows match the Sensor-tab row metrics (review ruling c). */
+.fg-srow-btn {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+    border: none;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.fg-srow-plain {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Assignment sheet header: the same stacked label, a touch larger. */
+.fg-sheet-sl { margin-top: 2px; }
+.fg-sheet-sl .sl-desc { font-size: 13.5px; font-weight: 600; }
+
+/* Filter tab rows: picker cell, unit suffix in the value boxes, off-chart note. */
+.filter-panel { container-type: inline-size; }
+.filter-row-wrap { display: grid; gap: 4px; }
+.filter-panel .filter-row { grid-template-columns: minmax(0, 1fr) auto 118px 118px 26px; }
+.filter-row-sensor-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.fr-warn-ico { flex-shrink: 0; color: var(--warn); }
+.fv-wrap { position: relative; display: block; min-width: 0; }
+.filter-row-value--unit { padding-right: 46px !important; box-sizing: border-box; }
+.fv-unit {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    max-width: 40px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+.fv-empty { display: block; }
+/* Solid amber note under a condition whose sensor left the chart — never the
+   dashed `.req` look (that means "required and empty"). */
+.filter-row-note {
+    margin-left: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    font-size: 11.5px;
+    color: var(--warn);
+}
+.filter-row-note > span {
+    min-width: 0;
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px;
+    color: var(--text-secondary);
+}
+.filter-row-note button {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--accent-hi);
+    cursor: pointer;
+}
+.filter-row-note button:disabled {
+    color: var(--text-faint);
+    cursor: not-allowed;
+}
+@container (max-width: 520px) {
+    .filter-panel .filter-row { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) 26px; }
+    .filter-row-sensor-cell { grid-column: 1 / -1; }
+    .filter-row .fv-empty { display: none; }
+    .filter-row:not(.is-between) .fv-wrap { grid-column: span 2; }
+}
+
+/* Highlights › By value: unit suffix on the range inputs + range chips. */
+.highlights-fv { flex: 1; min-width: 0; }
+.highlights-fv .highlights-field { width: 100%; box-sizing: border-box; }
+.hl-unit { font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--text-secondary); }
+
+/* Scatter: compact X/Y pickers + inline axis titles (review ruling b). */
+.scatter-pk { display: inline-flex; width: clamp(150px, 22vw, 300px); min-width: 0; }
+.scatter-axis-title {
+    position: absolute;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    overflow: hidden;
+}
+.scatter-axis-unit { flex-shrink: 0; font-family: var(--mono); font-size: 9.5px; color: var(--text-secondary); }
+.scatter-axis-title--y { writing-mode: vertical-rl; transform: rotate(180deg); }
+.scatter-axis-title--y > * { min-height: 0; max-height: 100%; }
+.scatter-axis-title--y .sl-inline-wrap,
+.scatter-axis-title--y .sl-inline { min-width: auto; max-width: none; min-height: 0; max-height: 100%; }
+.scatter-axis-title--y .sl-desc { min-width: auto; min-height: 0; }
+
+/* Pair Plot axis labels: the tag in mono with a dotted underline; the hover /
+   focus card is the stacked label + a component chip. */
+.pair-regl-axis-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+.pair-regl-axis-label.hoverable:focus-visible { outline: none; }
+.pair-regl-axis-label.hoverable:focus-visible > .pair-regl-axis-tag { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+.pair-regl-axis-label.hoverable:focus-within .pair-regl-axis-tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+.pair-regl-axis-card { min-width: 180px; max-width: 300px; padding: 6px 8px; }
+
+/* Build Model: list rows, detail header, readout, Fit X selector, subtitles, RC rows. */
+.bmw-srow .sl { min-width: 0; }
+.bmw-dhead h3.bmw-dh-sl { margin: 0; min-width: 0; white-space: normal; overflow: visible; }
+.f4-readout--sl .sl-fit { min-width: 0; }
+.wb2-xpk { display: inline-flex; width: clamp(160px, 18vw, 260px); min-width: 0; vertical-align: middle; }
+.wb2-sub-sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
+.f4-cond-s .pk-trigger { min-width: 0; }
+.rcm-cond-s { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rcm-cond-s > .pk-trigger { flex: 1; min-width: 140px; height: 34px; background: var(--bg-primary); font-size: 12px; }
+.rcm-cond { container-type: inline-size; }
+/* Condition rows narrower than ~480 px: the component chip moves under the trigger. */
+@container (max-width: 480px) {
+    .rcm-comp-chip { flex-basis: 100%; flex-grow: 0; width: fit-content; }
+}
+.rcc-chip--sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
+.rcc-chip--sl .sl-inline-wrap { max-width: 220px; }
+.rcc-rest { flex-shrink: 0; font-family: var(--mono); white-space: nowrap; }
+
+/* Special Sensors window: Manage rows, source chips. */
+.manage-ss-label { display: grid; }
+.ss-src-chip { min-width: 0; max-width: 100%; }
+.ss-src-chip .sl-inline-wrap { max-width: 220px; }
+.ss-src-chip--base .sl-desc,
+.ss-src-chip--base .sl-tag { color: inherit; }

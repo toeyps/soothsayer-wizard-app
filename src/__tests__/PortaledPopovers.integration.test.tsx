@@ -272,11 +272,12 @@ describe('HighlightsPanel colour popovers through Portal — interaction seam', 
     it('picking a colour with the REAL ColorPlatePicker inside the portal recolours, keeps the popover open, and does not toggle/remove the chip', () => {
         const props = highlightProps({ timeHighlights: [h1] });
         render(<HighlightsPanel {...props} />);
-        fireEvent.click(screen.getByTitle('Change colour'));
+        fireEvent.click(screen.getByTitle('Highlight colour'));
         const pop = openPopovers()[0];
         expect(pop).toBeTruthy();
-        // popover > ColorPlatePicker root > SV square.
-        const square = pop.firstElementChild!.firstElementChild as HTMLElement;
+        // Shared ColourPicker (customer item 4): #ff0000 is not a palette colour, so "Custom
+        // colour" is open — its ColorPlatePicker root > SV square.
+        const square = pop.querySelector('.cp-adv')!.firstElementChild!.firstElementChild as HTMLElement;
         square.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON() {} }) as DOMRect;
         fireEvent.pointerDown(square, { clientX: 0, clientY: 0, pointerId: 1 });
         fireEvent.click(square);
@@ -288,22 +289,22 @@ describe('HighlightsPanel colour popovers through Portal — interaction seam', 
 
     it('a scroll anywhere closes the time-highlight colour popover, and ONE swatch click reopens it', () => {
         render(<HighlightsPanel {...highlightProps({ timeHighlights: [h1] })} />);
-        fireEvent.click(screen.getByTitle('Change colour'));
+        fireEvent.click(screen.getByTitle('Highlight colour'));
         expect(openPopovers()).toHaveLength(1);
         fireEvent.scroll(document.body);
         expect(openPopovers()).toHaveLength(0);
-        fireEvent.click(screen.getByTitle('Change colour'));
+        fireEvent.click(screen.getByTitle('Highlight colour'));
         expect(openPopovers()).toHaveLength(1);
     });
 
     it('the value-range colour popover closes on resize and reopens with ONE click', () => {
         const valueHighlight: ValueHighlight = { sensor: 'TAG1', ranges: [{ id: 'r1', min: 1, max: 2, color: '#00ff00', enabled: true }] };
         render(<HighlightsPanel {...highlightProps({ valueHighlight })} />);
-        fireEvent.click(screen.getByTitle('Change colour'));
+        fireEvent.click(screen.getByTitle('Range colour'));
         expect(openPopovers()).toHaveLength(1);
         fireEvent(window, new Event('resize'));
         expect(openPopovers()).toHaveLength(0);
-        fireEvent.click(screen.getByTitle('Change colour'));
+        fireEvent.click(screen.getByTitle('Range colour'));
         expect(openPopovers()).toHaveLength(1);
     });
 });

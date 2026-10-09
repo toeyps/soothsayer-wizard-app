@@ -110,6 +110,7 @@ import '../components/dashboard'; // warm App's lazy chunk
 import BuildModelWindow from '../components/windows/BuildModelWindow';
 import AddSensorWindow from '../components/windows/AddSensorWindow';
 import { dismissAllErrors } from '../errorReporter';
+import { pickSingle, rowTag } from './helpers/sensorPicker';
 
 vi.setConfig({ testTimeout: 120_000 });
 
@@ -284,7 +285,7 @@ function sensorRow(tag: string): HTMLElement {
 }
 
 async function searchSensors(q: string) {
-    fireEvent.change(app().getByPlaceholderText('Search sensors...'), { target: { value: q } });
+    fireEvent.change(app().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: q } });
     await settle();
 }
 
@@ -367,7 +368,7 @@ async function setRunningCondition() {
     await act(async () => { fireEvent.click(dlg.getByTestId('rc-add-condition')); });
     const cond = within(dlg.getByTestId('rc-cond-1'));
     // pick TAG2 in the single-sensor picker
-    fireEvent.click(dlg.getByTestId('rc-cond-1').querySelector('button.sensor-picker-trigger-single') as HTMLElement);
+    fireEvent.click(dlg.getByTestId('rc-cond-1').querySelector('button.pk-trigger') as HTMLElement);
     await pickInModal('sensor', ['TAG2'], true);
     fireEvent.click(cond.getByRole('button', { name: 'Greater than' }));
     fireEvent.change(cond.getByLabelText('Value'), { target: { value: '10' } });
@@ -427,7 +428,7 @@ const PLANS: Record<Kind, KindPlan> = {
         sheetTag: 'TAG1',
         configure: async () => {
             openSettings();
-            fireEvent.click(bmwEl().querySelector('button.predictor-picker-trigger') as HTMLElement);
+            fireEvent.click(bmwEl().querySelector('button.pk-add') as HTMLElement);
             await pickInModal('predictors', ['SP1']);
         },
         setPoints: async () => {
@@ -444,10 +445,10 @@ const PLANS: Record<Kind, KindPlan> = {
         sheetTag: 'SP1',
         configure: async () => {
             openSettings();
-            fireEvent.click(bmwEl().querySelectorAll('button.sensor-picker-trigger-single')[0]);
+            fireEvent.click(bmwEl().querySelectorAll('button.pk-trigger')[0]);
             await pickInModal('Y sensor', ['TAG5'], true);
             openSettings();
-            fireEvent.click(bmwEl().querySelectorAll('button.sensor-picker-trigger-single')[1]);
+            fireEvent.click(bmwEl().querySelectorAll('button.pk-trigger')[1]);
             await pickInModal('criteria sensor', ['TAG4'], true);
             await settle(100);
             openSettings();
@@ -650,7 +651,7 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
         await settle();
         await act(async () => { fireEvent.click(app().getByText('Add condition')); });
         const row = document.querySelector('.filter-row') as HTMLElement;
-        fireEvent.change(row.querySelector('select')!, { target: { value: 'SP2' } });
+        pickSingle(within(row).getByRole('button', { name: 'Filter sensor' }), 'SP2');
         fireEvent.click(within(row).getByText('>'));
         fireEvent.change(row.querySelector('input[type="number"]')!, { target: { value: '30' } });
         await settle();
@@ -664,14 +665,15 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
         await settle(200);
         dataTab('Highlights');
         await settle();
-        const hlSelect = () => Array.from(document.querySelectorAll<HTMLSelectElement>('select.highlights-field--full')).pop()!;
-        fireEvent.change(hlSelect(), { target: { value: 'SP2' } });
+        // Customer item 3: "Colour by…" is the shared single picker.
+        const hlTrigger = () => Array.from(document.querySelectorAll<HTMLElement>('button.pk-trigger[aria-label="Colour by"]')).pop()!;
+        pickSingle(hlTrigger(), 'SP2');
         await settle();
         fireEvent.change(app().getByPlaceholderText('min'), { target: { value: '0' } });
         fireEvent.change(app().getByPlaceholderText('max'), { target: { value: '20' } });
         await act(async () => { fireEvent.click(app().getAllByText('+ Add').pop()!); });
         await settle();
-        fireEvent.click(app().getAllByTitle('Change colour').pop()!);
+        fireEvent.click(app().getAllByTitle('Range colour').pop()!);
         expect(openPopovers()).toHaveLength(1);
         // VIS-5: Scatter -> Line closes it and it does not come back on Line -> Scatter.
         await act(async () => { fireEvent.click(chartBtn('Line')); });
@@ -685,10 +687,10 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
         await renameSpecialSensor('SP2', 'SP2B');
         expect(be.session.has('SP2B')).toBe(true);
         expect(be.session.has('SP2')).toBe(false);
-        expect(hlSelect().value, 'value highlight follows the rename').toBe('SP2B');
+        expect(rowTag(hlTrigger()), 'value highlight follows the rename').toBe('SP2B');
         dataTab('Filter');
         await settle(200);
-        expect((document.querySelector('.filter-row select') as HTMLSelectElement).value, 'Filter tab follows the rename').toBe('SP2B');
+        expect(rowTag(document.querySelector('.filter-row .pk-trigger')!), 'Filter tab follows the rename').toBe('SP2B');
         await settle(400);
         expect(lastChartFilter().value_filters.map((f: any) => f.sensor)).toEqual(['SP2B']);
         expect(lastChartFilter().sensors).toContain('SP2B');

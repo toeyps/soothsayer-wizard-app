@@ -1,14 +1,9 @@
 import { useState, useEffect } from 'react';
 import { X, AlertCircle, Pencil } from 'lucide-react';
 import type { TimeHighlight, ValueHighlight } from '../../types';
-import ColorPlatePicker from './ColorPlatePicker';
-import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
-
-function fmt(n: number): string {
-    if (!isFinite(n)) return '—';
-    if (Math.abs(n) >= 10000 || (Math.abs(n) > 0 && Math.abs(n) < 0.01)) return n.toExponential(2);
-    return n.toFixed(2);
-}
+import ColourPicker from '../sensor/ColourPicker';
+import { SensorPickerSingle } from '../sensor/SensorPicker';
+import { fmtNumExact, useSensorLookup } from '../sensor/sensorInfo';
 
 interface HighlightsPanelProps {
     // "By time" -- timestamp windows, read by Line + Scatter (not Pair Plot).
@@ -83,12 +78,6 @@ export default function HighlightsPanel({
     const [draftEnd, setDraftEnd] = useState('');
     const [draftLabel, setDraftLabel] = useState('');
     const [highlightError, setHighlightError] = useState<string | null>(null);
-    const [highlightColorFor, setHighlightColorFor] = useState<string | null>(null);
-    // Viewport-relative rect of the swatch button that opened the colour
-    // picker — visual-refresh-only (see AnchoredPopover's docstring): the
-    // picker now renders through a floating popover instead of expanding
-    // inline within this scrolling panel.
-    const [highlightColorAnchor, setHighlightColorAnchor] = useState<PopoverAnchorRect | null>(null);
     // Inline label-rename -- which chip's label is currently an editable
     // text field instead of static text, plus its in-progress draft value.
     const [editLabelFor, setEditLabelFor] = useState<string | null>(null);
@@ -98,34 +87,16 @@ export default function HighlightsPanel({
     const [draftRangeMin, setDraftRangeMin] = useState('');
     const [draftRangeMax, setDraftRangeMax] = useState('');
     const [rangeError, setRangeError] = useState<string | null>(null);
-    const [rangeColorFor, setRangeColorFor] = useState<string | null>(null);
-    // Same idea as `highlightColorAnchor` above, for the "By value" range
-    // colour popover.
-    const [rangeColorAnchor, setRangeColorAnchor] = useState<PopoverAnchorRect | null>(null);
 
-    // Both colour popovers (and the inline rename draft) are gated on
-    // `highlightApplies`/`valueHighlightApplies` (see their render sites
-    // below) rather than unmounted along with their row, so switching chart
-    // type away and back doesn't naturally clear `highlightColorFor`/
-    // `rangeColorFor`/`editLabelFor` the way a removed row would. A round
-    // trip like Line -> Pair Plot -> Line left the picker re-mounting
-    // unasked at the screen position captured before the switch -- the
-    // panel's own layout shifts in between (the "Not shown on Pair Plot"
-    // banner appears above the list), so that position is stale.
-    //
-    // Clearing on ANY chartType change (not just when the column becomes
-    // disabled) is deliberate: Line <-> Scatter used to insert/remove a
-    // Scatter-only inline note above the chip list (gone since the Band /
-    // Line colour switch was removed, 2026-10-08), and the "By value"
-    // column still toggles its own banner -- every popover/draft that
-    // depends on chart-relative layout is cheap to re-open, so there's no
-    // reason to try to preserve it across a type switch (QA sweep,
-    // 2026-10-02).
+    // Customer item 3: the "By value" range chips and inputs show the Colour-by sensor's unit.
+    const lookup = useSensorLookup();
+    const unit = valueHighlight.sensor ? lookup(valueHighlight.sensor).unit : undefined;
+
+    // The inline rename draft is cleared on ANY chartType change: the panel's layout shifts
+    // (the "Not shown on Pair Plot" banner) and a half-typed rename is cheap to restart. The
+    // colour pickers (customer item 4: the shared ColourPicker) own their open state; they are
+    // keyed by chart type below, so a chart switch remounts them closed the same way.
     useEffect(() => {
-        setHighlightColorFor(null);
-        setHighlightColorAnchor(null);
-        setRangeColorFor(null);
-        setRangeColorAnchor(null);
         setEditLabelFor(null);
     }, [chartType]);
 
@@ -203,15 +174,16 @@ export default function HighlightsPanel({
                             <div key={h.id}>
                                 <div className="highlights-chip">
                                     <input type="checkbox" checked={h.enabled} onChange={() => onToggleTimeHighlight(h.id)} title={h.enabled ? 'Hide this highlight' : 'Show this highlight'} />
-                                    <button
-                                        onClick={(e) => {
-                                            const opening = highlightColorFor !== h.id;
-                                            setHighlightColorFor(opening ? h.id : null);
-                                            setHighlightColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
-                                        }}
-                                        title="Change colour"
-                                        className="highlights-chip-swatch"
-                                        style={{ background: h.color }}
+                                    <ColourPicker
+                                        // Keyed by chart type: any chart switch remounts it closed, so an
+                                        // open popover never survives a layout shift at a stale position.
+                                        key={chartType}
+                                        color={h.color}
+                                        onChange={hex => onRecolorTimeHighlight(h.id, hex)}
+                                        used={timeHighlights.filter(o => o.id !== h.id).map(o => o.color)}
+                                        label={h.label}
+                                        title="Highlight colour"
+                                        disabled={!highlightApplies}
                                     />
                                     <div className="highlights-chip-body">
                                         {editLabelFor === h.id && highlightApplies ? (
@@ -235,22 +207,6 @@ export default function HighlightsPanel({
                                     <button onClick={() => startEditLabel(h)} title="Rename" className="highlights-chip-icon-btn"><Pencil size={12} /></button>
                                     <button onClick={() => onRemoveTimeHighlight(h.id)} title="Remove" className="highlights-chip-icon-btn"><X size={12} /></button>
                                 </div>
-                                {/* Gated on highlightApplies too, not just fieldset
-                                    disabled=true: ColorPlatePicker is a custom
-                                    drag-square/hue-slider built from plain divs, not
-                                    a native form control, so a disabled <fieldset>
-                                    alone would NOT stop it from being dragged if it
-                                    was already open when the chart type changed
-                                    underneath it. */}
-                                {highlightColorFor === h.id && highlightApplies && (
-                                    <AnchoredPopover
-                                        anchorRect={highlightColorAnchor}
-                                        onRequestClose={() => { setHighlightColorFor(null); setHighlightColorAnchor(null); }}
-                                        style={{ width: 160 }}
-                                    >
-                                        <ColorPlatePicker color={h.color} onChange={hex => onRecolorTimeHighlight(h.id, hex)} />
-                                    </AnchoredPopover>
-                                )}
                             </div>
                         ))}
                     </div>
@@ -275,14 +231,19 @@ export default function HighlightsPanel({
                 )}
 
                 <fieldset disabled={!valueHighlightApplies} className={`highlights-fieldset${valueHighlightApplies ? '' : ' highlights-fieldset--dim'}`}>
-                    <select
+                    {/* Customer item 3: "Colour by…" is the shared single picker, scoped to the
+                        sensors on the chart — a real disabled state on Line and Pair Plot. */}
+                    <SensorPickerSingle
+                        sensors={valueHighlightSensors}
                         value={valueHighlight.sensor}
-                        onChange={e => onSetValueHighlightSensor(e.target.value)}
-                        className="highlights-field highlights-field--full"
-                    >
-                        <option value="">Colour by…</option>
-                        {valueHighlightSensors.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                        onSelect={onSetValueHighlightSensor}
+                        allowNone
+                        placeholder="Colour by…"
+                        disabled={!valueHighlightApplies}
+                        disabledReason={chartType === 'line' ? 'Colour by… (Scatter only)' : 'Colour by… (not on Pair Plot)'}
+                        scope={<>Sensors on the chart · {valueHighlightSensors.length}</>}
+                        ariaLabel="Colour by"
+                    />
 
                     {valueHighlight.sensor && (
                         <>
@@ -294,48 +255,41 @@ export default function HighlightsPanel({
                                     <div key={r.id}>
                                         <div className="highlights-chip">
                                             <input type="checkbox" checked={r.enabled} onChange={() => onToggleValueHighlightRange(r.id)} title={r.enabled ? 'Hide this range' : 'Show this range'} />
-                                            <button
-                                                onClick={(e) => {
-                                                    const opening = rangeColorFor !== r.id;
-                                                    setRangeColorFor(opening ? r.id : null);
-                                                    setRangeColorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
-                                                }}
-                                                title="Change colour"
-                                                className="highlights-chip-swatch"
-                                                style={{ background: r.color }}
+                                            <ColourPicker
+                                                key={chartType}
+                                                color={r.color}
+                                                onChange={hex => onRecolorValueHighlightRange(r.id, hex)}
+                                                used={valueHighlight.ranges.filter(o => o.id !== r.id).map(o => o.color)}
+                                                label={`${fmtNumExact(r.min)} – ${fmtNumExact(r.max)}${unit ? ` ${unit}` : ''}`}
+                                                title="Range colour"
+                                                disabled={!valueHighlightApplies}
                                             />
                                             <div className="highlights-chip-body highlights-chip-body--row">
-                                                <b>{fmt(r.min)} – {fmt(r.max)}</b>
+                                                <b>{fmtNumExact(r.min)} – {fmtNumExact(r.max)}{unit && <span className="hl-unit"> {unit}</span>}</b>
                                             </div>
                                             <button onClick={() => onRemoveValueHighlightRange(r.id)} title="Remove" className="highlights-chip-icon-btn"><X size={12} /></button>
                                         </div>
-                                        {/* Same reasoning as the "By time" picker above —
-                                            gated on valueHighlightApplies too, not just
-                                            fieldset disabled. */}
-                                        {rangeColorFor === r.id && valueHighlightApplies && (
-                                            <AnchoredPopover
-                                                anchorRect={rangeColorAnchor}
-                                                onRequestClose={() => { setRangeColorFor(null); setRangeColorAnchor(null); }}
-                                                style={{ width: 160 }}
-                                            >
-                                                <ColorPlatePicker color={r.color} onChange={hex => onRecolorValueHighlightRange(r.id, hex)} />
-                                            </AnchoredPopover>
-                                        )}
                                     </div>
                                 ))}
                             </div>
                             <div className="highlights-add-row">
-                                <input
-                                    type="number" placeholder="min" value={draftRangeMin}
-                                    onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
-                                    className="highlights-field"
-                                />
+                                <span className="fv-wrap highlights-fv">
+                                    <input
+                                        type="number" placeholder="min" value={draftRangeMin}
+                                        onChange={e => { setDraftRangeMin(e.target.value); setRangeError(null); }}
+                                        className={`highlights-field${unit ? ' filter-row-value--unit' : ''}`}
+                                    />
+                                    {unit && <span className="fv-unit" aria-hidden="true">{unit}</span>}
+                                </span>
                                 <span className="highlights-add-sep">–</span>
-                                <input
-                                    type="number" placeholder="max" value={draftRangeMax}
-                                    onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
-                                    className="highlights-field"
-                                />
+                                <span className="fv-wrap highlights-fv">
+                                    <input
+                                        type="number" placeholder="max" value={draftRangeMax}
+                                        onChange={e => { setDraftRangeMax(e.target.value); setRangeError(null); }}
+                                        className={`highlights-field${unit ? ' filter-row-value--unit' : ''}`}
+                                    />
+                                    {unit && <span className="fv-unit" aria-hidden="true">{unit}</span>}
+                                </span>
                                 <button className="highlights-add-btn" onClick={handleAddRange}>+ Add</button>
                             </div>
                             {rangeError && <div className="highlights-error">{rangeError}</div>}

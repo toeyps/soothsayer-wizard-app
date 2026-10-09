@@ -74,7 +74,7 @@ describe('FailureGroupsPanel', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
             expect(screen.getByText('Not in Group')).toBeTruthy();
             // one sensor line in Group A and one in Not in Group -- same sensor, listed per group
-            expect(screen.getAllByText('Pump Pressure (TAG1)')).toHaveLength(2);
+            expect(screen.getAllByText('Pump Pressure', { selector: '.sl-desc' })).toHaveLength(2);
             expect(screen.getByTestId('fg-sensor-row-0:tag1')).toBeTruthy();
         });
 
@@ -311,7 +311,8 @@ describe('FailureGroupsPanel', () => {
             render(<FailureGroupsPanel {...makeProps({ fgModels: [makeModel({ name: 'TAG1', targetSensor: 'TAG1' })] })} />);
             expandAll();
             expect(modelLabels()).toEqual(['Pump Pressure (TAG1)']);
-            expect(screen.queryByText('TAG1')).toBeNull();
+            // The bare tag only appears as the sensor line's own tag line (SensorLabel), never as a model label.
+            expect(screen.queryByText('TAG1', { selector: ':not(.sl-tag)' })).toBeNull();
         });
 
         it('falls back to the raw sensor tag when no name and no metadata description is available', () => {
@@ -384,11 +385,24 @@ describe('FailureGroupsPanel', () => {
             expect(screen.queryByText('Condition')).toBeNull();
         });
 
-        it('a long sensor label is a single-line ellipsis', () => {
+        it('the sensor line is the stacked SensorLabel (same as the Sensor tab rows): description, unit chip, tag; full name in title (customer item 3)', () => {
             render(<FailureGroupsPanel {...makeProps()} />);
-            const line = screen.getByText('Pump Pressure (TAG1)');
-            expect(line.style.whiteSpace).toBe('nowrap');
-            expect(line.style.textOverflow).toBe('ellipsis');
+            const row = screen.getByTestId('fg-sensor-row-1:tag1');
+            const label = row.querySelector('.fg-srow-btn .sl') as HTMLElement;
+            expect(label.querySelector('.sl-desc')?.textContent).toBe('Pump Pressure');
+            expect(label.querySelector('.sl-unit')?.textContent).toBe('bar');
+            expect(label.querySelector('.sl-tag')?.textContent).toBe('TAG1');
+            // The description ellipsises via `.sl-desc` (App.css); the title carries the full name.
+            expect(label.getAttribute('title')).toBe('Pump Pressure · TAG1 · bar · Pump');
+            expect(row.querySelector('.fg-srow-btn')?.getAttribute('aria-label')).toBe('Pump Pressure · TAG1 · bar · Pump');
+        });
+
+        it('search also matches the unit and the component', () => {
+            render(<FailureGroupsPanel {...makeProps()} />);
+            fireEvent.change(screen.getByPlaceholderText('Search groups or sensors...'), { target: { value: 'bar' } });
+            expect(screen.getByTestId('fg-sensor-row-1:tag1')).toBeTruthy();
+            fireEvent.change(screen.getByPlaceholderText('Search groups or sensors...'), { target: { value: 'nothing-like-this' } });
+            expect(screen.queryByTestId('fg-sensor-row-1:tag1')).toBeNull();
         });
 
         // 2026-10-02 (Visual refresh Phase 2): unit badge next to the
@@ -425,14 +439,14 @@ describe('FailureGroupsPanel', () => {
             fireEvent.change(screen.getByPlaceholderText('Search groups or sensors...'), { target: { value: 'motor' } });
             expect(screen.queryByText('Group A')).toBeNull();
             expect(screen.getByText('Group B')).toBeTruthy();
-            expect(screen.getByText('Motor Temperature (TAG2)')).toBeTruthy();
+            expect(screen.getByText('Motor Temperature', { selector: '.sl-desc' })).toBeTruthy();
         });
 
         it('a group-NAME match keeps every sensor in that group', () => {
             render(<FailureGroupsPanel {...makeProps({ fgGroups: [notInGroup, groupA, groupB], fgModels, sensorMetadata })} />);
             fireEvent.change(screen.getByPlaceholderText('Search groups or sensors...'), { target: { value: 'group a' } });
             expect(screen.getByText('Group A')).toBeTruthy();
-            expect(screen.getByText('Pump Pressure (TAG1)')).toBeTruthy();
+            expect(screen.getByText('Pump Pressure', { selector: '.sl-desc' })).toBeTruthy();
             expect(screen.queryByText('Group B')).toBeNull();
         });
 

@@ -94,16 +94,16 @@ describe('SensorSelection', () => {
     describe('search', () => {
         it('filters by description text and force-expands matching groups', () => {
             render(<SensorSelection {...makeProps()} />);
-            fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Pressure' } });
+            fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'Pressure' } });
             expect(screen.getByText('Pump Pressure')).toBeTruthy(); // auto-expanded, no click needed
             expect(screen.queryByText('Pump Temp')).toBeNull();
         });
 
         it('shows a "Clear filter" button while searching, which resets the search', () => {
             render(<SensorSelection {...makeProps()} />);
-            fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Pressure' } });
+            fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'Pressure' } });
             fireEvent.click(screen.getByText('Clear filter'));
-            expect((screen.getByPlaceholderText('Search sensors...') as HTMLInputElement).value).toBe('');
+            expect((screen.getByPlaceholderText('Search description, tag, unit or component…') as HTMLInputElement).value).toBe('');
             expect(screen.queryByText('Clear filter')).toBeNull();
         });
     });
@@ -336,6 +336,34 @@ describe('SensorSelection', () => {
         expect(badge.className).toContain('unit-badge');
     });
 
+    // Customer item 3 (2026-10-09): every row is the shared stacked SensorLabel.
+    it('rows are the stacked SensorLabel: description + unit chip, tag on line 2, full name in the title', () => {
+        render(<SensorSelection {...makeProps()} />);
+        expandPump();
+        const label = screen.getByText('Pump Pressure').closest('.sl') as HTMLElement;
+        expect(label.querySelector('.sl-l1 .unit-badge')?.textContent).toBe('bar');
+        expect(label.querySelector('.sl-l2 .sl-tag')?.textContent).toBe('TAG1');
+        expect(label.getAttribute('title')).toBe('Pump Pressure · TAG1 · bar · Pump');
+        // The label still toggles the row's checkbox (it is the checkbox's <label>).
+        expect(label.closest('label')?.getAttribute('for')).toBe('sensor-TAG1');
+    });
+
+    it('a sensor with no description shows its tag once, never a placeholder', () => {
+        render(<SensorSelection {...makeProps()} />);
+        fireEvent.click(screen.getByText('Uncategorized'));
+        const label = screen.getByText('TAG3').closest('.sl') as HTMLElement;
+        expect(label.textContent).toBe('TAG3');
+        expect(label.querySelector('.sl-tag')).toBeNull();
+    });
+
+    it('the search placeholder says what it matches, and the unit matches too', () => {
+        render(<SensorSelection {...makeProps()} />);
+        const box = screen.getByPlaceholderText('Search description, tag, unit or component…');
+        fireEvent.change(box, { target: { value: 'bar' } });
+        expect(screen.getByText('Pump Pressure')).toBeTruthy();
+        expect(screen.queryByText('Pump Temp')).toBeNull();
+    });
+
     // 2026-10-03: the old AnchoredPopover "Add to failure group" menu was
     // replaced by a full-height sheet docked to the Sensors panel's left edge
     // (FailureGroupAssignSheet). Its own matrix / rename / delete / create
@@ -344,7 +372,7 @@ describe('SensorSelection', () => {
     describe('the Failure Group Assignment sheet (opened from a row\'s 📁)', () => {
         const sheet = () => screen.queryByTestId('fg-sheet');
         const folder = () => screen.getAllByTitle('Add to failure group');
-        const heading = () => within(sheet()!).getByText(/Pump (Pressure|Temp)|TAG3/, { selector: '.fg-sheet-sensor' }).textContent;
+        const heading = () => within(sheet()!).getByText(/Pump (Pressure|Temp)|TAG3/, { selector: '.fg-sheet-sl .sl-desc' }).textContent;
 
         it('opens via the 📁 button and via right-click, for THAT sensor', () => {
             render(<SensorSelection {...makeProps()} />);
@@ -405,7 +433,7 @@ describe('SensorSelection', () => {
                 render(<SensorSelection {...makeProps({ onSensorChange })} />);
                 expandPump();
                 fireEvent.click(folder()[0]);
-                fireEvent.mouseDown(screen.getByPlaceholderText('Search sensors...'));
+                fireEvent.mouseDown(screen.getByPlaceholderText('Search description, tag, unit or component…'));
                 fireEvent.mouseDown(screen.getByText('Pump Temp'));
                 fireEvent.mouseDown(screen.getByText('Uncategorized'));
                 fireEvent.mouseDown(screen.getByRole('checkbox', { name: /Pump Pressure/ }));
@@ -484,7 +512,7 @@ describe('SensorSelection', () => {
                 render(<SensorSelection {...makeProps()} />);
                 expandPump();
                 fireEvent.click(folder()[0]);
-                fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Pump' } });
+                fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'Pump' } });
                 expect(sheet()).toBeNull();
             });
 
@@ -555,11 +583,11 @@ describe('SensorSelection', () => {
 
             it('works while the sensor search is filtering the list: clears the search so the target row exists', () => {
                 render(<SensorSelection {...makeProps()} />);
-                fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Pressure' } });
+                fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'Pressure' } });
                 fireEvent.click(folder()[0]); // TAG1 — the only match
                 expect(heading()).toBe('Pump Pressure');
                 fireEvent.click(next());
-                expect((screen.getByPlaceholderText('Search sensors...') as HTMLInputElement).value).toBe('');
+                expect((screen.getByPlaceholderText('Search description, tag, unit or component…') as HTMLInputElement).value).toBe('');
                 expect(heading()).toBe('Pump Temp');
                 expect(sheet()).not.toBeNull();
             });

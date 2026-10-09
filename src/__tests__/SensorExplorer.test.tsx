@@ -77,15 +77,28 @@ describe('SensorExplorer', () => {
         expect(screen.queryByText('undefined')).toBeNull();
     });
 
+    // Customer item 3 (2026-10-09): Explorer rows are the stacked SensorLabel.
+    it('rows are the stacked SensorLabel (description + unit chip, tag on line 2); a tag with no description stands alone', () => {
+        render(<SensorExplorer {...makeProps()} />);
+        fireEvent.click(screen.getByText('Pump'));
+        const label = screen.getByText('Pump Pressure').closest('.sl') as HTMLElement;
+        expect(label.querySelector('.sl-unit')?.textContent).toBe('bar');
+        expect(label.querySelector('.sl-tag')?.textContent).toBe('TAG1');
+        expect(label.getAttribute('title')).toBe('Pump Pressure · TAG1 · bar · Pump');
+        const bare = screen.getByText('TAG3').closest('.sl') as HTMLElement;
+        expect(bare.textContent).toBe('TAG3');
+        expect(screen.getByPlaceholderText('Search description, tag, unit or component…')).toBeTruthy();
+    });
+
     it('typing in the search box calls onSearchChange', () => {
         const onSearchChange = vi.fn();
         render(<SensorExplorer {...makeProps({ onSearchChange })} />);
-        fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'pump' } });
+        fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'pump' } });
         expect(onSearchChange).toHaveBeenCalledWith('pump');
     });
 
     it('reflects the controlled searchTerm value in the input', () => {
         render(<SensorExplorer {...makeProps({ searchTerm: 'abc' })} />);
-        expect((screen.getByPlaceholderText('Search sensors...') as HTMLInputElement).value).toBe('abc');
+        expect((screen.getByPlaceholderText('Search description, tag, unit or component…') as HTMLInputElement).value).toBe('abc');
     });
 });

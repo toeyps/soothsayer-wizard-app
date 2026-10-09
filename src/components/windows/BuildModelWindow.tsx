@@ -31,6 +31,8 @@ import RunningConditionPanel, { RunningConditionPills } from "./RunningCondition
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { useRowCountPreview } from "./useRowCountPreview";
 import { SensorPickerModal } from "./SensorPickers";
+import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
+import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import TimePeriodsEditor from "./TimePeriodsEditor";
 import TestPeriodsEditor from "./TestPeriodsEditor";
 import { TrainHighlightWarnings } from "./RunningConditionParts";
@@ -45,6 +47,7 @@ import { PageSwitch, SaveErrorNotice, StaleBanner } from "./workbench/WorkbenchS
 import { buildCheckLines, healthVerdict, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
 import { TestedPill } from "./workbench/ValidationCards";
+import { isPickerSurfaceOpen } from "../sensor/SensorPicker";
 
 /** How long a test-scoring Relation-model preview must have been loading before
  *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
@@ -516,10 +519,12 @@ export default function BuildModelWindow() {
     const [criteriaStats, setCriteriaStats] = useState<SensorStats | null>(null);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    // Customer item 3: every sensor label / picker in this window resolves through this lookup.
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
     // Raw description only (not the "description (tag)" combo `sensorLabel`
-    // below builds) — matches `SensorAutocomplete`'s own `getDesc` contract,
-    // which appends the tag itself separately.
+    // below builds). Sensor labels in the UI come from `sensorLookup` (the
+    // shared SensorLabel standard, customer item 3).
     const getDesc = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description ?? '', [sensorMetaMap]);
     // Unit text for the Running condition chips / value fields ("kW", "BAR"...).
     const getUnit = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.unit ?? '', [sensorMetaMap]);
@@ -2016,7 +2021,7 @@ export default function BuildModelWindow() {
         if (!rcFilterOpen) return;
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape' || e.defaultPrevented) return;
-            if (document.querySelector('.predictor-picker-backdrop')) return;
+            if (isPickerSurfaceOpen()) return;
             requestCloseRc();
         };
         window.addEventListener('keydown', onKey, true);
@@ -2041,7 +2046,8 @@ export default function BuildModelWindow() {
         const first = sg.models[0];
         if (!first) return false;
         const keyTag = (first.kind === 'clustering' ? first.xSensor : first.targetSensor) ?? '';
-        return sensorLabel(keyTag).toLowerCase().includes(q) || keyTag.toLowerCase().includes(q);
+        // Search matches description, tag, unit and component (DESIGN_SYSTEM §4).
+        return keyTag ? sensorHaystack(sensorLookup(keyTag)).includes(q) : false;
     };
     const attnCount = sensorGroupsAll.filter(sensorBuildBlocked).length;
     const doneCount = sensorGroupsAll.filter(sensorAllComplete).length;
@@ -2061,7 +2067,7 @@ export default function BuildModelWindow() {
         const first = sg.models[0];
         const keyTag = (first.kind === 'clustering' ? first.xSensor : first.targetSensor) ?? '';
         const title = keyTag ? (getDesc(keyTag) || keyTag) : modelDisplayLabel(first);
-        const label = keyTag ? sensorLabel(keyTag) : title;
+        const label = keyTag ? sensorTitle(sensorLookup(keyTag)) : title;
         const ordered = KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k));
         const selected = sg.key === selectedSensorKey;
         return (
@@ -2075,9 +2081,9 @@ export default function BuildModelWindow() {
                 onClick={() => setSelectedSensorKey(sg.key)}
                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedSensorKey(sg.key); } }}
             >
-                <div style={{ minWidth: 0 }}>
-                    <div data-testid="sensor-row-label" className="f4-sr-title" title={label}>{title}</div>
-                    <div className="f4-sr-tag">{keyTag}</div>
+                <div style={{ minWidth: 0 }} data-testid="sensor-row-label" title={label}>
+                    {/* Customer item 3: the stacked SensorLabel (unit chip, tag on line 2). */}
+                    {keyTag ? <SensorLabel tag={keyTag} /> : <div className="f4-sr-title">{title}</div>}
                 </div>
                 <div className="f4-kinds">
                     {ordered.map(m => {
@@ -2354,29 +2360,20 @@ export default function BuildModelWindow() {
                     <div className="f4-fld f4-fld--grow" style={{ flex: 1, minWidth: '260px' }}>
                         <span className="f4-lbl">Predictor sensors (≥ 1)</span>
                         <IncompleteHint />
+                        {/* Customer item 3: predictors as chips (× removes one) + a dashed
+                            "Add…" that opens the multi modal; the target is excluded and the
+                            scope line says so. */}
                         <SensorPickerModal
                             sensors={allSensors}
-                            getDesc={getDesc}
                             getComponent={getComponent}
                             selected={d.predictors}
                             excluded={[m.targetSensor ?? '']}
                             onConfirm={predictors => patchDraft(m, { predictors })}
                             noun="predictors"
-                            triggerText={d.predictors.length ? `${d.predictors.length} selected. Edit predictors…` : undefined}
                             invalid={d.predictors.length === 0}
+                            scope={<>All sensors except the target · {allSensors.filter(s => s !== m.targetSensor).length}</>}
                         />
-                        {d.predictors.length > 0 ? (
-                            <div className="f4-pchips">
-                                {d.predictors.map(p => (
-                                    <span key={p} className="f4-ppill" title={sensorLabel(p)}>
-                                        <span>{sensorLabel(p)}</span>
-                                        <button type="button" aria-label={`Remove ${p}`} onClick={() => patchDraft(m, { predictors: d.predictors.filter(x => x !== p) })}>
-                                            <X size={10} />
-                                        </button>
-                                    </span>
-                                ))}
-                            </div>
-                        ) : (
+                        {d.predictors.length === 0 && (
                             <div className="f4-req-note">No predictors yet. A Relation model needs at least one.</div>
                         )}
                     </div>
@@ -2403,9 +2400,9 @@ export default function BuildModelWindow() {
                 <>
                     <div className="f4-fld">
                         <span className="f4-lbl">X sensor</span>
-                        <div className="f4-readout" title={m.xSensor ? sensorLabel(m.xSensor) : undefined}>
+                        <div className="f4-readout f4-readout--sl" title={m.xSensor ? sensorTitle(sensorLookup(m.xSensor)) : undefined}>
                             <Lock size={12} aria-hidden="true" />
-                            <span>{m.xSensor ? sensorLabel(m.xSensor) : '—'}</span>
+                            {m.xSensor ? <SensorInline tag={m.xSensor} fit /> : <span>—</span>}
                         </div>
                     </div>
                     <div className="f4-fld">
@@ -2413,7 +2410,6 @@ export default function BuildModelWindow() {
                         <IncompleteHint />
                         <SensorPickerModal
                             sensors={allSensors}
-                            getDesc={getDesc}
                             getComponent={getComponent}
                             single
                             value={d.y}
@@ -2429,7 +2425,6 @@ export default function BuildModelWindow() {
                         <IncompleteHint />
                         <SensorPickerModal
                             sensors={allSensors}
-                            getDesc={getDesc}
                             getComponent={getComponent}
                             single
                             allowNone
@@ -2486,7 +2481,7 @@ export default function BuildModelWindow() {
             {/* 🆕 2026-09-30 [Custom running-condition editor port]: a direct
                 port of PredictiveModelBuild.tsx's own Custom section (periods
                 via TimePeriodsEditor, conditions via SensorPickerModal
-                single+mutedTag, AND/OR via .f4-seg--andor, "No condition" via
+                single (the shared single picker), AND/OR via .f4-seg--andor, "No condition" via
                 .f4-nofilter) — SPEC decision #2 says this is bound to the
                 draft/Save-changes flow, unlike the PM page's own autosaved
                 version, so every field below reads/writes `d`/`patchDraft`,
@@ -2577,10 +2572,8 @@ export default function BuildModelWindow() {
                                             <div className="f4-cond-s">
                                                 <SensorPickerModal
                                                     sensors={allSensors}
-                                                    getDesc={getDesc}
                                                     getComponent={getComponent}
                                                     single
-                                                    mutedTag
                                                     value={f.sensor}
                                                     onSelect={sensor => patchDraft(m, { customFilters: d.customFilters.map(x => x.id === f.id ? { ...x, sensor } : x) })}
                                                     noun="sensor"
@@ -3121,10 +3114,11 @@ export default function BuildModelWindow() {
                         {sidebarCollapsed ? '⇥' : '⇤'}
                     </button>
                     <div style={{ minWidth: 0 }}>
-                        <h3 title={keyTag ? sensorLabel(keyTag) : undefined}>{title}</h3>
+                        {/* Customer item 3: the stacked label at header size, component chip after the tag. */}
+                        {keyTag
+                            ? <h3 className="bmw-dh-sl" aria-label={title}><SensorLabel tag={keyTag} size="lg" after={component ? <span className="comp-chip">{component}</span> : undefined} /></h3>
+                            : <h3>{title}</h3>}
                         <div className="bmw-dmeta">
-                            {keyTag && <span className="f4-sr-tag">{keyTag}</span>}
-                            {component && <span className="model-chip model-chip--component">{component}</span>}
                             {groupNos.map(no => {
                                 const g = realGroups.find(x => x.no === no);
                                 return (
@@ -3297,6 +3291,7 @@ export default function BuildModelWindow() {
     );
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-primary)' }}>
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--card-bg)', borderBottom: '1px solid var(--border)' }}>
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -3451,7 +3446,7 @@ export default function BuildModelWindow() {
                                     <Search size={12} className="sensor-autocomplete-icon" aria-hidden="true" />
                                     <input
                                         className="sensor-autocomplete-input"
-                                        placeholder="Search sensor or tag…"
+                                        placeholder="Search description, tag, unit or component…"
                                         aria-label="Search sensors"
                                         value={searchQuery}
                                         onChange={e => setSearchQuery(e.target.value)}
@@ -3588,5 +3583,6 @@ export default function BuildModelWindow() {
                 />
             )}
         </div>
+        </SensorMetaContext.Provider>
     );
 }

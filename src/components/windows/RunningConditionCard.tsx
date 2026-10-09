@@ -6,6 +6,8 @@ import { testTrainOverlaps, validatePeriods, validateTestPeriods } from '../../u
 import { conditionChipParts, formatPeriodChip, type DataBounds } from './periodDisplay';
 import { PeriodCoverageBar } from './RunningConditionParts';
 import { formatPercent, type RowCountPreview } from './useRowCountPreview';
+import { SensorInline } from '../sensor/SensorLabel';
+import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
 
 /*
  * Build Model window: the Step-1 card that replaced the old one-line
@@ -97,6 +99,7 @@ function TestChips({ tests, train }: { tests: TestPeriod[]; train: TimePeriod[] 
 }
 
 export function RunningConditionCard({ state, periods, filters, combine, noneConfirmed, headers, getDesc, getUnit, rows, bounds, onOpen, testPeriods = [] }: RunningConditionCardProps) {
+    const lookup = useSensorLookup();
     if (state === 'unset') {
         return (
             <section className="rcc-card rcc-card--req" data-testid="rc-card" data-state="unset">
@@ -152,7 +155,10 @@ export function RunningConditionCard({ state, periods, filters, combine, noneCon
                                 return (
                                     <Fragment key={f.id}>
                                         {i > 0 && <span className="rcc-andor">{combine.toUpperCase()}</span>}
-                                        <span className="rcc-chip" data-testid="rc-card-cond-chip"><b>{c.name}</b> {c.rest}</span>
+                                        <span className="rcc-chip rcc-chip--sl" data-testid="rc-card-cond-chip" title={`${sensorTitle(lookup(f.sensor))} ${c.rest}`}>
+                                            {/* Customer item 3: Inline label + the condition in mono. */}
+                                            <SensorInline tag={f.sensor} size="sm" /> <span className="rcc-rest">{c.rest}</span>
+                                        </span>
                                     </Fragment>
                                 );
                             })}

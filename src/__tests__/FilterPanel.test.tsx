@@ -2,6 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import FilterPanel from '../components/dashboard/FilterPanel';
 import type { FilterState } from '../components/dashboard/FilterPanel';
+import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
+
+// Customer item 3 (2026-10-09): each condition's sensor is the shared single picker
+// (trigger "Filter sensor" + anchored popover), not a native <select>.
+const sensorTriggers = () => screen.queryAllByRole('button', { name: 'Filter sensor' });
+const sensorValues = () => sensorTriggers().map(t => rowTag(t));
 
 const emptyFilters: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [] };
 
@@ -22,8 +28,7 @@ describe('FilterPanel', () => {
         fireEvent.click(screen.getByText('Add condition').closest('button')!);
 
         expect(screen.queryByText('No sensor filters applied.')).toBeNull();
-        const sensorSelect = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-        expect(sensorSelect.value).toBe('A');
+        expect(sensorValues()).toEqual(['A']);
         // Operator is now a 4-button segmented control, not a <select> --
         // "greater_than" (">") is the default, shown as the only `.is-on`
         // button in the segment.
@@ -170,7 +175,7 @@ describe('FilterPanel', () => {
         expect((screen.getByPlaceholderText('max') as HTMLInputElement).value).toBe('');
     });
 
-    it('labels sensors with "description (tag)" when metadata is available, falling back to the bare tag', () => {
+    it('labels sensors with the Inline label (description then tag) when metadata is available, falling back to the bare tag', () => {
         render(
             <FilterPanel
                 filters={emptyFilters}
@@ -180,8 +185,96 @@ describe('FilterPanel', () => {
             />,
         );
         fireEvent.click(screen.getByText('Add condition').closest('button')!);
-        expect(screen.getByText('Pump Pressure (A)')).toBeTruthy();
-        expect(screen.getByText('B')).toBeTruthy(); // no metadata -> bare tag
+        // Trigger = Inline label: description then tag, no brackets.
+        expect(sensorTriggers()[0].textContent).toBe('Pump PressureA');
+        // The picker is scoped to the sensors on the chart and says so.
+        fireEvent.click(sensorTriggers()[0]);
+        expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('Sensors on the chart · 2');
+        // B has no metadata -> its bare tag.
+        expect(findPickerRow('B').textContent).toBe('B');
+    });
+
+    it('picking another sensor in the popover changes the condition (one click, no OK)', () => {
+        render(<FilterPanel filters={emptyFilters} onFiltersChange={vi.fn()} selectedSensors={['A', 'B']} />);
+        fireEvent.click(screen.getByText('Add condition').closest('button')!);
+        pickSingle(sensorTriggers()[0], 'B');
+        expect(sensorValues()).toEqual(['B']);
+        expect(document.querySelector('.pk-pop')).toBeNull();
+    });
+
+    it('the value boxes carry the unit of the sensor as a suffix', () => {
+        render(
+            <FilterPanel
+                filters={emptyFilters}
+                onFiltersChange={vi.fn()}
+                selectedSensors={['A']}
+                sensorMetadata={[{ tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' }]}
+            />,
+        );
+        fireEvent.click(screen.getByText('Add condition').closest('button')!);
+        fireEvent.click(screen.getByTitle('Between'));
+        expect([...document.querySelectorAll('.fv-unit')].map(e => e.textContent)).toEqual(['bar', 'bar']);
+        expect(document.querySelector('.filter-row-value')?.classList.contains('filter-row-value--unit')).toBe(true);
+    });
+
+    describe('a condition whose sensor is no longer on the chart', () => {
+        const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [{ id: 'f1', sensor: 'GONE', operation: 'greater_than', value1: '5', value2: '' }] };
+
+        it('is kept, with a ⚠ + solid amber picker (never the dashed "required" look) and a note with Show on chart / Remove', () => {
+            const onShowSensor = vi.fn();
+            render(
+                <FilterPanel
+                    filters={applied}
+                    onFiltersChange={vi.fn()}
+                    selectedSensors={['A']}
+                    sensorMetadata={[{ tag: 'GONE', description: 'Old flow', unit: 'm3/h', component: '' }]}
+                    onShowSensor={onShowSensor}
+                />,
+            );
+            const trig = sensorTriggers()[0];
+            expect(rowTag(trig)).toBe('GONE');
+            expect(trig.classList.contains('warn')).toBe(true);
+            expect(trig.classList.contains('req')).toBe(false);
+            expect(screen.getByLabelText('Not on the chart')).toBeTruthy();
+            const note = screen.getByRole('status');
+            expect(note.textContent).toContain('Old flowGONE is not on the chart. The filter still applies.');
+            fireEvent.click(screen.getByRole('button', { name: 'Show on chart' }));
+            expect(onShowSensor).toHaveBeenCalledWith('GONE');
+            fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+            expect(screen.getByText('No sensor filters applied.')).toBeTruthy();
+        });
+
+        it('a sensor on the chart has no note and no warning', () => {
+            render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A', 'GONE']} />);
+            expect(screen.queryByRole('status')).toBeNull();
+            expect(sensorTriggers()[0].classList.contains('warn')).toBe(false);
+        });
+
+        it('with a blocked reason (Pair Plot sensor cap) "Show on chart" is disabled and says why instead of silently doing nothing', () => {
+            const onShowSensor = vi.fn();
+            render(
+                <FilterPanel
+                    filters={applied}
+                    onFiltersChange={vi.fn()}
+                    selectedSensors={['A']}
+                    onShowSensor={onShowSensor}
+                    showSensorBlockedReason="Pair Plot shows at most 4 sensors"
+                />,
+            );
+            const btn = screen.getByRole('button', { name: 'Show on chart' }) as HTMLButtonElement;
+            expect(btn.disabled).toBe(true);
+            expect(btn.title).toBe('Pair Plot shows at most 4 sensors');
+            fireEvent.click(btn);
+            expect(onShowSensor).not.toHaveBeenCalled();
+            // Remove still works.
+            expect((screen.getByRole('button', { name: 'Remove' }) as HTMLButtonElement).disabled).toBe(false);
+        });
+
+        it('without onShowSensor only Remove is offered', () => {
+            render(<FilterPanel filters={applied} onFiltersChange={vi.fn()} selectedSensors={['A']} />);
+            expect(screen.queryByRole('button', { name: 'Show on chart' })).toBeNull();
+            expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
+        });
     });
 
     // 2026-10-03: a special sensor was renamed / deleted in the Add Special Sensor
@@ -190,7 +283,7 @@ describe('FilterPanel', () => {
     // cannot see it), without throwing away unrelated unapplied typing.
     describe('sensorChange (a special sensor renamed / deleted while the panel is open)', () => {
         const cond = (id: string, sensor: string, value1 = '4') => ({ id, sensor, operation: 'greater_than' as const, value1, value2: '' });
-        const selectValues = () => (screen.getAllByRole('combobox') as HTMLSelectElement[]).map(s => s.value);
+        const selectValues = sensorValues;
 
         it('a rename re-keys the applied conditions shown in the draft, in step with the Dashboard rewriting `filters`', () => {
             const applied: FilterState = { timestampStart: '', timestampEnd: '', sensorFilters: [cond('f1', 'A'), cond('f2', 'B')] };
@@ -243,7 +336,7 @@ describe('FilterPanel', () => {
             const { rerender } = render(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2']} sensorChange={{ id: 0 }} />);
             rerender(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2']} sensorChange={change} />);
             // The user picks sensor A again for that row ...
-            fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'A' } });
+            pickSingle(sensorTriggers()[0], 'A');
             expect(selectValues()).toEqual(['A']);
             // ... and an unrelated re-render with the SAME change does not rename it again.
             rerender(<FilterPanel filters={renamed} onFiltersChange={vi.fn()} selectedSensors={['A', 'A2']} sensorChange={change} />);

@@ -43,6 +43,10 @@ class MockResizeObserver {
 }
 
 import ScatterChart from '../components/charts/ScatterChart';
+import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
+
+// Customer item 3 (2026-10-09): X / Y are the shared compact single pickers (not native selects).
+const axisTriggers = () => [screen.getByRole('button', { name: 'X sensor' }), screen.getByRole('button', { name: 'Y sensor' })];
 
 function last<T>(arr: T[]): T {
     return arr[arr.length - 1];
@@ -94,9 +98,7 @@ describe('ScatterChart', () => {
 
     it('defaults X/Y to the first two distinct sensors', () => {
         render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
-        const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
-        expect(selects[0].value).toBe('A');
-        expect(selects[1].value).toBe('B');
+        expect(axisTriggers().map(t => rowTag(t))).toEqual(['A', 'B']);
     });
 
     it('notifies the parent of the settled X/Y pair via onScatterAxesChange', () => {
@@ -109,9 +111,8 @@ describe('ScatterChart', () => {
 
     it('changing the X dropdown updates the plotted X sensor', () => {
         render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
-        const [xSelect] = screen.getAllByRole('combobox');
-        fireEvent.change(xSelect, { target: { value: 'B' } });
-        expect((xSelect as HTMLSelectElement).value).toBe('B');
+        pickSingle(axisTriggers()[0], 'B');
+        expect(rowTag(axisTriggers()[0])).toBe('B');
     });
 
     it('creates the WebGL instance sized to the inner plot area, themed dark by default', () => {
@@ -172,7 +173,7 @@ describe('ScatterChart', () => {
 
         it('no criteria control exists in this chart\'s own toolbar (only X/Y pickers)', () => {
             render(<ScatterChart data={data3} sensors={['A', 'B', 'C']} headers={headers3} />);
-            expect(screen.getAllByRole('combobox')).toHaveLength(2); // X, Y only
+            expect(document.querySelectorAll('.pk-trigger')).toHaveLength(2); // X, Y only
             expect(screen.queryByText('Colour by…')).toBeNull();
             expect(screen.queryByPlaceholderText('min')).toBeNull();
             expect(screen.queryByText('+ Add')).toBeNull();
@@ -467,9 +468,19 @@ describe('ScatterChart', () => {
         expect(tooltip).toBeTruthy();
         expect(tooltip.querySelector('.scatter-regl-tooltip-title')).toBeNull();
         expect(tooltip.textContent).not.toContain('Row');
-        expect(tooltip.textContent).toContain('1.00'); // x value for row 0
-        expect(tooltip.textContent).toContain('10.00'); // y value for row 0
+        // Customer item 3: inline label + value (the one en-US formatter) per row.
+        const vals = [...tooltip.querySelectorAll('.tt-row')].map(r => [rowTag(r), r.querySelector('.tt-val')?.textContent]);
+        expect(vals).toEqual([['A', '1'], ['B', '10']]);
         expect(tooltip.textContent).toContain('t0');
+    });
+
+    it('a tiny non-zero value in the tooltip keeps 3 significant digits instead of reading as 0', () => {
+        const tiny = [{ timestamp: 't0', values: [0.00012, 12345678901.5] }] as any;
+        const { container } = render(<ScatterChart data={tiny} sensors={['A', 'B']} headers={headers} />);
+        act(() => { lastInstance!.__subs['pointover'](0); });
+        const vals = [...container.querySelectorAll('.scatter-regl-tooltip .tt-row')].map(r => r.querySelector('.tt-val')?.textContent);
+        expect(vals).toEqual(['0.00012', '12,345,678,902']);
+        expect(vals[0]).not.toBe('0');
     });
 
     it('clears the tooltip on pointout', () => {
@@ -481,75 +492,61 @@ describe('ScatterChart', () => {
         expect(container.querySelector('.scatter-regl-tooltip')).toBeNull();
     });
 
-    describe('axis-title hover tooltip for sensor description', () => {
+    // Customer item 3 (review ruling b, 2026-10-09): Scatter's axis titles have room — they are the
+    // Inline label (description then tag) + the unit, with the full name in `title`.
+    describe('axis titles: Inline label + unit', () => {
         const sensorMetadata = [
             { tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
             { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
         ];
 
-        it('marks the X-axis title hoverable and renders its tooltip content when a description is known', () => {
-            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
-            const xLabelWrap = Array.from(container.querySelectorAll('.pair-regl-axis-label'))
-                .find((el) => el.querySelector('span')?.textContent === 'A');
-            expect(xLabelWrap!.className).toContain('hoverable');
-            const tooltip = xLabelWrap!.querySelector('.pair-regl-axis-tooltip')!;
-            expect(tooltip.querySelector('.pair-regl-axis-tooltip-tag')!.textContent).toBe('A');
-            expect(tooltip.querySelector('.pair-regl-axis-tooltip-desc')!.textContent).toBe('Pump Pressure');
+        it('X title = description then tag + unit chip; title attribute carries every part', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const x = screen.getByTestId('scatter-axis-title-x');
+            expect(x.querySelector('.sl-desc')?.textContent).toBe('Pump Pressure');
+            expect(x.querySelector('.sl-tag')?.textContent).toBe('A');
+            expect(x.querySelector('.scatter-axis-unit')?.textContent).toBe('bar');
+            expect(x.querySelector('.sl-inline-wrap')?.getAttribute('title')).toBe('Pump Pressure · A · bar · Pump');
         });
 
-        it('does not mark the Y-axis title hoverable when its description is blank', () => {
-            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
-            const yLabelWrap = Array.from(container.querySelectorAll('.pair-regl-axis-label'))
-                .find((el) => el.querySelector('span')?.textContent === 'B');
-            expect(yLabelWrap!.className).not.toContain('hoverable');
-            expect(yLabelWrap!.querySelector('.pair-regl-axis-tooltip')).toBeNull();
-        });
-
-        it('no label is hoverable when sensorMetadata is not provided at all', () => {
-            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
-            expect(container.querySelectorAll('.pair-regl-axis-label.hoverable').length).toBe(0);
+        it('Y title is the vertical form; a blank description shows the tag alone (no unit chip when none)', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const y = screen.getByTestId('scatter-axis-title-y');
+            expect(y.classList.contains('scatter-axis-title--y')).toBe(true);
+            expect(y.textContent).toBe('B');
+            expect(y.querySelector('.scatter-axis-unit')).toBeNull();
         });
     });
 
-    // 2026-09-22, per explicit user request: the option text used to be
-    // "tag (X)"/"tag (Y)" — a bare tag says nothing useful on its own, and
-    // the axis was already obvious from position/the picker's own label. "X"
-    // and "Y" moved into their own small badge outside the <select>, and the
-    // option text became "description (tag)" (same convention as everywhere
-    // else a sensor is shown), so the axis dropdowns actually help pick the
-    // right sensor.
-    describe('X/Y sensor picker: description in the option text, X/Y as a separate badge', () => {
+    // 2026-10-09 (customer item 3): the native X / Y selects of 2026-09-22 are retired — the
+    // compact single picker shows the Inline label and opens an anchored popover scoped to the
+    // sensors on the chart; Y opens right-aligned so it stays inside the chart.
+    describe('X/Y sensor pickers', () => {
         const sensorMetadata = [
             { tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
-            { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
+            { tag: 'B', description: '', unit: '', component: '' },
         ];
 
-        it('shows "description (tag)" in both selects\' options when a description is known, falling back to the bare tag otherwise', () => {
-            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
-            const selects = container.querySelectorAll('.scatter-regl-select');
-            expect(selects.length).toBe(2);
-            for (const select of selects) {
-                const options = Array.from(select.querySelectorAll('option')).map(o => o.textContent);
-                expect(options).toEqual(['Pump Pressure (A)', 'B']);
-            }
+        it('compact triggers show the Inline label (description then tag, bare tag when none)', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            const [x, y] = axisTriggers();
+            expect(x.classList.contains('pk-trigger--sm')).toBe(true);
+            expect(x.textContent).toBe('Pump PressureA');
+            expect(y.textContent).toBe('B');
         });
 
-        it('falls back to the bare tag for every option when sensorMetadata is not provided at all', () => {
-            const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} />);
-            const selects = container.querySelectorAll('.scatter-regl-select');
-            for (const select of selects) {
-                const options = Array.from(select.querySelectorAll('option')).map(o => o.textContent);
-                expect(options).toEqual(['A', 'B']);
-            }
+        it('the popover is scoped to the sensors on the chart and says so', () => {
+            render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
+            fireEvent.click(axisTriggers()[1]);
+            expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('Sensors on the chart · 2');
+            expect(findPickerRow('A').textContent).toContain('Pump Pressure');
         });
 
-        it('renders "X" and "Y" as their own badge next to each select, not appended inside the option text', () => {
+        it('renders "X" and "Y" as their own badge next to each picker', () => {
             const { container } = render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
             const badges = Array.from(container.querySelectorAll('.scatter-regl-axis-badge')).map(b => b.textContent);
             expect(badges).toEqual(['X', 'Y']);
-            // Neither option text carries the old "(X)"/"(Y)" suffix any more.
-            const optionTexts = Array.from(container.querySelectorAll('.scatter-regl-select option')).map(o => o.textContent);
-            expect(optionTexts.every(t => !t!.includes('(X)') && !t!.includes('(Y)'))).toBe(true);
+            expect(container.querySelector('select')).toBeNull();
         });
     });
 
@@ -587,8 +584,9 @@ describe('ScatterChart', () => {
             expect(container.querySelector('.scatter-tag-badge')!.textContent).toBe('①');
             const callout = container.querySelector('.scatter-tag-callout')!;
             expect(callout.textContent).toContain('t0');
-            expect(callout.textContent).toContain('1.00'); // A's value for row 0
-            expect(callout.textContent).toContain('10.00'); // B's value for row 0
+            // Value rows: inline label left, value right (DESIGN_SYSTEM §4 tooltips and value boxes).
+            const vals = [...callout.querySelectorAll('.tt-row')].map(r => [rowTag(r), r.querySelector('.tt-val')?.textContent]);
+            expect(vals).toEqual([['A', '1'], ['B', '10']]);
         });
 
         it('clicking an already-tagged point again removes it (toggle)', () => {
@@ -741,8 +739,7 @@ describe('ScatterChart', () => {
             fireEvent.click(getCanvas(container));
             expect(container.querySelector('.scatter-tag-ring')).toBeTruthy();
 
-            const [, ySelect] = screen.getAllByRole('combobox') as HTMLSelectElement[];
-            fireEvent.change(ySelect, { target: { value: 'C' } }); // Y: B -> C
+            pickSingle(axisTriggers()[1], 'C'); // Y: B -> C
             expect(container.querySelector('.scatter-tag-ring')).toBeNull();
         });
     });

@@ -95,6 +95,18 @@ describe('SubModelsModal', () => {
         expect(onClose).toHaveBeenCalledTimes(3);
     });
 
+    it('ignores Esc while a sensor / colour picker is open over it (the picker takes that Esc)', () => {
+        const onClose = show(fits({ subModels: [] }));
+        const pop = document.createElement('div');
+        pop.className = 'pk-pop';
+        document.body.appendChild(pop);
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(onClose).not.toHaveBeenCalled();
+        pop.remove();
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
     it('no target / no predictors / loading / error / nothing computed yet', () => {
         show(fits(), { targetSensor: '' });
         expect(screen.getByText('No target sensor selected.')).toBeTruthy();

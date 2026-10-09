@@ -1,5 +1,6 @@
 import { LayoutGrid } from 'lucide-react';
-import { SensorAutocomplete } from '../SensorPickers';
+import { SensorPickerSingle } from '../../sensor/SensorPicker';
+import { SensorInline } from '../../sensor/SensorLabel';
 import type { ClusterStat, HealthPreview } from '../../../types/health';
 import ChartCard, { LegendItem } from './ChartCard';
 import { CHART, CLUSTER_COLORS, fmtNum } from './chartTheme';
@@ -60,7 +61,7 @@ const Stat = ({ label, value, testId }: { label: string; value: string; testId?:
 );
 
 export default function ModelFitPage(props: ModelFitPageProps) {
-    const { data, model, stale, unit, sensorLabel, getDesc } = props;
+    const { data, model, stale, unit } = props;
     const stats = data.stats;
     // Train / test scopes on every time chart (null = the preview carried no test periods).
     const scopes = scopesOf(data.test_validation, props.testNumbers);
@@ -146,13 +147,13 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                     <Stat label="2RMSE" value={fmtNum(stats.two_rmse)} testId="stat-2rmse" />
                     <Stat label="Residual mean" value={fmtNum(stats.residual_mean)} testId="stat-res-mean" />
                     <Stat label="Residual SD" value={fmtNum(stats.residual_sd)} testId="stat-res-sd" />
-                    <Stat label="Rows" value={stats.rows.toLocaleString()} testId="stat-rows" />
+                    <Stat label="Rows" value={stats.rows.toLocaleString('en-US')} testId="stat-rows" />
                     <Stat label="Predictors" value={String(stats.predictors.length)} testId="stat-predictors" />
                 </div>
                 <ChartCard
                     id="fit"
                     title="Fit"
-                    sub={`predictor vs ${sensorLabel(model.targetSensor)}`}
+                    sub={<span className="wb2-sub-sl">predictor vs <SensorInline tag={model.targetSensor ?? ''} size="sm" muted /></span>}
                     stale={stale}
                     option={fit ? buildFitScatterOption(fit, unit || model.targetSensor) : null}
                     empty="No fit to draw"
@@ -160,14 +161,22 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                         {fit && fit.predictors.length > 0 && (
                             <span className="wb2-xsel" data-testid="fit-x-selector">
                                 X:
-                                <SensorAutocomplete
-                                    sensors={fit.predictors}
-                                    getDesc={getDesc}
-                                    value={fit.x_sensor}
-                                    onSelect={props.onXPredictorChange}
-                                    placeholder="Select X-axis sensor..."
-                                    style={{ minWidth: '170px' }}
-                                />
+                                {/* Customer item 3: the compact single picker, scoped to this
+                                    model's predictors. With one predictor it is disabled but
+                                    still shows its value, and the tooltip gives the reason. */}
+                                <span className="wb2-xpk" title={fit.predictors.length === 1 ? 'Only one predictor — nothing else to plot on X' : undefined}>
+                                    <SensorPickerSingle
+                                        compact
+                                        alignRight
+                                        sensors={fit.predictors}
+                                        value={fit.x_sensor}
+                                        onSelect={(t) => { if (t) props.onXPredictorChange(t); }}
+                                        disabled={fit.predictors.length === 1}
+                                        disabledReason={fit.predictors.length === 1 ? 'Only one predictor — nothing else to plot on X' : undefined}
+                                        scope={<>Predictors of this model · {fit.predictors.length}</>}
+                                        ariaLabel="X sensor"
+                                    />
+                                </span>
                             </span>
                         )}
                         <button type="button" className="rcx-btn rcx-btn--sm" data-testid="compare-predictors" onClick={props.onCompare}>
@@ -217,7 +226,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                 <ChartCard
                     id="cl"
                     title="Clusters"
-                    sub={`${sensorLabel(xTag)} vs ${sensorLabel(yTag)}`}
+                    sub={<span className="wb2-sub-sl"><SensorInline tag={xTag} size="sm" muted /> vs <SensorInline tag={yTag} size="sm" muted /></span>}
                     size="xtall"
                     stale={stale}
                     option={scatter ? buildClusterOption(scatter, stats.clusters, { x: xTag, y: yTag }) : null}
@@ -231,7 +240,7 @@ export default function ModelFitPage(props: ModelFitPageProps) {
                     <section className="wb2-statc wb2-statc--top" data-testid="cluster-summary">
                         <div className="wb2-card-h">
                             <b>Clusters</b>
-                            {stats.criteria_sensor && <span className="wb2-card-s">split by {sensorLabel(stats.criteria_sensor)}</span>}
+                            {stats.criteria_sensor && <span className="wb2-card-s wb2-sub-sl">split by <SensorInline tag={stats.criteria_sensor} size="sm" muted /></span>}
                         </div>
                         <table>
                             <tbody>

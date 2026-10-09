@@ -5,11 +5,12 @@ import { RotateCcw, Ruler, Tag, Trash2 } from 'lucide-react';
 import { ChartProps } from './ChartTypes';
 import type { TimeHighlight, ValueHighlightRange } from '../../types';
 import { firstMatchingHighlight } from '../../utils/timeHighlights';
-import AxisLabel from './AxisLabel';
+import { SensorPickerSingle } from '../sensor/SensorPicker';
+import { SensorInline } from '../sensor/SensorLabel';
+import { SensorMetaContext, fmtNum, useLayeredSensorLookup, type SensorInfo } from '../sensor/sensorInfo';
 import { hexToRgba, rgbaToHex, RANGE_PALETTE, TAG_BADGES, MAX_TAGGED_POINTS } from './pairPlotColors';
 import { reportError } from '../../errorReporter';
 import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
-import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import TaggedPointList, { firstFreeColorIndex } from './TaggedPointList';
 
 // Re-exported so existing callers (Dashboard.tsx, charts/index.ts) that
@@ -57,16 +58,24 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
     return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
 }
 
+/** One value row of the hover tooltip / a tag callout: inline label left, value + unit right
+ *  (DESIGN_SYSTEM §4 "Tooltips and value boxes"). */
+function ValueRow({ info, value }: { info: SensorInfo; value: unknown }) {
+    return (
+        <div className="tt-row">
+            <span className="tt-label"><SensorInline tag={info.tag} info={info} size="sm" /></span>
+            <span className="tt-val">{typeof value === 'number' ? fmtNum(value) : '—'}{info.unit ? ` ${info.unit}` : ''}</span>
+        </div>
+    );
+}
+
 function ScatterChart({
     data, sensors, headers, scatterX: persistedX, scatterY: persistedY, onScatterAxesChange,
     scatterAxisPins: persistedPins, onScatterAxisPinsChange,
     sensorMetadata, timeHighlights, valueHighlight,
 }: ChartProps) {
-    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    const getDescription = useCallback(
-        (tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description || undefined,
-        [sensorMetaMap],
-    );
+    // Customer item 3: labels (pickers, axis titles, tooltip / tag rows) resolve through this lookup.
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     /** Scatter-point index → original CSV row index. `pointover` gives us a
@@ -785,6 +794,7 @@ function ScatterChart({
     const xTicks = makeTicks(visibleBounds.xMin, visibleBounds.xMax);
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div ref={wrapperRef} className="scatter-regl-wrap">
             {/* Sensor pickers — "X"/"Y" is its own small badge outside the
                 select now (2026-09-22, per explicit user request), not
@@ -798,14 +808,33 @@ function ScatterChart({
                 isn't clipped. */}
             <div className="scatter-regl-controls">
                 <span className="scatter-regl-axis-badge">X</span>
-                <select value={scatterX} onChange={e => setScatterX(e.target.value)} className="scatter-regl-select">
-                    {sensors.map(s => <option key={s} value={s}>{getDescription(s) ? `${getDescription(s)} (${s})` : s}</option>)}
-                </select>
+                {/* Customer item 3 (2026-10-09): the shared single picker in its compact
+                    24 px form — the native selects left here on 2026-09-22 are retired
+                    (DESIGN_SYSTEM §4: an anchored popover costs the same two clicks).
+                    Y opens right-aligned so it stays inside the chart. */}
+                <span className="scatter-pk">
+                    <SensorPickerSingle
+                        compact
+                        sensors={sensors}
+                        value={scatterX}
+                        onSelect={(t) => { if (t) setScatterX(t); }}
+                        scope={<>Sensors on the chart · {sensors.length}</>}
+                        ariaLabel="X sensor"
+                    />
+                </span>
                 <span className="scatter-regl-vs">vs</span>
                 <span className="scatter-regl-axis-badge">Y</span>
-                <select value={scatterY} onChange={e => setScatterY(e.target.value)} className="scatter-regl-select">
-                    {sensors.map(s => <option key={s} value={s}>{getDescription(s) ? `${getDescription(s)} (${s})` : s}</option>)}
-                </select>
+                <span className="scatter-pk">
+                    <SensorPickerSingle
+                        compact
+                        alignRight
+                        sensors={sensors}
+                        value={scatterY}
+                        onSelect={(t) => { if (t) setScatterY(t); }}
+                        scope={<>Sensors on the chart · {sensors.length}</>}
+                        ariaLabel="Y sensor"
+                    />
+                </span>
             </div>
 
             {/* ECharts-style toolbox (click to activate). Pan/zoom is always
@@ -953,18 +982,9 @@ function ScatterChart({
                     from stealing hover from neighbouring points. */}
                 {tooltip && (
                     <div className="scatter-regl-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
-                        <div className="scatter-regl-tooltip-row">
-                            <span className="scatter-regl-tooltip-label">{scatterX}</span>
-                            <span className="scatter-regl-tooltip-value">
-                                {tooltip.xVal != null ? fmt(tooltip.xVal as number) : '—'}
-                            </span>
-                        </div>
-                        <div className="scatter-regl-tooltip-row">
-                            <span className="scatter-regl-tooltip-label">{scatterY}</span>
-                            <span className="scatter-regl-tooltip-value">
-                                {tooltip.yVal != null ? fmt(tooltip.yVal as number) : '—'}
-                            </span>
-                        </div>
+                        {/* Customer item 3: inline label + value + unit. */}
+                        <ValueRow info={sensorLookup(scatterX)} value={tooltip.xVal} />
+                        <ValueRow info={sensorLookup(scatterY)} value={tooltip.yVal} />
                         {tooltip.timestamp && (
                             <div className="scatter-regl-tooltip-ts">{tooltip.timestamp}</div>
                         )}
@@ -983,8 +1003,8 @@ function ScatterChart({
                         </div>
                         <div className="scatter-tag-callout" style={{ left: t.x, top: t.y - 14 }}>
                             {t.timestamp && <div className="scatter-tag-callout-ts">{t.timestamp}</div>}
-                            <div>{scatterX}: {t.xVal != null ? fmt(t.xVal as number) : '—'}</div>
-                            <div>{scatterY}: {t.yVal != null ? fmt(t.yVal as number) : '—'}</div>
+                            <ValueRow info={sensorLookup(scatterX)} value={t.xVal} />
+                            <ValueRow info={sensorLookup(scatterY)} value={t.yVal} />
                         </div>
                     </div>
                 ))}
@@ -1081,23 +1101,20 @@ function ScatterChart({
 
             </svg>
 
-            {/* Axis titles — HTML overlays (not SVG text) so they can carry a
-                hover tooltip with the sensor's description, same pattern as
-                PairPlotChart's AxisLabel. tooltipSide points back INTO the
-                chart area on both axes so it never hangs off the wrap's edge. */}
-            <AxisLabel
-                tag={scatterX}
-                description={getDescription(scatterX)}
-                tooltipSide="top"
-                style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - 20, height: 18 }}
-            />
-            <AxisLabel
-                tag={scatterY}
-                description={getDescription(scatterY)}
-                rotate
-                style={{ left: 0, width: 24, top: AXIS_PADDING.top, height: innerDims.height }}
-            />
+            {/* Axis titles — HTML overlays. Customer item 3 (review ruling b): Scatter has room,
+                so its titles are the Inline label (description then tag) + unit, with the full
+                name in `title`. The Y title is `writing-mode: vertical-rl` capped at the plot
+                height so it can ellipsise. */}
+            <div className="scatter-axis-title scatter-axis-title--x" data-testid="scatter-axis-title-x" style={{ left: AXIS_PADDING.left, width: innerDims.width, top: wrapperDims.height - 20, height: 18 }}>
+                <SensorInline tag={scatterX} size="sm" />
+                {sensorLookup(scatterX).unit && <span className="scatter-axis-unit">{sensorLookup(scatterX).unit}</span>}
+            </div>
+            <div className="scatter-axis-title scatter-axis-title--y" data-testid="scatter-axis-title-y" style={{ left: 2, width: 20, top: AXIS_PADDING.top, height: innerDims.height, maxHeight: innerDims.height }}>
+                <SensorInline tag={scatterY} size="sm" />
+                {sensorLookup(scatterY).unit && <span className="scatter-axis-unit">{sensorLookup(scatterY).unit}</span>}
+            </div>
         </div>
+        </SensorMetaContext.Provider>
     );
 }
 

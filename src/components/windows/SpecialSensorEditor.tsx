@@ -10,6 +10,8 @@ import { ButtonBuilder, BASE_OP_IDS, ComponentSelect } from "./SensorTooling";
 import { nameProblem } from "../../utils/specialSensorNaming";
 import { describeRecipe } from "../../utils/specialSensorDescribe";
 import { stableJson } from "../../utils/specialSensorEdit";
+import { SensorInline } from '../sensor/SensorLabel';
+import { SensorPickerMulti } from '../sensor/SensorPicker';
 
 /**
  * Edit one special sensor in place.
@@ -448,7 +450,7 @@ export default function SpecialSensorEditor({
                                         <span
                                             key={sensor}
                                             onClick={pickingBase ? () => engine.setBaseSensor(sensor) : undefined}
-                                            className="flex items-center gap-1 px-1.5 py-0.5 rounded"
+                                            className={`flex items-center gap-1 px-1.5 py-0.5 rounded ss-src-chip${isBase ? ' ss-src-chip--base' : ''}`}
                                             style={{
                                                 fontSize: '11px',
                                                 cursor: pickingBase ? 'pointer' : 'default',
@@ -459,7 +461,8 @@ export default function SpecialSensorEditor({
                                             title={pickingBase ? 'Click to mark as the starting value' : undefined}
                                         >
                                             {isBase && <Star size={9} fill="currentColor" />}
-                                            {getSensorName(sensor)}
+                                            {/* Customer item 3: chips use the Inline label (description then tag). */}
+                                            <SensorInline tag={sensor} size="sm" />
                                             <button
                                                 type="button"
                                                 aria-label={`Remove ${sensor}`}
@@ -478,17 +481,18 @@ export default function SpecialSensorEditor({
                                     <span style={{ fontSize: '11px', color: 'var(--text-faint)' }}>None picked yet</span>
                                 )}
                             </div>
-                            <select
-                                value=""
-                                aria-label="Add a source sensor"
-                                onChange={e => {
-                                    if (e.target.value) setSources(prev => [...prev, e.target.value]);
-                                }}
-                                style={fieldStyle}
-                            >
-                                <option value="">Add a sensor…</option>
-                                {addable.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                            {/* Customer item 3: the native <select> is retired for sensors — the
+                                shared multi picker adds the checked sensors on OK. The list
+                                leaves out this sensor and the ones already picked; the scope
+                                line says so. */}
+                            <SensorPickerMulti
+                                sensors={addable}
+                                selected={[]}
+                                hideChips
+                                noun="source sensors"
+                                onConfirm={tags => { if (tags.length) setSources(prev => [...prev, ...tags.filter(t => !prev.includes(t))]); }}
+                                scope={<>All sensors except this one{sources.length ? ' and the ones already picked' : ''} · {addable.length}</>}
+                            />
                             {pickingBase && (
                                 <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>
                                     Click a sensor above to mark it as the input.

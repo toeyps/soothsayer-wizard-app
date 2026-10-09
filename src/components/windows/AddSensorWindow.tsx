@@ -30,6 +30,7 @@ import {
     bindToGeneration, isSessionLostError, STALE_SESSION_MESSAGE, StaleSessionError, TaskAbortedError,
 } from "../../utils/staleSession";
 import type { Invoker } from "../../utils/specialSensorRecompute";
+import { SensorMetaProvider } from '../sensor/SensorLabel';
 
 /** How long a deleted special sensor can still be brought back. Nothing has
  *  left this window yet during that time -- see `commitDeleteRaw`. */
@@ -1487,6 +1488,9 @@ export default function AddSensorWindow() {
 
 
     return (
+        // Customer item 3: sensor labels in this window (explorer, Manage, pickers) resolve
+        // through the window's metadata + the special sensors' ƒ / Σ badges.
+        <SensorMetaProvider metadata={sensorMetadata} special={recipes}>
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', position: 'relative' }}>
             {/* Header — matches View Table dialog (.pair-regl-modal-header) */}
             <div data-tauri-drag-region className="flex justify-between items-center gap-3 shrink-0" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border)' }}>
@@ -1662,5 +1666,6 @@ export default function AddSensorWindow() {
                 </div>
             )}
         </div>
+        </SensorMetaProvider>
     );
 }

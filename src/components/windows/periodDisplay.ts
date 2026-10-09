@@ -1,5 +1,6 @@
 import type { TimePeriod, WorkspaceSensorFilter } from '../../types';
 import { validatePeriods } from '../../utils/timePeriods';
+import { fmtNumText } from '../sensor/sensorInfo';
 
 /*
  * Pure display maths for the Running Condition / Training periods UI
@@ -259,7 +260,8 @@ export function conditionChipParts(
     unit?: (tag: string) => string,
 ): ConditionChipParts {
     const u = (unit ? unit(f.sensor) : '').trim();
-    const value = f.operation === 'between' ? `${f.value1}–${f.value2}` : f.value1;
+    // Customer item 3: display numbers use the one en-US formatter (thousands separators).
+    const value = f.operation === 'between' ? `${fmtNumText(f.value1)}–${fmtNumText(f.value2)}` : fmtNumText(f.value1);
     return {
         name: (label ? label(f.sensor) : '') || f.sensor,
         rest: `${conditionSymbol(f.operation)} ${value}${u ? ` ${u}` : ''}`,

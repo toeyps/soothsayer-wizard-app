@@ -149,6 +149,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import type { WorkspaceState } from '../types';
 // Train/Test validation (2026-10-07): train period required to Train, test period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
+import { findPickerRow, pickSingle, pickerSearch, rowTag } from './helpers/sensorPicker';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -269,28 +270,21 @@ async function clickSave() {
     await settle(30);
 }
 
-/** Drive the REAL SensorAutocomplete inside the Relationship X-axis switcher. */
+/** Drive the REAL compact single picker of the Relationship X-axis switcher (customer item 3). */
 async function pickXAxis(tag: string) {
     await waitFor(() => expect(bmwEl().querySelector('[data-testid="fit-x-selector"]')).toBeTruthy());
     const wrap = bmwEl().querySelector('[data-testid="fit-x-selector"]') as HTMLElement;
-    expect(wrap).toBeTruthy();
-    const input = wrap.querySelector('input') as HTMLInputElement;
-    fireEvent.change(input, { target: { value: tag } });
-    const item = [...wrap.querySelectorAll('.sensor-autocomplete-item')]
-        .find(b => b.querySelector('.sensor-autocomplete-item-tag')?.textContent === tag) as HTMLElement;
-    expect(item).toBeTruthy();
-    await act(async () => { fireEvent.click(item); });
+    const trigger = within(wrap).getByRole('button', { name: 'X sensor' });
+    pickSingle(trigger, tag);
+    await act(async () => { await Promise.resolve(); });
     await settle(30);
 }
 
-/** Drive the REAL SensorPickerModal (single mode) for a field whose trigger
- *  currently shows `triggerText`. */
+/** Drive the REAL shared single picker for a field whose trigger currently shows `triggerText`. */
 async function pickSingleSensor(triggerText: string, tag: string) {
-    fireEvent.click(bmw().getByText(triggerText).closest('button')!);
-    const dialog = within(screen.getByRole('dialog', { name: /Select criteria sensor/ }));
-    fireEvent.change(dialog.getByPlaceholderText('Search sensor tag or description...'), { target: { value: tag } });
-    const row = dialog.getAllByText(tag).map(e => e.closest('button')).find(Boolean)!;
-    await act(async () => { fireEvent.click(row); });
+    const trigger = bmw().getByText(triggerText).closest('button')!;
+    pickSingle(trigger, tag);
+    await act(async () => { await Promise.resolve(); });
     await settle(30);
 }
 
@@ -742,13 +736,16 @@ describe('(6) Running condition modal + the real nested sensor picker (2026-10-0
     const COND5 = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
     const esc = () => act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }); await Promise.resolve(); });
     const rcDialog = () => screen.queryByRole('dialog', { name: 'Running condition' });
-    const pickerDialog = () => screen.queryByRole('dialog', { name: 'Select sensor' });
+    // The shared single picker's anchored popover is named after its field ("sensor").
+    const pickerDialog = () => screen.queryByRole('dialog', { name: 'sensor' });
+    const condTrigger = () => within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: 'sensor' });
 
     async function openModalWithPicker() {
         writeDisk(wsState([dashModel({ id: 'i1' })], { runningConditionNoneConfirmed: false, runningConditionFilters: [COND5] }));
         await mountBuildModel();
         fireEvent.click(bmw().getByTestId('rc-card-open'));
-        fireEvent.click(within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: /Pump Pressure/ }));
+        expect(rowTag(condTrigger())).toBe('TAG1');
+        fireEvent.click(condTrigger());
         expect(pickerDialog()).toBeTruthy();
     }
 
@@ -762,12 +759,23 @@ describe('(6) Running condition modal + the real nested sensor picker (2026-10-0
         expect(rcDialog()).toBeNull();
     });
 
+    it('Esc with focus IN the picker search box closes only the picker (the modal capture-phase listener skips it)', async () => {
+        await openModalWithPicker();
+        const search = pickerSearch();
+        expect(document.activeElement).toBe(search);
+        await act(async () => { fireEvent.keyDown(search, { key: 'Escape' }); await Promise.resolve(); });
+        expect(pickerDialog()).toBeNull();
+        expect(rcDialog()).toBeTruthy();
+        expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
+    });
+
     it('Esc inside the picker over a DIRTY draft still only closes the picker; the following Esc asks before discarding', async () => {
         await openModalWithPicker();
         // the picker covers the modal; edit the draft first, then reopen the picker
         await esc();
         fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '9' } });
-        fireEvent.click(within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: /Pump Pressure/ }));
+        expect(rowTag(condTrigger())).toBe('TAG1');
+        fireEvent.click(condTrigger());
         await esc();
         expect(pickerDialog()).toBeNull();
         expect(screen.queryByTestId('rc-discard-prompt')).toBeNull();
@@ -779,14 +787,13 @@ describe('(6) Running condition modal + the real nested sensor picker (2026-10-0
     it('picking a sensor through the real picker changes the DRAFT only; Apply writes it once', async () => {
         await openModalWithPicker();
         const writesBefore = h.files.get(WS_FILE);
-        fireEvent.change(screen.getByPlaceholderText('Search sensor tag or description...'), { target: { value: 'TAG3' } });
-        fireEvent.click(within(pickerDialog()!).getByText('TAG3'));
+        fireEvent.click(findPickerRow('TAG3'));
         expect(pickerDialog()).toBeNull();
-        expect(within(within(rcDialog()!).getByTestId('rc-cond-1')).getByRole('button', { name: /Motor Current/ })).toBeTruthy();
+        expect(condTrigger().querySelector('.sl-desc')?.textContent).toBe('Motor Current');
         expect(h.files.get(WS_FILE)).toBe(writesBefore); // nothing on disk yet
         await act(async () => { fireEvent.click(screen.getByTestId('rc-apply')); });
         await settle(30);
         expect(readDisk().failureGroupState.runningConditionFilters[0]).toMatchObject({ sensor: 'TAG3', value1: '5' });
-        expect(bmw().getByTestId('rc-card-cond-chip').textContent).toBe('Motor Current > 5 A');
+        expect(bmw().getByTestId('rc-card-cond-chip').textContent).toBe('Motor CurrentTAG3 > 5 A');
     });
 });

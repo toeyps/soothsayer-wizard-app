@@ -44,6 +44,10 @@ const INTENTIONALLY_UNCALLED = new Set([
     'train_individual_model', 'train_clustering_model', 'train_relationship_model',
     // Diagnostic; no caller since the upload page stopped re-checking loaded paths.
     'get_loaded_paths',
+    // TEMPORARY (2026-10-09): Rust side of customer-batch phase 5 landed first (9476aa2);
+    // the formula editor that calls them is phase 5's frontend. The stale-list check
+    // below fails as soon as a caller exists, which forces these two off this list.
+    'preview_formula', 'convert_legacy_formula',
 ]);
 
 // ── Rust side ────────────────────────────────────────────────────────────

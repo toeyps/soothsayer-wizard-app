@@ -1,10 +1,10 @@
 # Wizard — Manual Test Plan
 
-> 342 ข้อ · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) · **อัปเดต 2026-09-30 (Build Model Workbench, Phase C — จุดสถานะในแท็บ Failure Groups)** — เพิ่มข้อใหม่ FG-13 (จุดสถานะที่มุมป้าย I/R/C ในแท็บ Failure Groups ของ Dashboard — ไม่มีสี/ฟ้า/เขียว ตรงกับหน้า Build Model เป๊ะ รวมถึงกรณี gate บล็อกด้วย) — ปิด Feature 4 (Build Model Workbench) ทั้ง Phase A/B/C ครบตาม SPEC FINAL · **อัปเดต 2026-09-30 (แก้บั๊กจากทดสอบแอปจริงรอบแรก, 4 ข้อ)** — เพิ่ม **PER-12** (ค่าที่แก้ใน Training periods หายเมื่อปิดแค่ popup "Edit…" โดยไม่ blur ก่อน — บั๊กเดิมที่ PER-11 ไม่ครอบ, รายงานซ้ำเป็นครั้งที่ 2) — BMW-28/BMW-40 (Model settings row) ปรับข้อความให้ตรงกับ CSS ที่จัดใหม่ (Model name กว้างขึ้นไม่ตัดคำ, Training data กว้างคงที่ทุกชนิด, ฟิลด์เฉพาะชนิดรวมกลุ่มแยกบรรทัด) ไม่เพิ่ม id ใหม่ · **อัปเดต 2026-09-30 (พอร์ตฟีเจอร์จากหน้า PM เต็มเข้า Workbench รอบสอง)** — เพิ่มข้อใหม่ **BMW-47** (Custom running-condition editor แก้ได้ในหน้า Workbench เอง ผ่านสวิตช์ Training data — เดิมทำไม่ได้ต้องไปหน้า PM เต็ม), **BMW-48** (Cluster ranges เป็นแถบเลื่อนลากได้ตามช่วงค่าจริง แสดงตลอดเวลาแทนที่จะซ่อนจนกว่าจะเลือก criteria sensor), **BMW-49** (แกน X ของกราฟผลลัพธ์ Relationship เลือกได้ทันทีไม่ต้อง Save) — แก้ข้อความ BMW-40 ที่เคยบอกว่า Custom "ยังไม่มีที่แก้ที่นี่" (ไม่จริงแล้ว ดู BMW-47) · **อัปเดต 2026-10-03 (ปุ่ม Apply ใน popup Running Condition Filter)** — popup แก้เป็น "แบบร่าง + กด Apply": แก้อะไรก็ตามในนั้นยังไม่มีผลจนกว่าจะกด **Apply** (ปิดโดยไม่ Apply = ทิ้งแบบร่าง) · เพิ่ม **BMW-50** (Apply / Cancel / ข้อความ "Changes not applied yet" / ถามก่อนทิ้งแบบร่างเมื่อกด X) · PER-11 → **PER-13** และ PER-12 → **PER-14** (ความหมายเปลี่ยน: ต้อง Apply ก่อนค่าจึงถูกบันทึก — id เก่าถูกลบเพื่อไม่ให้ผล pass/fail ที่เคยบันทึกไว้ทำให้เข้าใจผิด) · BMW-25/BMW-34 ปรับขั้นตอนให้ใส่การกด Apply (ไม่เพิ่ม id) · **อัปเดต 2026-10-03 (แผง Failure Group Assignment)** — ตัวเลือก Failure Group ที่เปิดจากปุ่ม 📁 ในแท็บ Sensor เปลี่ยนจาก popup เล็กเป็นแผงสูงเต็มความสูงติดขอบซ้ายของแผง Sensor (ตาราง กลุ่ม × ชนิดโมเดล) และเอาโมเดลออกจากกลุ่มสุดท้ายแล้วมี Undo 7 วินาที: **ตัด SEN-5 ถึง SEN-10** (อธิบาย popup เดิมที่ไม่มีแล้ว) แล้วเพิ่ม **SEN-12 ถึง SEN-21** (เปิดแผง, ตาราง, ติ๊กหลายชนิด, แถวไม่กระโดด/All|Assigned/ค้นหา, สลับ sensor + ‹ ›, สิ่งที่ปิดแผงได้, ลบโมเดลแล้ว Undo — SEN-8 เดิมมาเป็น SEN-18, Undo ข้ามหน้าต่าง Build Model, สร้างกลุ่ม, เปลี่ยนชื่อ/ลบกลุ่ม) — id เดิมที่ความหมายเปลี่ยนจึงไม่ถูกนำกลับมาใช้ · **อัปเดต 2026-10-03 (Running condition ใหม่)** — แถบ "Running condition" บรรทัดเดียวใน Build Model เปลี่ยนเป็นการ์ด "Step 1" 3 สถานะ + แถบขั้นตอนที่หัวหน้าต่าง และ popup Edit… ถูกออกแบบใหม่เป็น 2 คอลัมน์ (ช่วงเวลาเป็นการ์ด P1..Pn, การ์ดเลือก "Only when running" / "Use all rows", ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว, จำนวนแถวที่ใช้ train แบบสด, ปิดด้วย Esc): **ตัด BMW-34 และ BMW-25** (อธิบายแถบ/หน้าตาเดิมที่ไม่มีแล้ว) แล้วเพิ่ม **BMW-51 ถึง BMW-55** — BMW-50 (ต้องกด Apply), BMW-33, BMW-24, BMW-26 และ PER-9/10/13/14 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรงหน้าตาใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-03 (แก้บั๊ก Add Special Sensor — ค่าไม่ตรง / กราฟปักเกิน)** — คอลัมน์ของ special sensor ที่ลบหรือถูกเปลี่ยนชื่อ ถูกทิ้งจากหน่วยความจำจริงแล้ว (สร้างชื่อเดิมใหม่ไม่ได้ค่าเก่าอีกต่อไป), สร้างแล้ว**ปักเฉพาะตัวใหม่** และไม่ทับสิ่งที่เลือกใน Dashboard, ตรวจชื่อซ้ำที่ช่อง Name, กันกดซ้ำ, ชื่อมีอักขระพิเศษ/ภาษาไทยใช้ในสูตรได้, Sum ว่างเมื่อ source หาย, กู้ workspace ที่มี recipe พังได้อย่างปลอดภัย: **ตัด SPC-8 และ SPC-12** (ความหมายเปลี่ยน — SPC-12 เดิมคือ "ชื่อซ้ำให้จดพฤติกรรม" ตอนนี้ถูกบล็อกแล้ว, SPC-8 เดิมบอกว่ากราฟอัปเดตโดยไม่ระบุว่าปักอะไร) แล้วเพิ่ม **SPC-15 ถึง SPC-21, MNG-16 ถึง MNG-18, EDT-27 ถึง EDT-29, PER-15** (SPC-4 เพิ่มแค่ลิงก์ไป SPC-15) · **อัปเดต 2026-10-03 (Special sensor รอบสอง — แก้ 14 ข้อที่ QA เจอ)** — ฟอร์ม Create ว่างทั้งหมดหลัง Add (SPC-22), ป้าย on chart ตามที่ Dashboard ปักจริง (SPC-23), sensor ที่กำลัง Undo ไม่ถูกเสนอเป็น source (SPC-24), สร้าง/แก้/ลบเป็นคิวทีละงาน (SPC-25, MNG-24), ลบถูกตรวจซ้ำตอนยืนยันจริงรวม Running condition (MNG-19/20/21/22), ลบแล้วเงื่อนไขในแท็บ Filter ของ Dashboard หายตาม (MNG-23), rename ตามไปถึงแท็บ Filter + Running condition (EDT-30), แก้ไม่สำเร็จย้อนกลับ (EDT-31), ลำดับคำนวณตามการพึ่งพา (EDT-32), ตรวจวงกลมสดใหม่ (EDT-33) — **ตัด MNG-10** (ช่อง "PM filter" ถูกยกเลิกไปแล้ว) แทนด้วย **MNG-25** · **อัปเดต 2026-10-03 (ล็อก special sensor ที่โมเดลใช้อยู่)** — sensor ที่โมเดล (ทุกช่อง รวม Custom running condition) หรือ Running condition ของ workspace ใช้อยู่ — รวมถึงโดยอ้อมผ่าน sensor ที่สร้างต่อ — **เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ และลบไม่ได้** (แก้ได้แค่ Description / Unit / Component): **ตัด EDT-16, EDT-18, EDT-24, EDT-30** (ความหมายเปลี่ยน — เดิมบอกว่า sensor ที่ถูกใช้ยังแก้ได้ และ rename ตามไปถึงโมเดล / Running condition) แล้วเพิ่ม **EDT-35 ถึง EDT-41** (EDT-2/25 แก้แค่ข้อความอ้างอิง) · **อัปเดต 2026-10-03 (ผูกหน้าต่าง Add Special Sensor กับ dataset + latest-click-wins)** — special sensor ของ A ไม่โผล่/ไม่โดนแตะตอนทำงานใน B แม้หน้าต่างลูกของ A ค้าง (ทุกคำสั่งที่เขียนคอลัมน์ผูกกับ generation ของ dataset, ถูกปฏิเสธเมื่อ dataset เปลี่ยน), หน้าต่างที่ถูกดึงไปโปรเจกต์ใหม่ล้างฟอร์ม/ตัวแก้ไข/งานค้างทั้งหมด, คลิกเปิดโปรเจกต์ซ้อนกัน "คลิกหลังสุดชนะ", ออกจาก Dashboard แล้วบันทึกอัตโนมัติที่ค้างอยู่ทันที — เพิ่ม **MULTI-8 ถึง MULTI-13** (ไม่ตัด id ใดเลย) · **อัปเดต 2026-10-03 (Visual refresh)** — เพิ่ม **VIS-4 ถึง VIS-14** (popover ไม่ปิดเอง/ไม่ล้นจอ/ไม่ลอยค้าง, แถบ Time range แถวเดียว, แท็บ Filter/Highlights/Sensor/Failure Groups หน้าตาใหม่, สีกราฟ Build Model/PM โทนเดียวกับ Dashboard, หน้าต่าง Add Special Sensor หน้าตาใหม่) — ไม่ตัด id ใดเลย · **อัปเดต 2026-10-04 (Health score 3b-1 — Workbench 2 หน้า ต่อ model: Model fit + Health score)** — หัวหน้าต่างเป็นแถบขั้นตอน 5 ขั้นที่กดได้ (Running condition → Model settings → Train → Health set points → Complete), มีสวิตช์ "1 Model fit / 2 Health score" ที่หัว detail pane (หน้า Health score ยังเป็นกรอบว่างไว้ก่อน — มาในเฟสถัดไป), แถบเตือน stale + ฟิล์ม "Out of date" บนกราฟ, จุดสถานะ 3 สี (เหลือง/แดง/เขียว) + legend, กราฟของหน้า Model fit เป็นกราฟใหม่ทั้งหมดที่ดึงจากข้อมูลย่อของ Rust (Individual: ค่าตามเวลา + Distribution ใหม่ + การ์ดสถิติ; Relationship: แถบสถิติ + Fit + Target vs predicted + Residual เต็มกว้าง ไม่มี distribution ของ residual; Clustering: scatter + วง SD ทุก cluster + การ์ดสรุป), ทุกกราฟมีปุ่มขยาย, "Compare predictors" เปิด Sub-models เป็น modal, โมเดล Complete เห็นกราฟเมื่อเปิดซ้ำ, และแก้บั๊ก detail pane หดหายเมื่อซ่อนลิสต์ซ้าย: **ตัด BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-56 ถึง BMW-68** — BMW-56 คือการ์ด Step 1 เดิม (BMW-51) ที่ตัดส่วนแถบขั้นตอนออก · **อัปเดต 2026-10-04 (Health score 3b-2)** — หน้า "2 Health score" เป็นหน้าจริงแล้ว: **ตัด BMW-58 และ BMW-44** (หน้า placeholder / Mark complete ที่ footer หน้า Model fit — ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-69 ถึง BMW-79** (สวิตช์ 2 หน้า, set point ของ Individual/Relationship/Clustering, Checks, กราฟคะแนน + ซิงก์เมาส์, Mark complete เขียนไฟล์จริง, Mark incomplete + "Changed after saving", การบันทึก set point/ปิดหน้าต่าง, ป้าย "Set points needed"/"Fix set point", Finish ของหน้า PM) และแก้ข้อความ FG-13, BMW-4, BMW-30, BMW-33, BMW-56 ที่อ้างปุ่ม Mark complete เดิม · **อัปเดต 2026-10-04 (Health score เฟส 4 — ตัดหน้าเต็ม)** — ถอดหน้า Predictive Model (ปุ่ม "Open full view ↗", ปุ่ม Finish, Back, Sub-models บนหน้านั้น) ออกจากแอปทั้งหมด: **ตัดทั้งหมวด PM (22 ข้อ), BMW-8, BMW-10, BMW-79, VIS-12** แล้วเพิ่ม **BMW-83** (ไม่มีทางเปิดหน้า full view แล้ว) กับ **BMW-84** (ทุกโมเดลเข้าถึงและ Complete ได้จากสองหน้าของ Workbench เท่านั้น) และแก้ข้อความของ BMW-27, BMW-30, BMW-33, BMW-40, BMW-47, BMW-50, BMW-53, BMW-54, BMW-56, BMW-57, BMW-66, BMW-69, PER-9, PER-10, PER-13, VIS-1 ที่อ้างปุ่ม/หน้านั้น — Sub-models เหลือเป็น modal ใน Workbench เท่านั้น (BMW-66) · **อัปเดต 2026-10-04 (เก็บกวาด id หลัง QA)** — FG-13 → **FG-14** และ BMW-80 → **BMW-85** (ความหมายเปลี่ยนแต่เคยใช้ id เดิมซ้ำ — id เก่าถูกเพิ่มเข้ารายการที่ตัดแล้ว), ย้ายป้าย 🆕 ของ FG-14/BMW-85/BMW-81/BMW-82 ออกมาหลัง `**` ให้ตัวสร้าง HTML อ่านป้ายได้, และเติม id ที่เคยถูกตัดแต่ตกหล่นจากรายการ (BMW-3/7/12/78, FG-3/11, MNG-10, PER-11/12, SPC-8/12, EDT-16/18/24/30) · **อัปเดต 2026-10-04 (หน้าแรก "Get started" ใหม่ — Import เฟส B)** — step 0 ของหน้า Import เปลี่ยนเป็น 2 คอลัมน์: ซ้ายคือแบรนด์ + headline + ปุ่ม **New project** (Ctrl+N) + ช่องค้นหา + การ์ด Recent projects (hover/โฟกัสแล้วมี Rename / Delete, ลบยืนยัน**ในแถว**แทนหน้าต่าง dialog), ขวาคือภาพเครื่องจักรจากกลุ่มจุดที่เปลี่ยนรูปไปเรื่อย ๆ, ท้ายหน้ามีเวอร์ชันแอป + "Data stays on this machine": **ตัด IMP-1 และ IMP-21** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-22 ถึง IMP-29** (IMP-22 คือ IMP-21 เดิมที่ปรับเป็นยืนยันในแถว) — IMP-2/IMP-18 แก้แค่คำอธิบายตำแหน่ง/วิธีกด (ความหมายเดิม จึงไม่เปลี่ยน id) · step 1–2 ยังเป็นหน้าเดิม (sidebar เดิม) จนกว่าเฟสถัดไป · **อัปเดต 2026-10-04 (Import เฟส C — step 1–2 ใหม่)** — sidebar "Find workspace / Recent" ของ step 1–2 ถูกแทนด้วยแถบขั้นตอนทางซ้าย (rail) · Step 1 "Name your project" (ตัวนับ /80, เตือนชื่อซ้ำแบบไม่บล็อก, การ์ดตัวอย่าง, การ์ด Next) · Step 2 "Add your sensor data" (ซ้าย "Sensor data": dropzone + ชิปเงื่อนไข, แถบความคืบหน้าตอนอ่าน, การ์ดสรุป Rows/Sensors/Period/Interval/% empty, Time coverage, กล่อง "Fixed while reading" · ขวา "Tag names" ที่เดิมชื่อ Sensor mapping) · ปุ่ม Continue ของ step 2 เปลี่ยนเป็น "Open Dashboard": **ตัด IMP-6, IMP-7, IMP-8, IMP-9, IMP-10, IMP-11, IMP-12** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-30 ถึง IMP-39** — IMP-14/16/17/18/19/22 และ VIS-1/VIS-3 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรง UI ใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-07 (Train/Test model validation)** — ช่วงเวลาแบ่งเป็น **Train periods** (บังคับต้องมีอย่างน้อย 1 ช่วง ไม่มีช่วง = ไม่ใช่ "ทั้งชุดข้อมูล" อีกต่อไป) กับ **Test periods** (Normal / Known problem + event time, ต้องมีอย่างน้อย 1 ช่วงก่อน Mark complete) · ผลทดสอบเป็นข้อมูลเท่านั้น (เขียว/เหลือง ไม่บล็อก): **ตัด BMW-47, BMW-53, BMW-56** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-86 ถึง BMW-92** · **อัปเดต 2026-10-07 (แก้ตาม code review)** — เพิ่ม **BMW-93** (Custom: Test period ผิด = Save ไม่ได้, Mark complete ตอนมีค่าที่ยังไม่ Save บันทึกให้ก่อน, เตือน Train < 30 วันของ Custom) และ **BMW-94** (Relation model: Train คำนวณ Test ไปด้วย, ข้อความรอ ~15 วินาที, ให้คะแนน Test ไม่ได้ = กล่องเหลือง) · **อัปเดต 2026-10-07 (code review รอบ 3)** — เพิ่ม **BMW-95** (จำความล้มเหลว, Try again, engine เก่าไม่มีปุ่ม Try again, ช่วงใหญ่เกิน) · BMW-94 ย้ายกรณี engine เก่าไปที่ BMW-95 (ข้อใหม่วันเดียวกัน ยังไม่มีผลทดสอบ จึงไม่เปลี่ยน id) · BMW-88 ชิป "No train period" เปลี่ยนจากแดงเป็นเหลือง และ BMW-75 ข้อความเวลาของ Relationship (แก้ข้อความในข้อเดิม ความหมายไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (คำขอลูกค้า)** — เอาสวิตช์ Band / Line colour ในแท็บ Highlights ออก (highlight แบบ By time บนกราฟ Line เป็นแถบเสมอ): **ตัด HL-4** แล้วเพิ่ม **HL-8** (ไม่มีสวิตช์แล้ว + workspace เก่าที่เคยตั้ง Line colour เปิดแล้วเป็นแถบ) · ลบ tag ทีละอันได้: เพิ่ม **LINE-9** และ **SCAT-9** (รายการ tag ใต้แถบเครื่องมือ มีปุ่ม × ต่ออัน) · VIS-8 ตัดประโยคเรื่องสวิตช์ Band / Line colour ออก (ความหมายของข้อไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (แก้บั๊ก special sensor จาก QA)** — สูตรที่ไม่ผ่านการตรวจขึ้นสีแดงใต้ช่องสูตรและกด Add/Save ไม่ได้ (SPC-26, EDT-13 → EDT-42), เปลี่ยน source แล้ว Average/Sum/Median ไม่กลายเป็นผลบวก (SPC-29, EDT-43), Formula Syntax Help (SPC-27), ปัดทศนิยมแบบ "Then apply" (SPC-28), ชิป Referenced sensors (SPC-30), Rust ปฏิเสธฟังก์ชันที่ไม่รู้จัก (EDT-44), รายการ Manage บอกจำนวนทศนิยม (EDT-45), เปิด workspace เก่าที่มีสูตรซึ่งตอนนี้ไม่ผ่าน (EDT-46)
+> 358 ข้อ · **อัปเดต 2026-10-09 รอบแก้ตาม code review** — EDT-5 ได้ id ใหม่ (EDT-53), EDT-43 ปรับข้อความ (id เดิม), ข้อใหม่ HL-12, FIL-8, BMW-101, VIS-16 · id ซ้ำ: เดิมมี **SPC-30 สองข้อ** — ข้อหลัง (ชิป Referenced sensors) เปลี่ยนเป็น **SPC-32** (ไม่นับเป็นข้อที่ตัดออก เพราะไม่ได้เปลี่ยนความหมาย; ผล SPC-30 ที่เคยกรอกไว้อาจเป็นของข้อไหนก็ได้ ให้ตรวจทั้ง SPC-30 และ SPC-32 ใหม่) · EDT-4 / LINE-3 ไม่ได้ซ้ำ (EDT-4b / LINE-3b เป็นคนละ id) · **อัปเดต 2026-10-09 (customer items 3+4: ชื่อ sensor / ตัวเลือก sensor / ตัวเลือกสีแบบเดียวทั้งแอป)** — SEL-1/4, FIL-5, HL-1/5/6, LINE-2, SCAT-3, PAIR-5, BMW-9/13/14 ได้ id ใหม่ และข้อใหม่ FIL-7, LINE-11, SCAT-11, PAIR-12, SEN-22, FG-15, BMW-99/100, SPC-31, MNG-26, EDT-52, VIS-15 · เขียนไว้ 2026-09-07 หลังทำ Manage Special Sensors (ลบ + แก้ไข) เสร็จ · อัปเดต 2026-09-09 (rename special sensor, บังคับกรอกครบ 4 ช่อง, Group by Model Type, ย้ายปุ่ม Build Model) · **อัปเดต 2026-09-21 ให้ตรงกับ v0.5.0** — เพิ่มหมวด MULTI (หลายโปรเจกต์) และ VIS (กวาดหน้าตาหลังล้าง CSS), เปลี่ยนเมนู Zoom, Running Condition Filter, ปุ่ม Finish, ช่อง predictor แบบค้นหา/จัดกลุ่ม, Component เป็น dropdown, และ**ตัดข้อของฟีเจอร์ที่ถูกเอาออก** (Preview / Save Model / Confirm Save / Report PNG / Saving overlay / แถบเลื่อน dataZoom) · **อัปเดต 2026-09-23** — Running Condition Filter เพิ่ม AND/OR (BMW-11) และ per-model Workspace/Custom override (PM-21 ใหม่) · **อัปเดต 2026-09-24 (Feature 4 Phase 2)** — Build Model / Failure Groups จัดเป็น**หนึ่งแถวต่อ sensor** และ Category ตั้งที่หัว sensor ครั้งเดียว (BMW-3 → BMW-15, BMW-12 → BMW-16, BMW-7 → BMW-17, FG-3 → FG-8 และข้อใหม่ BMW-19/20/21/22, FG-9) · **อัปเดต 2026-09-24 (Feature 4 Phase 3)** — Running Condition บังคับตั้งก่อน Build/Finish (BMW-11 → BMW-18, PM-14 → PM-22, ขยาย BMW-17 และข้อใหม่ BMW-23/24, PM-23) · **อัปเดต 2026-09-24 (Feature 4 Phase 4)** — Training time เป็น**หลายช่วงเวลา (periods)** แทน Time start/end ช่วงเดียว (PM-8 → PM-26, PM-21 → PM-27, ข้อใหม่ BMW-25, PER-10; BMW-18/PM-18/PER-9 ปรับข้อความ) · **อัปเดต 2026-09-24 (แก้บั๊ก QA)** — เพิ่ม FG-10, BMW-26, PM-28/29/30 · **อัปเดต 2026-09-24 (ปรับหน้าตาให้ตรงมอคอัปที่อนุมัติ)** — แผง Running Condition / Training periods / แถว sensor / แท็บ / แบนเนอร์ / ป้าย ปรับข้อความและหน้าตาในข้อ BMW-15/16/18/19/20/21/23/24/25 และ PM-23/26/27/29 (ไม่เพิ่ม id ใหม่ — ความหมายของข้อไม่เปลี่ยน) · **อัปเดต 2026-09-29 (แก้บั๊ก PER)** — เพิ่ม PER-11 (แก้บั๊กค่าที่แก้ใน Running Condition Filter หายเมื่อปิดหน้าต่าง Build Model/PM ทันที) · **อัปเดต 2026-09-29 (Build Model Workbench, Phase A)** — เขียนหมวด BMW ใหม่ทั้งหมดให้ตรงกับ layout ใหม่ (ลิสต์ sensor ซ้าย + detail pane ขวา แทน accordion เดิม): **ตัด BMW-6** (Group by Model Type — ฟีเจอร์นี้ถูกลบออกจากแอปแล้ว), เปลี่ยนความหมาย/ตั้ง id ใหม่ให้ BMW-15→BMW-28, BMW-16→BMW-30, BMW-17→รวมเข้า BMW-42, BMW-18→BMW-34, BMW-19→BMW-31, BMW-20→BMW-32, BMW-23→BMW-33, เพิ่มข้อใหม่ BMW-36/37/38/40/41/42 (ลิสต์ซ้าย ค้นหา/filter/group-by, sidebar toggle, Model settings พับได้, ผลลัพธ์ placeholder, footer ใหม่) — ข้ออื่น (BMW-1/2/4/5/8/9/10/13/14/21/22/24/25/26/27) เนื้อหาเดิม ปรับแค่คำอธิบายตำแหน่ง/ปุ่มให้ตรง UI ใหม่ · **อัปเดต 2026-09-29 (Build Model Workbench, Phase B — Train in place)** — พื้นที่ผลลัพธ์ไม่ใช่ placeholder แล้ว: BMW-41 → BMW-43 (กราฟ+ตัวเลขจริงหลัง Train, ลิสต์ "N items to fix"), BMW-42 → BMW-44 (ป้ายสถานะ 3 แบบ Incomplete/Trained/Complete + ปุ่ม Train/Re-train + Mark complete ต้อง Trained ก่อน), เพิ่มข้อใหม่ BMW-45 (auto-recompute ตอนเปิดโมเดลที่เคย Train ซ้ำ) และ BMW-46 (จุดสถานะที่ป้าย I/R/C ในลิสต์ซ้าย) · **อัปเดต 2026-09-30 (Build Model Workbench, Phase C — จุดสถานะในแท็บ Failure Groups)** — เพิ่มข้อใหม่ FG-13 (จุดสถานะที่มุมป้าย I/R/C ในแท็บ Failure Groups ของ Dashboard — ไม่มีสี/ฟ้า/เขียว ตรงกับหน้า Build Model เป๊ะ รวมถึงกรณี gate บล็อกด้วย) — ปิด Feature 4 (Build Model Workbench) ทั้ง Phase A/B/C ครบตาม SPEC FINAL · **อัปเดต 2026-09-30 (แก้บั๊กจากทดสอบแอปจริงรอบแรก, 4 ข้อ)** — เพิ่ม **PER-12** (ค่าที่แก้ใน Training periods หายเมื่อปิดแค่ popup "Edit…" โดยไม่ blur ก่อน — บั๊กเดิมที่ PER-11 ไม่ครอบ, รายงานซ้ำเป็นครั้งที่ 2) — BMW-28/BMW-40 (Model settings row) ปรับข้อความให้ตรงกับ CSS ที่จัดใหม่ (Model name กว้างขึ้นไม่ตัดคำ, Training data กว้างคงที่ทุกชนิด, ฟิลด์เฉพาะชนิดรวมกลุ่มแยกบรรทัด) ไม่เพิ่ม id ใหม่ · **อัปเดต 2026-09-30 (พอร์ตฟีเจอร์จากหน้า PM เต็มเข้า Workbench รอบสอง)** — เพิ่มข้อใหม่ **BMW-47** (Custom running-condition editor แก้ได้ในหน้า Workbench เอง ผ่านสวิตช์ Training data — เดิมทำไม่ได้ต้องไปหน้า PM เต็ม), **BMW-48** (Cluster ranges เป็นแถบเลื่อนลากได้ตามช่วงค่าจริง แสดงตลอดเวลาแทนที่จะซ่อนจนกว่าจะเลือก criteria sensor), **BMW-49** (แกน X ของกราฟผลลัพธ์ Relationship เลือกได้ทันทีไม่ต้อง Save) — แก้ข้อความ BMW-40 ที่เคยบอกว่า Custom "ยังไม่มีที่แก้ที่นี่" (ไม่จริงแล้ว ดู BMW-47) · **อัปเดต 2026-10-03 (ปุ่ม Apply ใน popup Running Condition Filter)** — popup แก้เป็น "แบบร่าง + กด Apply": แก้อะไรก็ตามในนั้นยังไม่มีผลจนกว่าจะกด **Apply** (ปิดโดยไม่ Apply = ทิ้งแบบร่าง) · เพิ่ม **BMW-50** (Apply / Cancel / ข้อความ "Changes not applied yet" / ถามก่อนทิ้งแบบร่างเมื่อกด X) · PER-11 → **PER-13** และ PER-12 → **PER-14** (ความหมายเปลี่ยน: ต้อง Apply ก่อนค่าจึงถูกบันทึก — id เก่าถูกลบเพื่อไม่ให้ผล pass/fail ที่เคยบันทึกไว้ทำให้เข้าใจผิด) · BMW-25/BMW-34 ปรับขั้นตอนให้ใส่การกด Apply (ไม่เพิ่ม id) · **อัปเดต 2026-10-03 (แผง Failure Group Assignment)** — ตัวเลือก Failure Group ที่เปิดจากปุ่ม 📁 ในแท็บ Sensor เปลี่ยนจาก popup เล็กเป็นแผงสูงเต็มความสูงติดขอบซ้ายของแผง Sensor (ตาราง กลุ่ม × ชนิดโมเดล) และเอาโมเดลออกจากกลุ่มสุดท้ายแล้วมี Undo 7 วินาที: **ตัด SEN-5 ถึง SEN-10** (อธิบาย popup เดิมที่ไม่มีแล้ว) แล้วเพิ่ม **SEN-12 ถึง SEN-21** (เปิดแผง, ตาราง, ติ๊กหลายชนิด, แถวไม่กระโดด/All|Assigned/ค้นหา, สลับ sensor + ‹ ›, สิ่งที่ปิดแผงได้, ลบโมเดลแล้ว Undo — SEN-8 เดิมมาเป็น SEN-18, Undo ข้ามหน้าต่าง Build Model, สร้างกลุ่ม, เปลี่ยนชื่อ/ลบกลุ่ม) — id เดิมที่ความหมายเปลี่ยนจึงไม่ถูกนำกลับมาใช้ · **อัปเดต 2026-10-03 (Running condition ใหม่)** — แถบ "Running condition" บรรทัดเดียวใน Build Model เปลี่ยนเป็นการ์ด "Step 1" 3 สถานะ + แถบขั้นตอนที่หัวหน้าต่าง และ popup Edit… ถูกออกแบบใหม่เป็น 2 คอลัมน์ (ช่วงเวลาเป็นการ์ด P1..Pn, การ์ดเลือก "Only when running" / "Use all rows", ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว, จำนวนแถวที่ใช้ train แบบสด, ปิดด้วย Esc): **ตัด BMW-34 และ BMW-25** (อธิบายแถบ/หน้าตาเดิมที่ไม่มีแล้ว) แล้วเพิ่ม **BMW-51 ถึง BMW-55** — BMW-50 (ต้องกด Apply), BMW-33, BMW-24, BMW-26 และ PER-9/10/13/14 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรงหน้าตาใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-03 (แก้บั๊ก Add Special Sensor — ค่าไม่ตรง / กราฟปักเกิน)** — คอลัมน์ของ special sensor ที่ลบหรือถูกเปลี่ยนชื่อ ถูกทิ้งจากหน่วยความจำจริงแล้ว (สร้างชื่อเดิมใหม่ไม่ได้ค่าเก่าอีกต่อไป), สร้างแล้ว**ปักเฉพาะตัวใหม่** และไม่ทับสิ่งที่เลือกใน Dashboard, ตรวจชื่อซ้ำที่ช่อง Name, กันกดซ้ำ, ชื่อมีอักขระพิเศษ/ภาษาไทยใช้ในสูตรได้, Sum ว่างเมื่อ source หาย, กู้ workspace ที่มี recipe พังได้อย่างปลอดภัย: **ตัด SPC-8 และ SPC-12** (ความหมายเปลี่ยน — SPC-12 เดิมคือ "ชื่อซ้ำให้จดพฤติกรรม" ตอนนี้ถูกบล็อกแล้ว, SPC-8 เดิมบอกว่ากราฟอัปเดตโดยไม่ระบุว่าปักอะไร) แล้วเพิ่ม **SPC-15 ถึง SPC-21, MNG-16 ถึง MNG-18, EDT-27 ถึง EDT-29, PER-15** (SPC-4 เพิ่มแค่ลิงก์ไป SPC-15) · **อัปเดต 2026-10-03 (Special sensor รอบสอง — แก้ 14 ข้อที่ QA เจอ)** — ฟอร์ม Create ว่างทั้งหมดหลัง Add (SPC-22), ป้าย on chart ตามที่ Dashboard ปักจริง (SPC-23), sensor ที่กำลัง Undo ไม่ถูกเสนอเป็น source (SPC-24), สร้าง/แก้/ลบเป็นคิวทีละงาน (SPC-25, MNG-24), ลบถูกตรวจซ้ำตอนยืนยันจริงรวม Running condition (MNG-19/20/21/22), ลบแล้วเงื่อนไขในแท็บ Filter ของ Dashboard หายตาม (MNG-23), rename ตามไปถึงแท็บ Filter + Running condition (EDT-30), แก้ไม่สำเร็จย้อนกลับ (EDT-31), ลำดับคำนวณตามการพึ่งพา (EDT-32), ตรวจวงกลมสดใหม่ (EDT-33) — **ตัด MNG-10** (ช่อง "PM filter" ถูกยกเลิกไปแล้ว) แทนด้วย **MNG-25** · **อัปเดต 2026-10-03 (ล็อก special sensor ที่โมเดลใช้อยู่)** — sensor ที่โมเดล (ทุกช่อง รวม Custom running condition) หรือ Running condition ของ workspace ใช้อยู่ — รวมถึงโดยอ้อมผ่าน sensor ที่สร้างต่อ — **เปลี่ยนชื่อ / แก้สูตร / แก้ source ไม่ได้ และลบไม่ได้** (แก้ได้แค่ Description / Unit / Component): **ตัด EDT-16, EDT-18, EDT-24, EDT-30** (ความหมายเปลี่ยน — เดิมบอกว่า sensor ที่ถูกใช้ยังแก้ได้ และ rename ตามไปถึงโมเดล / Running condition) แล้วเพิ่ม **EDT-35 ถึง EDT-41** (EDT-2/25 แก้แค่ข้อความอ้างอิง) · **อัปเดต 2026-10-03 (ผูกหน้าต่าง Add Special Sensor กับ dataset + latest-click-wins)** — special sensor ของ A ไม่โผล่/ไม่โดนแตะตอนทำงานใน B แม้หน้าต่างลูกของ A ค้าง (ทุกคำสั่งที่เขียนคอลัมน์ผูกกับ generation ของ dataset, ถูกปฏิเสธเมื่อ dataset เปลี่ยน), หน้าต่างที่ถูกดึงไปโปรเจกต์ใหม่ล้างฟอร์ม/ตัวแก้ไข/งานค้างทั้งหมด, คลิกเปิดโปรเจกต์ซ้อนกัน "คลิกหลังสุดชนะ", ออกจาก Dashboard แล้วบันทึกอัตโนมัติที่ค้างอยู่ทันที — เพิ่ม **MULTI-8 ถึง MULTI-13** (ไม่ตัด id ใดเลย) · **อัปเดต 2026-10-03 (Visual refresh)** — เพิ่ม **VIS-4 ถึง VIS-14** (popover ไม่ปิดเอง/ไม่ล้นจอ/ไม่ลอยค้าง, แถบ Time range แถวเดียว, แท็บ Filter/Highlights/Sensor/Failure Groups หน้าตาใหม่, สีกราฟ Build Model/PM โทนเดียวกับ Dashboard, หน้าต่าง Add Special Sensor หน้าตาใหม่) — ไม่ตัด id ใดเลย · **อัปเดต 2026-10-04 (Health score 3b-1 — Workbench 2 หน้า ต่อ model: Model fit + Health score)** — หัวหน้าต่างเป็นแถบขั้นตอน 5 ขั้นที่กดได้ (Running condition → Model settings → Train → Health set points → Complete), มีสวิตช์ "1 Model fit / 2 Health score" ที่หัว detail pane (หน้า Health score ยังเป็นกรอบว่างไว้ก่อน — มาในเฟสถัดไป), แถบเตือน stale + ฟิล์ม "Out of date" บนกราฟ, จุดสถานะ 3 สี (เหลือง/แดง/เขียว) + legend, กราฟของหน้า Model fit เป็นกราฟใหม่ทั้งหมดที่ดึงจากข้อมูลย่อของ Rust (Individual: ค่าตามเวลา + Distribution ใหม่ + การ์ดสถิติ; Relationship: แถบสถิติ + Fit + Target vs predicted + Residual เต็มกว้าง ไม่มี distribution ของ residual; Clustering: scatter + วง SD ทุก cluster + การ์ดสรุป), ทุกกราฟมีปุ่มขยาย, "Compare predictors" เปิด Sub-models เป็น modal, โมเดล Complete เห็นกราฟเมื่อเปิดซ้ำ, และแก้บั๊ก detail pane หดหายเมื่อซ่อนลิสต์ซ้าย: **ตัด BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-56 ถึง BMW-68** — BMW-56 คือการ์ด Step 1 เดิม (BMW-51) ที่ตัดส่วนแถบขั้นตอนออก · **อัปเดต 2026-10-04 (Health score 3b-2)** — หน้า "2 Health score" เป็นหน้าจริงแล้ว: **ตัด BMW-58 และ BMW-44** (หน้า placeholder / Mark complete ที่ footer หน้า Model fit — ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-69 ถึง BMW-79** (สวิตช์ 2 หน้า, set point ของ Individual/Relationship/Clustering, Checks, กราฟคะแนน + ซิงก์เมาส์, Mark complete เขียนไฟล์จริง, Mark incomplete + "Changed after saving", การบันทึก set point/ปิดหน้าต่าง, ป้าย "Set points needed"/"Fix set point", Finish ของหน้า PM) และแก้ข้อความ FG-13, BMW-4, BMW-30, BMW-33, BMW-56 ที่อ้างปุ่ม Mark complete เดิม · **อัปเดต 2026-10-04 (Health score เฟส 4 — ตัดหน้าเต็ม)** — ถอดหน้า Predictive Model (ปุ่ม "Open full view ↗", ปุ่ม Finish, Back, Sub-models บนหน้านั้น) ออกจากแอปทั้งหมด: **ตัดทั้งหมวด PM (22 ข้อ), BMW-8, BMW-10, BMW-79, VIS-12** แล้วเพิ่ม **BMW-83** (ไม่มีทางเปิดหน้า full view แล้ว) กับ **BMW-84** (ทุกโมเดลเข้าถึงและ Complete ได้จากสองหน้าของ Workbench เท่านั้น) และแก้ข้อความของ BMW-27, BMW-30, BMW-33, BMW-40, BMW-47, BMW-50, BMW-53, BMW-54, BMW-56, BMW-57, BMW-66, BMW-69, PER-9, PER-10, PER-13, VIS-1 ที่อ้างปุ่ม/หน้านั้น — Sub-models เหลือเป็น modal ใน Workbench เท่านั้น (BMW-66) · **อัปเดต 2026-10-04 (เก็บกวาด id หลัง QA)** — FG-13 → **FG-14** และ BMW-80 → **BMW-85** (ความหมายเปลี่ยนแต่เคยใช้ id เดิมซ้ำ — id เก่าถูกเพิ่มเข้ารายการที่ตัดแล้ว), ย้ายป้าย 🆕 ของ FG-14/BMW-85/BMW-81/BMW-82 ออกมาหลัง `**` ให้ตัวสร้าง HTML อ่านป้ายได้, และเติม id ที่เคยถูกตัดแต่ตกหล่นจากรายการ (BMW-3/7/12/78, FG-3/11, MNG-10, PER-11/12, SPC-8/12, EDT-16/18/24/30) · **อัปเดต 2026-10-04 (หน้าแรก "Get started" ใหม่ — Import เฟส B)** — step 0 ของหน้า Import เปลี่ยนเป็น 2 คอลัมน์: ซ้ายคือแบรนด์ + headline + ปุ่ม **New project** (Ctrl+N) + ช่องค้นหา + การ์ด Recent projects (hover/โฟกัสแล้วมี Rename / Delete, ลบยืนยัน**ในแถว**แทนหน้าต่าง dialog), ขวาคือภาพเครื่องจักรจากกลุ่มจุดที่เปลี่ยนรูปไปเรื่อย ๆ, ท้ายหน้ามีเวอร์ชันแอป + "Data stays on this machine": **ตัด IMP-1 และ IMP-21** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-22 ถึง IMP-29** (IMP-22 คือ IMP-21 เดิมที่ปรับเป็นยืนยันในแถว) — IMP-2/IMP-18 แก้แค่คำอธิบายตำแหน่ง/วิธีกด (ความหมายเดิม จึงไม่เปลี่ยน id) · step 1–2 ยังเป็นหน้าเดิม (sidebar เดิม) จนกว่าเฟสถัดไป · **อัปเดต 2026-10-04 (Import เฟส C — step 1–2 ใหม่)** — sidebar "Find workspace / Recent" ของ step 1–2 ถูกแทนด้วยแถบขั้นตอนทางซ้าย (rail) · Step 1 "Name your project" (ตัวนับ /80, เตือนชื่อซ้ำแบบไม่บล็อก, การ์ดตัวอย่าง, การ์ด Next) · Step 2 "Add your sensor data" (ซ้าย "Sensor data": dropzone + ชิปเงื่อนไข, แถบความคืบหน้าตอนอ่าน, การ์ดสรุป Rows/Sensors/Period/Interval/% empty, Time coverage, กล่อง "Fixed while reading" · ขวา "Tag names" ที่เดิมชื่อ Sensor mapping) · ปุ่ม Continue ของ step 2 เปลี่ยนเป็น "Open Dashboard": **ตัด IMP-6, IMP-7, IMP-8, IMP-9, IMP-10, IMP-11, IMP-12** (ความหมายเปลี่ยน) แล้วเพิ่ม **IMP-30 ถึง IMP-39** — IMP-14/16/17/18/19/22 และ VIS-1/VIS-3 แก้แค่ชื่อปุ่ม/หัวข้อให้ตรง UI ใหม่ (ความหมายเดิม จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-07 (Train/Test model validation)** — ช่วงเวลาแบ่งเป็น **Train periods** (บังคับต้องมีอย่างน้อย 1 ช่วง ไม่มีช่วง = ไม่ใช่ "ทั้งชุดข้อมูล" อีกต่อไป) กับ **Test periods** (Normal / Known problem + event time, ต้องมีอย่างน้อย 1 ช่วงก่อน Mark complete) · ผลทดสอบเป็นข้อมูลเท่านั้น (เขียว/เหลือง ไม่บล็อก): **ตัด BMW-47, BMW-53, BMW-56** (ความหมายเปลี่ยน) แล้วเพิ่ม **BMW-86 ถึง BMW-92** · **อัปเดต 2026-10-07 (แก้ตาม code review)** — เพิ่ม **BMW-93** (Custom: Test period ผิด = Save ไม่ได้, Mark complete ตอนมีค่าที่ยังไม่ Save บันทึกให้ก่อน, เตือน Train < 30 วันของ Custom) และ **BMW-94** (Relation model: Train คำนวณ Test ไปด้วย, ข้อความรอ ~15 วินาที, ให้คะแนน Test ไม่ได้ = กล่องเหลือง) · **อัปเดต 2026-10-07 (code review รอบ 3)** — เพิ่ม **BMW-95** (จำความล้มเหลว, Try again, engine เก่าไม่มีปุ่ม Try again, ช่วงใหญ่เกิน) · BMW-94 ย้ายกรณี engine เก่าไปที่ BMW-95 (ข้อใหม่วันเดียวกัน ยังไม่มีผลทดสอบ จึงไม่เปลี่ยน id) · BMW-88 ชิป "No train period" เปลี่ยนจากแดงเป็นเหลือง และ BMW-75 ข้อความเวลาของ Relationship (แก้ข้อความในข้อเดิม ความหมายไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (คำขอลูกค้า)** — เอาสวิตช์ Band / Line colour ในแท็บ Highlights ออก (highlight แบบ By time บนกราฟ Line เป็นแถบเสมอ): **ตัด HL-4** แล้วเพิ่ม **HL-8** (ไม่มีสวิตช์แล้ว + workspace เก่าที่เคยตั้ง Line colour เปิดแล้วเป็นแถบ) · ลบ tag ทีละอันได้: เพิ่ม **LINE-9** และ **SCAT-9** (รายการ tag ใต้แถบเครื่องมือ มีปุ่ม × ต่ออัน) · VIS-8 ตัดประโยคเรื่องสวิตช์ Band / Line colour ออก (ความหมายของข้อไม่เปลี่ยน จึงไม่เปลี่ยน id) · **อัปเดต 2026-10-08 (แก้บั๊ก special sensor จาก QA)** — สูตรที่ไม่ผ่านการตรวจขึ้นสีแดงใต้ช่องสูตรและกด Add/Save ไม่ได้ (SPC-26, EDT-13 → EDT-42), เปลี่ยน source แล้ว Average/Sum/Median ไม่กลายเป็นผลบวก (SPC-29, EDT-43), Formula Syntax Help (SPC-27), ปัดทศนิยมแบบ "Then apply" (SPC-28), ชิป Referenced sensors (SPC-30), Rust ปฏิเสธฟังก์ชันที่ไม่รู้จัก (EDT-44), รายการ Manage บอกจำนวนทศนิยม (EDT-45), เปิด workspace เก่าที่มีสูตรซึ่งตอนนี้ไม่ผ่าน (EDT-46)
 >
 > **ต้องทดสอบบน installer ที่ติดตั้งแล้ว ไม่ใช่ `npm run tauri dev`** — CSP และ path ของ Python sidecar เป็นคนละกลไกกันระหว่าง dev กับ build จริง บั๊กหลายตัวที่เจอมาเห็นเฉพาะในตัวติดตั้ง
 >
-> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (ตัดทั้งหมวด PM: PM-1, PM-3, PM-4, PM-5, PM-6, PM-7, PM-26, PM-18, PM-11b, PM-12, PM-13, PM-22, PM-23, PM-15, PM-16, PM-17, PM-19, PM-20, PM-27, PM-28, PM-29, PM-30, BMW-8, BMW-10, BMW-79, VIS-12 — เฟส 4 ถอดหน้า Predictive Model + Open full view + Finish ออก · PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23, BMW-41, BMW-42, BMW-25, BMW-34, BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51, BMW-58, BMW-44, SEN-5, SEN-6, SEN-7, SEN-8, SEN-9, SEN-10, BMW-3, BMW-7, BMW-12, BMW-78, BMW-80 (ความหมายเปลี่ยน — ตอนนี้คือ BMW-85), FG-3, FG-11, FG-13 (ความหมายเปลี่ยน — ตอนนี้คือ FG-14), IMP-13 (ตัดออก: ไม่เคยมี UI จับคู่ tag ด้วยมือ), IMP-3 (ความหมายเปลี่ยน — ตอนนี้คือ IMP-22: ลบโปรเจกต์ต้องกดยืนยันในแถวก่อน), IMP-1 (ความหมายเปลี่ยน — ตอนนี้คือ IMP-23: หน้าแรกแบบใหม่), IMP-21 (ความหมายเปลี่ยน — ตอนนี้คือ IMP-22: เดิมเป็นหน้าต่าง dialog ยืนยัน ตอนนี้ยืนยันในแถว), IMP-6 (ตอนนี้คือ IMP-30: Step 1 "Name your project"), IMP-7 (ตอนนี้คือ IMP-31: เตือนชื่อซ้ำแบบไม่บล็อก), IMP-8 (ตอนนี้คือ IMP-33: แถบขั้นตอนทางซ้าย), IMP-9 (ตอนนี้คือ IMP-34: step 2 ใหม่), IMP-10 (ตอนนี้คือ IMP-37: merge หลายไฟล์ + Time coverage), IMP-11 (ตอนนี้คือ IMP-36: การ์ดสรุป), IMP-12 (ตอนนี้คือ IMP-38: Tag names), MNG-10, PER-11, PER-12, SPC-8, SPC-12, EDT-16, EDT-18, EDT-24, EDT-30, BMW-47 (ตอนนี้คือ BMW-89: Custom มีช่วง Train/Test ของตัวเอง + ข้อความ Copied ใหม่), BMW-53 (ตอนนี้คือ BMW-86: ไม่มีช่วงเวลา = ไม่ใช่ "ทั้งชุดข้อมูล" อีกต่อไป ต้องมี train period), BMW-56 (ตอนนี้คือ BMW-88: การ์ด Step 1 มีแถว Train/Test และแถบ 2 ชั้น)) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
+> ผลที่กรอกไว้ในไฟล์ HTML เก็บตาม id ของแต่ละข้อ — ข้อที่ **เปลี่ยนความหมายมากจึงตั้ง id ใหม่ / ตัดออก** (ตัดทั้งหมวด PM: PM-1, PM-3, PM-4, PM-5, PM-6, PM-7, PM-26, PM-18, PM-11b, PM-12, PM-13, PM-22, PM-23, PM-15, PM-16, PM-17, PM-19, PM-20, PM-27, PM-28, PM-29, PM-30, BMW-8, BMW-10, BMW-79, VIS-12 — เฟส 4 ถอดหน้า Predictive Model + Open full view + Finish ออก · PM-2, PM-9, PM-10, PM-10b, PM-11, PM-11c, BMW-11, PM-14, PM-8, PM-21, BMW-6, BMW-15, BMW-16, BMW-17, BMW-18, BMW-19, BMW-20, BMW-23, BMW-41, BMW-42, BMW-25, BMW-34, BMW-38, BMW-43, BMW-45, BMW-46, BMW-49, BMW-51, BMW-58, BMW-44, SEN-5, SEN-6, SEN-7, SEN-8, SEN-9, SEN-10, BMW-3, BMW-7, BMW-12, BMW-78, BMW-80 (ความหมายเปลี่ยน — ตอนนี้คือ BMW-85), FG-3, FG-11, FG-13 (ความหมายเปลี่ยน — ตอนนี้คือ FG-14), IMP-13 (ตัดออก: ไม่เคยมี UI จับคู่ tag ด้วยมือ), IMP-3 (ความหมายเปลี่ยน — ตอนนี้คือ IMP-22: ลบโปรเจกต์ต้องกดยืนยันในแถวก่อน), IMP-1 (ความหมายเปลี่ยน — ตอนนี้คือ IMP-23: หน้าแรกแบบใหม่), IMP-21 (ความหมายเปลี่ยน — ตอนนี้คือ IMP-22: เดิมเป็นหน้าต่าง dialog ยืนยัน ตอนนี้ยืนยันในแถว), IMP-6 (ตอนนี้คือ IMP-30: Step 1 "Name your project"), IMP-7 (ตอนนี้คือ IMP-31: เตือนชื่อซ้ำแบบไม่บล็อก), IMP-8 (ตอนนี้คือ IMP-33: แถบขั้นตอนทางซ้าย), IMP-9 (ตอนนี้คือ IMP-34: step 2 ใหม่), IMP-10 (ตอนนี้คือ IMP-37: merge หลายไฟล์ + Time coverage), IMP-11 (ตอนนี้คือ IMP-36: การ์ดสรุป), IMP-12 (ตอนนี้คือ IMP-38: Tag names), MNG-10, PER-11, PER-12, SPC-8, SPC-12, EDT-16, EDT-18, EDT-24, EDT-30, BMW-47 (ตอนนี้คือ BMW-89: Custom มีช่วง Train/Test ของตัวเอง + ข้อความ Copied ใหม่), BMW-53 (ตอนนี้คือ BMW-86: ไม่มีช่วงเวลา = ไม่ใช่ "ทั้งชุดข้อมูล" อีกต่อไป ต้องมี train period), BMW-56 (ตอนนี้คือ BMW-88: การ์ด Step 1 มีแถว Train/Test และแถบ 2 ชั้น), SEL-1, SEL-4, FIL-5, HL-1, HL-5, HL-6, LINE-2, SCAT-3, PAIR-5, BMW-9, BMW-13, BMW-14 (2026-10-09 customer items 3+4: ชื่อ sensor / ตัวเลือก sensor / ตัวเลือกสีแบบเดียวทั้งแอป — ตอนนี้คือ SEL-9, SEL-10, FIL-6, HL-9, HL-10, HL-11, LINE-10, SCAT-10, PAIR-11, BMW-96, BMW-97, BMW-98), EDT-5 (ตอนนี้คือ EDT-53: เลือก source sensor ผ่านหน้าต่างเลือก sensor แทน dropdown)) ถ้าเคยกรอกผลรอบก่อนไว้ให้กด "ล้างผลทั้งหมด" ก่อนเริ่มรอบนี้
 >
 > เครื่องหมาย: 🆕 = ของที่เพิ่งทำ ยังไม่เคยมีคนกดจริง · 👀 = บั๊กที่เพิ่งแก้ หรือรายงานที่ยังไม่เคยตามไปดู · 🐍 = path เดียวที่เรียก Python sidecar
 
@@ -428,6 +428,12 @@ _Step 0 = หน้าแรก "Get started" (สร้างโปรเจก
   - ดูแถว "Not in Group"
   - **คาดหวัง:** กด ⋯ แล้ว 3 ช่อง I/R/C ของแถวนั้นถูกแทนด้วยปุ่ม Rename / Delete… (กันกดพลาด) พร้อมปุ่มย้อนกลับ; Rename: Enter บันทึก (ชื่อเปลี่ยนทุกที่ที่อ้างถึง รวมแท็บ Failure Groups และหน้าต่าง Build Model), Esc ยกเลิก (แผงไม่ปิด), ชื่อซ้ำถูกกันมีข้อความแดง; Delete…: ถามยืนยันในแถวและบอกจำนวนโมเดลที่จะหลุดกลุ่ม ("N models lose this group"), Cancel/Esc ไม่ลบ, Delete แล้วกลุ่มหายและโมเดลที่มีแค่กลุ่มนี้ย้ายไป Not in Group (ไม่ถูกลบ) ส่วนโมเดลที่อยู่กลุ่มอื่นด้วยไม่โดนแตะ; "Not in Group" ไม่มี ⋯ (เปลี่ยนชื่อ/ลบไม่ได้)
 
+- [ ] **SEN-22 — แถว sensor ใช้ชื่อแบบมาตรฐาน (description ก่อน tag) + ช่องค้นหาบอกว่าค้นอะไรได้** 🆕
+  - กางกลุ่ม component แล้วดูแถว รวมถึง sensor ที่ไม่มี description และ special sensor (ƒ / Σ)
+  - ชี้ชื่อที่ยาวจนถูกตัด
+  - เปิดแผง Failure groups ของแถว (ปุ่ม 📁) ดูหัวแผง
+  - **คาดหวัง:** บรรทัดแรก description + ป้ายหน่วย, บรรทัดสอง tag สีเทา · ตัวที่ไม่มี description แสดง tag บรรทัดเดียวตัว mono (ไม่มี "no description", ไม่มี tag ซ้ำ) · special sensor มีป้าย ƒ / Σ หน้าชื่อ · ชี้แล้วขึ้นชื่อเต็ม · หัวแผง Failure groups เป็นชื่อแบบเดียวกับแถว · ช่องค้นหาเขียน "Search description, tag, unit or component…"
+
 - [ ] **SEN-11 — ปุ่ม Add Special Sensor เปิดหน้าต่างลูก**
   - กดปุ่มล่างสุดของแผง Sensor
   - **คาดหวัง:** หน้าต่างใหม่เปิดมากลางจอ กดปุ่ม X ปิดได้
@@ -438,9 +444,11 @@ _Step 0 = หน้าแรก "Get started" (สร้างโปรเจก
 
 ### แท็บ Selected Sensor
 
-- [ ] **SEL-1 — รายการแสดงข้อมูลครบ**
-  - ดูแต่ละแถว
-  - **คาดหวัง:** มี description เป็นบรรทัดหลัก และ `tag • unit` เป็นบรรทัดรอง สีตัวหนังสือตรงกับสีเส้นบนกราฟ
+- [ ] **SEL-9 — แถวในแท็บ Selected Sensor: ช่องสี (swatch) + ชื่อแบบมาตรฐาน สีตัวหนังสือเป็นกลาง (แทน SEL-1)** 🆕
+  - เลือก sensor 3-4 ตัวบนกราฟ Line แล้วดูแต่ละแถว
+  - เอาเมาส์ชี้ชื่อที่ยาวจนถูกตัด
+  - ดู sensor ที่ไม่มี description ในไฟล์ Tag names
+  - **คาดหวัง:** หน้าชื่อมี**ช่องสีสี่เหลี่ยมเล็ก**สีเดียวกับเส้นบนกราฟ (ไม่มีไอคอนหลอดดูดสีแล้ว) · บรรทัดแรก = description + ป้ายหน่วย, บรรทัดสอง = tag (ตัว mono สีเทา) · **ตัวหนังสือเป็นสีปกติ ไม่ใช่สีของเส้นอีกต่อไป** · ชื่อยาวถูกตัดด้วย … และชี้แล้วขึ้นชื่อเต็ม "DESCRIPTION · TAG · UNIT · Component" · ตัวที่ไม่มี description แสดง tag บรรทัดเดียว ไม่มีคำว่า "no description" และไม่มี tag ซ้ำ 2 ครั้ง · ปุ่มตรึงแกน Y ตอนตรึงอยู่เป็นสีฟ้า (ไม่ใช่สีของเส้น)
 
 - [ ] **SEL-2 — ซ่อน/แสดงเส้นด้วย checkbox**
   - ติ๊ก checkbox ออก
@@ -453,10 +461,14 @@ _Step 0 = หน้าแรก "Get started" (สร้างโปรเจก
   - จ้องดูตอนเส้นกำลังหาย
   - **คาดหวัง:** **เส้นที่เหลือต้องคงสีเดิม ห้ามมีจังหวะที่เส้นเปลี่ยนเป็นอีกสีก่อนหาย** (บั๊กที่เพิ่งแก้ — เดิมสีมาจากลำดับ พอเอาตัวหนึ่งออกตัวหลังเลื่อน slot)
 
-- [ ] **SEL-4 — เปลี่ยนสีเส้น**
-  - กดวงสี → เลือกสีใหม่
+- [ ] **SEL-10 — เปลี่ยนสีเส้นด้วยตัวเลือกสีแบบใหม่ (palette 12 สี + Custom) (แทน SEL-4)** 🆕
+  - กดช่องสีหน้าชื่อ sensor
+  - ดูพาเลท 12 สี: สีปัจจุบันมีวงขาว + เครื่องหมายถูก · สีที่ sensor ตัวอื่นบนกราฟใช้อยู่มีจุดเล็กที่มุม + คำอธิบาย "In use on this chart"
+  - กดสีอื่นในพาเลท (popover ยังเปิดอยู่) แล้วกด Esc
+  - เปิดอีกครั้ง กด "Custom colour" ลากในสี่เหลี่ยมสี/แถบ hue แล้วพิมพ์รหัสสีในช่อง hex เช่น `abcdef` และ `#12345`
+  - ใช้คีย์บอร์ด: Tab ไปที่ช่องสี → Enter เปิด → ลูกศรเลื่อนในพาเลท → Enter เลือก → Tab ไปจนพ้นตัวสุดท้าย
   - ปิดเปิดโปรแกรม
-  - **คาดหวัง:** สีเปลี่ยนทันทีทั้งกราฟและ swatch และยังอยู่หลังเปิดใหม่
+  - **คาดหวัง:** สีเปลี่ยนทันทีทั้งกราฟและช่องสี และยังอยู่หลังเปิดใหม่ · ไม่มีหน้าต่างเลือกสีของ Windows โผล่มา · พิมพ์ 6 หลัก (มีหรือไม่มี #) แล้วสีเปลี่ยนทันที · พิมพ์ไม่ครบ 6 หลักขึ้นข้อความแดง "Use 6 hex digits, like #3b82f6." และสีไม่เปลี่ยน · Esc ปิดแล้วโฟกัสกลับมาที่ช่องสี · Tab พ้นตัวสุดท้ายแล้ว popover ปิด · เปิดตัวเลือกสีแล้วกดปุ่มตรึงแกน Y = ตัวเลือกสีปิด (ไม่ซ้อนกัน 2 อัน)
 
 - [ ] **SEL-5 — ตรึงช่วงแกน Y ต่อ sensor**
   - ตั้ง min/max ของ sensor หนึ่ง
@@ -506,10 +518,26 @@ _แผงนี้ใช้ draft state — แก้/เพิ่ม/ลบแ
   - สลับ Line → Scatter → Pair Plot
   - **คาดหวัง:** ทุกโหมดเห็นข้อมูลที่ถูกกรองชุดเดียวกัน
 
-- [ ] **FIL-5 — filter บน sensor ที่ถูกเอาออกจากกราฟ**
-  - ตั้ง filter บน sensor A
-  - เอา A ออกจากกราฟ
-  - **คาดหวัง:** ดูว่า filter หายตามหรือค้างอยู่ — บันทึกพฤติกรรมจริงไว้
+- [ ] **FIL-6 — filter บน sensor ที่ถูกเอาออกจากกราฟ: ยังอยู่และยังกรองอยู่ + มีคำเตือนสีเหลือง (แทน FIL-5)** 🆕
+  - ตั้ง filter บน sensor A แล้วกด Apply filter
+  - เอา A ออกจากกราฟ (Remove from plot หรือเอาติ๊กออกในแผง Sensor)
+  - ดูแถว filter นั้นในแท็บ Filter แล้วกด "Show on chart"
+  - เอา A ออกอีกครั้ง แล้วกด "Remove" ในข้อความใต้แถว แล้วกด Apply filter
+  - **คาดหวัง:** แถว filter **ไม่หายไปเอง** และยังกรองข้อมูลอยู่ (จำนวนจุดบนกราฟเท่าเดิม) · หน้าแถวมีไอคอน ⚠ และกรอบช่อง sensor เป็น**เส้นทึบสีเหลือง** (ไม่ใช่เส้นประ) · ใต้แถวมีข้อความ "<description> <tag> is not on the chart. The filter still applies." พร้อมปุ่ม Show on chart / Remove · Show on chart เอา A กลับขึ้นกราฟ (คำเตือนหายไป) · Remove ลบแถวนั้นออก
+
+- [ ] **FIL-8 — "Show on chart" บน Pair Plot ที่มี sensor ครบ 4 ตัวแล้ว: กดไม่ได้และบอกเหตุผล** 🆕
+  - บน Line เลือก sensor A, B, C, D ตั้ง filter บน A แล้วกด Apply filter
+  - เอา A ออกจากกราฟ แล้วเลือก E เพิ่ม (บนกราฟเหลือ B, C, D, E = 4 ตัว) แล้วสลับเป็น Pair Plot
+  - ชี้เมาส์ที่ปุ่ม "Show on chart" ในข้อความใต้แถว แล้วสลับกลับเป็น Line
+  - **คาดหวัง:** บน Pair Plot ปุ่ม "Show on chart" **จางลงกดไม่ได้** ชี้แล้วขึ้น "Pair Plot shows at most 4 sensors" (ไม่ใช่กดแล้วเงียบ) · บน Line กดได้ตามปกติ · ปุ่ม Remove ยังใช้ได้ตลอด
+
+- [ ] **FIL-7 — เลือก sensor ของ filter ด้วยตัวเลือกแบบ popover + หน่วยท้ายช่องค่า** 🆕
+  - กด Add condition แล้วกดช่อง sensor ของแถว
+  - ดูบรรทัด "Sensors on the chart · N" ใต้ช่องค้นหา แล้วพิมพ์ค้นด้วย description, tag, หน่วย และชื่อ component
+  - กด ↓ / ↑ แล้ว Enter เพื่อเลือก, เปิดใหม่แล้วกด Esc
+  - เลือกตัวดำเนินการ between แล้วดูช่องค่า min / max
+  - ลองเปิดตัวเลือกในแถวที่อยู่ล่างสุดของหน้าจอ (หน้าต่างเตี้ย)
+  - **คาดหวัง:** เปิดเป็น popover ใต้ช่อง (ไม่ใช่ dropdown ของ Windows) — กดครั้งเดียวเลือกแล้วปิด ไม่มีปุ่ม OK · รายการมีแค่ sensor ที่อยู่บนกราฟ · ค้นได้ทั้ง 4 แบบ และกลุ่ม component ที่มีผลลัพธ์กางออกเอง · ชื่อในช่องเป็น description ตามด้วย tag (ไม่มีวงเล็บ) · ช่องค่ามีหน่วยต่อท้ายจางๆ (เช่น `BAR`) · Esc ปิดแล้วโฟกัสกลับที่ช่อง · แถวล่างสุดเปิด popover ขึ้นด้านบนแทน ไม่ตกขอบจอ · หน้าต่างแคบ แถว between ยังอ่านออก (ช่อง sensor ขึ้นบรรทัดของตัวเอง)
 
 ---
 
@@ -519,11 +547,11 @@ _แผงนี้ใช้ draft state — แก้/เพิ่ม/ลบแ
 
 _By time ใช้กับ Line/Scatter · By value ใช้กับ Scatter เท่านั้น · Pair Plot ไม่อ่านแท็บนี้เลย (ตั้งใจ)_
 
-- [ ] **HL-1 — By time — เพิ่มช่วงเวลา**
+- [ ] **HL-9 — By time — เพิ่มช่วงเวลา + เปลี่ยนสีด้วยตัวเลือกสีแบบใหม่ (แทน HL-1)** 🆕
   - เพิ่มช่วง
   - ใส่ label
-  - เปลี่ยนสี
-  - **คาดหวัง:** แถบสีขึ้นบนกราฟตรงช่วงที่กำหนด
+  - กดช่องสีหน้าชิปแล้วเลือกสีจากพาเลท
+  - **คาดหวัง:** แถบสีขึ้นบนกราฟตรงช่วงที่กำหนด · ตัวเลือกสีเป็นแบบเดียวกับแท็บ Selected Sensor (พาเลท 12 สี + จุดบอกสีที่ highlight อื่นใช้อยู่ + Custom) · สีบนกราฟเปลี่ยนทันที
 
 - [ ] **HL-2 — By time — toggle / rename / ลบ**
   - ปิด-เปิดช่วง
@@ -535,17 +563,24 @@ _By time ใช้กับ Line/Scatter · By value ใช้กับ Scatter 
   - เพิ่ม 3 ช่วงคนละสี
   - **คาดหวัง:** ขึ้นครบทุกช่วง ไม่ทับกันมั่ว
 
-- [ ] **HL-5 — By value (Scatter)**
-  - สลับไป Scatter
-  - เลือก sensor ที่จะไล่สี
-  - เพิ่มช่วง min/max + สี
-  - **คาดหวัง:** จุดในช่วงนั้นเปลี่ยนสีตาม
+- [ ] **HL-10 — By value (Scatter): "Colour by…" เป็นตัวเลือก sensor แบบ popover + หน่วยและตัวคั่นหลักพัน (แทน HL-5)** 🆕
+  - สลับไป Scatter แล้วกด "Colour by…"
+  - เลือก sensor (รายการมีบรรทัด "Sensors on the chart · N")
+  - เพิ่มช่วง min/max เช่น 1500 – 12345.5 แล้วดูชิป และดูช่อง min/max
+  - สลับไป Line และ Pair Plot แล้วดูช่อง "Colour by…"
+  - **คาดหวัง:** จุดในช่วงเปลี่ยนสีตาม · ชิปเขียน `1,500 – 12,345.5 <หน่วย>` · ช่อง min/max มีหน่วยต่อท้ายจางๆ · บน Line ช่อง "Colour by…" กดไม่ได้จริง (จาง) และเขียนเหตุผล "Colour by… (Scatter only)" — บน Pair Plot "Colour by… (not on Pair Plot)" — ถ้าเลือก sensor ไว้แล้ว ยังเห็นชื่อ sensor ในช่องที่จางอยู่
 
-- [ ] **HL-6 — By value — toggle / ลบ / เปลี่ยนสี**
+- [ ] **HL-12 — By value: "Colour by…" ล้างกลับเป็นไม่เลือกได้ (None) + ช่วงค่าเล็ก ๆ ไม่ถูกปัดเป็น 0** 🆕
+  - บน Scatter เลือก sensor ใน "Colour by…" แล้วเปิดตัวเลือกอีกครั้ง กดแถวบนสุด **None**
+  - เลือก sensor ใหม่ แล้วเพิ่มช่วง min/max เป็น `0.0001` – `0.0004`
+  - **คาดหวัง:** กด None แล้วช่องกลับเป็น "Colour by…" และสีตามช่วงหายจาก Scatter · ชิปช่วงเขียน `0.0001 – 0.0004` (ทศนิยมครบตามที่พิมพ์ ไม่ใช่ `0 – 0`)
+
+- [ ] **HL-11 — By value — toggle / ลบ / เปลี่ยนสี (ตัวเลือกสีแบบใหม่) (แทน HL-6)** 🆕
   - ปิด-เปิดช่วง
-  - เปลี่ยนสี
+  - กดช่องสีของช่วงแล้วเลือกสี (ดูจุดบอกสีที่ช่วงอื่นใช้อยู่)
+  - เปิดตัวเลือกสีค้างไว้แล้วสลับกราฟเป็น Line แล้วกลับ Scatter
   - ลบ
-  - **คาดหวัง:** ทำได้ครบ
+  - **คาดหวัง:** ทำได้ครบ · ตัวเลือกสีปิดเองเมื่อสลับกราฟ และไม่โผล่กลับมาเองตอนสลับกลับ
 
 - [ ] **HL-7 — Pair Plot ไม่ถูก highlight กระทบ**
   - ตั้ง highlight ไว้
@@ -612,9 +647,9 @@ _By time ใช้กับ Line/Scatter · By value ใช้กับ Scatter 
   - เลือก 5-6 sensor
   - **คาดหวัง:** ครบทุกเส้น สีตรงกับที่แสดงในแท็บ Selected Sensor
 
-- [ ] **LINE-2 — Tooltip**
-  - เอาเมาส์ชี้บนกราฟ
-  - **คาดหวัง:** แสดงเวลาและค่าของทุกเส้น ณ จุดนั้น — **ค่าต้องเป็นตัวเลขจริงพร้อมหน่วย** (เช่น `6425.308 KW`) ไม่ใช่ตัวเลข timestamp ดิบต่อท้าย (เคยเห็น `1756872000000,6425.3 KW` หลังเปลี่ยนเป็นแกนเวลา แก้แล้ว)
+- [ ] **LINE-10 — Tooltip: ชื่อแบบมาตรฐาน + ค่า + หน่วย ตัวคั่นหลักพัน (แทน LINE-2)** 🆕
+  - เลือก sensor ที่มีค่าเกิน 1,000 และตัวที่ไม่มี description แล้วเอาเมาส์ชี้บนกราฟ
+  - **คาดหวัง:** หัว tooltip เป็นเวลา · แต่ละแถวมีสี่เหลี่ยมสีของเส้น + description ตามด้วย tag (ตัวเล็กสีเทา ไม่มีวงเล็บ) ชิดซ้าย และ**ค่า + หน่วยชิดขวาเป็นสีของเส้น** เช่น `6,425.308 KW` (3 ตำแหน่ง มีตัวคั่นหลักพัน) · ตัวที่ไม่มี description แสดง tag อย่างเดียว · ไม่มีเลข timestamp ดิบโผล่ · description ยาวถูกตัดด้วย …
 
 - [ ] **LINE-3 — Zoom — เมนู "Horizontal zoom / Zoom out" (แทนแถบเลื่อนเดิม)** 🆕
   - ดูใต้กราฟ: **ต้องไม่มีแถบเลื่อน (slider) แล้ว**
@@ -645,6 +680,10 @@ _By time ใช้กับ Line/Scatter · By value ใช้กับ Scatter 
   - คลิกจุดที่ปักไว้แล้วซ้ำอีกที
   - กด Clear all tags
   - **คาดหวัง:** เปิดโหมดแล้วคลิกถึงปักได้ (ทดสอบซ้ำหลังเปลี่ยนเป็นแกนเวลา — เคยคลิกไม่ติดเลย แก้แล้ว), คลิกจุดที่ปักไว้ซ้ำ = เอาออก, Clear all ล้างหมดทีเดียว — tag พวกนี้ตั้งใจไม่ให้อยู่ข้ามการปิดโปรแกรม
+
+- [ ] **LINE-11 — กล่องค่าของ Tag point: description + tag + ค่าชิดขวา (ทดสอบบนตัวติดตั้ง — ฟอนต์ Consolas/Segoe UI)** 🆕
+  - เปิดโหมด Tag แล้วปักจุดบนกราฟที่มี sensor 3 ตัว (มีทั้ง description ยาวและตัวที่ไม่มี description)
+  - **คาดหวัง:** ในกล่องแต่ละบรรทัดเป็น description (ยาวถูกตัดด้วย …) ตามด้วย tag สีเทา แล้วค่า + หน่วยอยู่**คอลัมน์ขวาที่ตรงกันทุกบรรทัด** · กล่องกว้างไม่เกินราว 330 px · ตัวที่ไม่มี description แสดง tag เต็มช่อง · เอาเมาส์ชี้กราฟ tooltip ยังบอกชื่อเต็ม
 
 - [ ] **LINE-7 — Time highlight บนเส้น**
   - ตั้ง highlight by time ไว้
@@ -679,10 +718,18 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
   - เลือก 2+ sensor แล้วกด Scatter
   - **คาดหวัง:** **เห็นจุดจริง ไม่ใช่พื้นที่ว่าง** — ถ้าว่างเปล่าคือ CSP `unsafe-eval` หายไปอีกแล้ว (regl คอมไพล์ draw command ตอน runtime)
 
-- [ ] **SCAT-3 — เลือกแกน X / Y — dropdown แสดง description แทน tag เปล่าๆ แล้ว (แก้ 2026-09-22)** 🆕
-  - ดู dropdown X และ Y เหนือกราฟ (มีป้าย "X"/"Y" เล็กๆ แยกอยู่ข้างนอกกล่อง)
-  - เปลี่ยนค่าใน dropdown ทั้งสอง
-  - **คาดหวัง:** แต่ละตัวเลือกใน dropdown เขียนเป็น "description (tag)" (ตัวที่ไม่มี description ในไฟล์ mapping ก็ยังเขียน tag เปล่าๆ ได้) **ไม่ใช่ "tag (X)"/"tag (Y)" แบบเดิม** — กล่อง dropdown กว้างพอที่ description จะไม่ถูกตัดขาด, กราฟเปลี่ยนตามที่เลือก และเลือกค่าที่ตั้งไว้ยังอยู่หลังปิดเปิดโปรแกรม
+- [ ] **SCAT-10 — เลือกแกน X / Y ด้วยตัวเลือกแบบ popover ขนาดเล็ก (แทน SCAT-3 — dropdown ของ Windows ถูกเลิกใช้)** 🆕
+  - ดูช่อง X และ Y เหนือกราฟ (ป้าย "X"/"Y" เล็กๆ อยู่ข้างนอก)
+  - กดช่อง X: ดูบรรทัด "Sensors on the chart · N" แล้วค้นหาและเลือก
+  - กดช่อง Y ซึ่งอยู่ชิดขวา
+  - ใช้คีย์บอร์ด: Tab ไปที่ช่อง → Space หรือ ↓ เปิด → ↑↓ → Enter
+  - ปิดเปิดโปรแกรม
+  - **คาดหวัง:** ช่องเตี้ย (ราว 24 px) เขียน description ตามด้วย tag (ช่องแคบมากแล้ว tag ซ่อน แต่ชี้ค้างยังเห็นชื่อเต็ม) · เปิดเป็น popover ไม่ใช่ dropdown ของ Windows · popover ของ Y เปิดชิดขวาไม่หลุดขอบกราฟ · เลือกแล้วกราฟเปลี่ยนทันที และค่าที่เลือกยังอยู่หลังเปิดใหม่
+
+- [ ] **SCAT-11 — ชื่อแกนและ tooltip ของ Scatter เป็นชื่อแบบมาตรฐาน (ทดสอบบนตัวติดตั้ง — WebView2)** 🆕
+  - ดูชื่อแกน X ใต้กราฟและแกน Y แนวตั้งทางซ้าย (ลองเลือก sensor ที่ description ยาวมาก)
+  - เอาเมาส์ชี้จุด และปัก Tag point 1 จุด
+  - **คาดหวัง:** ชื่อแกนเป็น description ตามด้วย tag และหน่วย · ชื่อแกน Y อ่านจากล่างขึ้นบน และถ้ายาวกว่าความสูงกราฟ**ถูกตัดด้วย …** ไม่ล้นออกนอกกราฟ · tooltip และกล่อง Tag point แต่ละแถวเป็นชื่อซ้าย ค่า + หน่วยขวา (ตัวคั่นหลักพัน)
 
 - [ ] **SCAT-4 — ตรึงสเกลแกน (ไอคอนไม้บรรทัด)**
   - ใส่ min/max ของแกน X
@@ -738,12 +785,18 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
   - lasso อีก 2 ครั้ง
   - **คาดหวัง:** ได้ 3 cluster คนละสี, เปลี่ยนสีและลบทีละอันได้
 
-- [ ] **PAIR-5 — แก้ไขแล้ว — ไม่มีปุ่ม Enable/Disable ทั้งหมด (ไม่มีอยู่ในโค้ด) มีแค่ลบทีละ cluster**
+- [ ] **PAIR-11 — ลบ cluster ทีละอัน + เปลี่ยนสี cluster ด้วยตัวเลือกสีแบบใหม่ (แทน PAIR-5)** 🆕
   - สร้าง cluster ไว้ 3 อัน
-  - ลบทีละอันจากปุ่มถังขยะที่แถวนั้น
-  - ดูตัวเลข "N clusters · M rows" ที่หัวแผง
+  - กดช่องสีของ cluster หนึ่ง เลือกสีจากพาเลท (ดูจุดบอกสีที่ cluster อื่นใช้อยู่) แล้วลอง Custom colour
+  - ลบทีละอันจากปุ่มถังขยะที่แถวนั้น ดูตัวเลข "N clusters · M rows" ที่หัวแผง
   - ลบจนหมดทุกอัน
-  - **คาดหวัง:** **ไม่มีปุ่ม "เปิด/ปิดทั้งหมด" อยู่จริงในแอป** — แต่ละแถวมีแค่วงกลมสี (คลิกเปลี่ยนสีได้ ใช้ native color picker ของ OS ไม่ใช่ ColorPlatePicker แบบจุดอื่น) กับปุ่มถังขยะเท่านั้น ไม่มีปุ่มซ่อนชั่วคราว — ตัวเลขหัวแผงต้องลดตามทุกครั้งที่ลบ และพอลบหมดแล้ว**แผง cluster ทั้งกล่องต้องหายไปเลย** ไม่ใช่โชว์ "0 clusters" ค้างอยู่
+  - **คาดหวัง:** ช่องสีเปิดตัวเลือกสีแบบเดียวกับแท็บ Selected Sensor — **ไม่มีหน้าต่างเลือกสีของ Windows แล้ว** · สีของ cluster เปลี่ยนทุกช่องในตาราง · ตัวเลขหัวแผงลดตามทุกครั้งที่ลบ และลบหมดแล้วแผง cluster หายไปทั้งกล่อง
+
+- [ ] **PAIR-12 — ชื่อ sensor ที่หัวช่อง/ซ้ายแถว: tag เปล่าๆ ชี้แล้วขึ้นการ์ดชื่อเต็ม** 🆕
+  - เปิด Pair Plot 3-4 sensor แล้วเอาเมาส์ชี้ชื่อ tag ที่หัวคอลัมน์และซ้ายแถว (มีเส้นประใต้)
+  - กด Tab จนโฟกัสไปที่ชื่อแกน
+  - เอาเมาส์ชี้จุดในช่อง scatter
+  - **คาดหวัง:** ปกติเห็นแค่ tag ตัว mono · ชี้หรือโฟกัสแล้วขึ้นการ์ดที่มี description + ป้ายหน่วย + tag + ชิป component · ช่อง Time ไม่มีการ์ด · tooltip ของจุดเป็นชื่อซ้าย ค่า + หน่วยขวา
 
 - [ ] **PAIR-6 — ดูแถวที่ brush ไว้เป็นตาราง**
   - กด View brushed rows
@@ -782,6 +835,11 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
   - ติ๊กเลือก sensor
   - ลากเส้นแบ่งกลาง
   - **คาดหวัง:** ค้นได้ ติ๊กได้ ลากปรับความกว้างได้ (split.js)
+
+- [ ] **SPC-31 — Explorer ฝั่งซ้าย: แถวเป็นชื่อแบบมาตรฐาน (description + หน่วย / tag)** 🆕
+  - เปิด Add Special Sensor → Create กางกลุ่ม component
+  - ค้นหาด้วยหน่วย และด้วยชื่อ component
+  - **คาดหวัง:** แต่ละแถว 2 บรรทัด description + ป้ายหน่วย / tag · ตัวไม่มี description แสดง tag บรรทัดเดียว · special sensor ที่สร้างไว้มีป้าย ƒ / Σ · ช่องค้นหาเขียน "Search description, tag, unit or component…" และค้นเจอทั้ง 4 แบบ
 
 - [ ] **SPC-3 — Operation แบบ single**
   - เลือก sensor 1 ตัว
@@ -940,7 +998,7 @@ _โหมดนี้คือตัวที่เคยพังทั้ง�
   - ทำซ้ำด้วย **Sum all** และ **Median**; และลองกับ **Absolute difference** (ใช้ได้แค่ 2 ตัว)
   - **คาดหวัง:** Average/Sum/Median **ยังถูกเลือกอยู่** และ preview ยังบอกว่าเป็นค่าเฉลี่ย/ผลรวม/มัธยฐาน — ส่วน Absolute difference ถูกยกเลิกเอง (กลับไปเป็นการรวมด้วย + ตามที่ preview แสดง) เพราะใช้กับ 3 ตัวไม่ได้; ถ้าเหลือ sensor 1 ตัว ตัวเลือกจะล้างทั้งหมด
 
-- [ ] **SPC-30 — ชิป "Referenced sensors" ใต้ช่องสูตรบอกชื่อ sensor ถูกตัว (มีจุด / ภาษาไทย)** 🆕
+- [ ] **SPC-32 — ชิป "Referenced sensors" ใต้ช่องสูตรบอกชื่อ sensor ถูกตัว (มีจุด / ภาษาไทย)** 🆕
   - ใช้ข้อมูลที่มี sensor ชื่อมีจุด (เช่น `11PT1214A.PV`) และชื่อภาษาไทย
   - กด "Edit as text instead" แล้วพิมพ์ `$11PT1214A.PV - $อุณหภูมิ` (ใช้ชื่อจริงในข้อมูล)
   - **คาดหวัง:** ชิปใต้สูตรแสดง **`11PT1214A.PV`** (ไม่ใช่ `11PT1214A` ซึ่งเป็น sensor อีกตัว) และแสดงชื่อภาษาไทยด้วย
@@ -956,6 +1014,10 @@ _ของใหม่ทั้งหมด ยังไม่เคยมีค
   - สร้าง special sensor ไว้ 3-4 ตัว ทั้งแบบสูตรและ operation
   - เปิดแท็บ Manage
   - **คาดหวัง:** มีครบทุกตัว, หัวแท็บบอกจำนวน `Manage (N)`, badge ƒ = สูตร / Σ = operation
+
+- [ ] **MNG-26 — แถวในแท็บ Manage: description ก่อน, ป้ายหน่วย, tag บรรทัดสอง, ป้ายล็อกสีเทา** 🆕
+  - เปิดแท็บ Manage ที่มี special sensor ทั้งแบบมี description และไม่มี และตัวที่โมเดลใช้อยู่ (ล็อก)
+  - **คาดหวัง:** บรรทัดแรก description + ป้ายหน่วย, บรรทัดสอง tag · ตัวที่ไม่มี description แสดง tag อย่างเดียว — **ไม่มีข้อความ "— no description —" แล้ว** · ป้าย "Used by …" (ไอคอนกุญแจ) เป็น**สีเทา** ไม่ใช่สีเหลือง · ป้าย "No data — fix formula" ของตัวที่กู้ไม่ได้ยังเป็นสีเหลืองเหมือนเดิม
 
 - [ ] **MNG-2 — สูตร/operation อ่านออก** 🆕
   - ดูคอลัมน์ขวาของแต่ละแถว
@@ -1114,18 +1176,24 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ไปดูแท็บ Selected Sensor
   - **คาดหวัง:** ข้อความใหม่ขึ้นทั้งในแท็บ Manage และในรายการ Selected Sensor
 
+- [ ] **EDT-52 — แก้ sensor แบบ operation: เพิ่ม source ด้วยปุ่ม "Add source sensors…" (หน้าต่างเลือกหลายตัว) แทน dropdown** 🆕
+  - Manage → Edit sensor แบบ Sum / Average ที่ยังไม่ถูกล็อก
+  - กด "Add source sensors…" ดูบรรทัด scope แล้วติ๊ก 2 ตัว กด OK
+  - เปิดอีกครั้งแล้วกด Cancel
+  - **คาดหวัง:** ไม่มี dropdown ของ Windows แล้ว · รายการไม่มีตัวมันเองและตัวที่เลือกไว้แล้ว (บรรทัด scope บอก "All sensors except this one and the ones already picked · N") · OK แล้ว source เพิ่มเป็นชิป description + tag ครบทั้ง 2 ตัวในครั้งเดียว · Cancel ไม่เพิ่มอะไร · ชนิด operation เดิม (Sum / Average) ยังอยู่
+
 - [ ] **EDT-4b — บังคับกรอกครบ 4 ช่องในฟอร์มแก้ไข (เหมือน Create) — Component เลือกจากรายการ** 🆕
   - เปิดแก้ special sensor ที่มีข้อมูลครบอยู่แล้ว
   - ลบ Name / Description / Unit ออกทีละช่องให้ว่าง
   - ดูช่อง Component
   - **คาดหวัง:** ปุ่ม **Save changes จางลงกดไม่ได้ทันที** พร้อมข้อความบอกว่าขาดช่องไหน — Component เป็น dropdown เลือกจากรายการที่มีอยู่ (รวม "Uncategorized") จึงเว้นว่างไม่ได้ ไม่มี fallback เงียบ ๆ อีกต่อไป
 
-- [ ] **EDT-5 — แก้ operation — เปลี่ยน source sensors** 🆕
+- [ ] **EDT-53 — แก้ operation — เปลี่ยน source sensors ผ่านหน้าต่างเลือก sensor (แทน EDT-5)** 🆕
   - เปิดแก้ตัวที่เป็น operation
   - กด X ลบ chip ของ sensor หนึ่งออก
-  - เลือกตัวใหม่จาก dropdown
+  - กดปุ่ม **Add source sensors…** → หน้าต่างเลือก sensor (ช่องค้นหา + กลุ่มตาม component) ติ๊กตัวใหม่ 1 ตัวแล้วกด **OK** (ลองอีกรอบแล้วกด Cancel / Esc ด้วย)
   - Save
-  - **คาดหวัง:** ค่าคำนวณใหม่ตาม input ชุดใหม่ และ dropdown ต้องไม่เสนอชื่อตัวมันเอง และไม่เสนอตัวที่เลือกไปแล้ว
+  - **คาดหวัง:** ค่าคำนวณใหม่ตาม input ชุดใหม่ · รายการในหน้าต่าง**ไม่มีชื่อตัวมันเอง และไม่มีตัวที่เลือกไปแล้ว** (บรรทัดบนรายการเขียน "All sensors except this one and the ones already picked · N") · Cancel / Esc ไม่เปลี่ยนอะไร · ไม่มี dropdown ของ Windows แบบเดิม
 
 - [ ] **EDT-6 — แก้ operation — เปลี่ยนชนิดและค่า** 🆕
   - เปลี่ยน operation จาก Add เป็น Multiply
@@ -1313,7 +1381,7 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
 
 - [ ] **EDT-43 — ⭐ แก้ source ของ Average/Sum/Median แล้วต้องยังเป็น Average/Sum/Median (ไม่กลายเป็น A + B + C)** 🆕
   - สร้าง sensor แบบ **Average all** จาก 2 sensor จดค่าไว้ 2-3 จุด
-  - เปิดแก้ใน Manage เพิ่ม source ตัวที่ 3 จาก dropdown แล้ว Save
+  - เปิดแก้ใน Manage เพิ่ม source ตัวที่ 3 ผ่านปุ่ม **Add source sensors…** (ติ๊กในหน้าต่างเลือก sensor แล้วกด OK) แล้ว Save
   - เปิดแก้อีกที เอา source ออก 1 ตัว (ให้เหลือ 2) แล้ว Save
   - ทำซ้ำกับ Sum all และ Median
   - **คาดหวัง:** ปุ่ม Average all **ยังถูกเลือกอยู่**หลังเพิ่ม/ลด source, ค่าเป็น**ค่าเฉลี่ย**ของ source ชุดใหม่ (ไม่ใช่ผลรวมที่ใหญ่ขึ้นราว 3 เท่า) และใน Manage ยังเขียนเป็น `mean(...)` ไม่ใช่สูตร `$A + $B + $C`
@@ -1415,6 +1483,11 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - แก้ค่าที่ทำให้โมเดล stale (เช่นแก้ predictor หรือเงื่อนไข Running condition) แล้วดู จากนั้น Re-train
   - ปิดโปรแกรมแล้วเปิดใหม่ เลือก Recent Workspace เดิม ดูแท็บ Failure Groups ทันที (ก่อนเปิด Build Model)
   - **คาดหวัง:** ยังไม่เคย train = ไม่มีจุด · Train แล้ว set point ยังว่าง = จุดเหลือง (ตรงกับป้ายเหลือง "Set points needed" และจุดเหลืองในลิสต์ซ้ายของ Build Model) · ค่าที่ไม่ผ่าน = จุดแดง (ตรงกับ "Fix set point") — **ทั้งสองหน้าต้องเห็นตรงกัน** · ผ่านแล้วแต่ยังไม่ Complete = จุดฟ้า · Complete = เขียว (verdict ไม่มีผลกับโมเดล Complete) · stale = ไม่มีจุด และเมื่อ Re-train แล้วถูกตัดสินใหม่ (ค่าเก่าไม่ติดมา) · หลังเปิดโปรแกรมใหม่ จุดเหลือง/แดงยังอยู่ทันที ไม่ต้องเปิด Build Model (ผลถูกบันทึกกับโมเดล) · โมเดลที่ถูก Running Condition gate บล็อกอยู่ไม่ขึ้นจุดสีฟ้า/เหลือง/แดง
+
+- [ ] **FG-15 — แถว sensor ในแท็บ Failure Groups หน้าตาเหมือนแถวในแท็บ Sensor** 🆕
+  - เปิดแท็บ Failure Groups ดูแถว sensor ในแต่ละกลุ่ม
+  - ค้นหาด้วยหน่วยหรือชื่อ component
+  - **คาดหวัง:** ชื่อเป็น 2 บรรทัด (description + ป้ายหน่วย / tag) ขนาดและระยะเหมือนแท็บ Sensor · ไม่มีรูปแบบ "description (tag)" ที่แถว sensor อีก (แถวโมเดลที่กางออกยังเป็นชื่อโมเดลเหมือนเดิม) · ค้นด้วยหน่วย/component แล้วเจอ
 
 - [ ] **FG-12 — สร้างโมเดล Individual ของ sensor ที่มี / ไม่มี alarm limit ยังทำงานปกติ (เตรียมโครง Health score — ยังไม่มีหน้าจอ set point)** 🆕
   - สร้างโมเดล Individual (ผ่านไอคอนโฟลเดอร์ที่แท็บ Sensor หรือสร้างกลุ่มใหม่จาก sensor) ให้ sensor 3 แบบ: (ก) sensor ที่ mapping มี alarm L และ H ครบ (ข) sensor ที่มีแค่ด้านเดียวหรือไม่มีเลย (ค) special sensor ที่สร้างเอง
@@ -1519,6 +1592,18 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - ดูการ์ด "Target vs predicted" และ "Residual over time" (เต็มกว้าง ล่างสุด — เส้นเขียว ±2RMSE)
   - ปิดเปิดโมเดล/โปรแกรมแล้วดูค่า X ที่เลือกไว้
   - **คาดหวัง:** แถบสถิติมีครบ 7 ค่า ตัวเลข R²/2RMSE ตรงกับที่ Train (ไม่ใช้คำว่า LinearGAM ที่ใดเลย — ใช้ "Relation model") · **ไม่มีกราฟ distribution ของ residual และไม่มี histogram ติดข้างกราฟ** · เปลี่ยน X แล้วกราฟ Fit เปลี่ยนแกนทันที **โดยไม่ต้องกด Save** และไม่ทำให้โมเดลกลายเป็น stale/Incomplete (เป็นมุมมองกราฟ ไม่ใช่พารามิเตอร์โมเดล) · ตัวเลือก X มีแค่ predictor ที่ใช้ fit จริงตอน Train ล่าสุด · ปิดเปิดแล้วค่า X ที่เลือกยังจำอยู่ · ถ้า predictor ที่เคยเลือกถูกเอาออกแล้ว Train ใหม่ ช่อง X เด้งกลับเป็น predictor ตัวแรก · Residual over time มีเส้น ±2RMSE และเส้นศูนย์ ไม่มีเส้น set point (อยู่หน้า Health score)
+
+- [ ] **BMW-101 — ค่าเงื่อนไข Running condition ที่เป็นทศนิยมเล็ก ๆ แสดงครบตามที่พิมพ์ + Esc ในช่องค้นหา sensor ปิดแค่ตัวเลือก** 🆕
+  - ในหน้าต่าง Running condition ตั้งเงื่อนไข `> 0.0005` และอีกแถว between `0.0001` – `0.0004` แล้ว Apply
+  - ดูชิปเงื่อนไขในการ์ด Step 1 และประโยคสรุป
+  - เปิดหน้าต่าง Running condition อีกครั้ง กดช่อง sensor ของแถว (เคอร์เซอร์อยู่ในช่องค้นหา) แล้วกด Esc
+  - **คาดหวัง:** ชิปเขียน `> 0.0005` และ `between 0.0001–0.0004` (ไม่ถูกปัดเป็น 0; ค่าหลักพันยังมีจุลภาค เช่น `4,000`) · Esc ครั้งแรกปิด**แค่ตัวเลือก sensor** หน้าต่าง Running condition ยังเปิดอยู่ ไม่ขึ้นคำถาม Discard
+
+- [ ] **BMW-100 — ช่อง "X:" ของกราฟ Fit เป็นตัวเลือกแบบ popover ขนาดเล็ก; predictor ตัวเดียว = กดไม่ได้แต่ยังเห็นค่า** 🆕
+  - Train โมเดล Relationship ที่มี predictor 2 ตัว แล้วกดช่อง "X:" ที่หัวการ์ด Fit
+  - ดูบรรทัด "Predictors of this model · 2" แล้วเลือกอีกตัว
+  - Train โมเดลที่มี predictor ตัวเดียว แล้วเอาเมาส์ชี้ช่อง X
+  - **คาดหวัง:** popover เปิดชิดขวาของช่อง มีแค่ predictor ของโมเดลนี้ เลือกแล้วกราฟเปลี่ยนแกนทันที ไม่ทำให้โมเดล stale · ชื่อรองของการ์ด Fit เป็น "predictor vs <description tag>" สีจาง · predictor ตัวเดียว: ช่องจางกดไม่ได้ แต่ยังเขียนชื่อ predictor และชี้แล้วขึ้นเหตุผล "Only one predictor — nothing else to plot on X"
 
 - [ ] **BMW-66 — "Compare predictors" เปิดมุมมอง Sub-models เป็น modal (ย้ายมาจากหน้า Predictive Model เดิมที่ถูกถอดออกแล้ว — ตอนนี้ที่นี่ที่เดียว)** 🆕
   - ที่โมเดล Relationship ที่ Train แล้ว กดปุ่ม "Compare predictors" ที่หัวการ์ด Fit
@@ -1649,25 +1734,32 @@ _ของใหม่ทั้งหมด และเป็นส่วนท
   - สลับไปดูโมเดล Clustering อีกตัวระหว่างที่อีกตัวยังโหลด stats ไม่เสร็จ (เช่น สลับสลับไปมาเร็วๆ) — **คาดหวัง:** เห็น "Loading…" ของโมเดลที่เพิ่งเลือกเสมอ ไม่ใช่เห็นแถบของโมเดลก่อนหน้าค้างอยู่
   - **คาดหวัง:** ช่องนี้แสดงเสมอ (ไม่ซ่อนอีกต่อไป) — ลากหัวจับได้จริง ห้ามลากข้ามหัวจับข้างเคียง — ขอบเขต [ต่ำสุด, สูงสุด] คำนวณจาก training scope ของโมเดลนั้นจริง (Workspace หรือ Custom ของโมเดล — ช่วงเดียวกับตอนกด Train ไม่ใช่ทั้งชุดข้อมูลดิบ) — เลือก criteria sensor ใหม่หรือเปลี่ยนจำนวน cluster ต้องแบ่งช่วงใหม่ให้เท่ากันอัตโนมัติเสมอ (ไม่ค้างที่ค่าเดิม/ค่า 0-100) — สลับโมเดลระหว่างที่ stats ยังโหลดไม่เสร็จต้องไม่เห็นแถบของโมเดลอื่นค้างอยู่
 
-- [ ] **BMW-9 — ปุ่ม "Add predictors…" เปิด popup ค้นหาได้และจัดกลุ่มตาม Component**
-  - เลือก sensor ที่มีโมเดล Relationship จากลิสต์ซ้าย กาง Model settings ถ้าพับอยู่
-  - คลิกปุ่ม "Add predictors…" ที่ช่อง Predictor sensors
-  - พิมพ์ค้นหาด้วย tag และด้วยคำใน description ใน popup
-  - เลือก predictor 2-3 ตัว กด OK แล้วดูชิปที่ขึ้นนอก popup กด x บนชิปเพื่อเอาออกทีละตัว
-  - **คาดหวัง:** popup แบ่งรายการเป็นกลุ่มตามชื่อ Component (เรียงตามตัวอักษร ตัวที่ไม่มี component ไปอยู่ "Uncategorized"), พิมพ์ค้นหาแล้วกรองทั้งรายการได้, target ของโมเดลไม่โผล่ในตัวเลือก, ปุ่ม Save/Train ยังกดไม่ได้จนกว่าจะมี predictor อย่างน้อย 1 ตัว
+- [ ] **BMW-96 — Predictor sensors: ชิป + ปุ่มเส้นประ "Add…" เปิดหน้าต่างเลือกหลายตัว (แทน BMW-9)** 🆕
+  - เลือก sensor ที่มีโมเดล Relationship กาง Model settings
+  - ดูช่อง Predictor sensors ตอนยังไม่มี predictor แล้วกดปุ่ม "Add predictors…"
+  - ดูบรรทัด "All sensors except the target · N" ใต้ช่องค้นหา แล้วค้นด้วย tag / description / หน่วย / component
+  - เลือก 2-3 ตัว กด OK แล้วกด × บนชิปเพื่อเอาออกทีละตัว
+  - **คาดหวัง:** ตอนว่างปุ่ม "Add predictors…" เป็นสีเหลือง (required) · หน้าต่างกว้างราว 520 px จัดกลุ่มตาม Component · target ของโมเดลไม่อยู่ในรายการ และบรรทัด scope บอกเหตุผล · หลัง OK predictor ขึ้นเป็นชิป description + tag และปุ่มเปลี่ยนเป็น "Add…" · × เอาออกได้ทันที · Save/Train ยังกดไม่ได้จนกว่าจะมี predictor อย่างน้อย 1 ตัว
 
-- [ ] **BMW-13 — Predictor popup: เลือกได้หลายตัวก่อนกด OK, พับ/กางกลุ่มได้, Cancel/Esc ไม่บันทึกอะไรเลย**
-  - เปิด popup "Add predictors…" ดูว่ากลุ่ม Component แต่ละกลุ่มเริ่มต้น**พับอยู่**
-  - กดหัวกลุ่มเพื่อกาง แล้วติ๊กเลือกหลายตัวในกลุ่มเดียวกันและต่างกลุ่ม (ยังไม่กด OK)
-  - ลองพิมพ์ค้นหา ดูว่ากลุ่มที่มีผลลัพธ์ตรงกางออกให้เองโดยไม่ต้องกดหัวกลุ่ม
-  - กด Cancel (หรือกด Esc หรือคลิกนอก popup) แล้วเปิด popup ใหม่อีกครั้ง
-  - **คาดหวัง:** ติ๊กได้มากกว่า 1 ตัวสะสมไว้ก่อนกด OK, กลุ่มเริ่มพับเสมอจนกว่าจะกดเปิดเองหรือพิมพ์ค้นหา, Cancel/Esc/คลิกนอก popup **ไม่มีผลอะไรกับ predictor ที่เลือกไว้เดิมเลย**
+- [ ] **BMW-97 — หน้าต่างเลือก predictor: เลือกได้หลายตัวก่อน OK, พับ/กางกลุ่ม, คีย์บอร์ด, Cancel/Esc/คลิกนอกไม่บันทึก (แทน BMW-13)** 🆕
+  - เปิด "Add…" ดูว่ากลุ่มที่มี predictor ที่เลือกไว้กางอยู่ ส่วนกลุ่มอื่นพับ (ถ้า sensor ทั้งหมดไม่เกิน 10 ตัวจะกางทุกกลุ่ม)
+  - กดหัวกลุ่มเพื่อกาง/พับ, ใช้ ↓ ↑ เลื่อน → ← กาง/พับกลุ่ม Enter ติ๊ก
+  - ติ๊กหลายตัว ดูตัวนับ "N selected" และตัวเลขที่หัวกลุ่ม (เช่น 1 / 5)
+  - กด Cancel (หรือ Esc หรือคลิกพื้นหลังมืด) แล้วเปิดใหม่
+  - **คาดหวัง:** ติ๊กสะสมได้หลายตัวก่อนกด OK · พิมพ์ค้นหาแล้วกลุ่มที่มีผลลัพธ์กางเอง · Tab วนอยู่ในหน้าต่าง · Cancel/Esc/คลิกพื้นหลัง **ไม่เปลี่ยน predictor ที่เลือกไว้เลย**
 
-- [ ] **BMW-14 — Clustering: Y sensor และ Criteria sensor เป็น popup เลือกได้ตัวเดียว**
-  - เลือก sensor ที่มีโมเดล Clustering กาง Model settings ดูช่อง "Y sensor (target)" และ "Criteria sensor (optional)"
-  - คลิกช่อง Y sensor เลือก sensor 1 ตัว
-  - คลิกช่อง Criteria sensor ดูว่ามีตัวเลือก "None" ให้ด้วยไหม แล้วเลือก sensor 1 ตัว
-  - **คาดหวัง:** ทั้งสองช่องเปิด popup ค้นหา+จัดกลุ่มตาม Component — คลิกเลือกแล้ว popup ปิดทันที ไม่มีปุ่ม OK/Cancel และไม่ติ๊กได้มากกว่า 1 ตัว (X sensor ข้างๆ ยังล็อกไว้เหมือนเดิม) — ช่อง Criteria sensor มีแถว "None" ให้เลือกล้างค่าได้ ช่อง Y sensor ไม่มี
+- [ ] **BMW-98 — Clustering: X เป็นแบบล็อก, Y และ Criteria เป็นตัวเลือกแบบ popover เลือกได้ตัวเดียว (แทน BMW-14)** 🆕
+  - เลือก sensor ที่มีโมเดล Clustering กาง Model settings
+  - ดูช่อง X sensor (ล็อก), "Y sensor (target)" ตอนว่าง และ "Criteria sensor (optional)"
+  - กดช่อง Y เลือก 1 ตัว, กดช่อง Criteria แล้วเลือก "None" และเลือก sensor
+  - **คาดหวัง:** ช่อง X แสดง description + tag พร้อมไอคอนกุญแจ · Y ตอนว่างกรอบเส้นประสีเหลือง · ทั้งสองเปิดเป็น popover ใต้ช่อง ค้นหา+จัดกลุ่มตาม Component — กดเลือกแล้วปิดทันที ไม่มีปุ่ม OK · Criteria มีแถว "None" (ตัวหนังสือเทาปกติ ไม่เอียง) และเมื่อเลือก None ช่องเขียนว่า None สีเทา · Y ไม่มีแถว None · ชื่อหัวช่องไม่มีคำต่อท้าย "· Relation model" / "· Clustering"
+
+- [ ] **BMW-99 — ชื่อ sensor ใน Build Model เป็นแบบมาตรฐาน: ลิสต์ซ้าย, หัว detail, การ์ด Step 1, แถวเงื่อนไข Running condition** 🆕
+  - ดูแถวในลิสต์ซ้าย และหัว detail ของ sensor ที่เลือก
+  - ค้นหาในลิสต์ซ้ายด้วยหน่วยหรือชื่อ component
+  - ดูชิปเงื่อนไขในการ์ด "Step 1 · Running condition" (ลองค่า 4000)
+  - เปิด popup Running condition ดูแถวเงื่อนไข แล้วย่อหน้าต่างให้แคบ
+  - **คาดหวัง:** ลิสต์ซ้ายเป็น 2 บรรทัด (description + หน่วย / tag) · หัว detail ตัวใหญ่ มี tag และชิป component ต่อท้าย (ชิปกลุ่ม FG อยู่บรรทัดถัดไป) · ชิปเงื่อนไขเป็น description + tag แล้วตามด้วยเงื่อนไขตัว mono เช่น `> 4,000 kW` · แถวเงื่อนไขใน popup มีช่องเลือก sensor แบบ popover + ชิป component กรอบเทา (ในแถวแคบ ชิปตกลงไปอยู่ใต้ช่อง) · ค้นหาเจอด้วยหน่วย/component
 
 - [ ] **BMW-52 — popup Running condition: โครง 2 คอลัมน์ + ขั้น "2 When the plant is running" (การ์ดเลือก 2 ใบ, ปุ่ม operator, ปุ่ม AND/OR คั่นระหว่างแถว)** 🆕
   - เปิด popup ด้วยปุ่ม "Edit" (หรือ "Set running condition →") ดูหัวข้อและแต่ละคอลัมน์
@@ -2154,6 +2246,18 @@ _รอบนี้ปรับหน้าตาทั้งแอปตาม 
 - [ ] **VIS-14 — popup เลือก Failure Group เดิมถูกแทนที่แล้ว (ชื่อกลุ่มยาวต้องอ่านออก)** 🆕
   - สร้างกลุ่มที่ชื่อยาวมาก (เช่น "generator mechanical condition") แล้วกด 📁 ที่ sensor
   - **คาดหวัง:** ไม่มี popup เล็กใต้ปุ่มเหมือนเดิมแล้ว — ขึ้นเป็นแผงตามข้อ SEN-12 ถึง SEN-21 ที่แสดงชื่อกลุ่มยาวได้ ไม่ถูกตัดจนอ่านไม่ออก
+
+- [ ] **VIS-16 — ตัวเลือก sensor ที่เปิดใกล้ขอบจอ: ไม่ซ่อนใต้แถบหัวหน้าต่าง และช่องค้นหาไม่ขยับ** 🆕
+  - ย่อหน้าต่าง Dashboard ให้เตี้ย แล้วเปิดตัวเลือก sensor ในแถว filter ที่อยู่ล่างสุดของจอ (มันจะเปิด**ขึ้นข้างบน**)
+  - พิมพ์ค้นหาทีละตัวอักษร และกดเปิด-ปิดกลุ่ม component
+  - ลองเปิดตัวเลือก sensor / ตัวเลือกสี ที่อยู่ใกล้ขอบบนของหน้าต่าง
+  - **คาดหวัง:** เมื่อเปิดขึ้นข้างบน ช่องค้นหาอยู่กับที่ ไม่กระโดดลงไปข้างล่างระหว่างพิมพ์ · ไม่มีส่วนไหนของตัวเลือกไปซ่อนใต้แถบหัวหน้าต่าง (title bar สูง 32 px) · ตัวเลือกไม่ปิดเองทันทีที่เปิด (เคอร์เซอร์อยู่ในช่องค้นหา)
+
+- [ ] **VIS-15 — ชื่อ/ตัวเลือก sensor และตัวเลือกสีในหน้าต่างแคบและฟอนต์ของตัวติดตั้ง (Segoe UI / Consolas)** 🆕
+  - บนตัวติดตั้ง ย่อหน้าต่าง Dashboard และ Build Model ให้แคบ (~900 px)
+  - เปิดตัวเลือก sensor ในแท็บ Filter, Highlights, Scatter และในแถวเงื่อนไข Running condition
+  - เปิดตัวเลือกสีในแท็บ Selected Sensor ใกล้ขอบล่างของจอ
+  - **คาดหวัง:** ช่องเลือกที่แคบมาก (< ~150 px) ซ่อน tag เหลือแค่ description (ชี้แล้วเห็นชื่อเต็ม) · ในรายการที่แคบ (< ~320 px) ป้ายหน่วยหายแต่ยังค้นด้วยหน่วยได้ · popover กว้างไม่เกิน 420 px / 92% ของจอ และเปิดขึ้นด้านบนเมื่ออยู่ใกล้ขอบล่าง · ไม่มีข้อความทับกันหรือล้นกรอบ · โฟกัสคีย์บอร์ดเห็นกรอบสีฟ้าชัดเจนบนช่องสี (ไม่ถูกวงของสีปัจจุบันบัง)
 
 ---
 

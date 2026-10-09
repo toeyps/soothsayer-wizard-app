@@ -78,7 +78,7 @@ function spHistory(mid: string): string[] {
 
 async function createViaSheet(tag: string, kindLabel: string) {
     openDashSensorTab();
-    fireEvent.change(dash().getByPlaceholderText('Search sensors...'), { target: { value: tag } });
+    fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: tag } });
     await settle();
     const row = (screen.getByTestId('dashboard-window').querySelector(`#sensor-${tag}`) as HTMLElement).closest('.sensor-list-row') as HTMLElement;
     const btn = within(row).getByTitle('Add to failure group');
@@ -87,7 +87,7 @@ async function createViaSheet(tag: string, kindLabel: string) {
     await act(async () => { fireEvent.click(sheet.getByRole('button', { name: `${kindLabel} · FG-A` })); });
     await settle(400);
     if (screen.queryByTestId('fg-sheet')) fireEvent.click(btn);
-    fireEvent.change(dash().getByPlaceholderText('Search sensors...'), { target: { value: '' } });
+    fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: '' } });
     await settle(50);
 }
 
@@ -226,7 +226,7 @@ describe('Relationship specifics', () => {
         expect(lastPreviewKey()).toBe(keys[1]);
 
         openSettings();
-        fireEvent.click(bmwEl().querySelector('button.predictor-picker-trigger') as HTMLElement);
+        fireEvent.click(bmwEl().querySelector('button.pk-add') as HTMLElement);
         await pickInModal('predictors', ['TAG2']);
         await saveChanges();
         await train();

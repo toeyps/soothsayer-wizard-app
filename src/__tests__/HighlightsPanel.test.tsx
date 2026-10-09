@@ -11,6 +11,14 @@ vi.mock('../components/dashboard/ColorPlatePicker', () => ({
 }));
 
 import HighlightsPanel from '../components/dashboard/HighlightsPanel';
+import { SensorMetaProvider } from '../components/sensor/SensorLabel';
+import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
+
+// Customer item 4 (2026-10-09): colours are picked with the shared ColourPicker (the swatch is
+// the button; a palette pick applies immediately). Its own behaviour is in ColourPicker.test.tsx.
+const swatch = (name: RegExp | string) => screen.getByRole('button', { name });
+const paletteSwatch = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+const colourPopoverOpen = () => document.querySelector('.cp-pop') !== null;
 
 function makeProps(overrides: Partial<React.ComponentProps<typeof HighlightsPanel>> = {}) {
     return {
@@ -93,17 +101,20 @@ describe('HighlightsPanel', () => {
             expect(onRemoveTimeHighlight).toHaveBeenCalledWith('h1');
         });
 
-        it('opens the ColorPlatePicker on swatch click and calls onRecolorTimeHighlight when a colour is picked', () => {
+        it('opens the shared ColourPicker from the swatch and calls onRecolorTimeHighlight when a colour is picked', () => {
             const onRecolorTimeHighlight = vi.fn();
             const timeHighlights: TimeHighlight[] = [
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
+                { id: 'h2', start: '2026-01-02T00:00', end: '2026-01-02T01:00', label: 'Trip', color: '#10b981', enabled: true },
             ];
             render(<HighlightsPanel {...makeProps({ timeHighlights, onRecolorTimeHighlight })} />);
 
-            fireEvent.click(screen.getByTitle('Change colour'));
-            expect(colorPickerCalls[0].color).toBe('#ff0000');
-            fireEvent.click(screen.getByText('set-color-#ff0000'));
-            expect(onRecolorTimeHighlight).toHaveBeenCalledWith('h1', '#123456');
+            fireEvent.click(swatch('Highlight colour: Startup'));
+            expect(screen.getByRole('dialog', { name: 'Colour for Startup' })).toBeTruthy();
+            // The other highlight's colour is marked as in use.
+            expect(paletteSwatch('#10b981').querySelector('.cp-used')).toBeTruthy();
+            fireEvent.click(paletteSwatch('#8b5cf6'));
+            expect(onRecolorTimeHighlight).toHaveBeenCalledWith('h1', '#8b5cf6');
         });
 
         // Visual refresh (2026-10-02): this popover now renders through
@@ -125,9 +136,8 @@ describe('HighlightsPanel', () => {
             ];
             render(<HighlightsPanel {...makeProps({ timeHighlights })} />);
 
-            fireEvent.click(screen.getByTitle('Change colour'));
-            const pickerButton = screen.getByText('set-color-#ff0000');
-            const popover = pickerButton.closest('.sensor-popover') as HTMLElement;
+            fireEvent.click(swatch('Highlight colour: Startup'));
+            const popover = document.querySelector('.cp-pop')!.closest('.sensor-popover') as HTMLElement;
             expect(popover).toBeTruthy();
             // Left-aligned to the (zeroed, in jsdom) anchor rect's own left
             // edge — NOT right-aligned-and-clamped (which `width`-bearing
@@ -293,11 +303,12 @@ describe('HighlightsPanel', () => {
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
             ];
             const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'scatter', timeHighlights })} />);
-            fireEvent.click(screen.getByTitle('Change colour'));
-            expect(colorPickerCalls.length).toBeGreaterThan(0);
+            fireEvent.click(swatch('Highlight colour: Startup'));
+            expect(colourPopoverOpen()).toBe(true);
 
             rerender(<HighlightsPanel {...makeProps({ chartType: 'pair', timeHighlights })} />);
-            expect(screen.queryByText(/^set-color-/)).toBeNull();
+            expect(colourPopoverOpen()).toBe(false);
+            expect((swatch('Highlight colour: Startup') as HTMLButtonElement).disabled).toBe(true);
         });
 
         it('closes an already-open label-rename field the instant the group becomes inapplicable, reverting to the static label', () => {
@@ -325,11 +336,11 @@ describe('HighlightsPanel', () => {
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
             ];
             const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'line', timeHighlights })} />);
-            fireEvent.click(screen.getByTitle('Change colour'));
-            expect(colorPickerCalls.length).toBeGreaterThan(0);
+            fireEvent.click(swatch('Highlight colour: Startup'));
+            expect(colourPopoverOpen()).toBe(true);
 
             rerender(<HighlightsPanel {...makeProps({ chartType: 'scatter', timeHighlights })} />);
-            expect(screen.queryByText(/^set-color-/)).toBeNull();
+            expect(colourPopoverOpen()).toBe(false);
         });
 
         it('clears an in-progress rename draft on a Line -> Scatter switch too, even though the column never becomes disabled', () => {
@@ -346,13 +357,45 @@ describe('HighlightsPanel', () => {
     });
 
     describe('By value (Scatter-only — restored after removal, this time living here instead of a "Colour by…" control on Scatter\'s own toolbar)', () => {
-        it('lists the given sensors in the "Colour by…" dropdown and calls onSetValueHighlightSensor on pick', () => {
+        it('"Colour by…" is the shared single picker, scoped to the sensors on the chart; a pick calls onSetValueHighlightSensor', () => {
             const onSetValueHighlightSensor = vi.fn();
             render(<HighlightsPanel {...makeProps({ onSetValueHighlightSensor })} />);
-            const select = screen.getByText('Colour by…').closest('select') as HTMLSelectElement;
-            expect(Array.from(select.options).map(o => o.value)).toEqual(['', 'TAG1', 'TAG2', 'TAG3']);
-            fireEvent.change(select, { target: { value: 'TAG2' } });
+            const trig = screen.getByRole('button', { name: 'Colour by' });
+            expect(trig.textContent).toBe('Colour by…');
+            fireEvent.click(trig);
+            expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('Sensors on the chart · 3');
+            // A "None" row first (no tag), then the sensors.
+            expect([...openPickerSurface().querySelectorAll('[role="option"]')].map(rowTag)).toEqual([null, 'TAG1', 'TAG2', 'TAG3']);
+            fireEvent.click(findPickerRow('TAG2'));
             expect(onSetValueHighlightSensor).toHaveBeenCalledWith('TAG2');
+        });
+
+        it('"Colour by…" can be cleared again: picking None calls onSetValueHighlightSensor with an empty string', () => {
+            const onSetValueHighlightSensor = vi.fn();
+            render(<HighlightsPanel {...makeProps({ onSetValueHighlightSensor, valueHighlight: { sensor: 'TAG1', ranges: [] } })} />);
+            const trig = screen.getByRole('button', { name: 'Colour by' });
+            expect(trig.textContent).toBe('TAG1');
+            pickSingle(trig, '');
+            expect(onSetValueHighlightSensor).toHaveBeenCalledWith('');
+        });
+
+        it('with no sensor chosen the trigger keeps the "Colour by…" placeholder and the None row is the current one', () => {
+            render(<HighlightsPanel {...makeProps()} />);
+            fireEvent.click(screen.getByRole('button', { name: 'Colour by' }));
+            const none = openPickerSurface().querySelector('.pk-item--none') as HTMLElement;
+            expect(none.getAttribute('aria-selected')).toBe('true');
+        });
+
+        it('"Colour by…" is a real disabled state on Line and Pair Plot, with the reason', () => {
+            const { rerender } = render(<HighlightsPanel {...makeProps({ chartType: 'line' })} />);
+            const trig = () => screen.getByRole('button', { name: 'Colour by' }) as HTMLButtonElement;
+            expect(trig().disabled).toBe(true);
+            expect(trig().textContent).toBe('Colour by… (Scatter only)');
+            rerender(<HighlightsPanel {...makeProps({ chartType: 'pair' })} />);
+            expect(trig().textContent).toBe('Colour by… (not on Pair Plot)');
+            // A sensor already chosen stays visible while disabled.
+            rerender(<HighlightsPanel {...makeProps({ chartType: 'line', valueHighlight: { sensor: 'TAG1', ranges: [] } })} />);
+            expect(trig().textContent).toBe('TAG1');
         });
 
         it('hides the range editor entirely until a sensor is picked', () => {
@@ -405,7 +448,7 @@ describe('HighlightsPanel', () => {
             };
             render(<HighlightsPanel {...makeProps({ valueHighlight, onToggleValueHighlightRange, onRemoveValueHighlightRange })} />);
 
-            expect(screen.getByText('10.00 – 20.00')).toBeTruthy();
+            expect(screen.getByText('10 – 20')).toBeTruthy();
             fireEvent.click(screen.getByRole('checkbox'));
             expect(onToggleValueHighlightRange).toHaveBeenCalledWith('r1');
 
@@ -421,10 +464,35 @@ describe('HighlightsPanel', () => {
             };
             render(<HighlightsPanel {...makeProps({ valueHighlight, onRecolorValueHighlightRange })} />);
 
-            fireEvent.click(screen.getByTitle('Change colour'));
-            expect(colorPickerCalls[0].color).toBe('#ff0000');
-            fireEvent.click(screen.getByText('set-color-#ff0000'));
-            expect(onRecolorValueHighlightRange).toHaveBeenCalledWith('r1', '#123456');
+            fireEvent.click(swatch(/^Range colour: 10 – 20/));
+            fireEvent.click(paletteSwatch('#06b6d4'));
+            expect(onRecolorValueHighlightRange).toHaveBeenCalledWith('r1', '#06b6d4');
+        });
+
+        it('a range chip keeps every decimal the user typed (a small range never reads as 0 – 0)', () => {
+            const valueHighlight: ValueHighlight = {
+                sensor: 'TAG1',
+                ranges: [{ id: 'r1', min: 0.0001, max: 0.0004, color: '#ff0000', enabled: true }],
+            };
+            render(<HighlightsPanel {...makeProps({ valueHighlight })} />);
+            expect(screen.getByText('0.0001 – 0.0004')).toBeTruthy();
+            expect(swatch(/^Range colour: 0\.0001 – 0\.0004/)).toBeTruthy();
+        });
+
+        it('range chips and the add-range inputs show the unit, with thousands separators on the chip', () => {
+            const valueHighlight: ValueHighlight = {
+                sensor: 'TAG1',
+                ranges: [{ id: 'r1', min: 1500, max: 12345.5, color: '#ff0000', enabled: true }],
+            };
+            render(
+                <SensorMetaProvider metadata={[{ tag: 'TAG1', description: 'Load', unit: 'kW', component: '' }]}>
+                    <HighlightsPanel {...makeProps({ valueHighlight })} />
+                </SensorMetaProvider>,
+            );
+            const chip = document.querySelector('.highlights-chip-body--row b') as HTMLElement;
+            expect(chip.textContent).toBe('1,500 – 12,345.5 kW');
+            expect(chip.querySelector('.hl-unit')?.textContent).toBe(' kW');
+            expect([...document.querySelectorAll('.fv-unit')].map(e => e.textContent)).toEqual(['kW', 'kW']);
         });
 
         it('shows the "applies to Scatter only" scope note', () => {

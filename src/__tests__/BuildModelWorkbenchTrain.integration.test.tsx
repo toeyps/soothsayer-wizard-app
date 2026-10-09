@@ -449,7 +449,7 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
         const models = readDisk().failureGroupState.models;
         expect(models.map((m: any) => m.id)).toEqual(['i2']);
         expect(models.some((m: any) => m.lastTrainedAt)).toBe(false);
-        expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Pump Temp');
+        expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Pump Temp');
     });
 
     // FIXED (qa 2026-09-29). `executeTrain` used to finish with
@@ -469,12 +469,12 @@ describe('(4) a slow Train that lands after its model or workspace is gone', () 
 
         await act(async () => { await emit('build-model-data', { ...BUILD_DATA, workspaceId: 'ws2' }); });
         await settle(30);
-        expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Motor Current'); // ws2's only sensor
+        expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Motor Current'); // ws2's only sensor
 
         await act(async () => { release(); });
         await settle(30);
-        expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Motor Current');
-        expect(screen.queryAllByTestId('sensor-row-label').map(e => e.textContent)).toEqual(['Motor Current']);
+        expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Motor Current');
+        expect(screen.queryAllByTestId('sensor-row-label').map(e => e.querySelector('.sl-desc')?.textContent)).toEqual(['Motor Current']);
     });
 
     // FIXED (qa 2026-09-29). Same path: the abandoned run used to still

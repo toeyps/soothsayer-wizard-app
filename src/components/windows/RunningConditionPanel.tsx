@@ -212,15 +212,15 @@ export default function RunningConditionPanel({
                                                 <div className="rcm-cond-s">
                                                     <SensorPickerModal
                                                         sensors={sensors}
-                                                        getDesc={getDesc}
                                                         getComponent={getComponent}
                                                         single
-                                                        mutedTag
                                                         value={f.sensor}
                                                         onSelect={sensor => onUpdateFilter(f.id, { sensor })}
                                                         noun="sensor"
                                                     />
-                                                    {getComponent(f.sensor) && <small className="rcm-cond-comp">{getComponent(f.sensor)}</small>}
+                                                    {/* Customer item 3: the component is a small outlined chip after the
+                                                        picker (it drops under it in rows narrower than ~480 px). */}
+                                                    {getComponent(f.sensor) && <span className="comp-chip rcm-comp-chip">{getComponent(f.sensor)}</span>}
                                                 </div>
                                                 <div role="group" aria-label="Condition operator" className="rcm-ops">
                                                     {OPERATORS.map(o => (

@@ -318,7 +318,8 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
         expect(css('.special-sensor-footer')['flex-shrink']).toBe('0');
         expect(css('.special-sensor-footer-hint')['min-width']).toBe('0');
         // Long sensor names ellipsize instead of widening the fixed column.
-        expect(css('.special-sensor-row-name')['overflow']).toBe('hidden');
+        // (customer item 3: the row is the stacked SensorLabel; its description line ellipsises)
+        expect(css('.sl-desc')['overflow']).toBe('hidden');
         expect(css('.special-sensor-row-main')['min-width']).toBe('0');
     });
 
@@ -470,14 +471,14 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
      *  same; it went away with the Band / Line colour switch, 2026-10-08.) */
     function layoutAwareSwatches() {
         rectFor = (el) => {
-            if (!(el instanceof HTMLElement) || !el.classList.contains('highlights-chip-swatch')) return null;
+            if (!(el instanceof HTMLElement) || !el.classList.contains('cp-hit')) return null;
             const col = el.closest('.highlights-col');
             const shift = col?.querySelector('.highlights-note') ? 30 : 0;
             return mkRect({ top: SWATCH_TOP + shift, left: 40, width: 16, height: 16 });
         };
     }
-    const timeSwatch = () => document.querySelectorAll<HTMLElement>('.highlights-col')[0].querySelector<HTMLButtonElement>('.highlights-chip-swatch')!;
-    const valueSwatch = () => document.querySelectorAll<HTMLElement>('.highlights-col')[1].querySelector<HTMLButtonElement>('.highlights-chip-swatch')!;
+    const timeSwatch = () => document.querySelectorAll<HTMLElement>('.highlights-col')[0].querySelector<HTMLButtonElement>('.cp-hit')!;
+    const valueSwatch = () => document.querySelectorAll<HTMLElement>('.highlights-col')[1].querySelector<HTMLButtonElement>('.cp-hit')!;
     /** Popover is either gone, or sits right under where its swatch is NOW. */
     function expectNoStaleAnchor(swatch: () => HTMLElement) {
         const pops = openPopovers();

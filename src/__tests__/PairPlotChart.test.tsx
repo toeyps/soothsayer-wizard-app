@@ -156,14 +156,22 @@ describe('PairPlotChart', () => {
                 { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
             ];
 
-            it('marks the top (column) label hoverable and renders its tooltip content when a description is known', () => {
+            // Customer item 3 (2026-10-09): at rest the tag alone (mono, dotted underline); the
+            // hover / focus card is the stacked label (description, unit chip, tag) + a component chip.
+            it('marks the top (column) label hoverable; its card is the stacked label + unit + component chip', () => {
                 const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
                 const topLabelWrap = Array.from(container.querySelectorAll('.pair-regl-axis-label'))
-                    .find((el) => !!(el.querySelector('span') as HTMLElement | null)?.textContent && el.querySelector('span')!.textContent === 'A');
-                expect(topLabelWrap!.className).toContain('hoverable');
-                const tooltip = topLabelWrap!.querySelector('.pair-regl-axis-tooltip')!;
-                expect(tooltip.querySelector('.pair-regl-axis-tooltip-tag')!.textContent).toBe('A');
-                expect(tooltip.querySelector('.pair-regl-axis-tooltip-desc')!.textContent).toBe('Pump Pressure');
+                    .find((el) => el.querySelector('.pair-regl-axis-tag')?.textContent === 'A') as HTMLElement;
+                expect(topLabelWrap.className).toContain('hoverable');
+                expect(topLabelWrap.tabIndex).toBe(0); // focus shows the card too
+                // Focusable with an aria-label → it carries a role.
+                expect(topLabelWrap.getAttribute('role')).toBe('group');
+                expect(topLabelWrap.getAttribute('aria-label')).toBe('Pump Pressure · A · bar · Pump');
+                const tooltip = topLabelWrap.querySelector('.pair-regl-axis-tooltip')!;
+                expect(tooltip.querySelector('.sl-desc')!.textContent).toBe('Pump Pressure');
+                expect(tooltip.querySelector('.sl-unit')!.textContent).toBe('bar');
+                expect(tooltip.querySelector('.sl-tag')!.textContent).toBe('A');
+                expect(tooltip.querySelector('.comp-chip')!.textContent).toBe('Pump');
             });
 
             it('marks the left (row) label hoverable too, matched case-insensitively via normalizeSensorTag', () => {
@@ -179,12 +187,14 @@ describe('PairPlotChart', () => {
                 expect(wrap.className).toContain('hoverable');
             });
 
-            it('does not mark a label hoverable when no description is known (blank description, or sensor missing from sensorMetadata entirely)', () => {
+            it('does not mark a label hoverable when nothing beyond the tag is known (blank description / unit / component, or sensor missing from sensorMetadata entirely)', () => {
                 const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
                 // B has a metadata entry but an empty description string.
                 const topLabelForB = Array.from(container.querySelectorAll('.pair-regl-axis-label'))
                     .find((el) => el.querySelector('span')?.textContent === 'B');
                 expect(topLabelForB!.className).not.toContain('hoverable');
+                expect(topLabelForB!.getAttribute('role')).toBeNull();
+                expect(topLabelForB!.hasAttribute('tabindex')).toBe(false);
                 expect(topLabelForB!.querySelector('.pair-regl-axis-tooltip')).toBeNull();
             });
 
@@ -336,8 +346,10 @@ describe('PairPlotChart', () => {
 
         expect(screen.getByText('Cluster 1')).toBeTruthy();
         expect(screen.getByText('2 rows')).toBeTruthy();
-        const swatchInput = screen.getByLabelText('Change colour of Cluster 1') as HTMLInputElement;
-        expect(swatchInput.value).toBe('#fcbf2e'); // CLUSTER_PALETTE[0] amber, rounded
+        // Customer item 4: the shared ColourPicker swatch (no native colour input).
+        const swatch = screen.getByRole('button', { name: 'Cluster colour: Cluster 1' });
+        expect((swatch.querySelector('.cp-swatch') as HTMLElement).style.background).toBe('rgb(252, 191, 46)'); // CLUSTER_PALETTE[0] amber, rounded
+        expect(document.querySelector('input[type="color"]')).toBeNull();
     });
 
     it('successive lassos cycle through the palette with incrementing labels', () => {
@@ -359,12 +371,16 @@ describe('PairPlotChart', () => {
         expect(screen.queryByText('Cluster 1')).toBeNull();
     });
 
-    it('recoloring a cluster updates its swatch input value', () => {
+    it('recoloring a cluster from the ColourPicker palette updates its swatch; other clusters\u2019 colours are marked in use', () => {
         render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
         fireEvent.click(screen.getByText('lasso-A-B'));
-        const swatchInput = screen.getByLabelText('Change colour of Cluster 1') as HTMLInputElement;
-        fireEvent.change(swatchInput, { target: { value: '#ff0000' } });
-        expect((screen.getByLabelText('Change colour of Cluster 1') as HTMLInputElement).value).toBe('#ff0000');
+        fireEvent.click(screen.getByText('lasso-B-time'));
+        fireEvent.click(screen.getByRole('button', { name: 'Cluster colour: Cluster 1' }));
+        const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+        expect(sw('#f43f5e')).toBeTruthy();
+        fireEvent.click(sw('#f43f5e'));
+        const swatch = screen.getByRole('button', { name: 'Cluster colour: Cluster 1' });
+        expect((swatch.querySelector('.cp-swatch') as HTMLElement).style.background).toBe('rgb(244, 63, 94)');
     });
 
     it('Reset clears all clusters and bumps resetTick on every child cell', () => {
@@ -385,8 +401,9 @@ describe('PairPlotChart', () => {
         fireEvent.click(screen.getByText('hover-A-B'));
         expect(container.querySelector('.scatter-regl-tooltip-title')).toBeNull();
         expect(screen.queryByText(/^Row /)).toBeNull();
-        expect(screen.getByText('1.2346')).toBeTruthy();
-        expect(screen.getByText('9.8765')).toBeTruthy();
+        // Customer item 3: inline label + value (the one en-US formatter, up to 3 decimals).
+        expect(screen.getByText('1.235')).toBeTruthy();
+        expect(screen.getByText('9.877')).toBeTruthy();
     });
 
     it('shows a hover tooltip with a formatted date/time for a time-axis cell', () => {

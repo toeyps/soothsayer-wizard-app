@@ -388,7 +388,9 @@ const createBody = () => win!.container.querySelector('.special-sensor-body') as
 
 function explorerRow(tag: string): HTMLElement | undefined {
     const rows = Array.from(createBody().querySelectorAll('.special-sensor-row')) as HTMLElement[];
-    return rows.find(r => (r.querySelector('.sensor-row-tag')?.textContent ?? r.querySelector('.special-sensor-row-name')?.textContent) === tag);
+    // Rows are the stacked SensorLabel (customer item 3): the tag line, or the description slot
+    // when the sensor has no description.
+    return rows.find(r => (r.querySelector('.sl-tag')?.textContent ?? r.querySelector('.sl-desc')?.textContent) === tag);
 }
 async function setSearch(term: string) {
     const input = createBody().querySelector('.special-sensor-explorer-search input') as HTMLInputElement;

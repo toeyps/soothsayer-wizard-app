@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Activity, Loader2, X } from 'lucide-react';
 import ResponsiveECharts from '../charts/ResponsiveECharts';
+import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
 /*
@@ -139,7 +140,8 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
 
     // Escape closes the modal (same convention as the chart-expand modals).
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        // A picker open inside the modal takes the Esc first.
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !isPickerSurfaceOpen()) onClose(); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose]);

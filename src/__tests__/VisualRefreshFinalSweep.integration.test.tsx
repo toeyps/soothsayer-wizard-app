@@ -228,7 +228,7 @@ describe('CSS contract: the same semantic element renders the same on every refr
             '.bmw-modal-backdrop',          // Build Model: Running Condition modal (Phase 3)
             '.pm-chart-modal-backdrop',     // Build Model: expand-chart modal (Phase 4)
             '.pm-preview-modal-backdrop',   // Build Model: Sub-models modal (Phase 4)
-            '.predictor-picker-backdrop',   // SensorPickerModal, both windows (Phase 4)
+            '.pk-scrim',                    // shared SensorPicker multi modal (customer item 3, 2026-10-09)
             '.pair-regl-modal-backdrop',    // Dashboard: Pair Plot table modal (pre-existing)
             '.pair-regl-expand-backdrop',   // Dashboard: Pair Plot expanded cell (pre-existing)
         ];
@@ -411,7 +411,7 @@ describe('SensorSelection assignment sheet — never left open or resurrected ov
         renderSensorSelection();
         fireEvent.click(folderButtons()[0]); // TAG1
         expect(sheet()).not.toBeNull();
-        const search = screen.getByPlaceholderText('Search sensors...');
+        const search = screen.getByPlaceholderText('Search description, tag, unit or component…');
         fireEvent.change(search, { target: { value: 'Temp' } }); // TAG1 filtered out
         expect(sheet()).toBeNull();
         fireEvent.change(search, { target: { value: '' } });
@@ -422,7 +422,7 @@ describe('SensorSelection assignment sheet — never left open or resurrected ov
         renderSensorSelection();
         fireEvent.click(folderButtons()[1]); // TAG2
         expect(sheet()).not.toBeNull();
-        fireEvent.change(screen.getByPlaceholderText('Search sensors...'), { target: { value: 'Temp' } });
+        fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'Temp' } });
         expect(sheet()).toBeNull();
     });
 
@@ -463,7 +463,7 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
     // popovers' "…For"/anchor state the moment either turns false.
     it('Line -> Pair Plot -> Line does not resurrect the time-highlight colour popover unasked', () => {
         const { rerender } = render(<HighlightsPanel {...hlProps('line')} />);
-        const swatch = screen.getByTitle('Change colour');
+        const swatch = screen.getByTitle('Highlight colour');
         swatch.getBoundingClientRect = () => rectAt(100);
         fireEvent.click(swatch);
         expect(openPopovers()).toHaveLength(1);
@@ -497,8 +497,14 @@ describe('AnchoredPopover viewport clamp (direct consumer)', () => {
             </AnchoredPopover>,
         );
         const pop = openPopovers()[0];
-        const top = parseFloat(pop.style.top);
-        expect(top + 300).toBeLessThanOrEqual(h - 40); // flipped above the anchor
+        // Flipped above the anchor: since the 2026-10-09 review fix it is anchored by its BOTTOM
+        // edge (6 px over the anchor) so it grows upward from the trigger.
+        expect(pop.dataset.placement).toBe('above');
+        expect(pop.style.top).toBe('auto');
+        const bottom = parseFloat(pop.style.bottom);
+        expect(bottom).toBe(40 + 6);
+        const top = h - bottom - 300;
+        expect(top + 300).toBeLessThanOrEqual(h - 40);
         expect(top).toBeGreaterThanOrEqual(8);
     });
 });

@@ -523,7 +523,7 @@ describe('(4) old time keys re-added by a stale writer', () => {
         await mountBuildModel();
         const rows = screen.getAllByTestId('sensor-row-label');
         selectSensorRow(rows.length - 1); // TAG2 row
-        expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('Pump Temp'); // detail pane is TAG2's
+        expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Pump Temp'); // detail pane is TAG2's
         await act(async () => { fireEvent.click(trainBtn()); });
         await settle(30);
         expect(lastInvoke('compute_sensor_stats')!.args.filter.timestamp_ranges).toEqual([{ start: Q.start, end: Q.end }]);

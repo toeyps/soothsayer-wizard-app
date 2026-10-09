@@ -25,8 +25,88 @@ interface AnchoredPopoverProps {
      *  except the plain colour swatch). Left-aligned to the anchor's own
      *  left edge when omitted. */
     width?: number;
+    /** The tallest this popover can grow while open (e.g. the sensor picker's list
+     *  `max-height`). Used to decide below vs above ONCE at open, and — when it opens above —
+     *  reserved as its height, so the content (the picker's search box) never moves while the
+     *  user types or opens groups. Omitted → the height measured at open. */
+    reserveHeight?: number;
+    /** Called once per open, right after the first clamp has positioned the popover — the
+     *  place to move focus into it (with `preventScroll`), so a focus-scroll can never fire
+     *  before the popover is where it will stay. */
+    onPlaced?: (el: HTMLDivElement) => void;
     children: ReactNode;
     style?: CSSProperties;
+}
+
+const GAP = 6;
+const EDGE = 8;
+
+/** The lowest `top` a popover may take: 8 px from the viewport edge, or 4 px under the main
+ *  window's fixed custom titlebar (`.titlebar`, z-index 9999 — it would cover the popover).
+ *  Read from the DOM, so windows without a titlebar keep the plain 8 px. */
+export function popoverMinTop(): number {
+    const tb = typeof document !== 'undefined' ? document.querySelector('.titlebar') : null;
+    const bottom = tb ? tb.getBoundingClientRect().bottom : 0;
+    return Math.max(EDGE, bottom > 0 ? bottom + 4 : 0);
+}
+
+export interface PopoverPlacementInput {
+    anchor: PopoverAnchorRect;
+    /** Measured popover size. */
+    height: number;
+    width: number;
+    /** The `width` prop (right-aligns to the anchor when given). */
+    alignWidth?: number;
+    vw: number;
+    vh: number;
+    minTop: number;
+    reserveHeight?: number;
+    /** A placement already chosen at open — kept on later re-clamps so the popover never flips
+     *  between below and above while open. */
+    placement?: 'below' | 'above';
+}
+
+export interface PopoverPlacement {
+    placement: 'below' | 'above';
+    /** Exactly one of `top` / `bottom` is set (`bottom` = distance from the viewport bottom). */
+    top: number | null;
+    bottom: number | null;
+    left: number;
+    /** A fixed height (reserved when opening above), or null for auto. */
+    height: number | null;
+}
+
+/**
+ * The clamp/flip math (pure, so it is unit-tested directly). Below the anchor unless the
+ * popover's planned height does not fit there and there is more room above. Above, it is
+ * anchored by its BOTTOM edge (6 px over the anchor) so it grows upward from the trigger, with
+ * `reserveHeight` (capped to the room above) as a fixed height; a popover with no reserve that is
+ * taller than the room above is pinned at `minTop` instead (it then overlaps the anchor rather
+ * than sliding under the titlebar or off screen).
+ */
+export function computePopoverPlacement(i: PopoverPlacementInput): PopoverPlacement {
+    const { anchor, height, vw, vh, minTop, reserveHeight } = i;
+    const popoverWidth = i.alignWidth ?? i.width;
+    let left = i.alignWidth !== undefined ? Math.max(EDGE, anchor.right - i.alignWidth) : anchor.left;
+    if (left + popoverWidth > vw - EDGE) left = Math.max(EDGE, vw - popoverWidth - EDGE);
+
+    const spaceBelow = vh - anchor.bottom - GAP;
+    const spaceAbove = anchor.top - GAP - minTop;
+    const plan = Math.max(height, reserveHeight ?? 0);
+    const placement = i.placement ?? (plan > spaceBelow && spaceAbove > spaceBelow ? 'above' : 'below');
+
+    if (placement === 'above') {
+        const bottom = vh - anchor.top + GAP;
+        if (reserveHeight !== undefined) {
+            return { placement, top: null, bottom, left, height: Math.max(0, Math.min(plan, spaceAbove)) };
+        }
+        if (height <= spaceAbove) return { placement, top: null, bottom, left, height: null };
+        return { placement, top: minTop, bottom: null, left, height: null };
+    }
+    // Below: keep the natural placement, but never let the bottom edge run past the viewport
+    // (nor the top edge under the titlebar).
+    const top = Math.min(anchor.bottom + GAP, Math.max(minTop, vh - height - EDGE));
+    return { placement, top, bottom: null, left, height: null };
 }
 
 /**
@@ -50,7 +130,9 @@ interface AnchoredPopoverProps {
  * while its anchor button scrolls away underneath it, which would look
  * like a worse bug than the clipping this component exists to fix.
  */
-export default function AnchoredPopover({ anchorRect, onRequestClose, width, children, style }: AnchoredPopoverProps) {
+export default function AnchoredPopover({ anchorRect, onRequestClose, width, reserveHeight, onPlaced, children, style }: AnchoredPopoverProps) {
+    const onPlacedRef = useRef(onPlaced);
+    onPlacedRef.current = onPlaced;
     // Ref so the scroll/resize listener below always calls the LATEST
     // onRequestClose without needing it in the effect's own dependency
     // array (callers typically pass an inline arrow function).
@@ -116,39 +198,30 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
     // callback ref). A callback ref fires exactly when the host node is
     // actually inserted into the DOM, whichever commit that turns out to
     // be, so it reliably catches the delayed portal mount.
+    // The below/above choice made at open; later re-clamps (ResizeObserver) keep it, so a list
+    // that shrinks while the user types never makes the popover jump to the other side.
+    const placementRef = useRef<'below' | 'above' | null>(null);
     const applyClamp = useCallback((el: HTMLDivElement) => {
         if (!anchorRect) return;
-        const vh = window.innerHeight;
-        const vw = window.innerWidth;
         const rect = el.getBoundingClientRect();
-        const popoverHeight = rect.height;
-        const popoverWidth = width ?? rect.width;
-
-        const naturalTop = anchorRect.bottom + 6;
-        const spaceBelow = vh - anchorRect.bottom - 6;
-        const spaceAbove = anchorRect.top - 6;
-        let top: number;
-        if (popoverHeight > spaceBelow && spaceAbove > spaceBelow) {
-            // More room above the anchor than below, and it doesn't fit
-            // below as-is — flip to open upward instead.
-            top = Math.max(8, anchorRect.top - popoverHeight - 6);
-        } else {
-            // Keep the natural (below-anchor) placement, but never let the
-            // popover's bottom edge run past the viewport.
-            top = Math.min(naturalTop, Math.max(8, vh - popoverHeight - 8));
-        }
-
-        const naturalLeft = width !== undefined
-            ? Math.max(8, anchorRect.right - width)
-            : anchorRect.left;
-        let left = naturalLeft;
-        if (left + popoverWidth > vw - 8) {
-            left = Math.max(8, vw - popoverWidth - 8);
-        }
-
-        el.style.top = `${top}px`;
-        el.style.left = `${left}px`;
-    }, [anchorRect, width]);
+        const p = computePopoverPlacement({
+            anchor: anchorRect,
+            height: rect.height,
+            width: rect.width,
+            alignWidth: width,
+            vw: window.innerWidth,
+            vh: window.innerHeight,
+            minTop: popoverMinTop(),
+            reserveHeight,
+            placement: placementRef.current ?? undefined,
+        });
+        placementRef.current = p.placement;
+        el.style.top = p.top !== null ? `${p.top}px` : 'auto';
+        el.style.bottom = p.bottom !== null ? `${p.bottom}px` : '';
+        if (p.height !== null) el.style.height = `${p.height}px`;
+        el.style.left = `${p.left}px`;
+        el.dataset.placement = p.placement;
+    }, [anchorRect, width, reserveHeight]);
 
     // Holds the ResizeObserver set up below for the currently-mounted
     // popover element, so it can be torn down (and not leaked/duplicated)
@@ -157,10 +230,12 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
 
     const setPopoverRef = useCallback((node: HTMLDivElement | null) => {
         popoverRef.current = node;
+        placementRef.current = null;
         resizeObserverRef.current?.disconnect();
         resizeObserverRef.current = null;
         if (node) {
             applyClamp(node);
+            onPlacedRef.current?.(node);
             // The clamp above only runs once, right when the popover is
             // first inserted — content that grows AFTER that (e.g. the
             // add-to-failure-group menu adding a row for a group just
@@ -191,6 +266,7 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, chi
     // the callback ref above is what actually fires in practice, but this
     // keeps the clamp correct if that assumption ever changes.
     useLayoutEffect(() => {
+        placementRef.current = null;
         if (popoverRef.current) applyClamp(popoverRef.current);
     }, [applyClamp]);
 

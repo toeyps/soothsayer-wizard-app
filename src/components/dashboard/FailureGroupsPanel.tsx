@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, Play, ChevronRight, Check } from 'lucide-react';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata } from '../../types';
-import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { SensorLabel } from '../sensor/SensorLabel';
+import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { groupModelsBySensor, type SensorModelGroup } from '../../utils/modelGrouping';
 import type { RunningConditionFg } from '../../utils/runningCondition';
 import { isModelComplete, modelDotState, modelSetPointFlag } from '../../utils/modelStatus';
@@ -125,7 +126,9 @@ export default function FailureGroupsPanel({
     // not touch which models/groups exist.
     const [fgSearch, setFgSearch] = useState('');
 
-    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    // Customer item 3: rows use the same stacked label as the Sensor tab, from this panel's own
+    // metadata layered on the window's provider (special-sensor badges come through).
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
     // `RunningConditionFg` needs `models` too (category derivation falls back
     // to it when a model's own `category` is null) — `fgModels` is already a
@@ -192,7 +195,7 @@ export default function FailureGroupsPanel({
         const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const trimmedName = model.name.trim();
         if (!targetTag) return trimmedName || 'Untitled model';
-        const label = (trimmedName && trimmedName !== targetTag) ? trimmedName : sensorMetaMap.get(normalizeSensorTag(targetTag))?.description;
+        const label = (trimmedName && trimmedName !== targetTag) ? trimmedName : sensorLookup(targetTag).description;
         return label ? `${label} (${targetTag})` : targetTag;
     };
 
@@ -262,8 +265,8 @@ export default function FailureGroupsPanel({
         const open = expandedSensors.has(id);
         const first = sg.models[0];
         const keyTag = first.kind === 'clustering' ? first.xSensor : first.targetSensor;
-        const meta = keyTag ? sensorMetaMap.get(normalizeSensorTag(keyTag)) : undefined;
-        const label = keyTag ? (meta?.description ? `${meta.description} (${keyTag})` : keyTag) : modelDisplayLabel(first);
+        const info = keyTag ? sensorLookup(keyTag) : undefined;
+        const label = info ? sensorTitle(info) : modelDisplayLabel(first);
         const kinds = (['individual', 'relationship', 'clustering'] as ModelKind[]).filter(k => sg.models.some(m => m.kind === k));
         return (
             <div key={id} data-testid={`fg-sensor-row-${id}`}>
@@ -272,20 +275,16 @@ export default function FailureGroupsPanel({
                         type="button"
                         onClick={() => toggleSensor(id)}
                         aria-expanded={open}
-                        title={label}
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1, minWidth: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', textAlign: 'left' }}
+                        title={info ? undefined : label}
+                        aria-label={info ? label : undefined}
+                        className="fg-srow-btn"
                     >
                         <ChevronRight size={11} style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }} />
-                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
-                            {label}
-                        </span>
-                        {/* Unit badge trails the name+tag label, matching the
-                            Sensor tab's "name (unit) tag" convention as
-                            closely as this row's combined "desc (tag)" text
-                            allows without splitting that text across
-                            elements (a test asserts on its exact combined
-                            string — see FailureGroupsPanel.test.tsx). */}
-                        {meta?.unit && <span className="unit-badge" style={{ flexShrink: 0 }}>{meta.unit}</span>}
+                        {/* Customer item 3 (review ruling c): the stacked label, row metrics
+                            matching the Sensor tab rows exactly. */}
+                        {info && keyTag
+                            ? <SensorLabel tag={keyTag} info={info} />
+                            : <span className="fg-srow-plain">{label}</span>}
                     </button>
                     {kinds.map(k => {
                         // One model per (sensor, kind) across the whole
@@ -347,8 +346,7 @@ export default function FailureGroupsPanel({
         if (!searchQuery) return true;
         const first = sg.models[0];
         const keyTag = first.kind === 'clustering' ? first.xSensor : first.targetSensor;
-        const desc = keyTag ? sensorMetaMap.get(normalizeSensorTag(keyTag))?.description : undefined;
-        return `${desc ?? ''} ${keyTag ?? ''}`.toLowerCase().includes(searchQuery);
+        return keyTag ? sensorHaystack(sensorLookup(keyTag)).includes(searchQuery) : false;
     };
     const visibleSensorGroups = (groupNo: number, groupName: string): { visible: boolean; sensorGroups: SensorModelGroup[] } => {
         const all = groupModelsBySensor(fgModels, groupNo);
@@ -411,6 +409,7 @@ export default function FailureGroupsPanel({
     const notInGroupVisible = visibleSensorGroups(0, 'Not in Group');
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="fg-panel-widget" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             {/* Search -> summary chip -> legend, same header shell as the
                 Sensor tab's own search box (locked structural rule, SPEC
@@ -624,5 +623,6 @@ export default function FailureGroupsPanel({
                 </button>
             </div>
         </div>
+        </SensorMetaContext.Provider>
     );
 }

@@ -10,22 +10,24 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
         />
     ),
 }));
-// The real search dropdown lives in SensorPickers.tsx and has its own tests in SensorPickers.test.tsx.
-vi.mock('../components/windows/SensorPickers', () => ({
-    SensorAutocomplete: (props: any) => (
-        <select aria-label={props.placeholder} value={props.value} onChange={e => props.onSelect(e.target.value)}>
-            {props.sensors.map((s: string) => <option key={s} value={s}>{s}</option>)}
-        </select>
-    ),
-}));
+// The Fit chart's X selector is the REAL shared compact single picker (customer item 3,
+// 2026-10-09); its own behaviour is tested in SensorPicker.test.tsx.
 
 import ModelFitPage from '../components/windows/workbench/ModelFitPage';
+import { SensorMetaProvider } from '../components/sensor/SensorLabel';
+import { openPickerSurface, pickSingle, pickerRows, rowTag } from './helpers/sensorPicker';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import type { UseHealthPreviewResult } from '../hooks/useHealthPreview';
 import type { FailureModel } from '../types';
 
-afterEach(cleanup);
+afterEach(() => {
+    cleanup();
+    document.getElementById('wizard-portal-root')?.remove();
+});
+
+// The Build Model window's SensorMetaProvider supplies the labels: description "Label of TAG".
+const META = ['T1', 'A', 'B', 'X1', 'Y1', 'LOAD'].map(tag => ({ tag, description: `Label of ${tag}`, unit: '', component: '' }));
 
 const model = (over: Record<string, any> = {}) => ({
     id: 'm1', kind: 'individual', targetSensor: 'T1', predictorSensors: [], xSensor: '', ySensor: '', ...over,
@@ -41,7 +43,7 @@ function page(m: FailureModel, req: Record<string, any>, over: Record<string, an
         onXPredictorChange: vi.fn(), onCompare: vi.fn(),
         ...over,
     };
-    render(<ModelFitPage {...props} />);
+    render(<SensorMetaProvider metadata={META}><ModelFitPage {...props} /></SensorMetaProvider>);
     return props;
 }
 
@@ -118,12 +120,31 @@ describe('ModelFitPage — Relationship', () => {
 
     it('the X selector lists the fitted predictors, shows the plotted one and reports a change', () => {
         const p = page(rel(), { target: 'T1', predictors: ['A', 'B'], x_predictor: 'B' });
-        const select = within(screen.getByTestId('fit-x-selector')).getByLabelText('Select X-axis sensor...') as HTMLSelectElement;
-        expect([...select.options].map(o => o.value)).toEqual(['A', 'B']);
-        expect(select.value).toBe('B');
+        const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
+        expect(trigger.classList.contains('pk-trigger--sm')).toBe(true);
+        expect(rowTag(trigger)).toBe('B');
         expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('B');
-        fireEvent.change(select, { target: { value: 'A' } });
+        fireEvent.click(trigger);
+        expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('Predictors of this model · 2');
+        expect(pickerRows().map(rowTag)).toEqual(['A', 'B']);
+        fireEvent.click(trigger); // close
+        pickSingle(trigger, 'A');
         expect(p.onXPredictorChange).toHaveBeenCalledWith('A');
+    });
+
+    it('with ONE predictor the X selector is disabled, still shows its value, and gives the reason in a tooltip', () => {
+        page(rel(), { target: 'T1', predictors: ['A'], x_predictor: 'A' });
+        const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' }) as HTMLButtonElement;
+        expect(trigger.disabled).toBe(true);
+        expect(rowTag(trigger)).toBe('A');
+        expect(trigger.getAttribute('title')).toBe('Only one predictor — nothing else to plot on X');
+    });
+
+    it('the Fit card subtitle names the target with the muted Inline label (no brackets)', () => {
+        page(rel(), { target: 'T1', predictors: ['A', 'B'] });
+        const sub = within(screen.getByTestId('chart-card-fit')).getByText('predictor vs', { exact: false });
+        expect(sub.textContent).toBe('predictor vs Label of T1T1');
+        expect(sub.querySelector('.sl--muted')).toBeTruthy();
     });
 
     it('"Compare predictors" opens the comparison', () => {
@@ -150,7 +171,7 @@ describe('ModelFitPage — Clustering', () => {
         expect(series).toMatch(/Cluster 1/);
         expect(series).toMatch(/Cluster 2 3× SD/);
         const summary = screen.getByTestId('cluster-summary');
-        expect(summary.textContent).toMatch(/split by Label of LOAD/);
+        expect(summary.textContent).toMatch(/split by Label of LOADLOAD/);
         expect(within(summary).getByTestId('cluster-row-1').textContent).toMatch(/Cluster 1 · 0\.000 – 50\.0041 rows/);
         expect(within(summary).getByTestId('cluster-row-2').textContent).toMatch(/Cluster 2 · 50\.00 – 100\.042 rows/);
         expect(summary.textContent).toMatch(/x 10\.00 · y 20\.00/);
@@ -163,7 +184,7 @@ describe('ModelFitPage — Clustering', () => {
 
     it('the card subtitle names both sensors by their labels', () => {
         page(clu(), { n_clusters: 1 });
-        expect(screen.getByTestId('chart-card-cl').textContent).toMatch(/Label of X1 vs Label of Y1/);
+        expect(screen.getByTestId('chart-card-cl').textContent).toMatch(/Label of X1X1 vs Label of Y1Y1/);
     });
 });
 

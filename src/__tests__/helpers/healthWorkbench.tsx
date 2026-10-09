@@ -7,6 +7,7 @@ import { computeTrainFingerprint } from '../../utils/trainFingerprint';
 import { env } from './healthEnv';
 import { PLANT_META, plantDataset, createFakeHealthRust, type HealthDataset } from './fakeHealthRust';
 import { ALL_TIME_TRAIN, ONE_TEST } from './trainTestFixture';
+import { rowTag } from './sensorPicker';
 
 /**
  * Drivers for the health-score integration tests (QA, 2026-10-04): mount the
@@ -226,18 +227,19 @@ export async function saveChanges() {
     await settle(50);
 }
 
-/** Pick sensors in an open SensorPickerModal (multi: checkboxes + OK; single: click). */
+/** Pick sensors in an open shared sensor picker (customer item 3, 2026-10-09):
+ *  multi = the "Select {noun}" modal (tick rows + OK); single = the anchored popover named
+ *  after the field (one click picks and closes). */
 export async function pickInModal(noun: string, tags: string[], single = false) {
-    const dlg = within(screen.getByRole('dialog', { name: `Select ${noun}` }));
+    const dialog = () => screen.getByRole('dialog', { name: single ? noun : `Select ${noun}` });
     for (const tag of tags) {
-        fireEvent.change(dlg.getByRole('textbox'), { target: { value: tag } });
-        const item = [...screen.getByRole('dialog', { name: `Select ${noun}` }).querySelectorAll('.predictor-picker-item')]
-            .find(el => el.querySelector('.predictor-picker-item-tag')?.textContent === tag) as HTMLElement;
+        fireEvent.change(within(dialog()).getByRole('combobox'), { target: { value: tag } });
+        const item = [...dialog().querySelectorAll('[role="option"]')].find(el => rowTag(el) === tag) as HTMLElement;
         expect(item, `picker item ${tag}`).toBeTruthy();
         if (single) { fireEvent.click(item); await settle(); return; }
-        fireEvent.click(item.querySelector('input')!);
+        fireEvent.click(item);
     }
-    const ok = [...screen.getByRole('dialog', { name: `Select ${noun}` }).querySelectorAll('.predictor-picker-footer button')].pop() as HTMLElement;
+    const ok = [...dialog().querySelectorAll('.pk-foot button')].pop() as HTMLElement;
     fireEvent.click(ok);
     await settle();
 }

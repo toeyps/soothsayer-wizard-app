@@ -12,6 +12,7 @@ beforeEach(() => {
 });
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
 import SpecialSensorEditor from '../components/windows/SpecialSensorEditor';
+import { openPickerSurface, pickMulti, pickerRows, rowTag } from './helpers/sensorPicker';
 
 const formulaRecipe: SpecialSensorRecipe = { kind: 'formula', tag: 'special A', formula: '$TAG1 * 2' };
 const operationRecipe: SpecialSensorRecipe = {
@@ -147,7 +148,7 @@ describe('SpecialSensorEditor', () => {
             renderEditor({ recipe: singleRecipe, availableSensors: ['TAG1', 'TAG2'], sensorMetadata: [] });
             expect(screen.getByText('Value')).toBeTruthy(); // single-sensor UI, "Add" seeded
 
-            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'TAG2' } });
+            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['TAG2']);
             expect(screen.getByText('Combine with operators')).toBeTruthy(); // now the multi-sensor UI
             expect(screen.queryByText('Value')).toBeNull(); // the single-op form is gone, not just hidden-empty
 
@@ -231,11 +232,13 @@ describe('SpecialSensorEditor', () => {
                 availableSensors: ['TAG1', 'TAG2', 'TAG3', 'Total flow'],
                 sensorMetadata: [],
             });
-            const options = Array.from(screen.getByLabelText('Add a source sensor').querySelectorAll('option'))
-                .map(o => o.textContent);
+            // Customer item 3: the shared multi picker (its scope line says what is left out).
+            fireEvent.click(screen.getByRole('button', { name: 'Add source sensors…' }));
+            const options = pickerRows().map(rowTag);
             expect(options).not.toContain('Total flow');
             expect(options).not.toContain('TAG1');
             expect(options).toContain('TAG3');
+            expect(openPickerSurface().querySelector('.pk-scope')?.textContent).toBe('All sensors except this one and the ones already picked · 1');
         });
 
         it('shows source sensors by their description when metadata is available', () => {
@@ -413,7 +416,7 @@ describe('SpecialSensorEditor', () => {
             const calc = screen.getByLabelText('Calculation') as HTMLTextAreaElement;
             expect(calc.readOnly).toBe(true);
             expect(calc.value).toBe('sum(TAG1, TAG2)');
-            expect(screen.queryByLabelText('Add a source sensor')).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Add source sensors…' })).toBeNull();
             expect(screen.queryByLabelText('Remove TAG1')).toBeNull();
         });
 
@@ -502,7 +505,7 @@ describe('SpecialSensorEditor', () => {
         it('an operation sensor that was not restored gets its source picker back and a matching note', () => {
             renderEditor({ recipe: operationRecipe, sensorMetadata: [], lockMessage, restore: { reason: 'Sensor not found: TAG2' } });
             expect(screen.getByTestId('restore-note').textContent).toContain('Sensor not found: TAG2. Fix its calculation or sources to restore it.');
-            expect(screen.getByLabelText('Add a source sensor')).toBeTruthy();
+            expect(screen.getByRole('button', { name: 'Add source sensors…' })).toBeTruthy();
             expect(screen.getByLabelText('Remove TAG2')).toBeTruthy();
         });
 
@@ -651,7 +654,7 @@ describe('SpecialSensorEditor', () => {
         const fill = () => fillRequiredFields();
         it('Sum all stays Sum all when a source is added', () => {
             const { props } = renderEditor({ recipe: operationRecipe, sensorMetadata: [] });
-            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'TAG3' } });
+            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['TAG3']);
             fill();
             fireEvent.click(save());
             expect((props.onSave as any).mock.calls[0][0].recipe).toEqual({
@@ -681,7 +684,7 @@ describe('SpecialSensorEditor', () => {
         it('removing the only source then adding another starts the single-sensor form fresh, and the new pick is saved', () => {
             const { props } = renderEditor({ recipe: singleRecipe, availableSensors: ['TAG1', 'TAG2'], sensorMetadata: [] });
             fireEvent.click(screen.getByLabelText('Remove TAG1')); // none left: the hint replaces the builder
-            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'TAG2' } });
+            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['TAG2']);
             expect(screen.queryByText('Value')).toBeNull();
             fireEvent.click(screen.getByText('Add'));
             fireEvent.change(valueInput(), { target: { value: '7' } });

@@ -468,8 +468,29 @@ describe('LineChart option building', () => {
             const html = formatter([
                 { axisValue: ms, seriesName: 'A', value: [ms, 5], color: '#fff' },
             ]);
-            expect(html).toContain('A: 5');
+            // No description → the tag alone (mono), value with 3 decimals, no unit.
+            expect(html).toContain('<span class="tt-desc tt-mono">A</span>');
+            expect(html).toContain('>5.000</span>');
             expect(html).not.toContain('undefined');
+        });
+
+        // Customer item 3 (2026-10-09): inline label (description then tag, no brackets), value +
+        // unit right in the series colour, thousands separators.
+        it('each row is the Inline label + value + unit in the series colour, with thousands separators', () => {
+            const columnar = columnarOf(['A'], 3);
+            render(
+                <LineChart
+                    data={[]} columnar={columnar} sensors={['A']} headers={['A']}
+                    sensorMetadata={[{ tag: 'A', description: 'Exhaust temperature', unit: 'DEGC', component: 'GT' }]}
+                />,
+            );
+            const { formatter } = capturedOptions[capturedOptions.length - 1].tooltip;
+            const ms = msOf('2026-01-01T00:00:00');
+            const html = formatter([{ axisValue: ms, seriesName: 'A', value: [ms, 12345.6], color: '#10b981' }]);
+            expect(html).toContain('<div class="tt-head">2026/01/01');
+            expect(html).toContain('<span class="tt-desc">Exhaust temperature</span><span class="tt-tag">A</span>');
+            expect(html).toContain('<span class="tt-val" style="color:#10b981">12,345.600 DEGC</span>');
+            expect(html).not.toMatch(/\(A\)/);
         });
 
         it('caps the number of rendered rows at 10', () => {
@@ -481,7 +502,7 @@ describe('LineChart option building', () => {
                 axisValue: ms, seriesName: `S${i}`, value: [ms, i], color: '#fff',
             }));
             const html = formatter(params);
-            expect((html.match(/S\d+:/g) ?? [])).toHaveLength(10);
+            expect((html.match(/class="tt-row"/g) ?? [])).toHaveLength(10);
         });
     });
 
@@ -587,6 +608,31 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(markPoint.data).toHaveLength(1);
         expect(markPoint.data[0].coord[0]).toBe(msOf(columnar.timestamps[2]));
         expect(markPoint.data[0].label.formatter).toContain('①');
+    });
+
+    // Customer item 3 (review ruling a): the tag-point box is ECharts rich text — a description
+    // segment (200 px, truncates), the tag segment, then a fixed right-aligned value column.
+    it('the tag-point box lists each sensor as description + tag + right-aligned value (rich text)', () => {
+        const columnar = columnarOf(headers, 5);
+        const meta = headers.map((h, i) => ({ tag: h, description: i === 0 ? 'Bearing {temp} | DE' : '', unit: i === 0 ? 'DEGC' : '', component: '' }));
+        const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} sensorMetadata={meta} />);
+        fireEvent.click(tagToggle(container));
+        mockConvertFromPixel.mockReturnValue([msOf(columnar.timestamps[2]), 0]);
+        act(() => { zrClickHandler!({ offsetX: 50, offsetY: 50 }); });
+        const markPoint = capturedOptions[capturedOptions.length - 1].series[0].markPoint;
+        const text: string = markPoint.data[0].label.formatter;
+        const lines = text.split('\n');
+        expect(lines[0]).toMatch(/^\{h\|① {2}/);
+        // `{ } |` inside a name would break the rich-text syntax → replaced by spaces.
+        expect(lines[1]).toMatch(new RegExp(`^\\{d\\|Bearing  temp    DE\\}\\{t\\|${headers[0]}\\}\\{v\\|[^}]+ DEGC\\}$`));
+        // No description → the tag alone in the wider mono segment.
+        expect(lines[2]).toMatch(new RegExp(`^\\{dm\\|${headers[1]}\\}\\{v\\|`));
+        const rich = markPoint.label.rich;
+        expect(rich.d.width).toBeGreaterThanOrEqual(200);
+        expect(rich.v.align).toBe('right');
+        expect(rich.d.width + rich.t.width + rich.v.width).toBeLessThanOrEqual(340);
+        expect(rich.d.fontFamily).toContain('Segoe UI');
+        expect(rich.v.fontFamily).toContain('Consolas');
     });
 
     it('ignores a click outside the plot grid (containPixel false)', () => {

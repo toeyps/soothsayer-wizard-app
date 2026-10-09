@@ -11,7 +11,7 @@ vi.mock('../components/windows/SensorPickers', () => ({
     SensorPickerModal: (props: any) => {
         pickerProps.push(props);
         return (
-            <button data-testid="picker" data-single={String(!!props.single)} data-muted={String(!!props.mutedTag)} onClick={() => props.onSelect('PICKED')}>
+            <button data-testid="picker" data-single={String(!!props.single)} onClick={() => props.onSelect('PICKED')}>
                 {props.value}
             </button>
         );
@@ -266,14 +266,15 @@ describe('RunningConditionPanel — step 2 choice cards', () => {
 });
 
 describe('RunningConditionPanel — condition rows', () => {
-    it('each row: the REAL single sensor picker (muted tag), operator buttons, value + unit, remove', () => {
+    it('each row: the shared single sensor picker + a component chip, operator buttons, value + unit, remove', () => {
         const h = setup();
         const rows = [screen.getByTestId('rc-cond-1'), screen.getByTestId('rc-cond-2')];
         expect(rows[0].className).toContain('rcm-cond');
         const pickers = screen.getAllByTestId('picker');
         expect(pickers).toHaveLength(2);
         expect(pickers[0].getAttribute('data-single')).toBe('true');
-        expect(pickers[0].getAttribute('data-muted')).toBe('true');
+        // Customer item 3: the component is a small outlined chip after the picker.
+        expect(within(rows[0]).getByText('Pump').className).toContain('comp-chip');
         expect(pickerProps[0]).toMatchObject({ single: true, value: 'I_MOT_A', noun: 'sensor' });
         fireEvent.click(pickers[1]);
         expect(h.onUpdateFilter).toHaveBeenCalledWith('f2', { sensor: 'PICKED' });

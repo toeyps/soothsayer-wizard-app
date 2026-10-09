@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
-import { Plus, X, Check } from 'lucide-react';
+import { Plus, X, Check, AlertTriangle } from 'lucide-react';
 import { SensorMetadata } from '../../types';
-import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
+import { SensorInline } from '../sensor/SensorLabel';
+import { SensorPickerSingle } from '../sensor/SensorPicker';
+import { SensorMetaContext, useLayeredSensorLookup, useSensorLookup } from '../sensor/sensorInfo';
 import { renameTagInRunningConditionFilters, removeTagsFromFilters } from '../../utils/specialSensorRename';
 
 export interface SensorValueFilter {
@@ -36,6 +38,11 @@ interface FilterPanelProps {
     onFiltersChange: (filters: FilterState) => void;
     sensorMetadata?: SensorMetadata[] | null;
     sensorChange?: FilterSensorChange;
+    /** "Show on chart" on a condition whose sensor is no longer on the chart. */
+    onShowSensor?: (tag: string) => void;
+    /** Why "Show on chart" can't add a sensor right now (e.g. the Pair Plot sensor cap) — the
+     *  button is then disabled with this as its tooltip instead of silently doing nothing. */
+    showSensorBlockedReason?: string;
 }
 
 // ── Operator segmented control ──────────────────────────────────────────
@@ -50,63 +57,95 @@ const OPERATORS: { value: SensorValueFilter['operation']; label: string; title: 
 
 // ── Filter Row (memoized) ───────────────────────────────────────────────
 // One grid row per condition — `.frow` in the prototype:
-// [sensor select] [operator segmented] [value1] [value2 or blank] [delete].
+// [sensor picker] [operator segmented] [value1] [value2 or blank] [delete].
+//
+// Customer item 3 (SPEC 2026-10-09 §1 "Filter tab"): the sensor is the shared single picker,
+// scoped to the sensors on the chart, and the value boxes carry the unit as a suffix. A condition
+// whose sensor is no longer on the chart is KEPT and still applies (Dashboard's
+// `wireValueFilters` sends every condition) — its row gets a ⚠ and a solid amber picker border,
+// and a note under it with "Show on chart" / "Remove". Never the dashed `.req` look (that means
+// "required and empty").
 
 const FilterRow = memo(function FilterRow({
     filter,
     selectedSensors,
-    getSensorLabel,
     onUpdate,
     onRemove,
+    onShowSensor,
+    showSensorBlockedReason,
 }: {
     filter: SensorValueFilter;
     selectedSensors: string[];
-    getSensorLabel: (sensor: string) => string;
     onUpdate: (id: string, field: keyof SensorValueFilter, value: string) => void;
     onRemove: (id: string) => void;
+    onShowSensor?: (tag: string) => void;
+    showSensorBlockedReason?: string;
 }) {
+    const lookup = useSensorLookup();
     const isBetween = filter.operation === 'between';
-    return (
-        <div className="filter-row">
-            <select
-                value={filter.sensor}
-                onChange={(e) => onUpdate(filter.id, 'sensor', e.target.value)}
-                className="filter-row-sensor"
-            >
-                {selectedSensors.map(s => <option key={s} value={s}>{getSensorLabel(s)}</option>)}
-            </select>
-            <div className="filter-op-seg">
-                {OPERATORS.map(op => (
-                    <button
-                        key={op.value}
-                        type="button"
-                        className={filter.operation === op.value ? 'is-on' : ''}
-                        onClick={() => onUpdate(filter.id, 'operation', op.value)}
-                        title={op.title}
-                    >
-                        {op.label}
-                    </button>
-                ))}
-            </div>
+    const offChart = !!filter.sensor && !selectedSensors.includes(filter.sensor);
+    const unit = filter.sensor ? lookup(filter.sensor).unit : undefined;
+    const valueInput = (field: 'value1' | 'value2', placeholder: string) => (
+        <span className="fv-wrap">
             <input
                 type="number"
-                value={filter.value1}
-                onChange={(e) => onUpdate(filter.id, 'value1', e.target.value)}
-                placeholder={isBetween ? 'min' : 'value'}
-                className="filter-row-value"
+                value={filter[field]}
+                onChange={(e) => onUpdate(filter.id, field, e.target.value)}
+                placeholder={placeholder}
+                className={`filter-row-value${unit ? ' filter-row-value--unit' : ''}`}
             />
-            {isBetween ? (
-                <input
-                    type="number"
-                    value={filter.value2}
-                    onChange={(e) => onUpdate(filter.id, 'value2', e.target.value)}
-                    placeholder="max"
-                    className="filter-row-value"
-                />
-            ) : <span />}
-            <button onClick={() => onRemove(filter.id)} className="filter-row-delete" title="Remove filter">
-                <X size={12} />
-            </button>
+            {unit && <span className="fv-unit" aria-hidden="true">{unit}</span>}
+        </span>
+    );
+    return (
+        <div className="filter-row-wrap">
+            <div className={`filter-row${isBetween ? ' is-between' : ''}`}>
+                <div className="filter-row-sensor-cell">
+                    {offChart && <AlertTriangle size={13} className="fr-warn-ico" aria-label="Not on the chart" />}
+                    <SensorPickerSingle
+                        sensors={selectedSensors}
+                        value={filter.sensor}
+                        onSelect={(t) => { if (t) onUpdate(filter.id, 'sensor', t); }}
+                        warn={offChart}
+                        scope={<>Sensors on the chart · {selectedSensors.length}</>}
+                        ariaLabel="Filter sensor"
+                    />
+                </div>
+                <div className="filter-op-seg">
+                    {OPERATORS.map(op => (
+                        <button
+                            key={op.value}
+                            type="button"
+                            className={filter.operation === op.value ? 'is-on' : ''}
+                            onClick={() => onUpdate(filter.id, 'operation', op.value)}
+                            title={op.title}
+                        >
+                            {op.label}
+                        </button>
+                    ))}
+                </div>
+                {valueInput('value1', isBetween ? 'min' : 'value')}
+                {isBetween ? valueInput('value2', 'max') : <span className="fv-empty" />}
+                <button onClick={() => onRemove(filter.id)} className="filter-row-delete" title="Remove filter">
+                    <X size={12} />
+                </button>
+            </div>
+            {offChart && (
+                <div className="filter-row-note" role="status">
+                    <span><SensorInline tag={filter.sensor} /> is not on the chart. The filter still applies.</span>
+                    {onShowSensor && (
+                        <button
+                            type="button"
+                            disabled={!!showSensorBlockedReason}
+                            title={showSensorBlockedReason}
+                            onClick={() => onShowSensor(filter.sensor)}
+                        >
+                            Show on chart
+                        </button>
+                    )}
+                    <button type="button" onClick={() => onRemove(filter.id)}>Remove</button>
+                </div>
+            )}
         </div>
     );
 });
@@ -135,17 +174,15 @@ export default function FilterPanel({
     onFiltersChange,
     sensorMetadata,
     sensorChange,
+    onShowSensor,
+    showSensorBlockedReason,
 }: FilterPanelProps) {
     // Local draft state — edits happen here without triggering heavy recomputation
     const [draft, setDraft] = useState<FilterState>(filters);
 
-    // "<description> (<tag>)" when metadata is loaded — a bare tag like
-    // "11EI1301.PV" isn't enough to tell which sensor it is at a glance.
-    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    const getSensorLabel = useCallback((sensor: string) => {
-        const meta = sensorMetaMap.get(normalizeSensorTag(sensor));
-        return meta ? `${meta.description} (${sensor})` : sensor;
-    }, [sensorMetaMap]);
+    // Labels in the rows (pickers, the off-chart note) read this panel's own metadata, layered on
+    // the window's provider.
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
     // Sync from parent -- but only the pieces that actually changed
     // upstream. `filters` bundles BOTH the time period (timestampStart/End
@@ -258,6 +295,7 @@ export default function FilterPanel({
     const hasAny = draft.sensorFilters.length > 0;
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="filter-panel">
             {/* Header -- `.fhead` in the prototype: bold title + hint text +
                 spacer + "Add condition" (disabled with no sensors to pick
@@ -284,9 +322,10 @@ export default function FilterPanel({
                             key={filter.id}
                             filter={filter}
                             selectedSensors={selectedSensors}
-                            getSensorLabel={getSensorLabel}
                             onUpdate={updateSensorFilter}
                             onRemove={removeSensorFilter}
+                            onShowSensor={onShowSensor}
+                            showSensorBlockedReason={showSensorBlockedReason}
                         />
                     ))}
                 </div>
@@ -314,5 +353,6 @@ export default function FilterPanel({
                 )}
             </div>
         </div>
+        </SensorMetaContext.Provider>
     );
 }

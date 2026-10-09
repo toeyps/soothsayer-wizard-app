@@ -4,6 +4,7 @@ import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
 import { buildSpecialSensorUsage, describeEditLock, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
 import { describeRecipe } from "../../utils/specialSensorDescribe";
 import SpecialSensorEditor from "./SpecialSensorEditor";
+import { SensorLabel } from '../sensor/SensorLabel';
 
 interface Props {
     /** Special sensors to list — already excluding anything in an open undo
@@ -176,14 +177,14 @@ export default function ManageSpecialSensors({
                                     {recipe.kind === 'formula' ? 'ƒ' : 'Σ'}
                                 </span>
 
-                                <div className="min-w-0 flex-1">
-                                    <div className="truncate" style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                        {recipe.tag}
-                                    </div>
-                                    <div className="truncate" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                                        {meta?.description || '— no description —'}
-                                        {meta?.unit ? ` · ${meta.unit}` : ''}
-                                    </div>
+                                {/* Customer item 3: description first, unit chip, tag on line 2 — the
+                                    ƒ / Σ badge is already the square on the left, so it is not repeated.
+                                    No "no description" placeholder (the tag stands alone). */}
+                                <div className="min-w-0 flex-1 manage-ss-label">
+                                    <SensorLabel
+                                        tag={recipe.tag}
+                                        info={{ tag: recipe.tag, description: meta?.description?.trim() || undefined, unit: meta?.unit?.trim() || undefined, component: meta?.component?.trim() || undefined }}
+                                    />
                                 </div>
 
                                 <div
@@ -219,8 +220,9 @@ export default function ManageSpecialSensors({
                                             onClick={() => setExpandedTag(expanded ? null : recipe.tag)}
                                             aria-expanded={expanded}
                                             className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-                                            style={{ fontSize: '10px', color: 'var(--warn)', border: '1px solid var(--warn)' }}
+                                            style={{ fontSize: '10px', color: 'var(--text-secondary)', border: '1px solid var(--border-strong)' }}
                                         >
+                                            {/* Customer item 3: a neutral grey lock pill (a lock is not a warning). */}
                                             <Lock size={9} />
                                             {summary}
                                         </button>

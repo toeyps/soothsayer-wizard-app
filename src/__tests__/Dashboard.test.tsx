@@ -905,6 +905,32 @@ describe('Dashboard', () => {
             expect(lastCall.filter.timestamp_start).toBe('2026-01-01T00:00');
         });
 
+        // Customer item 3 (2026-10-09): a condition whose sensor left the chart is kept and still
+        // applies; its note offers "Show on chart", which puts the sensor back on the chart.
+        it('"Show on chart" from the Filter tab adds the sensor back to the chart', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+            fireEvent.click(screen.getByText('Filter'));
+            const props = last(filterPanelProps) as any;
+            expect(typeof props.onShowSensor).toBe('function');
+            act(() => { props.onShowSensor('TAG2'); });
+            expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2']);
+            // Showing a sensor already on the chart is a no-op.
+            act(() => { (last(filterPanelProps) as any).onShowSensor('TAG1'); });
+            expect(last(sensorSelectionProps).selectedSensors).toEqual(['TAG1', 'TAG2']);
+        });
+
+        it('"Show on chart" is blocked with a reason on Pair Plot at the sensor cap, and free otherwise', () => {
+            renderDashboard({
+                initialState: makeInitialState({
+                    selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], chartType: 'pair',
+                }),
+            });
+            fireEvent.click(screen.getByText('Filter'));
+            expect((last(filterPanelProps) as any).showSensorBlockedReason).toBe('Pair Plot shows at most 4 sensors');
+            fireEvent.click(screen.getAllByText('Line').find(el => el.classList.contains('chart-type-btn'))!);
+            expect((last(filterPanelProps) as any).showSensorBlockedReason).toBeUndefined();
+        });
+
         // 2026-09-22, per explicit user question ("filter รวม... การแสดงผล
         // ยังต้องแสดงผลทั้งหมดเหมือนเดิมนะ การทำงานตรงนี้ถูกต้องไหม"): the
         // workspace-wide Running Condition Filter is meant ONLY for every
@@ -1771,7 +1797,7 @@ describe('Dashboard', () => {
     describe('color / axis editor (Selected Sensor tab)', () => {
         it('the color picker updates sensorColors and is reflected on the Chart', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             fireEvent.click(screen.getByText('set-color'));
             const lastChart = last(chartProps.filter((p) => p.chartType === 'line'));
             expect(lastChart.sensorColors.TAG1).toBe('#abcdef');
@@ -1811,7 +1837,7 @@ describe('Dashboard', () => {
 
         it('clears the color/axis-range override once the sensor is deselected', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             fireEvent.click(screen.getByText('set-color'));
 
             fireEvent.click(screen.getByTitle('Remove from plot'));
@@ -1833,17 +1859,17 @@ describe('Dashboard', () => {
 
         it('both popovers render into the portal root, outside the Dashboard container', () => {
             const { container } = renderOne();
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             expect(openPops()).toHaveLength(1);
             expect(container.contains(openPops()[0])).toBe(false);
-            fireEvent.click(screen.getByTitle('Change line color')); // close
+            fireEvent.click(screen.getByTitle('Line colour')); // close
             fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
             expect(container.contains(screen.getByPlaceholderText('min'))).toBe(false);
         });
 
         it('clicking inside the colour popover recolours without closing it or hiding the sensor', () => {
             renderOne();
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             fireEvent.click(screen.getByText('set-color'));
             fireEvent.click(screen.getByText('set-color'));
             expect(openPops()).toHaveLength(1);
@@ -1877,10 +1903,10 @@ describe('Dashboard', () => {
 
         it('a resize closes the colour popover and ONE click on the swatch reopens it', () => {
             renderOne();
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             fireEvent(window, new Event('resize'));
             expect(openPops()).toHaveLength(0);
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             expect(openPops()).toHaveLength(1);
         });
 
@@ -1922,7 +1948,7 @@ describe('Dashboard', () => {
         // axisEditorFor already was.
         it('removing a sensor with its colour popover open, then re-adding it, does not resurrect the popover', () => {
             renderOne();
-            fireEvent.click(screen.getByTitle('Change line color'));
+            fireEvent.click(screen.getByTitle('Line colour'));
             fireEvent.click(screen.getByTitle('Remove from plot'));
             expect(openPops()).toHaveLength(0);
             fireEvent.click(screen.getByText('select-tag1'));
@@ -1937,9 +1963,38 @@ describe('Dashboard', () => {
         // "open" branch close the other popover first.
         it('only one Selected Sensor popover is open at a time (two fixed popovers from one row overlap)', () => {
             renderOne();
-            fireEvent.click(screen.getByTitle('Change line color'));
-            fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
+            fireEvent.click(screen.getByTitle('Line colour'));
+            // A real click starts with a mousedown — the shared ColourPicker closes on a
+            // mousedown outside itself (customer item 4, 2026-10-09).
+            const pin = screen.getByTitle(/Pin the Y-axis/);
+            fireEvent.mouseDown(pin);
+            fireEvent.click(pin);
             expect(openPops()).toHaveLength(1);
+            expect(document.querySelector('.cp-pop')).toBeNull();
+            // ...and opening the colour picker closes the axis popover.
+            fireEvent.click(screen.getByTitle('Line colour'));
+            expect(openPops()).toHaveLength(1);
+            expect(document.querySelector('.cp-pop')).toBeTruthy();
+            expect(screen.queryByPlaceholderText('min')).toBeNull();
+        });
+
+        // Customer items 3 + 4 (2026-10-09): the swatch IS the colour button (no pipette), the row
+        // text is the neutral stacked SensorLabel, and the picker marks the other sensors' colours.
+        it('the row is swatch + neutral SensorLabel; the picker marks colours other sensors on the chart use', () => {
+            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], sensorColors: { TAG1: '#3b82f6', TAG2: '#10b981' } }) });
+            const swatches = screen.getAllByTitle('Line colour');
+            expect(swatches).toHaveLength(2);
+            expect(swatches[0].classList.contains('cp-hit')).toBe(true);
+            const row = swatches[0].parentElement as HTMLElement;
+            const label = row.querySelector('.sl') as HTMLElement;
+            expect(label).toBeTruthy();
+            expect(label.getAttribute('style') ?? '').not.toContain('color');
+            fireEvent.click(swatches[0]);
+            const sw = (hex: string) => document.querySelector(`.cp-pop .cp-sw[title^="${hex}"]`) as HTMLElement;
+            expect(sw('#3b82f6').classList.contains('sel')).toBe(true);
+            expect(sw('#10b981').querySelector('.cp-used')).toBeTruthy();
+            fireEvent.click(sw('#8b5cf6'));
+            expect(last(chartProps.filter((p) => p.chartType === 'line')).sensorColors.TAG1).toBe('#8b5cf6');
         });
 
         // ── Final visual-refresh QA sweep (2026-10-02, after Phase 4) ──
@@ -1962,7 +2017,7 @@ describe('Dashboard', () => {
 
         it('Line -> Scatter -> Line does not resurrect the colour popover (unclicked) at its stale anchor', () => {
             renderTwo();
-            const swatch = screen.getAllByTitle('Change line color')[0];
+            const swatch = screen.getAllByTitle('Line colour')[0];
             swatch.getBoundingClientRect = () => rectAt(100);
             fireEvent.click(swatch);
             expect(openPops()).toHaveLength(1);

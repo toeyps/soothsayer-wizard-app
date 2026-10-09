@@ -4,8 +4,10 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { writeUserTextFile } from '../../workspaceManager';
 import PairPlotCell, { HoverInfo, Cluster } from './PairPlotCell';
 import AxisLabel from './AxisLabel';
+import ColourPicker from '../sensor/ColourPicker';
+import { SensorInline } from '../sensor/SensorLabel';
+import { SensorMetaContext, fmtNum, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { ChartProps, MAX_PAIR_PLOT_SENSORS } from './ChartTypes';
-import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaMap';
 import { formatDateTime } from '../../utils/dateFormat';
 import { ACCENT_HEX, CANVAS_BG_HEX, correlationGradientHex, hexToRgba, hexToRgbaCss, rgbaToHex } from './pairPlotColors';
 import { pearsonCorrelation } from './pairPlotStats';
@@ -164,11 +166,10 @@ const AXIS_LABEL_STYLE = {
 } as const;
 
 function CorrelationCell({
-    r, sensorY, sensorYDescription, showYLabel,
+    r, sensorY, showYLabel,
 }: {
     r: number | null;
     sensorY: string;
-    sensorYDescription?: string;
     /** True only for the left-most correlation cell in its row (column 0) —
      *  that's the row's shared header, "outer frame only" like every other
      *  cell type. Correlation cells never sit in row 0, so they never carry
@@ -207,25 +208,15 @@ function CorrelationCell({
                 tooltip needs to escape that boundary to show a full
                 description without being cut off. */}
             {showYLabel && (
-                <AxisLabel tag={sensorY} description={sensorYDescription} rotate style={AXIS_LABEL_STYLE.left} />
+                <AxisLabel tag={sensorY} rotate style={AXIS_LABEL_STYLE.left} />
             )}
         </>
     );
 }
 
-/** Format a tooltip value cleanly. */
-function fmt(n: number): string {
-    if (!isFinite(n)) return '—';
-    if (Math.abs(n) >= 10000 || (Math.abs(n) > 0 && Math.abs(n) < 0.01)) return n.toExponential(2);
-    return n.toFixed(4);
-}
-
 function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
-    const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    const getDescription = useCallback(
-        (tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description || undefined,
-        [sensorMetaMap],
-    );
+    // Customer item 3: axis hover cards and the hover tooltip resolve labels through this lookup.
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     /** Ordered list of brushed clusters. Each lasso pushes a new entry; the
      *  user can recolour or delete any cluster from the bottom panel. */
     const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -426,6 +417,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     };
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="pair-regl-wrap">
             {/* Global toolbox — Lasso / Pan-zoom are mutually exclusive, shared
                 by every cell in the matrix (and the enlarged-view dialog). */}
@@ -479,7 +471,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         isTopRow={false}
                                     />
                                     {i === 0 && (
-                                        <AxisLabel tag={sensorY} description={getDescription(sensorY)} style={AXIS_LABEL_STYLE.top} />
+                                        <AxisLabel tag={sensorY} style={AXIS_LABEL_STYLE.top} />
                                     )}
                                     {inspectMode && (
                                         <div
@@ -513,7 +505,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         resetTick={resetTick}
                                     />
                                     {i === 0 && (
-                                        <AxisLabel tag={sensorX} description={getDescription(sensorX)} style={AXIS_LABEL_STYLE.top} />
+                                        <AxisLabel tag={sensorX} style={AXIS_LABEL_STYLE.top} />
                                     )}
                                     {inspectMode && (
                                         <div
@@ -535,7 +527,6 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     <CorrelationCell
                                         r={correlations.get(`${i}-${k}`) ?? null}
                                         sensorY={sensorY}
-                                        sensorYDescription={getDescription(sensorY)}
                                         showYLabel={k === 0}
                                     />
                                 </div>
@@ -602,15 +593,20 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                         zIndex: 200,
                     }}
                 >
-                    <div className="scatter-regl-tooltip-row">
-                        <span className="scatter-regl-tooltip-label">{hover.sensorX}</span>
-                        <span className="scatter-regl-tooltip-value">
-                            {hover.isTimeAxis ? formatDateTime(new Date(hover.xVal)) : fmt(hover.xVal)}
+                    {/* Customer item 3: inline label + value + unit. */}
+                    <div className="tt-row">
+                        <span className="tt-label">
+                            {hover.isTimeAxis ? <span className="tt-desc">Time</span> : <SensorInline tag={hover.sensorX} size="sm" />}
+                        </span>
+                        <span className="tt-val">
+                            {hover.isTimeAxis
+                                ? formatDateTime(new Date(hover.xVal))
+                                : `${fmtNum(hover.xVal)}${sensorLookup(hover.sensorX).unit ? ` ${sensorLookup(hover.sensorX).unit}` : ''}`}
                         </span>
                     </div>
-                    <div className="scatter-regl-tooltip-row">
-                        <span className="scatter-regl-tooltip-label">{hover.sensorY}</span>
-                        <span className="scatter-regl-tooltip-value">{fmt(hover.yVal)}</span>
+                    <div className="tt-row">
+                        <span className="tt-label"><SensorInline tag={hover.sensorY} size="sm" /></span>
+                        <span className="tt-val">{fmtNum(hover.yVal)}{sensorLookup(hover.sensorY).unit ? ` ${sensorLookup(hover.sensorY).unit}` : ''}</span>
                     </div>
                     {hover.timestamp && !hover.isTimeAxis && (
                         <div className="scatter-regl-tooltip-ts">{hover.timestamp}</div>
@@ -650,14 +646,15 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                     <ul className="pair-regl-cluster-list">
                         {clusters.map(c => (
                             <li key={c.id} className="pair-regl-cluster-row">
-                                <label className="pair-regl-cluster-swatch" style={{ background: rgbaToHex(c.color) }}>
-                                    <input
-                                        type="color"
-                                        value={rgbaToHex(c.color)}
-                                        onChange={e => handleRecolour(c.id, e.target.value)}
-                                        aria-label={`Change colour of ${c.label}`}
-                                    />
-                                </label>
+                                {/* Customer item 4: the shared ColourPicker replaces the OS
+                                    colour dialog (unthemed, could not mark colours in use). */}
+                                <ColourPicker
+                                    color={rgbaToHex(c.color)}
+                                    onChange={hex => handleRecolour(c.id, hex)}
+                                    used={clusters.filter(o => o.id !== c.id).map(o => rgbaToHex(o.color))}
+                                    label={c.label}
+                                    title="Cluster colour"
+                                />
                                 <span className="pair-regl-cluster-label">{c.label}</span>
                                 <span className="pair-regl-cluster-count">
                                     {c.rowIndices.size.toLocaleString()} rows
@@ -907,6 +904,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                 </div>
             )}
         </div>
+        </SensorMetaContext.Provider>
     );
 }
 

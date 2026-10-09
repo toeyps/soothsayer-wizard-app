@@ -134,12 +134,17 @@ describe('conditionChipParts (Step-1 card / summary sentence)', () => {
     const unit = (t: string) => ({ POWER: 'kW' } as Record<string, string>)[t] ?? '';
 
     it('name (description) and "> 4000 kW": symbol, value, unit', () => {
-        expect(conditionChipParts(f('POWER', 'greater_than', '4000'), desc, unit)).toEqual({ name: 'GENERATOR ACTIVE POWER', rest: '> 4000 kW' });
+        expect(conditionChipParts(f('POWER', 'greater_than', '4000'), desc, unit)).toEqual({ name: 'GENERATOR ACTIVE POWER', rest: '> 4,000 kW' });
         expect(conditionChipParts(f('POWER', 'less_than', '12'), desc, unit).rest).toBe('< 12 kW');
         expect(conditionChipParts(f('POWER', 'equals', '3'), desc, unit).rest).toBe('= 3 kW');
     });
     it('between shows both bounds with one unit', () => {
         expect(conditionChipParts(f('POWER', 'between', '1', '5'), desc, unit).rest).toBe('between 1–5 kW');
+    });
+    it('a typed threshold keeps every decimal the user typed (separators only, never rounded to 0)', () => {
+        expect(conditionChipParts(f('POWER', 'greater_than', '0.0005'), desc, unit).rest).toBe('> 0.0005 kW');
+        expect(conditionChipParts(f('POWER', 'between', '0.0001', '0.0004'), desc, unit).rest).toBe('between 0.0001–0.0004 kW');
+        expect(conditionChipParts(f('POWER', 'less_than', '12345.6789'), desc, unit).rest).toBe('< 12,345.6789 kW');
     });
     it('no description falls back to the tag; no unit leaves it out; label/unit callbacks are optional', () => {
         expect(conditionChipParts(f('X_TAG', 'greater_than', '1'), desc, unit)).toEqual({ name: 'X_TAG', rest: '> 1' });

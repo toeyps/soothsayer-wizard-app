@@ -1,6 +1,7 @@
 import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { Maximize2, X } from 'lucide-react';
 import ResponsiveECharts from '../../charts/ResponsiveECharts';
+import { isPickerSurfaceOpen } from '../../sensor/SensorPicker';
 
 /*
  * A chart card of the Build Model Workbench (mockup `.cc`): title + subtitle,
@@ -58,7 +59,8 @@ export default function ChartCard({ id, title, sub, full, size = 'normal', extra
 
     useEffect(() => {
         if (!expanded) return;
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); };
+        // A sensor / colour picker open inside the expanded chart takes the Esc first.
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !isPickerSurfaceOpen()) setExpanded(false); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [expanded]);

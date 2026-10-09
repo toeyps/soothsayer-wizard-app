@@ -45,8 +45,7 @@ const defaultModels: FailureModel[] = [
 function makeProps(overrides: Partial<FailureGroupAssignSheetProps> = {}): FailureGroupAssignSheetProps {
     return {
         tag: 'TAG1',
-        sensorLabel: 'Pump Pressure',
-        unit: 'bar',
+        info: { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar' },
         fgGroups: groups,
         fgModels: defaultModels,
         getGroupColor: () => 'blue',
@@ -81,11 +80,23 @@ const sectionLabels = () => Array.from(document.querySelectorAll('.fg-sheet-sec'
 
 describe('FailureGroupAssignSheet', () => {
     describe('header', () => {
-        it('names the sensor, its tag and unit', () => {
+        it('names the sensor with the stacked SensorLabel: description + unit chip, tag on line 2 (customer item 3)', () => {
             renderSheet();
             const dialog = screen.getByRole('dialog', { name: 'Failure groups for Pump Pressure' });
-            expect(within(dialog).getByText('Pump Pressure')).toBeTruthy();
-            expect(within(dialog).getByText('TAG1 · bar')).toBeTruthy();
+            const label = dialog.querySelector('.fg-sheet-sl.sl') as HTMLElement;
+            expect(label).toBeTruthy();
+            expect(label.querySelector('.sl-desc')?.textContent).toBe('Pump Pressure');
+            expect(label.querySelector('.sl-unit')?.textContent).toBe('bar');
+            expect(label.querySelector('.sl-tag')?.textContent).toBe('TAG1');
+            expect(label.getAttribute('title')).toBe('Pump Pressure · TAG1 · bar');
+        });
+
+        it('a sensor with no description shows its tag once, with no placeholder', () => {
+            renderSheet({ info: { tag: 'TAG1' } });
+            const dialog = screen.getByRole('dialog', { name: 'Failure groups for TAG1' });
+            const label = dialog.querySelector('.fg-sheet-sl') as HTMLElement;
+            expect(label.textContent).toBe('TAG1');
+            expect(label.querySelector('.sl-tag')).toBeNull();
         });
 
         it('the ‹ › buttons call onStep(-1)/onStep(1) and honour canStepPrev/canStepNext', () => {
@@ -425,6 +436,20 @@ describe('FailureGroupAssignSheet', () => {
             expect(props.onDeleteGroup).not.toHaveBeenCalled();
         });
 
+        it('Esc is left to a sensor / colour picker open over the sheet: neither the sheet nor its menu closes', () => {
+            const { props } = renderSheet();
+            fireEvent.click(screen.getByRole('button', { name: 'Group actions: Group A' }));
+            const pop = document.createElement('div');
+            pop.className = 'cp-pop';
+            document.body.appendChild(pop);
+            fireEvent.keyDown(document, { key: 'Escape' });
+            expect(screen.getByRole('button', { name: /Delete…/ })).toBeTruthy();
+            expect(props.onClose).not.toHaveBeenCalled();
+            pop.remove();
+            fireEvent.keyDown(document, { key: 'Escape' });
+            expect(screen.queryByRole('button', { name: /Delete…/ })).toBeNull();
+        });
+
         it('Esc with a row menu open closes the menu first, then the sheet', () => {
             const { props } = renderSheet();
             fireEvent.click(screen.getByRole('button', { name: 'Group actions: Group A' }));
@@ -545,7 +570,7 @@ describe('FailureGroupAssignSheet', () => {
             fireEvent.change(screen.getByLabelText('Search failure groups'), { target: { value: 'group' } });
             fireEvent.click(screen.getByRole('button', { name: /^Assigned/ }));
             fireEvent.click(screen.getByRole('button', { name: 'Group actions: Group A' }));
-            rerender(<FailureGroupAssignSheet {...props} tag="TAG2" sensorLabel="Pump Temp" unit="C" />);
+            rerender(<FailureGroupAssignSheet {...props} tag="TAG2" info={{ tag: 'TAG2', description: 'Pump Temp', unit: 'C' }} />);
             expect(screen.getByText('Pump Temp')).toBeTruthy();
             expect((screen.getByLabelText('Search failure groups') as HTMLInputElement).value).toBe('');
             expect(screen.getByRole('button', { name: /^All/ }).getAttribute('aria-pressed')).toBe('true');
@@ -580,7 +605,7 @@ describe('FailureGroupAssignSheet', () => {
             const missing = [...classes].filter(c => c.startsWith('fg-sheet') && !new RegExp(`\\.${c}(?![\\w-])`).test(css));
             expect(missing).toEqual([]);
             // Classes shared with the rest of the Dashboard exist too.
-            for (const c of ['kind-badge--individual', 'row-action-btn', 'fg-group-dot', 'sensor-row-tag', 'popover-surface']) {
+            for (const c of ['kind-badge--individual', 'row-action-btn', 'fg-group-dot', 'sl-tag', 'sl-desc', 'unit-badge', 'popover-surface']) {
                 expect(css).toMatch(new RegExp(`\\.${c}(?![\\w-])`));
             }
         });

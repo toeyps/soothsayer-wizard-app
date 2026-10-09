@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Search, Plus, Check } from 'lucide-react';
 import { SensorMetadata } from '../../types';
+import { SensorLabel } from '../sensor/SensorLabel';
+import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
 
 interface SensorExplorerProps {
     sensors: string[];
@@ -39,6 +41,9 @@ export default function SensorExplorer({
     onSearchChange
 }: SensorExplorerProps) {
     const [expandedComponents, setExpandedComponents] = useState<Set<string>>(new Set());
+    // Customer item 3: rows use the stacked SensorLabel from this list's own metadata (O(1) per
+    // row, layered on the window's provider so the ƒ / Σ badges come through).
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
     const toggleComponent = (comp: string) => {
         const newSet = new Set(expandedComponents);
@@ -56,12 +61,12 @@ export default function SensorExplorer({
         const noComponent: string[] = [];
 
         sensors.forEach(sensor => {
-            const meta = sensorMetadata?.find(m => m.tag === sensor);
-            if (meta && meta.component) {
-                if (!groups[meta.component]) {
-                    groups[meta.component] = [];
+            const component = sensorLookup(sensor).component;
+            if (component) {
+                if (!groups[component]) {
+                    groups[component] = [];
                 }
-                groups[meta.component].push(sensor);
+                groups[component].push(sensor);
             } else {
                 noComponent.push(sensor);
             }
@@ -71,7 +76,7 @@ export default function SensorExplorer({
         const sortedKeys = Object.keys(groups).sort();
 
         return { groups, sortedKeys, noComponent };
-    }, [sensors, sensorMetadata]);
+    }, [sensors, sensorLookup]);
 
     // While searching, every group that still has a match opens automatically
     // — same convention as SensorSelection.tsx's sensor list.
@@ -79,7 +84,6 @@ export default function SensorExplorer({
 
     const renderSensorItem = (sensor: string) => {
         const isSelected = selectedSensors.includes(sensor);
-        const meta = sensorMetadata?.find(m => m.tag === sensor);
 
         return (
             <div
@@ -88,12 +92,7 @@ export default function SensorExplorer({
                 onClick={() => onToggleSensor(sensor)}
             >
                 <div className="special-sensor-row-main">
-                    <span className="special-sensor-row-name">{meta ? meta.description : sensor}</span>
-                    {/* Only shown alongside a real description -- when there's
-                        no metadata, the name above already falls back to the
-                        bare tag, so repeating it here would just duplicate
-                        the same text (matches SensorSelection.tsx's row). */}
-                    {meta && <span className="sensor-row-tag">{sensor}</span>}
+                    <SensorLabel tag={sensor} />
                 </div>
                 {isSelected ? (
                     <span className="special-sensor-added-pill"><Check size={10} /> Added</span>
@@ -105,12 +104,13 @@ export default function SensorExplorer({
     };
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="special-sensor-explorer">
             <div className="special-sensor-explorer-search">
                 <Search size={14} />
                 <input
                     type="text"
-                    placeholder="Search sensors..."
+                    placeholder="Search description, tag, unit or component…"
                     value={searchTerm}
                     onChange={(e) => onSearchChange(e.target.value)}
                 />
@@ -146,5 +146,6 @@ export default function SensorExplorer({
                 )}
             </div>
         </div>
+        </SensorMetaContext.Provider>
     );
 }

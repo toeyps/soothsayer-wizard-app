@@ -27,7 +27,9 @@ import UndoToastStack from './UndoToastStack';
 import { KIND_LABEL, UNDO_SECONDS } from './FailureGroupAssignSheet';
 import FailureGroupsPanel from './FailureGroupsPanel';
 import HighlightsPanel from './HighlightsPanel';
-import ColorPlatePicker from './ColorPlatePicker';
+import ColourPicker from '../sensor/ColourPicker';
+import { SensorLabel } from '../sensor/SensorLabel';
+import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import { useScatterSample, ScatterSampleFilter } from '../../hooks/useScatterSample';
 import { reportError } from '../../errorReporter';
@@ -41,7 +43,7 @@ import { demoteModelsTrainedOnSensors } from '../../utils/specialSensorRepair';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
-import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, Pipette, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
+import { Plus, EyeOff, BarChart3, Radio, Calendar, ArrowLeft, Check, Trash2, LineChart as LineChartIcon, X, RotateCcw } from 'lucide-react';
 import { debugLog } from '../../utils/debugLog';
 import { formatDateTime } from '../../utils/dateFormat';
 
@@ -349,6 +351,16 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setSelectedSensors(prev => prev.filter(s => s !== sensor));
     }, []);
 
+    // "Show on chart" from a Filter condition whose sensor is no longer plotted (customer item 3).
+    // Respects the Pair Plot cap the same way the Sensor tab does (`maxSelectable`).
+    const showSensorOnChart = useCallback((sensor: string) => {
+        setSelectedSensors(prev => {
+            if (prev.includes(sensor)) return prev;
+            if (chartTypeRef.current === 'pair' && prev.length >= MAX_PAIR_PLOT_SENSORS) return prev;
+            return [...prev, sensor];
+        });
+    }, []);
+
     // Bulk equivalent of removeSensor — drops every plotted sensor at once
     // (the "Clear all" action in the Selected Sensor tab header).
     const clearAllSensors = useCallback(() => {
@@ -356,6 +368,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    // Customer item 3: every sensor label / picker / tooltip in this window resolves through
+    // this lookup (merged metadata + the ƒ / Σ badges of the special sensors).
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata, specialSensorRecipes);
     const getSensorMeta = useCallback(
         (sensor: string) => sensorMetaMap.get(normalizeSensorTag(sensor)) ?? null,
         [sensorMetaMap]
@@ -1053,19 +1068,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         });
     }, []);
 
-    // Themed color plate (see ColorPlatePicker) — replaces the browser/OS-
-    // native <input type="color"> dialog, unreachable by CSS. Same
-    // one-open-at-a-time toggle pattern as the axis editor below.
-    const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
-    const toggleColorPicker = useCallback((sensor: string) => {
-        setColorPickerFor(prev => (prev === sensor ? null : sensor));
-    }, []);
-    // Viewport-relative rect of the swatch button that opened the colour
-    // picker — visual-refresh-only (see AnchoredPopover's docstring): the
-    // picker now renders through a floating popover instead of expanding
-    // inline within the Selected Sensor list, so it can escape that list's
-    // own clipping.
-    const [colorPickerAnchor, setColorPickerAnchor] = useState<PopoverAnchorRect | null>(null);
+    // (Customer item 4, 2026-10-09: the line colour is picked with the shared ColourPicker on the
+    // Selected Sensor row — it owns its own open state and anchor, and unmounts with the row, so
+    // the old `colorPickerFor`/anchor state and its stale-anchor prunes are gone.)
 
     // Inline "pin Y-axis scale" editor — one sensor's min/max fields open at
     // a time, directly under its row in the Selected Sensor tab.
@@ -1074,7 +1079,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [axisDraftMax, setAxisDraftMax] = useState('');
 
     const [axisEditorError, setAxisEditorError] = useState<string | null>(null);
-    // Same idea as `colorPickerAnchor` above, for the pin-Y-axis popover.
+    // Viewport-relative rect of the button that opened the pin-Y-axis popover.
     const [axisEditorAnchor, setAxisEditorAnchor] = useState<PopoverAnchorRect | null>(null);
 
     const openAxisEditor = useCallback((sensor: string) => {
@@ -1177,15 +1182,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             return next;
         });
         setAxisEditorFor(prev => (prev && !selectedSet.has(prev) ? null : prev));
-        // colorPickerFor used to be left out of this prune — removing a
-        // sensor with its colour popover open, then re-adding it, would
-        // resurrect the picker at a stale captured anchor rect (bug found
-        // in QA sweep, 2026-10-02). Clear it the same way axisEditorFor is
-        // handled above (the anchor itself doesn't need clearing either —
-        // like axisEditorAnchor, the popover's render is already gated on
-        // `colorPickerFor === sensor`, so a stale anchor is inert once the
-        // "for" state is null).
-        setColorPickerFor(prev => (prev && !selectedSet.has(prev) ? null : prev));
     }, [selectedSensors]);
 
     // Collapsed panels state. Filters out ids that no longer exist in PANELS
@@ -1699,7 +1695,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // for good instead of just hiding them.
     useEffect(() => {
         if (chartType !== 'line') {
-            setColorPickerFor(null);
             setAxisEditorFor(null);
         }
     }, [chartType]);
@@ -2645,6 +2640,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             onFiltersChange={handleFiltersChange}
                             sensorMetadata={sensorMetadata}
                             sensorChange={filterSensorChange}
+                            onShowSensor={showSensorOnChart}
+                            showSensorBlockedReason={chartType === 'pair' && selectedSensors.length >= MAX_PAIR_PLOT_SENSORS
+                                ? `Pair Plot shows at most ${MAX_PAIR_PLOT_SENSORS} sensors`
+                                : undefined}
                         />
                     </div>
                 ) : activeDataTab === 'highlights' ? (
@@ -2695,7 +2694,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             </div>
                         )}
                         {selectedSensors.map((sensor) => {
-                            const meta = getSensorMeta(sensor);
                             const visible = visibleSensors.includes(sensor);
                             const isPinned = !!sensorAxisRange[sensor];
                             const isLine = chartType === 'line';
@@ -2723,16 +2721,20 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 title={visible ? 'Hide from chart' : 'Show on chart'}
                                             />
                                         )}
-                                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                                            <span style={{ fontWeight: 500, fontSize: '0.8rem', color: currentColor }}>
-                                                {meta ? meta.description : sensor}
-                                            </span>
-                                            {meta && (
-                                                <span style={{ fontSize: '0.7rem', color: currentColor, opacity: 0.75 }}>
-                                                    {meta.tag} • {meta.unit}
-                                                </span>
-                                            )}
-                                        </div>
+                                        {/* Customer item 4: the swatch IS the colour button. Customer item 3
+                                            (review ruling d): the row text stays neutral — the series colour
+                                            lives only on the swatch and on tooltip / tag-box values. */}
+                                        {isLine && (
+                                            <ColourPicker
+                                                color={currentColor}
+                                                onChange={(hex) => setSensorColor(sensor, hex)}
+                                                onOpen={closeAxisEditor}
+                                                used={selectedSensors.filter(t => t !== sensor).map(t => resolvedSensorColors[t] ?? defaultSensorColor(t))}
+                                                label={sensorLookup(sensor).description || sensor}
+                                                title="Line colour"
+                                            />
+                                        )}
+                                        <SensorLabel tag={sensor} />
                                         {/* Action cluster — kept together (not scattered) so the row reads as
                                             one group of controls on the right, same as the reference layout. */}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
@@ -2740,37 +2742,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 <>
                                                     <button
                                                         onClick={(e) => {
-                                                            const opening = colorPickerFor !== sensor;
-                                                            toggleColorPicker(sensor);
-                                                            setColorPickerAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
-                                                            // Both popovers are `position: fixed` at the same row
-                                                            // height now, 28px apart — having both open at once
-                                                            // overlaps them, so opening this one closes the other.
-                                                            if (opening) closeAxisEditor();
-                                                        }}
-                                                        title="Change line color"
-                                                        className="row-action-btn"
-                                                        style={{
-                                                            background: colorPickerFor === sensor ? `${currentColor}33` : 'none',
-                                                            color: currentColor,
-                                                        }}
-                                                    >
-                                                        <Pipette size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
                                                             const opening = axisEditorFor !== sensor;
                                                             toggleAxisEditor(sensor);
                                                             setAxisEditorAnchor(opening ? e.currentTarget.getBoundingClientRect() : null);
-                                                            // Same reasoning as the colour-swatch button above, in reverse.
-                                                            if (opening) { setColorPickerFor(null); setColorPickerAnchor(null); }
+                                                            // (An open ColourPicker closes itself on this mousedown.)
                                                         }}
                                                         title={isPinned ? 'Y-axis scale pinned to a fixed range — click to edit, click again to close' : 'Pin the Y-axis to a fixed min/max range'}
                                                         className="row-action-btn"
-                                                        style={{
-                                                            background: isPinned ? `${currentColor}33` : 'none',
-                                                            color: currentColor,
-                                                        }}
+                                                        style={isPinned ? { background: 'var(--accent-muted)', color: 'var(--accent-hi)' } : undefined}
                                                     >
                                                         <LineChartIcon size={14} />
                                                     </button>
@@ -2780,24 +2759,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 onClick={() => removeSensor(sensor)}
                                                 title="Remove from plot"
                                                 className="row-action-btn"
-                                                style={{ color: currentColor }}
                                             >
                                                 <Trash2 size={14} />
                                             </button>
                                         </div>
                                     </div>
-                                    {isLine && colorPickerFor === sensor && (
-                                        <AnchoredPopover
-                                            anchorRect={colorPickerAnchor}
-                                            onRequestClose={() => { setColorPickerFor(null); setColorPickerAnchor(null); }}
-                                            width={180}
-                                        >
-                                            <ColorPlatePicker
-                                                color={currentColor}
-                                                onChange={(hex) => setSensorColor(sensor, hex)}
-                                            />
-                                        </AnchoredPopover>
-                                    )}
                                     {isLine && axisEditorFor === sensor && (
                                         <AnchoredPopover
                                             anchorRect={axisEditorAnchor}
@@ -2999,6 +2965,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     };
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="dashboard-container">
             <UndoToastStack
                 toasts={undoToasts}
@@ -3052,6 +3019,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 </div>
             </div>
         </div>
+        </SensorMetaContext.Provider>
     );
 });
 

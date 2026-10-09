@@ -60,12 +60,13 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     ),
 }));
 
-// The shared sensor pickers (SensorPickers.tsx) are stubbed with minimal
-// stand-ins - their real search / grouping / single-vs-multi behaviour is
-// tested directly in SensorPickers.test.tsx. BuildModelWindow's tests only
-// assert its own wiring (props passed in, the callbacks it reacts to).
+// The Workbench's sensor-picker adapter (SensorPickers.tsx) is stubbed with a minimal
+// stand-in - the real shared picker's search / grouping / single-vs-multi behaviour is
+// tested directly in SensorPicker.test.tsx (+ the adapter in SensorPickers.test.tsx).
+// BuildModelWindow's tests only assert its own wiring (props passed in, the callbacks it
+// reacts to). The Fit chart's X selector is the REAL compact picker (ModelFitPage imports
+// it from components/sensor directly) and is driven with helpers/sensorPicker.
 const sensorPickerModalProps: any[] = [];
-const sensorAutocompleteProps: any[] = [];
 vi.mock('../components/windows/SensorPickers', () => ({
     // Minimal stand-in for the popup picker — its own search/collapsible-
     // group/checkbox/single-vs-multi behavior is tested directly against the
@@ -88,24 +89,6 @@ vi.mock('../components/windows/SensorPickers', () => ({
             />
         );
     },
-    // 🆕 2026-09-30 [X-axis switcher]: minimal stand-in for the real
-    // search-dropdown component (its own search/group/select behavior is
-    // tested directly against the real implementation in
-    // SensorPickers.test.tsx) — a plain `<select>` is enough to
-    // assert BuildModelWindow's own wiring (options = the sensors passed in,
-    // current value, `onSelect` fires on change).
-    SensorAutocomplete: (props: any) => {
-        sensorAutocompleteProps.push(props);
-        return (
-            <select
-                aria-label={props.placeholder ?? 'X-axis'}
-                value={props.value ?? ''}
-                onChange={e => props.onSelect(e.target.value)}
-            >
-                {props.sensors.map((s: string) => <option key={s} value={s}>{s}</option>)}
-            </select>
-        );
-    },
 }));
 
 import BuildModelWindow from '../components/windows/BuildModelWindow';
@@ -117,6 +100,7 @@ import { MARK_COMPLETE_CLOSE_WAIT } from '../utils/healthPersist';
 import { ADD_TRAIN_PERIOD_HINT, NO_TEST_PERIOD_REASON } from '../utils/runningCondition';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
+import { pickSingle, rowTag } from './helpers/sensorPicker';
 
 // jsdom does not load App.css (vitest also stubs `?raw` CSS imports to ''; cwd is the repo root), so layout
 // rules that used to be inline styles are asserted against the stylesheet source itself.
@@ -296,7 +280,6 @@ const openHealthPage = async () => {
 beforeEach(() => {
     listenCallbacks = {};
     sensorPickerModalProps.length = 0;
-    sensorAutocompleteProps.length = 0;
     lineChartProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
@@ -407,8 +390,8 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             ];
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models } });
-            const list = within(screen.getByPlaceholderText('Search sensor or tag…').closest('aside') as HTMLElement);
-            fireEvent.change(screen.getByPlaceholderText('Search sensor or tag…'), { target: { value: 'temp' } });
+            const list = within(screen.getByPlaceholderText('Search description, tag, unit or component…').closest('aside') as HTMLElement);
+            fireEvent.change(screen.getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'temp' } });
             expect(list.queryByText('Pump Pressure')).toBeNull();
             expect(list.getByText('Pump Temp')).toBeTruthy();
         });
@@ -420,7 +403,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             ];
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models } });
-            const list = within(screen.getByPlaceholderText('Search sensor or tag…').closest('aside') as HTMLElement);
+            const list = within(screen.getByPlaceholderText('Search description, tag, unit or component…').closest('aside') as HTMLElement);
             const chips = within(document.querySelector('.bmw-chips') as HTMLElement);
 
             fireEvent.click(chips.getByText(/^Complete/));
@@ -436,12 +419,16 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(list.getByText('Pump Temp')).toBeTruthy();
         });
 
-        it('the sensor row title stays on one line (single-line ellipsis) — reuses the existing .f4-sr-title rule', async () => {
+        // Customer item 3 (2026-10-09): the row is the stacked SensorLabel; its description line is
+        // the single-line ellipsis (`.sl-desc`), the full name is in the title.
+        it('the sensor row is the stacked SensorLabel; the description stays on one line (single-line ellipsis)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             const label = screen.getAllByTestId('sensor-row-label')[0];
-            expect(label.classList.contains('f4-sr-title')).toBe(true);
-            const rule = cssBlock('.f4-sr-title');
+            expect(label.querySelector('.sl .sl-desc')?.textContent).toBe('Pump Pressure');
+            expect(label.querySelector('.sl .sl-tag')?.textContent).toBe('TAG1');
+            expect(label.getAttribute('title')).toMatch(/^Pump Pressure · TAG1/);
+            const rule = cssBlock('.sl-desc');
             expect(rule).toMatch(/white-space:\s*nowrap/);
             expect(rule).toMatch(/text-overflow:\s*ellipsis/);
             expect(rule).toMatch(/overflow:\s*hidden/);
@@ -450,11 +437,11 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         it('the sidebar can be hidden and re-shown via the detail header\'s icon button', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            expect(screen.getByPlaceholderText('Search sensor or tag…')).toBeTruthy();
+            expect(screen.getByPlaceholderText('Search description, tag, unit or component…')).toBeTruthy();
             fireEvent.click(screen.getByTitle('Hide sensor list'));
-            expect(screen.queryByPlaceholderText('Search sensor or tag…')).toBeNull();
+            expect(screen.queryByPlaceholderText('Search description, tag, unit or component…')).toBeNull();
             fireEvent.click(screen.getByTitle('Show sensor list'));
-            expect(screen.getByPlaceholderText('Search sensor or tag…')).toBeTruthy();
+            expect(screen.getByPlaceholderText('Search description, tag, unit or component…')).toBeTruthy();
         });
 
         it('a sensor deleted (from another window) while selected is replaced by auto-selecting another available sensor', async () => {
@@ -474,10 +461,12 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         it('shows description, tag, component chip and FG chips for the selected sensor', async () => {
             render(<BuildModelWindow />);
             await deliverData();
-            expect(screen.getByRole('heading', { name: 'Pump Pressure' })).toBeTruthy();
-            const meta = screen.getByRole('heading', { name: 'Pump Pressure' }).parentElement!.querySelector('.bmw-dmeta') as HTMLElement;
-            expect(within(meta).getByText('TAG1')).toBeTruthy();
-            expect(within(meta).getByText('Pump')).toBeTruthy();
+            const heading = screen.getByRole('heading', { name: 'Pump Pressure' });
+            // Customer item 3: the stacked label at header size; component chip after the tag.
+            expect(heading.querySelector('.sl.sl--lg .sl-desc')?.textContent).toBe('Pump Pressure');
+            expect(within(heading).getByText('TAG1').className).toContain('sl-tag');
+            expect(within(heading).getByText('Pump').className).toContain('comp-chip');
+            const meta = heading.parentElement!.querySelector('.bmw-dmeta') as HTMLElement;
             expect(within(meta).getByText('FG-1 · Group A')).toBeTruthy();
         });
 
@@ -589,7 +578,14 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             openSettings();
-            expect(screen.getByText('Pump Temp (TAG2)')).toBeTruthy(); // predictor chip
+            // Customer item 3: predictors are the multi picker's chips + "Add…" (the adapter is
+            // stubbed here; its chips are tested in SensorPicker(s).test.tsx).
+            const predictorPicker = sensorPickerModalProps.filter(pr => !pr.single && pr.noun === 'predictors').pop();
+            expect(predictorPicker.selected).toEqual(['TAG2']);
+            expect(predictorPicker.excluded).toEqual(['TAG1']);
+            expect(predictorPicker.getDesc).toBeUndefined();
+            const scope = render(<>{predictorPicker.scope}</>).container.textContent;
+            expect(scope).toMatch(/^All sensors except the target · \d+$/);
             expect(screen.getByRole('button', { name: 'Loose' }).className).toBe('on'); // 10_000 -> "Loose"
 
             cleanup();
@@ -597,7 +593,9 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
             openSettings();
-            expect(screen.getByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' })).toBeTruthy(); // locked X
+            const readout = document.querySelector('.f4-readout') as HTMLElement; // locked X
+            expect(readout.querySelector('.sl-desc')?.textContent).toBe('Pump Pressure');
+            expect(readout.querySelector('.sl-tag')?.textContent).toBe('TAG1');
             expect(within(screen.getByTestId('add-model-form')).getByText('3')).toBeTruthy(); // cluster stepper count
             fireEvent.click(screen.getByLabelText('More clusters'));
             expect(within(screen.getByTestId('add-model-form')).getByText('4')).toBeTruthy();
@@ -1756,13 +1754,13 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
         });
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        const select = screen.getByLabelText('Select X-axis sensor...') as HTMLSelectElement;
+        const xTrigger = () => within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
         const fitAxis = () => within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
-        expect(select.value).toBe('TAG2');
+        expect(rowTag(xTrigger())).toBe('TAG2');
         expect(fitAxis()).toBe('TAG2');
         expect(screen.queryByText(/Unsaved changes/)).toBeNull();
 
-        fireEvent.change(select, { target: { value: 'TAG3' } });
+        pickSingle(xTrigger(), 'TAG3');
         await flush();
         // The write is immediate and the preview is re-requested with the new X predictor.
         await waitFor(() => expect(fitAxis()).toBe('TAG3'));
@@ -2318,7 +2316,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             expect(screen.getAllByTestId('rc-card-period-chip').map(c => c.textContent)).toEqual(['P1 · 1 Jan 2026 → 31 Mar 2026', 'P2 · 15 Apr 2026 → End']);
             // Train/Test validation: the persisted test periods sit on their own "Test" row
             expect(screen.getAllByTestId('rc-card-test-chip').map(c => c.textContent)).toEqual(['T1 Normal · 1 Jan 2024 → 31 Jan 2024']);
-            expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump Pressure > 5 bar'); // description + unit come from the sensor metadata
+            expect(screen.getByTestId('rc-card-cond-chip').textContent).toBe('Pump PressureTAG1 > 5 bar'); // Inline label (description then tag) + condition; description + unit come from the sensor metadata
             await waitFor(() => expect(screen.getByTestId('rc-card-rows').textContent).toBe('100')); // mocked compute_sensor_stats count
             expect(screen.getByTestId('rc-card-pct').textContent).toBe('rows · 100%');
         });
@@ -2661,7 +2659,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
             await open();
             sensorPickerModalProps.length = 0;
             fireEvent.click(screen.getByTestId('rc-add-condition'));
-            const rcPickers = sensorPickerModalProps.filter(pr => pr.single && pr.mutedTag);
+            const rcPickers = sensorPickerModalProps.filter(pr => pr.single && pr.noun === 'sensor');
             expect(rcPickers.length).toBeGreaterThan(0);
             expect(rcPickers[0]).toMatchObject({ noun: 'sensor' });
             expect(typeof rcPickers[0].getComponent).toBe('function');
@@ -2705,7 +2703,7 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
         it('is IGNORED while a nested sensor picker (or any picker backdrop) is open: Esc there closes only the picker', async () => {
             await open();
             const picker = document.createElement('div');
-            picker.className = 'predictor-picker-backdrop';
+            picker.className = 'pk-pop'; // the shared sensor picker's popover (customer item 3)
             document.body.appendChild(picker);
             await esc();
             expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
@@ -3323,10 +3321,12 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             statefulUpdateMock([rel]);
             await mount([rel]);
             await chartsReady();
-            const select = within(screen.getByTestId('fit-x-selector')).getByLabelText('Select X-axis sensor...') as HTMLSelectElement;
-            expect([...select.options].map(o => o.value)).toEqual(['TAG2', 'TAG3']);
-            expect(select.value).toBe('TAG2');
-            fireEvent.change(select, { target: { value: 'TAG3' } });
+            const trigger = within(screen.getByTestId('fit-x-selector')).getByRole('button', { name: 'X sensor' });
+            expect(rowTag(trigger)).toBe('TAG2');
+            fireEvent.click(trigger);
+            expect([...document.querySelectorAll('.pk-pop [role="option"]')].map(rowTag)).toEqual(['TAG2', 'TAG3']);
+            fireEvent.click(trigger);
+            pickSingle(trigger, 'TAG3');
             await flush();
             await waitFor(() => expect(healthCalls().pop()).toMatchObject({ x_predictor: 'TAG3' }));
             const state = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;

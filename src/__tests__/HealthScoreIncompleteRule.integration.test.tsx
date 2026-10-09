@@ -53,6 +53,7 @@ import {
 } from './helpers/healthWorkbench';
 import { updateWorkspaceData } from '../workspaceManager';
 import { withFailureGroupState } from '../utils/failureGroupState';
+import { pickSingle } from './helpers/sensorPicker';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -188,7 +189,7 @@ describe('model-setting triggers (Save changes)', () => {
         await waitForCharts();
         expect(pill()).toBe('Complete');
         openSettings();
-        fireEvent.click(bmwEl().querySelector('button.predictor-picker-trigger') as HTMLElement);
+        fireEvent.click(bmwEl().querySelector('button.pk-add') as HTMLElement);
         await pickInModal('predictors', ['TAG2']);
         await saveChanges();
         await expectDemoted('r1', before, { key: 'tag1', kind: 'relationship' });
@@ -224,8 +225,8 @@ describe('model-setting triggers (Save changes)', () => {
             expect(pill()).toBe('Complete');
             openSettings();
             if (step === 'count') fireEvent.click(bmw().getByRole('button', { name: 'More clusters' }));
-            if (step === 'y') { fireEvent.click(bmwEl().querySelectorAll('button.sensor-picker-trigger-single')[0]); await pickInModal('Y sensor', ['TAG1'], true); }
-            if (step === 'criteria') { fireEvent.click(bmwEl().querySelectorAll('button.sensor-picker-trigger-single')[1]); await pickInModal('criteria sensor', ['TAG2'], true); }
+            if (step === 'y') { fireEvent.click(bmwEl().querySelectorAll('button.pk-trigger')[0]); await pickInModal('Y sensor', ['TAG1'], true); }
+            if (step === 'criteria') { fireEvent.click(bmwEl().querySelectorAll('button.pk-trigger')[1]); await pickInModal('criteria sensor', ['TAG2'], true); }
             await settle(200);
             await saveChanges();
             await expectDemoted('c1', before, { key: 'tag3', kind: 'clustering' });
@@ -295,7 +296,7 @@ describe('NOT triggers: the model stays Complete', () => {
 
         // FG membership: the Dashboard sheet adds TAG1's Individual model to FG-B
         openDashSensorTab();
-        fireEvent.change(dash().getByPlaceholderText('Search sensors...'), { target: { value: 'TAG1' } });
+        fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'TAG1' } });
         await settle();
         const row = (screen.getByTestId('dashboard-window').querySelector('#sensor-TAG1') as HTMLElement).closest('.sensor-list-row') as HTMLElement;
         fireEvent.click(within(row).getByTitle('Add to failure group'));
@@ -310,13 +311,8 @@ describe('NOT triggers: the model stays Complete', () => {
         await waitForCharts();
         expect(pill()).toBe('Complete');
         const xs = within(bmw().getByTestId('fit-x-selector'));
-        const input = xs.getByRole('textbox');
-        fireEvent.focus(input);
-        fireEvent.change(input, { target: { value: 'TAG2' } });
-        await settle();
-        const opt = [...bmwEl().querySelectorAll('.sensor-autocomplete-item')].find(el => el.textContent?.includes('TAG2')) as HTMLElement;
-        expect(opt).toBeTruthy();
-        fireEvent.click(opt);
+        // Customer item 3: the compact single picker (anchored popover), not a type-ahead box.
+        pickSingle(xs.getByRole('button', { name: 'X sensor' }), 'TAG2');
         await settle(100);
         expect(diskModel('r1').scatterXSensor).toBe('TAG2');
         expect(diskModel('r1').status).toBe(true);

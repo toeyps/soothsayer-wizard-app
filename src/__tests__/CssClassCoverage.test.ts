@@ -47,6 +47,7 @@ const STYLED_PREFIXES = [
     'kind-badge', 'model-kind-icon', 'model-status-pill', 'pair-regl', 'scatter-regl',
     'special-sensor', 'highlights', 'timebar', 'line-chart',
     'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
+    'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows (customer items 3+4)
 ];
 
 /**
@@ -57,7 +58,6 @@ const STYLED_PREFIXES = [
 const ALLOW_UNSTYLED = new Set<string>([
     'fg-panel-widget',                 // FailureGroupsPanel root; layout is inline style, never had a rule
     'hs-share-l',                      // label cell of `.hs-share` (3-col grid styles it positionally)
-    'sensor-autocomplete-item--none',  // "None" row reuses `.sensor-autocomplete-item` look
     'scatter-regl-axes',               // inline-styled SVG overlay (ScatterChart)
     'scatter-regl-canvas-wrap',        // inline-styled wrapper (ScatterChart)
     'wb2-card--normal',                // default ChartCard size = the base `.wb2-card` look

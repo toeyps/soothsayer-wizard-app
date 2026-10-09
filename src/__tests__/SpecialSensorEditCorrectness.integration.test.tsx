@@ -34,6 +34,7 @@ import { replaySpecialSensorRecipes } from '../utils/specialSensorReplay';
 import { describeRecipe } from '../utils/specialSensorDescribe';
 import { createFakeRust, type FakeRust } from './helpers/fakeRustSession';
 import fixture from '../../src-tauri/tests/fixtures/special_sensor_formulas.json';
+import { pickMulti } from './helpers/sensorPicker';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({ valid: true, error: null, referenced_sensors: [] })) }));
 
@@ -183,7 +184,7 @@ describe('editing a special sensor after creation: every value equals a fresh ca
         const rust = await sessionWithChain();
         const invoker = (cmd: string, args: Record<string, unknown>) => rust.invoke(cmd, args);
         const payload = editInEditor(CHAIN[2], () => {
-            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'A' } });
+            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['A']);
             fireEvent.click(screen.getByText('Median')); // Average (kept for the 3 sources) -> Median
         }, ALL);
         expect(payload.recipe).toMatchObject({ kind: 'operation', sourceSensors: ['S1', 'C', 'A'], operationConfig: { mode: 'multi', multiOp: { type: 'median' } } });
@@ -268,7 +269,7 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
             operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'Avg' },
         };
         const payload = editInEditor(avg, () => {
-            fireEvent.change(screen.getByLabelText('Add a source sensor'), { target: { value: 'C' } });
+            pickMulti(screen.getByRole('button', { name: 'Add source sensors…' }), ['C']);
             fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'avg' } });
             fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u' } });
             fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });

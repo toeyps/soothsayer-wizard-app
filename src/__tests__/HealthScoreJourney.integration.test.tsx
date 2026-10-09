@@ -63,7 +63,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 /** Dashboard Sensor tab -> 📁 of `tag` -> the FG sheet's `<kind> · FG-A` cell. */
 async function createViaSheet(tag: string, kindLabel: 'Individual' | 'Relationship' | 'Clustering') {
     openDashSensorTab();
-    fireEvent.change(dash().getByPlaceholderText('Search sensors...'), { target: { value: tag } });
+    fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: tag } });
     await settle();
     const row = (screen.getByTestId('dashboard-window').querySelector(`#sensor-${tag}`) as HTMLElement).closest('.sensor-list-row') as HTMLElement;
     const btn = within(row).getByTitle('Add to failure group');
@@ -73,7 +73,7 @@ async function createViaSheet(tag: string, kindLabel: 'Individual' | 'Relationsh
     await settle(400);
     // close the sheet, clear the search
     if (screen.queryByTestId('fg-sheet')) fireEvent.click(btn);
-    fireEvent.change(dash().getByPlaceholderText('Search sensors...'), { target: { value: '' } });
+    fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: '' } });
     await settle(50);
 }
 
@@ -192,7 +192,7 @@ describe('Relationship: the whole journey', () => {
         await act(async () => { fireEvent.click(bmw().getByRole('button', { name: /Performance/i })); });
         await settle(50);
         openSettings();
-        fireEvent.click(bmwEl().querySelector('button.predictor-picker-trigger') as HTMLElement);
+        fireEvent.click(bmwEl().querySelector('button.pk-add') as HTMLElement);
         await pickInModal('predictors', ['TAG3']);
         await train();
         expect(pill()).toBe('Trained');
@@ -281,10 +281,10 @@ describe('Clustering: the whole journey', () => {
         await act(async () => { fireEvent.click(bmw().getByRole('button', { name: /Performance/i })); });
         await settle(50);
         openSettings();
-        fireEvent.click(bmwEl().querySelectorAll('button.sensor-picker-trigger-single')[0]);
+        fireEvent.click(bmwEl().querySelectorAll('button.pk-trigger')[0]);
         await pickInModal('Y sensor', ['TAG5'], true);
         openSettings(); // the section collapses by itself once nothing is missing
-        fireEvent.click(bmwEl().querySelectorAll('button.sensor-picker-trigger-single')[1]);
+        fireEvent.click(bmwEl().querySelectorAll('button.pk-trigger')[1]);
         await pickInModal('criteria sensor', ['TAG4'], true);
         await settle(100);
         openSettings();

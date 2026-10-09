@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import { RunningConditionCard } from '../components/windows/RunningConditionCard';
+import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { RowCountPreview } from '../components/windows/useRowCountPreview';
 import type { TestPeriod, WorkspaceSensorFilter } from '../types';
 
@@ -12,10 +13,13 @@ const f = (id: string, sensor: string, operation: WorkspaceSensorFilter['operati
 const DESC: Record<string, string> = { POWER: 'GENERATOR ACTIVE POWER', SPEED: 'TURBINE SPEED' };
 const UNIT: Record<string, string> = { POWER: 'kW', SPEED: 'RPM' };
 const OK: RowCountPreview = { status: 'ok', used: 11_066, total: 52_340 };
+// The window's SensorMetaProvider (BuildModelWindow) supplies the chip labels.
+const META = Object.keys(DESC).map(tag => ({ tag, description: DESC[tag], unit: UNIT[tag], component: 'Generator' }));
 
 function card(over: Partial<React.ComponentProps<typeof RunningConditionCard>> = {}) {
     const onOpen = vi.fn();
     render(
+        <SensorMetaProvider metadata={META}>
         <RunningConditionCard
             state="set"
             periods={[p('a', '2026-01-01T00:00', '2026-03-31T23:59'), p('b', '2026-04-15T00:00', '')]}
@@ -28,7 +32,8 @@ function card(over: Partial<React.ComponentProps<typeof RunningConditionCard>> =
             rows={OK}
             onOpen={onOpen}
             {...over}
-        />,
+        />
+        </SensorMetaProvider>,
     );
     return onOpen;
 }
@@ -123,12 +128,23 @@ describe('RunningConditionCard — Set', () => {
             filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'between', '2900', '3100')],
         });
         const chips = screen.getAllByTestId('rc-card-cond-chip');
-        expect(chips.map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWER > 4000 kW', 'TURBINE SPEED between 2900–3100 RPM']);
-        expect(chips[0].querySelector('b')!.textContent).toBe('GENERATOR ACTIVE POWER'); // the name is the bold part
+        // Customer item 3: Inline label (description then tag) + the condition in mono, with
+        // thousands separators; the full name + condition in the title.
+        expect(chips.map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWERPOWER > 4,000 kW', 'TURBINE SPEEDSPEED between 2,900–3,100 RPM']);
+        expect(chips[0].querySelector('.sl-desc')!.textContent).toBe('GENERATOR ACTIVE POWER');
+        expect(chips[0].querySelector('.sl-tag')!.textContent).toBe('POWER');
+        expect(chips[0].querySelector('.rcc-rest')!.textContent).toBe('> 4,000 kW');
+        expect(chips[0].getAttribute('title')).toBe('GENERATOR ACTIVE POWER · POWER · kW · Generator > 4,000 kW');
         expect(within(screen.getByTestId('rc-card-cond')).getByText('AND')).toBeTruthy();
         cleanup();
         card({ filters: [f('f1', 'POWER', 'greater_than', '4000'), f('f2', 'SPEED', 'less_than', '3')], combine: 'or' });
         expect(within(screen.getByTestId('rc-card-cond')).getByText('OR')).toBeTruthy();
+    });
+
+    it('a small typed threshold keeps its decimals on the chip (never rounded to 0)', () => {
+        card({ filters: [f('f1', 'POWER', 'greater_than', '0.0005'), f('f2', 'SPEED', 'between', '0.0001', '0.0004')] });
+        const rests = screen.getAllByTestId('rc-card-cond-chip').map(x => x.querySelector('.rcc-rest')!.textContent);
+        expect(rests).toEqual(['> 0.0005 kW', 'between 0.0001–0.0004 RPM']);
     });
 
     it('a sensor without a description shows its tag; one without a unit shows no unit', () => {

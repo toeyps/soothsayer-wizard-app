@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Check, Plus, Search, X, Pencil, Trash2 } from 'lucide-react';
 import Portal from '../Portal';
+import { SensorLabel } from '../sensor/SensorLabel';
+import type { SensorInfo } from '../sensor/sensorInfo';
+import { isPickerSurfaceOpen } from '../sensor/SensorPicker';
 import type { FailureGroup, FailureModel, ModelKind } from '../../types';
 import { modelSensorKey } from '../../utils/modelGrouping';
 import { normalizeSensorTag } from '../../hooks/useSensorMetaMap';
@@ -38,9 +41,9 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 export interface FailureGroupAssignSheetProps {
     /** Tag of the sensor being edited. */
     tag: string;
-    /** What to call it in the header: its description, or the bare tag. */
-    sensorLabel: string;
-    unit?: string;
+    /** The sensor's metadata for the header (SPEC 2026-10-09 item 3: the sheet header gets
+     *  meta, not strings) — rendered as the same stacked label as the row that opened it. */
+    info: SensorInfo;
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
     getGroupColor: (groupNo: number) => string;
@@ -173,7 +176,7 @@ export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetPr
                 ref={sheetRef}
                 className="fg-sheet popover-surface"
                 role="dialog"
-                aria-label={`Failure groups for ${props.sensorLabel}`}
+                aria-label={`Failure groups for ${props.info.description || tag}`}
                 data-testid="fg-sheet"
                 style={style}
             >
@@ -190,7 +193,7 @@ export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetPr
 }
 
 function SheetBody({
-    tag, sensorLabel, unit, fgGroups, fgModels, getGroupColor,
+    tag, info, fgGroups, fgModels, getGroupColor,
     onToggleSensorGroupKind, onCreateGroupForSensor, onRenameGroup, onDeleteGroup,
     canStepPrev, canStepNext, onStep, onClose,
 }: FailureGroupAssignSheetProps) {
@@ -253,6 +256,8 @@ function SheetBody({
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
+            // A picker open over the sheet closes itself on this Esc; don't close the sheet too.
+            if (isPickerSurfaceOpen()) return;
             const s = sub.current;
             if (s.renameFor !== null) { setRenameFor(null); setRenameError(''); }
             else if (s.confirmFor !== null) setConfirmFor(null);
@@ -459,8 +464,7 @@ function SheetBody({
             <div className="fg-sheet-head">
                 <div className="fg-sheet-title">
                     <div className="fg-sheet-kicker">Failure groups</div>
-                    <div className="fg-sheet-sensor" title={sensorLabel}>{sensorLabel}</div>
-                    <div className="sensor-row-tag">{tag}{unit ? ` · ${unit}` : ''}</div>
+                    <SensorLabel tag={tag} info={info} className="fg-sheet-sl" />
                 </div>
                 <div className="fg-sheet-step">
                     <button type="button" className="row-action-btn" title="Previous sensor" aria-label="Previous sensor" disabled={!canStepPrev} onClick={() => onStep(-1)}>‹</button>

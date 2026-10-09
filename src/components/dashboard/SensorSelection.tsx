@@ -6,6 +6,8 @@ import { modelSensorKey } from '../../utils/modelGrouping';
 import { ALARM_LEVELS, ALARM_LABELS, isCriticalAlarmLevel, alarmLevelColor, hasAlarmSetpoints } from '../../utils/alarmLevels';
 import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import FailureGroupAssignSheet, { KIND_LETTER, KIND_LABEL, ALL_KINDS } from './FailureGroupAssignSheet';
+import { SensorLabel } from '../sensor/SensorLabel';
+import { SensorMetaContext, useLayeredSensorLookup } from '../sensor/sensorInfo';
 
 
 
@@ -111,6 +113,9 @@ export default function SensorSelection({
     };
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
+    // Labels (rows + the assignment sheet header) read this panel's own metadata, layered on the
+    // window's provider so special-sensor badges still come through.
+    const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const getMetadata = (sensor: string) => sensorMetaMap.get(normalizeSensorTag(sensor));
 
     const matchesSearch = (sensor: string) => {
@@ -343,15 +348,11 @@ export default function SensorSelection({
                             onChange={() => handleSensorToggle(sensor)}
                             onClick={(e) => e.stopPropagation()}
                         />
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} style={{ cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span>{meta ? meta.description : sensor}</span>
-                                {meta?.unit && <span className="unit-badge">{meta.unit}</span>}
-                            </label>
-                            {meta && (
-                                <span className="sensor-row-tag">{meta.tag}</span>
-                            )}
-                        </div>
+                        {/* Customer item 3: the stacked SensorLabel — description + unit chip,
+                            tag on line 2, full name in the title when it truncates. */}
+                        <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} className="sensor-row-label">
+                            <SensorLabel tag={sensor} info={sensorLookup(sensor)} />
+                        </label>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
                         {hasAlarms && (
@@ -476,11 +477,12 @@ export default function SensorSelection({
     };
 
     return (
+        <SensorMetaContext.Provider value={sensorLookup}>
         <div className="sensor-selection-widget h-full flex flex-col" ref={rootRef}>
             <div className="widget-header flex-shrink-0" style={{ flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
                 <input
                     type="text"
-                    placeholder="Search sensors..."
+                    placeholder="Search description, tag, unit or component…"
                     value={searchTerm}
                     onChange={e => handleSearchChange(e.target.value)}
                     className="search-input-compact"
@@ -539,8 +541,7 @@ export default function SensorSelection({
             {fgSheetFor && (
                 <FailureGroupAssignSheet
                     tag={fgSheetFor}
-                    sensorLabel={getMetadata(fgSheetFor)?.description || fgSheetFor}
-                    unit={getMetadata(fgSheetFor)?.unit}
+                    info={sensorLookup(fgSheetFor)}
                     fgGroups={fgGroups}
                     fgModels={fgModels}
                     getGroupColor={getGroupColor}
@@ -558,5 +559,6 @@ export default function SensorSelection({
                 />
             )}
         </div>
+        </SensorMetaContext.Provider>
     );
 }
