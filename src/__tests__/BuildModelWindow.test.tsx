@@ -1941,7 +1941,8 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
     // 🆕 2026-10-09: a NEW Clustering model starts with 1 cluster and no ranges (Dashboard's
     // default), so it has nothing to fix. Picking a criteria sensor whose stats are still in
     // flight used to fix the range COUNT over a 0-100 placeholder and never re-divide once the
-    // real [min, max] arrived — Train would then have filtered the criteria sensor to 0-100.
+    // real [min, max] arrived. That matters for 2+ clusters (the ranges split the rows); for
+    // 1 cluster Rust ignores `cluster_ranges`, so the re-divide only keeps the saved range tidy.
     it('a new default model (1 cluster, no ranges) has nothing to fix; picking a criteria sensor divides over its REAL range once stats land, and the stepper still raises the count', async () => {
         let resolveStats: (v: unknown) => void = () => {};
         mockInvoke.mockImplementation((cmd: string) => {
@@ -2032,6 +2033,117 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
         const m = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
         expect(m).toMatchObject({ criteriaSensor: 'TAG4', numClusters: 2, clusterRanges: [{ min: 500, max: 700 }, { min: 700, max: 900 }] });
+    });
+
+    // 🆕 2026-10-09 (code review): while a division is pending ("Loading…"), Save and Train
+    // are blocked. Saving the placeholder ranges used to make them the saved key, so the real
+    // division never happened and a 2+-cluster model on a 500-900 sensor trained empty clusters.
+    describe('Save / Train are blocked while a cluster division waits for the criteria stats', () => {
+        const STATS_500_900 = { mean: 700, sd: 10, min: 500, max: 900, count: 100, lower1: 690, upper1: 710, lower3: 670, upper3: 730 };
+        const saveBtn = () => screen.getByText('Save changes').closest('button') as HTMLButtonElement;
+        const lastSaved = async () => (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+
+        it('+ on a saved 2-cluster model while its stats are pending: Save/Train disabled, then 3 ranges over the real [min, max] are saved', async () => {
+            let resolveStats: (v: unknown) => void = () => {};
+            mockInvoke.mockImplementation((cmd: string) => {
+                if (cmd === 'compute_sensor_stats') return new Promise(res => { resolveStats = res; });
+                return Promise.resolve({});
+            });
+            const clu = makeModel({
+                id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+                numClusters: 2, clusterRanges: [{ min: 500, max: 600 }, { min: 600, max: 900 }],
+            });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+            statefulUpdateMock([clu]);
+            openSettings();
+            await flush();
+            // Unchanged saved key: never blocked, even while the stats are still loading.
+            expect(screen.getByTestId('cluster-slider-loading')).toBeTruthy();
+            expect(saveBtn().disabled).toBe(false);
+            expect(trainSensorBtn().disabled).toBe(false);
+
+            fireEvent.click(screen.getByRole('button', { name: 'More clusters' }));
+            await flush();
+            expect(screen.getByTestId('cluster-slider-loading')).toBeTruthy();
+            expect(saveBtn().disabled).toBe(true);
+            expect(trainSensorBtn().disabled).toBe(true);
+            const writesBefore = mockUpdateWorkspaceData.mock.calls.length;
+            fireEvent.click(saveBtn());
+            await flush();
+            expect(mockUpdateWorkspaceData.mock.calls.length).toBe(writesBefore); // nothing persisted
+
+            await act(async () => { resolveStats(STATS_500_900); await Promise.resolve(); await Promise.resolve(); });
+            await flush();
+            expect(saveBtn().disabled).toBe(false);
+            expect(trainSensorBtn().disabled).toBe(false);
+            expect(pill(0)).toBe('#1: 500 – ');
+            expect(pill(2)).toMatch(/^#3: .* – 900$/);
+            await act(async () => { fireEvent.click(saveBtn()); await Promise.resolve(); await Promise.resolve(); });
+            const m = await lastSaved();
+            expect(m.criteriaSensor).toBe('TAG3');
+            expect(m.numClusters).toBe(3);
+            const r = m.clusterRanges as { min: number; max: number }[];
+            expect(r).toHaveLength(3);
+            expect(r[0].min).toBe(500);
+            expect(r[2].max).toBe(900);
+            expect(r[0].max).toBeCloseTo(500 + 400 / 3, 9);
+            expect(r[1].max).toBeCloseTo(500 + 800 / 3, 9);
+        });
+
+        it('switching criteria A -> B and pressing Save before B\'s stats land is blocked; once they land, Save writes ranges over B\'s range', async () => {
+            let resolveB: (v: unknown) => void = () => {};
+            mockInvoke.mockImplementation((cmd: string, args?: any) => {
+                if (cmd === 'compute_sensor_stats' && args?.sensor === 'TAG4') return new Promise(res => { resolveB = res; });
+                if (cmd === 'compute_sensor_stats') return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
+                return Promise.resolve({});
+            });
+            const clu = makeModel({
+                id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+                numClusters: 2, clusterRanges: [{ min: 0, max: 5 }, { min: 5, max: 10 }],
+            });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+            statefulUpdateMock([clu]);
+            openSettings();
+            await flush(); // A's (TAG3) stats [0, 10] arrive
+
+            const criteria = () => sensorPickerModalProps.filter(p => p.noun === 'criteria sensor').pop();
+            await act(async () => { criteria().onSelect('TAG4'); await Promise.resolve(); });
+            await flush();
+            expect(screen.getByTestId('cluster-slider-loading')).toBeTruthy();
+            expect(saveBtn().disabled).toBe(true);
+            expect(trainSensorBtn().disabled).toBe(true);
+            const writesBefore = mockUpdateWorkspaceData.mock.calls.length;
+            fireEvent.click(saveBtn());
+            await flush();
+            expect(mockUpdateWorkspaceData.mock.calls.length).toBe(writesBefore);
+
+            await act(async () => { resolveB(STATS_500_900); await Promise.resolve(); await Promise.resolve(); });
+            await flush();
+            expect(saveBtn().disabled).toBe(false);
+            expect(trainSensorBtn().disabled).toBe(false);
+            await act(async () => { fireEvent.click(saveBtn()); await Promise.resolve(); await Promise.resolve(); });
+            expect(await lastSaved()).toMatchObject({ criteriaSensor: 'TAG4', numClusters: 2, clusterRanges: [{ min: 500, max: 700 }, { min: 700, max: 900 }] });
+        });
+
+        it('a 1-cluster model picking a criteria sensor is NOT blocked while its stats are pending', async () => {
+            mockInvoke.mockImplementation((cmd: string) => {
+                if (cmd === 'compute_sensor_stats') return new Promise(() => {}); // never lands
+                return Promise.resolve({});
+            });
+            const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: '', numClusters: 1, clusterRanges: [] });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+            statefulUpdateMock([clu]);
+            openSettings();
+            const criteria = () => sensorPickerModalProps.filter(p => p.noun === 'criteria sensor').pop();
+            await act(async () => { criteria().onSelect('TAG3'); await Promise.resolve(); });
+            await flush();
+            expect(screen.queryByTestId('settings-to-fix')).toBeNull();
+            expect(saveBtn().disabled).toBe(false);
+            expect(trainSensorBtn().disabled).toBe(false);
+        });
     });
 
     it('an already-configured model whose criteria/count did not change keeps its saved (non-equal) ranges when stats arrive', async () => {

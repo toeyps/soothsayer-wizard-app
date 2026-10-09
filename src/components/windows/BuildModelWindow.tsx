@@ -2272,17 +2272,32 @@ export default function BuildModelWindow() {
         const prevKey = prevClusterDivisionKeyRef.current[activeModel.id] ?? persistedClusterKeyForActive;
         const keyChanged = divisionKey !== prevKey;
         const lengthMismatch = clusterRangesLenForActive !== numClustersForActive;
-        if (!keyChanged && !lengthMismatch) return;
-        // Wait for real stats unless the length is already wrong — there's
-        // no valid range set to show in the meantime for a mismatch, so it
-        // can't wait (same tradeoff the PM page's own effect makes).
-        if (!criteriaStats && !lengthMismatch) return;
-        // Only a division over the REAL [min, max] settles the key. A length
-        // fix made before the stats arrive (0-100 placeholder) leaves it open,
-        // so the stats landing re-divides over the real range — otherwise a new
-        // 1-cluster model (2026-10-09 default: `clusterRanges: []`, so the draft
-        // holds 3 placeholder ranges) picking a criteria sensor kept a single
-        // 0-100 range, and Train filtered the criteria sensor to 0-100.
+        // Empty ranges left in the DRAFT by a pending division (below) still need the real
+        // one, even once the key/length look settled (e.g. after a model switch and back).
+        const pendingInDraft = (drafts[activeModel.id]?.ranges ?? []).some(r => r.min === null || r.max === null);
+        // `drafts` is read fresh on each run but is not a dependency: the stats landing is the trigger.
+        if (!keyChanged && !lengthMismatch && !pendingInDraft) return;
+        if (!criteriaStats) {
+            // 🆕 2026-10-09: the division is PENDING until the criteria sensor's stats arrive.
+            // For 2+ clusters the draft gets EMPTY ranges meanwhile, so the "Fill in the cluster
+            // ranges" check blocks Save and Train: a placeholder range persisted now would
+            // become the saved key and the real division would never happen — a 500-900
+            // sensor would then train clusters with no rows. The stats landing re-runs this
+            // effect and fills them in. One cluster is never blocked: Rust ignores
+            // `cluster_ranges` when `n_clusters == 1`, so a 0-100 placeholder there is
+            // harmless and only re-divided to keep the saved ranges tidy.
+            if (numClustersForActive > 1) {
+                const current = draftOf(activeModel).ranges;
+                if (current.length === numClustersForActive && current.every(r => r.min === null && r.max === null)) return;
+                writeDraft(activeModel, { ranges: Array.from({ length: numClustersForActive }, () => ({ min: null, max: null })) });
+                return;
+            }
+            // 1 cluster: only a length mismatch can't wait (no valid range set to show).
+            if (!lengthMismatch) return;
+        }
+        // Only a division over the REAL [min, max] settles the key. A 1-cluster length fix
+        // made before the stats arrive (0-100 placeholder) leaves it open, so the stats
+        // landing re-divides over the real range and the saved range stays tidy.
         if (criteriaStats) prevClusterDivisionKeyRef.current[activeModel.id] = divisionKey;
         const lo = criteriaStats?.min ?? 0;
         const hi = criteriaStats?.max ?? 100;
