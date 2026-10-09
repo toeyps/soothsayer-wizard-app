@@ -381,7 +381,7 @@ fn aggregate_hourly(ctx: &QueryCtx, method: &str) -> AggRows {
 /// where each bucket spans ~1–2 px this preserves the exact vertical
 /// envelope of the raw trace (spikes included), which plain striding would
 /// destroy. Under `max_points` rows it's a straight passthrough.
-fn decimate(
+pub(crate) fn decimate(
     n: usize,
     n_cols: usize,
     ts_at: &(dyn Fn(usize) -> String + Sync),

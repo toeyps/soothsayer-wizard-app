@@ -4176,3 +4176,202 @@ All of the above was forwarded to the integration run.
 - Harness: scratchpad `cur2/`.
 - Final ui-design-reviewer on the merged app: started, then STOPPED because the usage limit was reached. Re-run it next session, then write the SPEC FINALs in `docs/design/handoff/`.
 - **🆕 2026-10-08/09 — Special sensor: แก้ตาม code review รอบ 2–3 (ซ่อม sensor ที่กู้คืนไม่ได้ + model กลับเป็น Incomplete)** · **ปัญหา (review รอบ 2)**: สูตรเก่าที่พิมพ์เองแบบ `round($A, 2)` / `$A (1 - $B)` ตอนนี้ถูก gate ปฏิเสธ → เปิด workspace แล้ว sensor กู้คืนไม่ได้ และถ้า model ใช้อยู่ สูตรถูกล็อก แก้/ลบไม่ได้ · **ผมตัดสินใจ**: sensor ที่ "กู้คืนไม่ได้" (ไม่มีคอลัมน์ใน session — ตรวจจาก Rust session ผ่าน `findUnrestoredSpecialSensors`) ปลดล็อกการแก้สูตร/source (ห้ามเปลี่ยนชื่อ, ลบยังไม่ได้ถ้า model ใช้) + ป้าย "No data — fix formula" + โน้ตสีเหลืองบอกเหตุผลจาก Rust · แก้แค่ description/unit/component ไม่คำนวณใหม่ (ส่ง recipe เดิม) · **review รอบ 3 MUST-FIX ที่แก้แล้ว**: (1) repair mode ใน `runSpecialSensorEdit`: ตัวที่ซ่อมคำนวณก่อน, ตัวที่สร้างต่อซึ่งไม่มีคอลัมน์มาก่อนแล้วยังผิด → ไม่ fatal ("B still needs fixing: …"), ถ้า fatal ให้ `remove_sensor_columns` คอลัมน์ที่เพิ่งสร้าง (ไม่พยายามคำนวณสูตรเดิมที่รู้ว่าผิด), editor ไม่ทิ้งสูตรที่พิมพ์ถ้าสถานะล็อกเปลี่ยนกลางทาง; (2) ซ่อมสำเร็จ → Dashboard handler `update-special-sensor` (`repaired: true` + `affectedTags` + workspaceId) ใช้ `demoteModelsTrainedOnSensors` (`src/utils/specialSensorRepair.ts`) ใน `persistFailureGroupStateFrom`: model ที่ train บน sensor นั้นหรือที่สร้างต่อจากมัน → `status:false`, ล้าง `trainedFingerprint`/`healthVerdict`/`testsChangedAt` (เก็บ `lastTrainedAt`/set points/export) → stale ต้อง train ใหม่ก่อน Mark complete · SHOULD-FIX ที่แก้: การตรวจซ้ำในคิวผูก generation, ป้ายไม่กระพริบจาก refs เก่า, sensor แบบ operation แก้ unit ไม่คำนวณใหม่ · Rust: นับ `[ ]` `{ }` ในเพดานความลึก 64, สูตรที่ไม่มี sensor ถูกบอกว่าผิดตั้งแต่ validate, `validate_formula` รับ `expectedGeneration` (optional) — หน้าต่างที่ค้างจากโปรเจกต์อื่นไม่ขึ้น error แดงผิดๆ (ผมเพิ่มส่วนแท็บ Create เอง) · **review รอบยืนยัน**: ไม่มี MUST-FIX · ที่ค้าง (ไม่บล็อก): ไม่มี automated test สำหรับป้ายกระพริบ (race, ดูด้วยตา), ลำดับ rollback (comment), จำนวน model ในข้อความนับตัวที่ Incomplete อยู่แล้วด้วย, race ข้ามหน้าต่างถ้า Train ใน Build Model ระหว่างซ่อม (กลุ่ม race ข้ามหน้าต่างเดิม) · tsc ผ่าน, vitest 3282 ผ่าน + 1 expected-fail, cargo lib 594 + integration ผ่าน, vite build ผ่าน · manual plan EDT-47→49, EDT-48 ปรับ, ใหม่ EDT-50/51 (342 ข้อ) · session หยุดกลางคัน 1 ครั้งเพราะชนลิมิต (ไม่มีงานเสีย) · ยังไม่ได้ลองในแอปจริง · ไม่ push
+
+## 🆕 2026-10-09 — User rejected the item-6 calculator look; ui-design-lead is re-directing the formula editor
+- The user tried the merged mockup (version 8). Their words: "เหมือนเครื่องคิดเลขมากเกินไป … ไม่สวย สิ่งที่ผมต้องการคือการแก้สมการได้ เช่น () ตามที่ต้องการ".
+  - The keypad dominates the window.
+  - Structural edits (wrapping part of the formula in brackets, changing an operator in the middle) are clumsy.
+- Started ui-design-lead (Fable) to set a new direction: a professional formula editor where the user edits the equation freely, with a palette and templates as secondary helpers only.
+- Constraints kept:
+  - engine rules;
+  - Average/Median as aggregate blocks;
+  - validation codes;
+  - the preview, locked, unknown-sensor and narrow states.
+- The lead builds it inside a copy of the full-app harness (scratchpad `cur3/`) and publishes it as a new artifact, so the v8 link stays intact until the user chooses.
+- Housekeeping: stopped two local python http.server processes (ports 8791 and 8792) that design agents had left running for about 16 h.
+
+## 🆕 2026-10-09 — Design side synced with dev's special-sensor repair mode (commits 42d9786, b044d01)
+- Forwarded dev's shipped behaviour to the ui-design-lead run that is redesigning the formula editor:
+  - stricter validation;
+  - repair mode for unrestored sensors: the formula is unlocked even when a model uses it; no rename; Delete is disabled while a model uses it; a "No data — fix formula" badge; dependent models are demoted to Incomplete after the repair.
+- The new editor must show this state as well as the normal locked state.
+- Status for the user: items 3, 4, 5, 8, 9 are designed, reviewed as parts and merged (mockup version 8); the final merged review has not run yet. Item 6 is being redesigned after the user's feedback. No SPEC FINAL has been sent to dev yet.
+
+## 🆕 2026-10-09 — User request: redesign the Pair Plot lasso cluster panel (ui-design-agent started)
+- The user (with a screenshot) said: "ไม่ได้ใช้ทำอะไร นอกจากเปลี่ยนสี จำนวน row หรือ view table ไม่ต้องมี".
+  - The floating card "1 cluster · 4,149 rows · View Table · ↺" with per-cluster rows covers the plot.
+- Brief to ui-design-agent:
+  - Drop the row counts and View Table.
+  - The main job is the cluster colour, using the shared ColourPicker.
+  - Make the panel light and keep it off the data.
+  - Keep a minimal remove-one and clear-all (open question).
+  - List dead code (e.g. the cluster table).
+- Built in the merged harness `cur2`, published as the next version of K1wTJ…. The ui-design-lead formula-editor work runs in parallel in `cur3`.
+
+## 🆕 2026-10-09 — ui-design-lead: new formula-editor direction for item 6 (replaces the calculator)
+- Mockup (new artifact; the v8 link is untouched): https://claude.ai/artifact/Er2fQQFpJB6ETtnbQnv119
+  - Harness: scratchpad `cur3/`, seed v9.
+  - Click path: GEG-4 → Sensor tab → + Add Special Sensor, plus Manage → ✎.
+  - Seeded cases: GEN_LOAD_PCT locked; BRG_TEMP_AVG an Average block; CW_TEMP_RISE an unknown source; LO_PRESS_MARGIN a new repair case (old `round(x, 2)`, used by a Relation model).
+- Direction: one free-text formula field with its structure painted behind the text (sensor chips, depth-coloured brackets, pair matching, error underline).
+  - Select + `(` wraps the selection; Unwrap removes a pair; native undo.
+  - Autocomplete on `$` or after 2+ letters.
+  - A thin secondary palette, plus Templates ▾ and All functions ▾.
+  - A Sensors row and a check line with fix buttons.
+  - The keypad is gone.
+  - Storage is unchanged (`kind: 'formula'` text). Average/Median remain blocks.
+- States covered:
+  - idle, typing and valid with a preview;
+  - invalid with a fix button; unknown sensor + Replace…;
+  - the Average block; Round the result;
+  - locked (read-only);
+  - repair (amber "No data — fix formula"; unlocked even when a model uses it; name locked; "1 model goes back to Incomplete");
+  - narrow layout; installed fonts.
+- `preview_formula` contract additions:
+  - a `round_excel` issue code;
+  - an optional char range `[start, end]` on issues.
+- Docs: DESIGN_SYSTEM §4.1 "Formula editor" replaces "Calculator formula builder", plus a §7 line. APP_MAP has the Special Sensors row and the open questions.
+- Open questions (defaults applied):
+  1. Auto-open autocomplete (yes).
+  2. `(` wraps the selection (yes).
+  3. Keep Templates (yes).
+  4. Show the tag in the text, with the description on hover / in the Sensors row (yes).
+  5. Keep dev's repair rules (yes).
+- Next: user review → ui-design-agent feedback rounds if needed → ui-design-reviewer. Then merge into the main mockup.
+
+## 🆕 2026-10-09 — Pair Plot cluster legend redesign merged into the full-app mockup (K1wTJ… version 9)
+- **Design:** the floating card is replaced by a chip row in the existing 36 px strip above the matrix, so it never covers data. Each chip is a ColourPicker swatch, a name and ×. "Clear" appears only at 2+ clusters. The same chips show in the enlarged-view footer.
+- **Removed:** row counts, View Table, the cluster table modal and CSV export of brushed rows.
+- **Behaviour changes:**
+  - Toolbox ↺ now resets the view only; it used to also wipe every cluster.
+  - Smallest free cluster number reused (the old code produced duplicate "Cluster 2" names).
+  - Default cluster colours aligned to the shared PALETTE.
+- **Code impact:** no data/Rust/IPC change.
+- **Dead code at implementation** (listed in the agent report):
+  - the table modal, CSV export and the related CSS;
+  - the `writeUserTextFile` TS helper — its last caller. The Rust `write_user_file` would then have no caller; the agent recommends keeping it.
+- **Tests and manual plan:**
+  - Rewrite `PairPlotChart.test` (cluster, View Table and CSV blocks) and `VisualRefreshFinalSweep`.
+  - PAIR-4: rewrite. PAIR-5: new id. Delete PAIR-6 and PAIR-7.
+- **Open questions:**
+  - ↺ view-only (yes);
+  - Clear only at 2+ (yes);
+  - drop CSV export (yes);
+  - palette defaults (yes);
+  - creation order (yes).
+
+## 🆕 2026-10-09 — Mockup divergence fixed + the "couldn't be restored" error toast explained
+- **Divergence:** the user opened the formula-editor mockup (Er2fQ…, harness `cur3`) and saw the OLD Pair Plot cluster card. `cur3` was copied before the cluster legend was redesigned in `cur2` (K1wTJ… version 9).
+  - Started ui-design-agent to port the legend into `cur3` and republish Er2fQ….
+  - Lesson: after this, consolidate into ONE harness.
+- **Error toast:** the user asked why every open shows a red "SPECIAL-SENSOR-RESTORE … couldn't be restored" toast, and said they don't want it in the real project.
+  - In the mockup it is seeded on purpose (CW_TEMP_RISE has an unknown source; LO_PRESS_MARGIN uses an old `round(x, 2)`), so the repair mode can be tried.
+  - It IS real-app behaviour (`DataUploadPage.tsx:76-104`, `reportError('special-sensor-restore', …)`). It fires when a source sensor is missing from the loaded data, or when a formula that older versions accepted is now refused by dev's stricter validation (commit 42d9786: Excel-style `round(x, n)`, implicit multiplication like `$A (1 - $B)`, unknown names such as `pi`).
+  - Risk: the user's existing workspaces with such formulas will show this red error after upgrading.
+  - Options raised with the user:
+    - (a) dev auto-converts unambiguous legacy forms on load — `round(x, n)` → `round(10^-n, x)`. The old engine computed nonsense for it, so models trained on it go back to Incomplete. Shown with an amber notice instead of an error.
+    - (b) design: replace the red error toast with an amber notice + "Fix in Manage" action for cases that can't be auto-fixed.
+
+## 🆕 2026-10-09 — User request: rename Pair Plot clusters in place
+- After trying the new chip row, the user asked to be able to edit the cluster name ("ถ้าสามารถแก้ไขชื่อได้จะดีมากๆ").
+- Sent to the ui-design-agent run that is porting the legend into `cur3`.
+- Proposed behaviour:
+  - click or F2 on the name → inline field;
+  - Enter or blur saves; Esc cancels; empty reverts;
+  - about 40 characters, truncated with a title;
+  - auto-numbering ignores renamed clusters;
+  - the same name in the enlarged view.
+- To be added in both `cur2` (K1wTJ…) and `cur3` (Er2fQ…).
+
+## 🆕 2026-10-09 — User feedback on the formula editor: bring back the selection-aware quick build
+- The user valued the old concept in `SensorTooling.tsx` `ButtonBuilder`: picking 1 sensor offers one set of options, picking 2+ offers a different set. In the new free-text editor it was lost: "เหมือนผมต้องกดใส่สูตรเองทั้งหมด".
+- The old option sets:
+  - **1 sensor:** Combine with a number (+ − × ÷ ^, with a value) and Transform (abs, sqrt, log10, exp, ceil, floor, round with decimals).
+  - **2+ sensors:**
+    - a chain with + by default (click a sign to change it);
+    - Combine all: sum, mean, median, spread, |A−B| (needs exactly 2);
+    - Compare one against the rest: efficiency %;
+    - a Wrap group around the result.
+- Sent back to ui-design-lead. The quick build becomes the primary way to start, and it writes visible formula text into the editor, which stays for precise edits. Templates may merge into it.
+- Coordination with the parallel cur3 Pair Plot port is in the brief.
+
+## 🆕 2026-10-09 — Cluster legend ported to cur3 + cluster rename-in-place (K1wTJ… v10, Er2fQ… v3)
+- Both mockups now have the cluster chip row and inline rename.
+  - Rename: click the name (or Tab, then Enter/F2). Enter or blur saves, Esc cancels, an empty name reverts.
+  - Max 40 characters. Truncated at 160 px, with the full name in a title.
+  - The enlarged-view footer chips are renameable too.
+  - Auto-numbering counts only "Cluster N" names.
+- Open questions (defaults):
+  - duplicates allowed;
+  - a single click starts editing;
+  - names are not persisted (clusters aren't saved in the workspace).
+- Implementation (no data/Rust change):
+  - `PairPlotChart.tsx`: `ChipName`, `handleRename`, `onRename`.
+  - `App.css`: `.pp-chip-*`.
+- Tests: rename cases in `PairPlotChart` + a MANUAL_TEST_PLAN item.
+- The agent stopped its local servers (8765/8791/8794/8795).
+
+## 🆕 2026-10-09 — Clarification: no redesign of the "couldn't be restored" toast
+- The user was only asking what the error is and whether it will happen in the real app. They did NOT ask for a new design. Option (b), the amber notice redesign, is dropped.
+- Answer given:
+  - In the mockup it is seeded on purpose.
+  - In the real app it appears only when a special sensor cannot be rebuilt:
+    - its source sensor is missing from the loaded CSV; or
+    - an old formula is now refused by the stricter validation (commit 42d9786) — Excel-style round, missing `*`, or bare `pi`.
+- Option (a) — dev auto-converts the legacy forms — is still awaiting the user's call.
+
+## 🆕 2026-10-09 — Formula editor round 2 (Quick build restored); all requested designs complete — one link for the user's review
+- Er2fQ… version 4 (scratchpad `cur3`) is now the single complete mockup. It holds:
+  - every merge from K1wTJ v8 (items 3+4, 5, 8+9);
+  - the Pair Plot chip legend + rename;
+  - the new formula editor.
+- K1wTJ… still shows the old calculator and is superseded for review.
+- **Quick build** (item 6, round 2): the old `ButtonBuilder` concept is back, and it is the primary way to start.
+  - Clicking left-list rows picks sensors; a hover `$` button inserts at the caret.
+  - **0 picked:** a hint.
+  - **1 picked:** Combine with a number (+ − × ÷ ^ with a value) or Transform (abs √ log₁₀ exp ceil floor round with decimals).
+  - **2+ picked:**
+    - a Chain with clickable signs (+ by default);
+    - Combine all: Sum / Average / Median / Spread / |A−B|;
+    - Compare: Efficiency % with an input radio;
+    - Then wrap.
+  - The generated text is always visible. Use this formula / Insert at cursor / Replace formula. Average/Median stay blocks.
+  - Templates ▾ is removed (merged into Quick build).
+  - DESIGN_SYSTEM §4.1 / §7 and APP_MAP are updated by the lead.
+- Open questions (defaults):
+  - click = pick, `$` = insert;
+  - no "add as-is";
+  - Quick build sits above the editor;
+  - the chain is dimmed when a combination is chosen;
+  - Sum is expanded and Average/Median are blocks.
+- Next: the user reviews everything once and gives batched feedback → ui-design-agent fixes → ui-design-reviewer final → SPEC FINALs.
+
+## 🆕 2026-10-09 — Checked the user's real data + error log for the "couldn't be restored" error (read-only)
+- Real workspaces in `%APPDATA%\com.prompt-solution.tauri-app\workspaces` ("Workspace 8/4/2026", "GEG-4", "test") have **0 special-sensor recipes**, so the restore error cannot fire on the user's current data.
+- Real log `%LOCALAPPDATA%\com.prompt-solution.tauri-app\logs\frontend-errors.log` (969 lines) has **0** `special-sensor-restore` entries. The toast the user saw came only from the mockup's deliberate seed.
+- Other recent log entries are dev-time hot-reload errors (localhost:1420, `?t=` HMR stamps). For example, 2026-10-08 15:34 `withoutLegacyWorkspaceFields is not defined` during autosave: the function exists now (`Dashboard.tsx:132`), so it was a mid-edit reload, not a shipped bug.
+- Remaining risk: future workspaces whose formulas use the refused legacy forms, or whose CSV lacks a source tag. Auto-converting legacy formulas (dev) is still awaiting the user's decision.
+
+## 🆕 2026-10-09 — 📐 SPEC FINAL: customer batch (items 3, 4, 5, 6, 8+9 + Pair Plot cluster legend) → handed to dev
+- The user approved every design and every default ("design ok แล้วส่งให้ dev จัดการได้เลย").
+- Spec: `docs/design/handoff/customer-batch-2026-10/README.md`
+  - **5 phases:**
+    1. SensorLabel / Picker / ColourPicker rollout
+    2. Pair Plot legend + rename
+    3. FG as Import step 3
+    4. Train queue
+    5. Formula editor + Quick build (Rust `preview_formula` + `multiOp.decimals`)
+  - Per-item files, tests and manual-plan changes are listed in the spec.
+  - Reference files: `mockup-frontend.diff` (against `b044d01` — keep dev's repair utilities, which the diff shows as removed), `mock-backend-reference.js`, `mock-seed-reference.js`.
+- Mockup: https://claude.ai/artifact/Er2fQQFpJB6ETtnbQnv119 (the K1wTJ… link is superseded).
+- Reviews:
+  - Items 3+4 and 5/6/8+9 were reviewed as parts, and their must-fixes were applied.
+  - The final merged review was cut off by the usage limit.
+  - The Pair Plot legend and formula round 2 were approved by the user without a separate review.
+  - → Run code-reviewer per phase.
+- Sent to the dev session (soothsayer-wizard-dev) via cross-session message.
+- Still open, not in the batch: auto-converting legacy formulas on load; the bundled fonts question.
+- Not committed (design session; `docs/design/**` commit is still "เอาไว้ก่อน" per the user).
+- **🆕 2026-10-09 — รับ SPEC FINAL batch ลูกค้า (ข้อ 3, 4, 5, 6, 8+9 + legend cluster ของ Pair Plot) จาก session ออกแบบ — เริ่ม implement** · SPEC: `docs/design/handoff/customer-batch-2026-10/README.md` (ไฟล์ของ session ออกแบบ ยังไม่ commit), mockup https://claude.ai/artifact/Er2fQQFpJB6ETtnbQnv119 · ผมถามยืนยันผู้ใช้ (AskUserQuestion): **"เริ่มเลย ทั้ง 5 phase"** · **"เปลี่ยนเป็น In progress"** สำหรับหน้า Notion ของ tag (ข้อ 1) และ highlight (ข้อ 2) ที่เป็น Done แต่โค้ดเปลี่ยนอีก · **"แก้ ทำพร้อม phase 5"**: ให้ train fingerprint ของ model รวมสูตรของ special sensor ที่ model ใช้ (แก้สูตร sensor ที่ไม่ถูกล็อกแล้ว model ต้องรู้ว่า stale) · phase ตาม SPEC: 1 SensorLabel/SensorPicker/ColourPicker ทั้งแอป (fe-ui), 2 legend + rename cluster ของ Pair Plot (fe-ui; ตัด View Table + CSV export, ลบ TS `writeUserTextFile` เก็บ Rust `write_user_file`), 3 Failure groups เป็นขั้นที่ 3 ของ Import (fe-logic → fe-ui), 4 Train sensor / Train all แบบคิว (fe-logic `useTrainQueue` → fe-ui), 5 Formula editor + Quick build (rust `preview_formula` + `multiOp.decimals` ∥ fe-logic tokenizer → fe-ui) · ทุก phase: code-reviewer ก่อน commit (ผู้ใช้ขอ), ห้ามทำให้แอปช้าลง, ไม่ทำ auto-convert สูตรเก่า (ยังไม่ตัดสิน) · เริ่ม phase 1 (fe-ui) ∥ phase 5 ส่วน Rust พร้อมกัน (โซนไม่ทับ)
+- **🆕 2026-10-09 — ผู้ใช้ตัดสินใจ: แปลงสูตรเก่าแบบ `round($A, 2)` ให้อัตโนมัติตอนเปิด workspace** · เดิม SPEC ระบุว่า "ยังไม่ตัดสิน อย่าทำ" — ผู้ใช้ตอบ (AskUserQuestion) **"แปลงให้อัตโนมัติ"**: ตอนเปิด workspace สูตรที่ถูกปฏิเสธเพราะ round แบบ Excel จะถูกแปลงเป็น `round(X * 10^N) / 10^N` คำนวณใหม่ บันทึกสูตรใหม่ และแจ้งผู้ใช้ (ค่าจะต่างจากที่เคยแสดง เพราะแบบเดิมคำนวณผิด) · แผน: rust-agent (phase 5) เพิ่มฟังก์ชันแปลงที่ใช้ตัว scan เดียวกับ check_round_argument_order + command `convert_legacy_formula` + `converted_formula` ใน `preview_formula`; frontend ทำใน phase 5 ที่ replay ตอนเปิด workspace · ยังไม่ implement ณ entry นี้
+- **🆕 2026-10-09 — Phase 5 ส่วน Rust: `preview_formula`, gate แบบมีโค้ด, `multiOp.decimals`, ตัวแปลงสูตร round แบบ Excel (commit นี้ = src-tauri เท่านั้น)** · rust-agent → code-reviewer (MUST-FIX 1) → rust-agent → code-reviewer ยืนยัน (ไม่มี MUST-FIX) · **ใหม่**: `formula_gate` (limits → references → compile) เดียวใช้ทั้ง validate/preview/create/replay ข้อความเดิมทุกตัวอักษร + `FormulaIssue {code, message, range}` (range เป็น UTF-16 ของข้อความต้นฉบับ รองรับไทย/อีโมจิ/`${…}`) โมดูลใหม่ `formula_diagnostics.rs` (จัดประเภทเท่านั้น fasteval ยังเป็นตัวตัดสิน) · command ใหม่ `preview_formula` (async+spawn_blocking, คีย์ camelCase ตามคำสั่ง special-sensor อื่น: `formula|aggregate`, `maxPoints` (default 600, 2..2000), `expectedGeneration`, `replace`, `requestId`; คืน `ok, issues[], stats (ทุกแถว), timestamps/values (downsample), period (ข้อความแถวเหมือน timestamps), functions, limits, converted_formula`) — ยกเลิกเมื่อมี requestId ใหม่กว่า (`Err("CANCELLED: …")`) · `convert_legacy_formula({formula}) → {formula, changed}` ใช้ตัว scan เดียวกับการปฏิเสธ round แบบ Excel → `round(X * 100) / 100` (เลขจริง ไม่ใช่ 10^n), idempotent, เกินเพดาน = ไม่แปลง · `SensorOperationConfig.multiOp.decimals` (0..10, ปัดแบบ half-away-from-zero, ไม่มี/null = เหมือนเดิมทุก bit) · คำนวณแบบขนานเขียนลง buffer เดียว (ไม่กิน RAM 2 เท่า) ทั้งสูตรและ Average/Median · ปฏิเสธเฉพาะตอนสร้าง (ไม่ใช่ตอนเปิด workspace): หารด้วย 0 ตรงๆ (`div_zero`), Average/Median ที่มี sensor ตัวเดียว (`agg_too_few`) · ชื่อ default ของ block ที่มีทศนิยมลงท้าย ", Ndp)" (ของเดิมไม่เปลี่ยน) · เพดานความยาวนับเป็น UTF-16 (หลวมขึ้น) · **ค้างให้ phase 5 frontend** (จาก review): (1) ถ้าได้ CANCELLED และ requestId นั้นยังเป็นตัวล่าสุดที่หน้าต่างส่ง ให้ส่งใหม่ (task อาจรันสลับลำดับ), มีตัวแก้สูตรทำ preview ได้ทีละตัว; (2) `validate_formula` ไม่รู้ว่าเป็นการแก้ sensor เดิม → editor ควรย้ายไปใช้ `preview_formula` ส่ง `replace` เหมือนตอน Save; (3) แปลงสูตรเก่าแล้วค่าเปลี่ยน → ต้อง demote model ที่ train บน sensor นั้น (เหมือน repair) + แจ้งผู้ใช้; (4) เพิ่ม 'preview_formula' ใน GENERATION_GUARDED, ใช้ `maxPoints` · cargo test lib 636 + integration ผ่าน, build ไม่มี warning · ยังไม่มี frontend เรียกใช้ · ไม่ push

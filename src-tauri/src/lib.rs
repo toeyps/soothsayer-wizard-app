@@ -1,6 +1,7 @@
 mod chart_query;
 pub mod clustering;
 pub mod csv_processor;
+mod formula_diagnostics;
 pub mod health_score;
 mod health_preview;
 mod health_validation;
@@ -19,12 +20,19 @@ mod train_test_validation_internal;
 #[cfg(test)]
 #[path = "../tests/internal/qa_special_sensor_internal.rs"]
 mod qa_special_sensor_internal;
+// Formula editor preview / coded gate / decimals / legacy round conversion
+// (customer batch 2026-10, item 6; same arrangement).
+#[cfg(test)]
+#[path = "../tests/internal/formula_preview_internal.rs"]
+mod formula_preview_internal;
+use formula_diagnostics::FormulaIssue;
 use csv_processor::{
     load_metadata, micros_to_naive, parse_timestamp, ts_to_micros, ColumnarData, CsvLoadReport,
     CsvRecord, MappingData, MappingResult, SensorMetadata, TS_MISSING,
 };
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::RwLock;
 use tauri::{Emitter, State};
 
@@ -3286,11 +3294,24 @@ struct SingleOperation {
     value: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct MultiOperation {
     #[serde(rename = "type")]
     op_type: String,
+    /// Round every result row to this many decimal places (customer batch
+    /// 2026-10, item 6: a rounded Average / Median block keeps its own
+    /// decimals instead of a `round()` wrap). `(x * 10^d).round() / 10^d`,
+    /// half away from zero like the single-op `round`. Absent / `null` = no
+    /// rounding, so every recipe saved before this field existed loads and
+    /// computes exactly as before. A whole number 0..=MAX_OPERATION_DECIMALS
+    /// (read as a number so a `2.0` does not fail the whole command).
+    #[serde(default)]
+    decimals: Option<f64>,
 }
+
+/// Upper bound for `MultiOperation::decimals` (beyond ~10 places an f64 sensor
+/// value has no digits left to round).
+const MAX_OPERATION_DECIMALS: f64 = 10.0;
 
 #[derive(Debug, Deserialize)]
 struct SensorOperationConfig {
@@ -3507,6 +3528,155 @@ fn remove_sensor_columns(
     remove_derived_in_state(&state, &names, expected_generation)
 }
 
+/// User-facing name of a multi operation in messages.
+fn multi_op_label(op_type: &str) -> &'static str {
+    match op_type {
+        "mean" => "Average",
+        "median" => "Median",
+        "sum" => "Sum",
+        _ => "This operation",
+    }
+}
+
+/// The ONE check of a multi-sensor operation (Sum / Average / Median block),
+/// shared by `calculate_new_sensor` (create, edit, replay) and
+/// `preview_formula`'s aggregate mode. Returns the resolved source columns.
+///
+/// Order (kept from before): no sources → unknown source → unknown op → too
+/// few sources → bad decimals. `require_two` refuses a block of fewer than 2
+/// sources (`agg_too_few`) — on for a CREATE and for the preview; off for a
+/// recompute/replay (`replace`) so a legacy one-source recipe still restores.
+fn check_multi_operation(
+    headers: &[String],
+    sensors: &[String],
+    op: &MultiOperation,
+    require_two: bool,
+) -> Result<Vec<usize>, FormulaIssue> {
+    use formula_diagnostics::{issue_at, AGG_TOO_FEW, BAD_DECIMALS, UNKNOWN_OPERATION, UNKNOWN_SENSOR};
+    if sensors.is_empty() {
+        return Err(issue_at("", AGG_TOO_FEW, "No sensors selected", None));
+    }
+    let mut indices = Vec::with_capacity(sensors.len());
+    for sensor in sensors {
+        match resolve_sensor(headers, sensor) {
+            Some(idx) => indices.push(idx),
+            None => return Err(issue_at("", UNKNOWN_SENSOR, format!("Sensor not found: {}", sensor), None)),
+        }
+    }
+    if let Err(e) = operation_registry::multi_op_name(&op.op_type) {
+        return Err(issue_at("", UNKNOWN_OPERATION, e, None));
+    }
+    if require_two && sensors.len() < 2 {
+        return Err(issue_at(
+            "",
+            AGG_TOO_FEW,
+            format!("{} needs at least 2 sensors.", multi_op_label(&op.op_type)),
+            None,
+        ));
+    }
+    if let Some(d) = op.decimals {
+        if !(d.is_finite() && d.fract() == 0.0 && (0.0..=MAX_OPERATION_DECIMALS).contains(&d)) {
+            return Err(issue_at(
+                "",
+                BAD_DECIMALS,
+                format!("Decimals must be a whole number from 0 to {} (got {}).", MAX_OPERATION_DECIMALS, d),
+                None,
+            ));
+        }
+    }
+    Ok(indices)
+}
+
+/// `(x * 10^d).round() / 10^d` — rounds to `d` decimal places, half away from
+/// zero (the same rounding as the single-op `round` and fasteval's
+/// `round(x)`, i.e. what `round(X * 100) / 100` gives in a formula).
+///
+/// * `|x * 10^d| >= 2^52` (or not finite): returned unchanged — at that scale
+///   every f64 already has no digit beyond `d` decimals, and scaling would
+///   overflow a huge value to infinity, which would then become "missing".
+/// * A result of `-0.0` (`-0.001` to 2 decimals) is returned as `0.0`, so a
+///   rounded column never shows "-0".
+fn round_to_decimals(v: f64, decimals: f64) -> f64 {
+    const EXACT_INT: f64 = 4_503_599_627_370_496.0; // 2^52
+    let factor = 10f64.powi(decimals as i32);
+    let scaled = v * factor;
+    if scaled.is_nan() || scaled.abs() >= EXACT_INT {
+        return v;
+    }
+    let r = scaled.round() / factor;
+    if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
+}
+
+/// Rows per parallel chunk of a computed column (formula and multi-op
+/// builders), and the granularity of a preview's cancellation check.
+const COLUMN_CHUNK: usize = 16_384;
+
+/// "Has this computation been superseded?" — checked once per chunk. Create /
+/// Save / replay pass [`never_cancelled`]; only `preview_formula` cancels.
+type CancelCheck<'a> = &'a (dyn Fn() -> bool + Sync);
+
+fn never_cancelled() -> bool {
+    false
+}
+
+/// `Err` of a preview superseded by a newer `preview_formula` request.
+const FORMULA_PREVIEW_CANCELLED: &str = "CANCELLED: a newer formula preview replaced this one";
+
+/// Build a multi-operation column (already checked by
+/// [`check_multi_operation`]). `sum` needs every source (a missing one makes
+/// the row missing); `mean` / `median` skip missing sources; an all-missing
+/// row is missing. Non-finite results are missing; `decimals` rounds last.
+///
+/// Parallel over [`COLUMN_CHUNK`]-row chunks written straight into the
+/// preallocated output (no per-chunk vectors to concatenate, so peak memory is
+/// one column); every row is computed exactly as before, so the result is
+/// bit-identical to the old serial loop.
+fn compute_multi_column(
+    data: &ColumnarData,
+    indices: &[usize],
+    op: &MultiOperation,
+    cancelled: CancelCheck,
+) -> Result<Vec<f64>, String> {
+    use rayon::prelude::*;
+    let f = operation_registry::multi_op_fn(&op.op_type)?;
+    let needs_all = operation_registry::multi_op_needs_all_inputs(&op.op_type);
+    let src_cols: Vec<&[f64]> = indices.iter().map(|&i| data.columns[i].as_slice()).collect();
+    let n = data.n_rows();
+    let mut new_col: Vec<f64> = vec![0.0; n];
+    new_col.par_chunks_mut(COLUMN_CHUNK).enumerate().try_for_each(|(c, out)| {
+        if cancelled() {
+            return Err(FORMULA_PREVIEW_CANCELLED.to_string());
+        }
+        let start = c * COLUMN_CHUNK;
+        let mut valid: Vec<f64> = Vec::with_capacity(src_cols.len());
+        for (k, slot) in out.iter_mut().enumerate() {
+            let r = start + k;
+            valid.clear();
+            for col in &src_cols {
+                let v = col[r];
+                if !v.is_nan() {
+                    valid.push(v);
+                }
+            }
+            // `sum` (needs_all): any missing source -> missing row, like
+            // `evaluate_formula`. Other ops skip missing sources and use
+            // what is left; an all-missing row stays missing.
+            let skip = valid.is_empty() || (needs_all && valid.len() != src_cols.len());
+            let mut v = if skip { f64::NAN } else { f(&valid).unwrap_or(f64::NAN) };
+            if let Some(d) = op.decimals {
+                v = round_to_decimals(v, d);
+            }
+            *slot = if v.is_finite() { v } else { f64::NAN };
+        }
+        Ok(())
+    })?;
+    Ok(new_col)
+}
+
 /// Pure core of `calculate_new_sensor`: validates and computes the column
 /// without touching the session. Returns `(final trimmed name, column)`.
 fn compute_operation_sensor(
@@ -3542,8 +3712,19 @@ fn compute_operation_sensor(
         }
         "multi" => {
             let op = config.multi_op.as_ref().ok_or("Missing multiOp config")?;
+            // The shared block check (also what `preview_formula` answers).
+            // A recompute / replay (`replace`) still accepts a legacy
+            // one-source block.
+            check_multi_operation(&data.headers, sensors, op, !replace)?;
             let op_name = operation_registry::multi_op_name(&op.op_type)?;
-            (Op::Multi(op), format!("{}({:?})", op_name, sensors))
+            // Decimals are part of the default name, so two blocks that
+            // differ only in rounding don't clash; a block without decimals
+            // keeps the name it has always had (saved recipes replay under it).
+            let default_name = match op.decimals {
+                Some(d) => format!("{}({:?}, {}dp)", op_name, sensors, d),
+                None => format!("{}({:?})", op_name, sensors),
+            };
+            (Op::Multi(op), default_name)
         }
         _ => return Err("Invalid mode".to_string()),
     };
@@ -3569,49 +3750,20 @@ fn compute_operation_sensor(
 
     // The whole column is built before anything touches the session, so an
     // error part-way can't leave the dataset half-mutated.
-    let n = data.n_rows();
-    let mut new_col: Vec<f64> = Vec::with_capacity(n);
-    // Non-finite results (power/exp overflow, 0^-1, ...) become "missing":
-    // `inf` stored in a column poisons every downstream stat and chart axis.
-    let finite = |v: f64| if v.is_finite() { v } else { f64::NAN };
-
-    match op {
+    let new_col = match op {
         Op::Single(op) => {
+            // Non-finite results (power/exp overflow, 0^-1, ...) become
+            // "missing": `inf` stored in a column poisons every downstream
+            // stat and chart axis.
+            let finite = |v: f64| if v.is_finite() { v } else { f64::NAN };
             let f = operation_registry::single_op_fn(&op.op_type)?;
-            for &v in data.columns[indices[0]].iter() {
-                new_col.push(if v.is_nan() {
-                    f64::NAN
-                } else {
-                    f(v, op.value).map(finite).unwrap_or(f64::NAN)
-                });
-            }
+            data.columns[indices[0]]
+                .iter()
+                .map(|&v| if v.is_nan() { f64::NAN } else { f(v, op.value).map(finite).unwrap_or(f64::NAN) })
+                .collect()
         }
-        Op::Multi(op) => {
-            let f = operation_registry::multi_op_fn(&op.op_type)?;
-            let needs_all = operation_registry::multi_op_needs_all_inputs(&op.op_type);
-            let src_cols: Vec<&[f64]> =
-                indices.iter().map(|&i| data.columns[i].as_slice()).collect();
-            let mut valid: Vec<f64> = Vec::with_capacity(src_cols.len());
-            for r in 0..n {
-                valid.clear();
-                for col in &src_cols {
-                    let v = col[r];
-                    if !v.is_nan() {
-                        valid.push(v);
-                    }
-                }
-                // `sum` (needs_all): any missing source -> missing row, like
-                // `evaluate_formula`. Other ops skip missing sources and use
-                // what is left; an all-missing row stays missing.
-                let skip = valid.is_empty() || (needs_all && valid.len() != src_cols.len());
-                new_col.push(if skip {
-                    f64::NAN
-                } else {
-                    f(&valid).map(finite).unwrap_or(f64::NAN)
-                });
-            }
-        }
-    }
+        Op::Multi(op) => compute_multi_column(data, &indices, op, &never_cancelled)?,
+    };
 
     Ok((name, new_col))
 }
@@ -3858,6 +4010,16 @@ fn rename_formula_refs(formula: String, old_name: String, new_name: String) -> S
 /// `^` needs no rewriting -- fasteval parses it natively as its exponent
 /// operator (`BinaryOp::EExp`).
 fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
+    let (expr, safe_names, _) = prepare_formula_for_eval_mapped(formula);
+    (expr, safe_names)
+}
+
+/// [`prepare_formula_for_eval`] plus, for every BYTE of the rewritten text
+/// (and one past the end), the CHAR index in `formula` it came from — so a
+/// position fasteval reports in the rewritten text (`_0 _1`) can be shown in
+/// the user's own (`$A $B`). A generated name maps to its reference's start;
+/// an inserted space to the neighbouring reference edge.
+fn prepare_formula_for_eval_mapped(formula: &str) -> (String, Vec<(String, String)>, Vec<usize>) {
     let chars: Vec<char> = formula.chars().collect();
     let spans = scan_sensor_refs(formula);
 
@@ -3885,11 +4047,19 @@ fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
     let prefix = "_".repeat(longest_run + 1);
 
     let mut expr = String::with_capacity(formula.len() + 8);
+    let mut map: Vec<usize> = Vec::with_capacity(formula.len() + 9);
     let mut safe_names: Vec<(String, String)> = Vec::new();
     let mut pos = 0;
 
+    let push_chars = |expr: &mut String, map: &mut Vec<usize>, from: usize, to: usize| {
+        for (k, c) in chars[from..to].iter().enumerate() {
+            expr.push(*c);
+            map.extend(std::iter::repeat_n(from + k, c.len_utf8()));
+        }
+    };
+
     for span in &spans {
-        expr.extend(chars[pos..span.start].iter());
+        push_chars(&mut expr, &mut map, pos, span.start);
         let idx = match safe_names.iter().position(|(_, n)| *n == span.name) {
             Some(i) => i,
             None => {
@@ -3899,16 +4069,20 @@ fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
         };
         if expr.chars().last().is_some_and(is_formula_word_char) {
             expr.push(' ');
+            map.push(span.start);
         }
         expr.push_str(&safe_names[idx].0);
+        map.extend(std::iter::repeat_n(span.start, safe_names[idx].0.len()));
         if chars.get(span.end).is_some_and(|c| is_formula_word_char(*c)) {
             expr.push(' ');
+            map.push(span.end);
         }
         pos = span.end;
     }
-    expr.extend(chars[pos..].iter());
+    push_chars(&mut expr, &mut map, pos, chars.len());
+    map.push(chars.len());
 
-    (expr, safe_names)
+    (expr, safe_names, map)
 }
 
 /// A character fasteval would glue onto an adjacent name or number.
@@ -3958,6 +4132,15 @@ const BUILTIN_FORMULA_FNS: &[&str] = &[
 const FORMULA_FUNCTION_LIST: &str =
     "abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()";
 
+/// Every function name the engine accepts -- fasteval's built-ins plus
+/// [`eval_extra_math_fn`]. Sent to the editor by `preview_formula` so the
+/// front end never retypes it (a test checks it matches both lists).
+const FORMULA_FUNCTIONS: &[&str] = &[
+    "abs", "sqrt", "pow", "exp", "ln", "log", "log10", "round", "min", "max", "ceil", "floor",
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+    "sign", "int", "pi", "e",
+];
+
 #[cfg(test)]
 mod special_sensor_tests {
     use super::*;
@@ -4003,7 +4186,7 @@ mod special_sensor_tests {
         SensorOperationConfig {
             mode: "multi".into(),
             single_op: None,
-            multi_op: Some(MultiOperation { op_type: op.into() }),
+            multi_op: Some(MultiOperation { op_type: op.into(), decimals: None }),
             custom_name: name.map(String::from),
         }
     }
@@ -5062,6 +5245,14 @@ struct FormulaValidationResult {
     valid: bool,
     error: Option<String>,
     referenced_sensors: Vec<String>,
+    /// Stable issue code when invalid (same codes as `preview_formula`;
+    /// absent when valid). Added 2026-10-09, optional for old callers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    /// `[start, end)` of the problem in UTF-16 units of the formula, when it
+    /// can be located.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range: Option<[usize; 2]>,
 }
 
 /// Bound on formula source length + bracket nesting depth — a cheap
@@ -5079,21 +5270,42 @@ const MAX_FORMULA_LEN: usize = 4096;
 const MAX_FORMULA_DEPTH: i32 = 64;
 
 fn check_formula_limits(formula: &str) -> Result<(), String> {
-    if formula.len() > MAX_FORMULA_LEN {
-        return Err(format!(
-            "Formula too long ({} chars, max {})",
-            formula.len(),
-            MAX_FORMULA_LEN
+    match formula_limit_issue(formula) {
+        Some(issue) => Err(issue.message),
+        None => Ok(()),
+    }
+}
+
+/// The size gate as a coded issue (`too_long` / `too_deep`).
+///
+/// The length is counted in UTF-16 code units — the same count as the
+/// editor's own `text.length` — not UTF-8 bytes (2026-10-09): a Thai sensor
+/// name is 3 bytes per character, so a byte count refused Thai formulas far
+/// below the 4,096 characters the editor promised. Still a hard bound: at
+/// most 3 bytes per unit reach the parser.
+fn formula_limit_issue(formula: &str) -> Option<FormulaIssue> {
+    use formula_diagnostics::{issue_at, TOO_DEEP, TOO_LONG};
+    let len = formula.encode_utf16().count();
+    if len > MAX_FORMULA_LEN {
+        return Some(issue_at(
+            formula,
+            TOO_LONG,
+            format!("Formula too long ({} chars, max {})", len, MAX_FORMULA_LEN),
+            None,
         ));
     }
     let mut depth: i32 = 0;
     let mut max_depth: i32 = 0;
-    for c in formula.chars() {
+    let mut first_over: Option<usize> = None;
+    for (i, c) in formula.chars().enumerate() {
         match c {
             '(' | '[' | '{' => {
                 depth += 1;
                 if depth > max_depth {
                     max_depth = depth;
+                }
+                if depth > MAX_FORMULA_DEPTH && first_over.is_none() {
+                    first_over = Some(i);
                 }
             }
             ')' | ']' | '}' => {
@@ -5103,12 +5315,14 @@ fn check_formula_limits(formula: &str) -> Result<(), String> {
         }
     }
     if max_depth > MAX_FORMULA_DEPTH {
-        return Err(format!(
-            "Formula too deeply nested ({} levels, max {})",
-            max_depth, MAX_FORMULA_DEPTH
+        return Some(issue_at(
+            formula,
+            TOO_DEEP,
+            format!("Formula too deeply nested ({} levels, max {})", max_depth, MAX_FORMULA_DEPTH),
+            first_over.map(|i| (i, i + 1)),
         ));
     }
-    Ok(())
+    None
 }
 
 #[cfg(test)]
@@ -5180,6 +5394,119 @@ mod check_formula_limits_tests {
     }
 }
 
+#[cfg(test)]
+mod formula_gate_tests {
+    use super::*;
+
+    const NAN: f64 = f64::NAN;
+
+    fn data() -> ColumnarData {
+        ColumnarData::from_parts(
+            vec!["timestamp".into(), "A".into(), "ค่า แรง".into()],
+            vec![Some("2020-01-01T00:00".into()), Some("2020-01-01T00:01".into())],
+            vec![vec![NAN; 2], vec![1.5, 4.0], vec![2.0, NAN]],
+        )
+    }
+
+    #[test]
+    fn the_function_list_is_exactly_the_engines_and_every_entry_compiles() {
+        let mut expected: Vec<&str> = BUILTIN_FORMULA_FNS.to_vec();
+        expected.extend(EXTRA_MATH_FNS.iter().map(|(n, _, _)| *n));
+        expected.extend(["pi", "e"]);
+        let mut got = FORMULA_FUNCTIONS.to_vec();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected);
+        for f in FORMULA_FUNCTIONS {
+            let formula = match *f {
+                "pi" | "e" => format!("$A * {f}()"),
+                "pow" => "pow($A, 2)".to_string(),
+                _ => format!("{f}($A)"),
+            };
+            assert!(compute_formula_sensor(&data(), &formula, Some("Z"), false).is_ok(), "{formula}");
+        }
+    }
+
+    #[test]
+    fn the_rewrite_map_points_every_byte_back_at_the_users_text() {
+        let f = "${ค่า แรง} + $A0";
+        let (expr, names, map) = prepare_formula_for_eval_mapped(f);
+        assert_eq!(map.len(), expr.len() + 1);
+        assert_eq!(names.len(), 2);
+        let chars: Vec<char> = f.chars().collect();
+        // The `+` in the rewritten text maps to the user's `+`.
+        let plus = expr.find('+').unwrap();
+        assert_eq!(chars[map[plus]], '+');
+        // The second generated name maps to the start of `$A0`.
+        let second = expr.rfind(&names[1].0).unwrap();
+        assert_eq!(chars[map[second]], '$');
+        assert_eq!(map[second], 13);
+        assert_eq!(*map.last().unwrap(), chars.len());
+        // Unchanged text keeps the old (unmapped) function's output.
+        assert_eq!(prepare_formula_for_eval(f), (expr, names));
+    }
+
+    #[test]
+    fn validate_reports_the_code_and_range_of_its_refusal() {
+        let v = validate_formula_against(&data(), "${ค่า แรง} + $nope");
+        assert!(!v.valid);
+        assert_eq!(v.error.as_deref(), Some("Sensor not found: nope"));
+        assert_eq!(v.code, Some("unknown_sensor"));
+        assert_eq!(v.range, Some([13, 18]));
+        let v = validate_formula_against(&data(), "round($A, 2)");
+        assert_eq!(v.code, Some("round_excel"));
+        assert_eq!(v.range, Some([0, 12]));
+        let v = validate_formula_against(&data(), "$A + 1");
+        assert!(v.valid && v.code.is_none() && v.range.is_none());
+        // A valid verdict serializes exactly as before (no code / range keys).
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json, serde_json::json!({ "valid": true, "error": null, "referenced_sensors": ["A"] }));
+    }
+
+    #[test]
+    fn a_literal_division_by_zero_is_refused_on_create() {
+        let err = compute_formula_sensor(&data(), "$A / 0", Some("Z"), false).unwrap_err();
+        assert_eq!(err, formula_diagnostics::DIV_ZERO_MESSAGE);
+        // Dividing by a sensor that is 0 on some rows is still fine (those rows are empty).
+        assert!(compute_formula_sensor(&data(), "1 / ($A - 1.5)", Some("Z"), false).is_ok());
+        // Create-only: a recompute / replay of a saved recipe still computes.
+        assert!(compute_formula_sensor(&data(), "$A / 0", Some("Z"), true).is_ok());
+    }
+
+    #[test]
+    fn the_limit_counts_utf16_units_like_the_editor() {
+        let thai = "ค".repeat(MAX_FORMULA_LEN);
+        assert!(thai.len() > MAX_FORMULA_LEN, "3 bytes per char");
+        assert!(check_formula_limits(&thai).is_ok());
+        let over = "ค".repeat(MAX_FORMULA_LEN + 1);
+        assert_eq!(
+            check_formula_limits(&over).unwrap_err(),
+            format!("Formula too long ({} chars, max {})", MAX_FORMULA_LEN + 1, MAX_FORMULA_LEN)
+        );
+        // An astral char is two units, as in JS.
+        let astral = "😀".repeat(MAX_FORMULA_LEN / 2 + 1);
+        assert!(check_formula_limits(&astral).is_err());
+    }
+
+    #[test]
+    fn multi_op_decimals_rounds_and_is_optional_in_json() {
+        let cfg: SensorOperationConfig = serde_json::from_value(serde_json::json!({
+            "mode": "multi", "multiOp": { "type": "mean", "decimals": 0 }, "customName": "M"
+        }))
+        .unwrap();
+        assert_eq!(cfg.multi_op.as_ref().unwrap().decimals, Some(0.0));
+        let (_, col) = compute_operation_sensor(&data(), &["A".into(), "ค่า แรง".into()], &cfg, false).unwrap();
+        assert_eq!(col, vec![2.0, 4.0], "1.75 -> 2, a lone 4 stays 4");
+        let old: SensorOperationConfig = serde_json::from_value(serde_json::json!({
+            "mode": "multi", "multiOp": { "type": "mean" }, "customName": "M"
+        }))
+        .unwrap();
+        assert_eq!(old.multi_op.unwrap().decimals, None);
+        assert_eq!(round_to_decimals(1.005, 2.0), (1.005f64 * 100.0).round() / 100.0);
+        assert_eq!(round_to_decimals(-0.25, 1.0), -0.3);
+    }
+}
+
 /// A formula parsed once and proven to evaluate (see [`compile_formula`]).
 struct CompiledFormula {
     slab: fasteval::Slab,
@@ -5210,8 +5537,17 @@ const FORMULA_TRIAL_VALUE: f64 = 1.0;
 ///    the row loop used to turn into "missing" on every row.
 /// 3. Refuse `round(<sensor expr>, <constant>)` -- see
 ///    [`check_round_argument_order`].
-fn compile_formula(formula: &str) -> Result<CompiledFormula, String> {
-    let (expr, safe_names) = prepare_formula_for_eval(formula);
+///
+/// NOT here: the literal-division-by-0 refusal (`div_zero`) is a CREATE-only
+/// check (like `agg_too_few`) — see [`create_only_formula_issue`]. A recipe
+/// saved before that refusal existed must still restore on replay / Save.
+///
+/// A refusal is a [`FormulaIssue`]: the message every caller has always
+/// shown, plus a stable code and (where it can be located) a range in the
+/// user's text — see `formula_diagnostics`. Callers that only want the
+/// message use `?` into `String`.
+fn compile_formula(formula: &str) -> Result<CompiledFormula, FormulaIssue> {
+    let (expr, safe_names, byte_map) = prepare_formula_for_eval_mapped(formula);
 
     let parser = fasteval::Parser {
         expr_len_limit: expr.len().max(fasteval::parser::DEFAULT_EXPR_LEN_LIMIT),
@@ -5221,15 +5557,20 @@ fn compile_formula(formula: &str) -> Result<CompiledFormula, String> {
     };
     // Every sub-expression / value consumes at least one byte of the text.
     let mut slab = fasteval::Slab::with_capacity(expr.len().max(64) + 1);
-    let expr_i = parser
-        .parse(&expr, &mut slab.ps)
-        .map_err(|e| formula_parse_error_message(&e, &safe_names))?;
+    let expr_i = match parser.parse(&expr, &mut slab.ps) {
+        Ok(i) => i,
+        Err(e) => {
+            let message = formula_parse_error_message(&e, &safe_names);
+            return Err(formula_diagnostics::parse_issue(formula, &e, message, &expr, &byte_map));
+        }
+    };
 
     let compiled = CompiledFormula { slab, expr_i, safe_names };
     let trial = vec![FORMULA_TRIAL_VALUE; compiled.safe_names.len()];
     let mut failed = None;
     if let Err(e) = eval_compiled(&compiled, &trial, &mut failed) {
-        return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names));
+        let message = formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names);
+        return Err(formula_diagnostics::eval_issue(formula, &e, failed.as_ref(), &compiled.safe_names, message));
     }
 
     check_round_argument_order(formula)?;
@@ -5369,21 +5710,66 @@ fn formula_eval_error_message(
 /// silent. `round(x)`, `round(step, $A)` and `round($A, $B)` (step taken from
 /// a sensor) are unchanged; a round with no sensor on either side is just a
 /// constant and is left alone.
-fn check_round_argument_order(formula: &str) -> Result<(), String> {
+///
+/// 2026-10-09: the refusal stays, but OLD workspaces are now auto-converted
+/// on reopen (`convert_legacy_formula`, the explicit rewrite to
+/// `round(x * 10^n) / 10^n`, never a silent reinterpretation by the engine).
+/// The refusal is code `round_excel`, ranged on the whole call.
+fn check_round_argument_order(formula: &str) -> Result<(), FormulaIssue> {
     let chars: Vec<char> = formula.chars().collect();
-    let len = chars.len();
     let spans = scan_sensor_refs(formula);
+    let in_ref = ref_mask(chars.len(), &spans);
+    let Some(call) = excel_round_calls(&chars, &in_ref, &spans).into_iter().next() else {
+        return Ok(());
+    };
+    let text = |a: usize, b: usize| chars[a..b].iter().collect::<String>().trim().to_string();
+    let message = round_order_message(
+        &text(call.x.0, call.x.1),
+        &text(call.n.0, call.n.1),
+        is_formula_atom(&chars, &in_ref, &spans, call.x.0, call.x.1),
+    );
+    Err(formula_diagnostics::issue_at(
+        formula,
+        formula_diagnostics::ROUND_EXCEL,
+        message,
+        Some((call.start, call.end)),
+    ))
+}
+
+/// `true` for every char that belongs to a `$Name` / `${Name}` reference.
+fn ref_mask(len: usize, spans: &[SensorRefSpan]) -> Vec<bool> {
     let mut in_ref = vec![false; len];
-    for s in &spans {
+    for s in spans {
         for flag in &mut in_ref[s.start..s.end] {
             *flag = true;
         }
     }
+    in_ref
+}
+
+/// One spreadsheet-order `round(x, n)` call (char indices): the call from
+/// the `round` keyword through its closing bracket (`start..end`), and its two
+/// arguments `x` (holds a sensor) and `n` (holds none).
+struct ExcelRoundCall {
+    start: usize,
+    end: usize,
+    x: (usize, usize),
+    n: (usize, usize),
+}
+
+/// Every `round(<expr with a sensor>, <expr without one>)` call, in order of
+/// its `round` keyword (an enclosing call before the calls inside it). The
+/// ONE scan behind both the refusal ([`check_round_argument_order`]) and the
+/// legacy conversion (`formula_diagnostics::convert_legacy_round`), so they
+/// can never disagree. Accepts fasteval's `round[ … ]` and `;` spellings;
+/// text inside a reference (`${x round(1, 2)}`) is a name, never a call.
+fn excel_round_calls(chars: &[char], in_ref: &[bool], spans: &[SensorRefSpan]) -> Vec<ExcelRoundCall> {
+    let len = chars.len();
     let is_word = |i: usize| !in_ref[i] && (chars[i].is_ascii_alphanumeric() || chars[i] == '_');
     let has_ref = |a: usize, b: usize| spans.iter().any(|s| s.start >= a && s.end <= b);
-    let text = |a: usize, b: usize| chars[a..b].iter().collect::<String>().trim().to_string();
     const ROUND: [char; 5] = ['r', 'o', 'u', 'n', 'd'];
 
+    let mut out = Vec::new();
     let mut i = 0;
     while i + ROUND.len() <= len {
         let end = i + ROUND.len();
@@ -5403,7 +5789,7 @@ fn check_round_argument_order(formula: &str) -> Result<(), String> {
             let mut depth = 0i32;
             let mut args: Vec<(usize, usize)> = Vec::new();
             let mut arg_start = j + 1;
-            let mut closed = false;
+            let mut close = None;
             for k in j..len {
                 if in_ref[k] {
                     continue;
@@ -5414,7 +5800,7 @@ fn check_round_argument_order(formula: &str) -> Result<(), String> {
                         depth -= 1;
                         if depth == 0 {
                             args.push((arg_start, k));
-                            closed = true;
+                            close = Some(k);
                             break;
                         }
                     }
@@ -5425,21 +5811,16 @@ fn check_round_argument_order(formula: &str) -> Result<(), String> {
                     _ => {}
                 }
             }
-            if closed && args.len() == 2 {
+            if let (Some(k), 2) = (close, args.len()) {
                 let (x, n) = (args[0], args[1]);
                 if has_ref(x.0, x.1) && !has_ref(n.0, n.1) {
-                    let x_text = text(x.0, x.1);
-                    return Err(round_order_message(
-                        &x_text,
-                        &text(n.0, n.1),
-                        is_formula_atom(&chars, &in_ref, &spans, x.0, x.1),
-                    ));
+                    out.push(ExcelRoundCall { start: i, end: k + 1, x, n });
                 }
             }
         }
         i = end;
     }
-    Ok(())
+    out
 }
 
 /// Whether `chars[a..b]` (trimmed) is ONE operand that can be multiplied
@@ -5495,14 +5876,21 @@ fn is_formula_atom(
     false
 }
 
+/// How many decimal places a refused `round(x, n)` meant: `n` (as typed,
+/// evaluated as a constant) when it is a whole number 0..=15, else `None`.
+/// Shared by the refusal message and the legacy conversion.
+fn round_places(n: &str) -> Option<u32> {
+    fasteval::ez_eval(n, &mut fasteval::EmptyNamespace)
+        .ok()
+        .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v <= 15.0)
+        .map(|v| v as u32)
+}
+
 /// The message for a refused `round(x, n)` -- `x` is the user's expression
 /// and `n` their second value, both as typed; `x_is_simple` says whether `x`
 /// can be multiplied without brackets.
 fn round_order_message(x: &str, n: &str, x_is_simple: bool) -> String {
-    let places = fasteval::ez_eval(n, &mut fasteval::EmptyNamespace)
-        .ok()
-        .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v <= 15.0)
-        .map(|v| v as u32);
+    let places = round_places(n);
     match places {
         Some(0) => format!(
             "Formula error: round({}, {}) is not supported. Write round({}) to round to a whole number.",
@@ -5566,38 +5954,141 @@ fn validate_formula_in_state(
 /// `compute_formula_sensor` applies, so the editor's verdict and message are
 /// exactly what Create / Save would answer.
 fn validate_formula_against(data: &ColumnarData, formula: &str) -> FormulaValidationResult {
-    // 1. Extract sensor references (distinct, in order of appearance)
+    // Sensor references (distinct, in order of appearance) — reported even
+    // when the formula is refused.
     let mut referenced_sensors: Vec<String> = Vec::new();
     for (_, name) in extract_sensor_refs(formula) {
         if !referenced_sensors.contains(&name) {
             referenced_sensors.push(name);
         }
     }
-    if referenced_sensors.is_empty() {
-        return FormulaValidationResult {
+    match formula_gate(&data.headers, formula, false) {
+        Ok(_) => FormulaValidationResult { valid: true, error: None, referenced_sensors, code: None, range: None },
+        Err(issue) => FormulaValidationResult {
             valid: false,
-            error: Some(FORMULA_NO_REFS_ERROR.to_string()),
+            error: Some(issue.message),
             referenced_sensors,
-        };
+            code: Some(issue.code),
+            range: issue.range,
+        },
     }
+}
 
-    // 2. Check all referenced sensors exist in loaded data — through the same
-    //    resolver `evaluate_formula` uses, so "valid" here means "will run".
-    for sensor_name in &referenced_sensors {
-        if resolve_sensor(&data.headers, sensor_name).is_none() {
-            return FormulaValidationResult {
-                valid: false,
-                error: Some(format!("Sensor not found: {}", sensor_name)),
-                referenced_sensors,
-            };
+/// Every distinct sensor a formula references, resolved to its column (in
+/// the order `prepare_formula_for_eval` assigns variables). Refuses a formula
+/// with no reference at all (`constant_only`) and the first name that is not
+/// in the dataset (`unknown_sensor`, ranged on its first occurrence) — through
+/// the same resolver every reader uses, so "valid" means "will run".
+fn resolve_formula_sources(headers: &[String], formula: &str) -> Result<Vec<usize>, FormulaIssue> {
+    use formula_diagnostics::{issue_at, CONSTANT_ONLY, UNKNOWN_SENSOR};
+    let spans = scan_sensor_refs(formula);
+    if spans.is_empty() {
+        return Err(issue_at(formula, CONSTANT_ONLY, FORMULA_NO_REFS_ERROR, None));
+    }
+    let (_, safe_names) = prepare_formula_for_eval(formula);
+    let mut src_idx: Vec<usize> = Vec::with_capacity(safe_names.len());
+    for (_, name) in &safe_names {
+        match resolve_sensor(headers, name) {
+            Some(idx) => src_idx.push(idx),
+            None => {
+                let at = spans.iter().find(|s| s.name == *name).map(|s| (s.start, s.end));
+                return Err(issue_at(formula, UNKNOWN_SENSOR, format!("Sensor not found: {}", name), at));
+            }
         }
     }
+    Ok(src_idx)
+}
 
-    // 3. Parse + trial-evaluate (the shared gate).
-    match compile_formula(formula) {
-        Ok(_) => FormulaValidationResult { valid: true, error: None, referenced_sensors },
-        Err(e) => FormulaValidationResult { valid: false, error: Some(e), referenced_sensors },
+/// THE formula gate, in the order every caller has always applied it: size
+/// limits → references → parse + trial evaluation + the app's own refusals.
+/// `validate_formula`, `preview_formula` and (with its name checks slotted in
+/// before the compile) `compute_formula_sensor` all answer from it, so the
+/// editor's verdict, code and message are exactly what Create / Save answer.
+///
+/// `replace` mirrors the `replace` flag of `evaluate_formula`: `false` (a
+/// CREATE, and `validate_formula`) also applies the create-only refusals
+/// ([`create_only_formula_issue`]); `true` (a recompute / replay / Save of an
+/// existing sensor) skips them, exactly as `compute_formula_sensor` does.
+fn formula_gate(
+    headers: &[String],
+    formula: &str,
+    replace: bool,
+) -> Result<(CompiledFormula, Vec<usize>), FormulaIssue> {
+    if let Some(issue) = formula_limit_issue(formula) {
+        return Err(issue);
     }
+    let src_idx = resolve_formula_sources(headers, formula)?;
+    let compiled = compile_formula(formula)?;
+    if !replace {
+        if let Some(issue) = create_only_formula_issue(formula) {
+            return Err(issue);
+        }
+    }
+    Ok((compiled, src_idx))
+}
+
+/// Refusals applied only when a formula sensor is CREATED (and by the
+/// editor's create-mode check), never on a recompute / replay: today only a
+/// division by a literal 0 (`div_zero`). Such a formula still evaluates — the
+/// divided part has no value on any row — so a recipe saved before the
+/// refusal existed (2026-10-09) keeps restoring instead of dropping into
+/// Repair and demoting the models trained on it.
+fn create_only_formula_issue(formula: &str) -> Option<FormulaIssue> {
+    formula_diagnostics::division_by_zero(formula)
+}
+
+/// Evaluate a compiled formula for every row (in parallel). A row with ANY
+/// missing (NaN) input, or a NaN / infinite result, is NaN. Shared by
+/// Create / Save / replay and the preview, so the preview's numbers are the
+/// numbers the sensor will hold.
+fn eval_formula_column(
+    data: &ColumnarData,
+    compiled: &CompiledFormula,
+    src_idx: &[usize],
+    cancelled: CancelCheck,
+) -> Result<Vec<f64>, String> {
+    use rayon::prelude::*;
+    let n = data.n_rows();
+    let src_cols: Vec<&[f64]> = src_idx.iter().map(|idx| data.columns[*idx].as_slice()).collect();
+    // Chunks write straight into the preallocated column (peak memory is one
+    // column, not chunks + their concatenation); row r always lands at r.
+    let mut col: Vec<f64> = vec![0.0; n];
+    col.par_chunks_mut(COLUMN_CHUNK).enumerate().try_for_each(|(c, out)| {
+        if cancelled() {
+            return Err(FORMULA_PREVIEW_CANCELLED.to_string());
+        }
+        let start = c * COLUMN_CHUNK;
+        let mut row_values: Vec<f64> = vec![0.0; src_cols.len()];
+        let mut failed = None;
+        for (k, slot) in out.iter_mut().enumerate() {
+            let r = start + k;
+            // A missing (NaN) input on any referenced sensor → missing result.
+            if src_cols.iter().any(|col| col[r].is_nan()) {
+                *slot = f64::NAN;
+                continue;
+            }
+            for (j, col) in src_cols.iter().enumerate() {
+                row_values[j] = col[r];
+            }
+            *slot = match eval_compiled(compiled, &row_values, &mut failed) {
+                Ok(result) if result.is_finite() => result,
+                // NaN / Infinity (0/0, 1/0, sqrt of a negative, ...) → missing
+                Ok(_) => f64::NAN,
+                // Defence only -- not expected to happen. Whether evaluation
+                // errors depends on the formula's names and argument counts,
+                // never on row values: the namespace answers by name + arity
+                // alone, and fasteval evaluates every operand eagerly (`&&` /
+                // `||` combine values already computed; nothing
+                // short-circuits). So the trial evaluation in
+                // `compile_formula` already met any error a row could. If
+                // that ever changes, refuse the whole formula rather than
+                // empty some rows.
+                Err(e) => return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names)),
+            };
+        }
+        Ok(())
+    })?;
+    Ok(col)
 }
 
 /// Pure core of `evaluate_formula`: validates and evaluates without touching
@@ -5613,21 +6104,8 @@ fn compute_formula_sensor(
 ) -> Result<(String, Vec<f64>), String> {
     check_formula_limits(formula)?;
 
-    // 1. Extract sensor references from formula
-    if extract_sensor_refs(formula).is_empty() {
-        return Err(FORMULA_NO_REFS_ERROR.to_string());
-    }
-
-    // 2. Resolve every distinct sensor to a column (all of them must exist).
-    //    `prepare_formula_for_eval` is deterministic, so these are the same
-    //    sensors, in the same order, that `compile_formula` assigns below.
-    let (_, safe_names) = prepare_formula_for_eval(formula);
-    let mut src_idx: Vec<usize> = Vec::with_capacity(safe_names.len());
-    for (_, original_name) in &safe_names {
-        let idx = resolve_sensor(&data.headers, original_name)
-            .ok_or_else(|| format!("Sensor not found: {}", original_name))?;
-        src_idx.push(idx);
-    }
+    // 1-2. Every distinct sensor resolved to a column (all must exist).
+    let src_idx = resolve_formula_sources(&data.headers, formula)?;
 
     // 3. Final name + collision rules.
     let name = match custom_name.map(str::trim) {
@@ -5650,41 +6128,16 @@ fn compute_formula_sensor(
 
     // 4. Parse once and prove it evaluates (refuses a bad formula up front).
     let compiled = compile_formula(formula)?;
-
-    // 5. Evaluate for each row (NaN in `new_col` = missing result)
-    let n = data.n_rows();
-    let mut new_col: Vec<f64> = Vec::with_capacity(n);
-    let src_cols: Vec<&[f64]> = src_idx.iter().map(|idx| data.columns[*idx].as_slice()).collect();
-    let mut row_values: Vec<f64> = vec![0.0; src_cols.len()];
-    let mut failed = None;
-
-    for r in 0..n {
-        // A missing (NaN) input on any referenced sensor → missing result.
-        if src_cols.iter().any(|col| col[r].is_nan()) {
-            new_col.push(f64::NAN);
-            continue;
-        }
-        for (j, col) in src_cols.iter().enumerate() {
-            row_values[j] = col[r];
-        }
-        match eval_compiled(&compiled, &row_values, &mut failed) {
-            Ok(result) if result.is_finite() => new_col.push(result),
-            // NaN / Infinity (0/0, 1/0, sqrt of a negative, ...) → missing
-            Ok(_) => new_col.push(f64::NAN),
-            // Defence only -- not expected to happen. Whether evaluation
-            // errors depends on the formula's names and argument counts, never
-            // on row values: the namespace answers by name + arity alone, and
-            // fasteval evaluates every operand eagerly (`&&` / `||` combine
-            // values already computed; nothing short-circuits). So the trial
-            // evaluation in `compile_formula` already met any error a row
-            // could. If that ever changes, refuse the whole formula rather
-            // than empty some rows.
-            Err(e) => {
-                return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names))
-            }
+    // A CREATE also gets the create-only refusals; a recompute / replay
+    // (`replace`) must keep restoring a recipe saved before they existed.
+    if !replace {
+        if let Some(issue) = create_only_formula_issue(formula) {
+            return Err(issue.into());
         }
     }
 
+    // 5. Evaluate every row (NaN = missing result).
+    let new_col = eval_formula_column(data, &compiled, &src_idx, &never_cancelled)?;
     Ok((name, new_col))
 }
 
@@ -5732,6 +6185,338 @@ fn evaluate_formula(
         expected_generation,
         &|| {},
     )
+}
+
+// ---------------------------------------------------------------------------
+// Formula editor preview (customer batch 2026-10, item 6)
+// ---------------------------------------------------------------------------
+
+/// Default / ceiling of `preview_formula`'s downsampled series.
+const FORMULA_PREVIEW_DEFAULT_POINTS: usize = 600;
+const FORMULA_PREVIEW_MAX_POINTS: usize = 2000;
+
+/// An Average / Median / Sum block, previewed exactly as
+/// `calculate_new_sensor` (mode `multi`) would build it.
+#[derive(Debug, Deserialize, Clone)]
+struct FormulaPreviewAggregate {
+    /// `"mean"` (Average) | `"median"` | `"sum"`
+    #[serde(rename = "type")]
+    op_type: String,
+    sources: Vec<String>,
+    /// Same meaning as `SensorOperationConfig.multiOp.decimals`.
+    #[serde(default)]
+    decimals: Option<f64>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+struct FormulaPreviewStats {
+    /// Over the rows that have a value; `null` when none has.
+    min: Option<f64>,
+    max: Option<f64>,
+    mean: Option<f64>,
+    /// Every row of the dataset.
+    rows: usize,
+    /// Rows without a value (a missing input or a non-finite result).
+    missing: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaPreviewLimits {
+    max_len: usize,
+    max_depth: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaPreview {
+    ok: bool,
+    /// Empty when `ok`; otherwise the gate's refusal (one entry today).
+    issues: Vec<FormulaIssue>,
+    /// `null` when not `ok`.
+    stats: Option<FormulaPreviewStats>,
+    /// Min/max-preserving downsample of the computed column, at most
+    /// `max_points` entries (both arrays the same length; empty when not ok).
+    timestamps: Vec<String>,
+    values: Vec<Option<f64>>,
+    /// `[first, last]` timestamp of the dataset: the earliest / latest row by
+    /// parsed time, written as that row's own timestamp TEXT — the same
+    /// format as `timestamps` above and as the line chart's `timestamps` /
+    /// `ts_min` / `ts_max` (the CSV text, Buddhist-Era years already
+    /// converted). `null` when not ok or no row has a parseable time.
+    period: Option<[String; 2]>,
+    /// Every engine function name (the editor's suggestion / error list).
+    functions: &'static [&'static str],
+    limits: FormulaPreviewLimits,
+    /// Set only when the refusal is `round_excel` and converting every
+    /// spreadsheet-order round (`convert_legacy_formula`) gives a formula that
+    /// passes the whole gate; the editor can offer it as the fix.
+    converted_formula: Option<String>,
+}
+
+impl FormulaPreview {
+    fn refused(issue: FormulaIssue, converted_formula: Option<String>) -> Self {
+        FormulaPreview {
+            ok: false,
+            issues: vec![issue],
+            stats: None,
+            timestamps: Vec::new(),
+            values: Vec::new(),
+            period: None,
+            functions: FORMULA_FUNCTIONS,
+            limits: FormulaPreviewLimits { max_len: MAX_FORMULA_LEN, max_depth: MAX_FORMULA_DEPTH },
+            converted_formula,
+        }
+    }
+}
+
+/// Pure core of `preview_formula`. Validation goes through the very gate
+/// Create / Save use (`formula_gate` / `check_multi_operation`), and the
+/// values through the very column builders (`eval_formula_column` /
+/// `compute_multi_column`); only the OUTPUT is bounded — stats over every
+/// row plus a min/max downsample of at most `max_points` points.
+///
+/// Create-mode, never cancelled — see [`build_formula_preview_with`].
+#[cfg(test)]
+fn build_formula_preview(
+    data: &ColumnarData,
+    formula: Option<&str>,
+    aggregate: Option<&FormulaPreviewAggregate>,
+    max_points: Option<usize>,
+) -> Result<FormulaPreview, String> {
+    build_formula_preview_with(data, formula, aggregate, max_points, false, &never_cancelled)
+}
+
+/// [`build_formula_preview`] with the two request options:
+///
+/// * `replace` — answer exactly as a Save of an EXISTING sensor / a replay
+///   answers (`replace: true` on `evaluate_formula` / `calculate_new_sensor`):
+///   the create-only refusals (`agg_too_few` for a one-source block,
+///   `div_zero`) are skipped, so a legacy recipe previews as it restores.
+///   `false` = a CREATE (the default).
+/// * `cancelled` — checked once per chunk of the evaluation and before the
+///   bounded output is built; when it answers `true` the result is
+///   `Err(FORMULA_PREVIEW_CANCELLED)`.
+fn build_formula_preview_with(
+    data: &ColumnarData,
+    formula: Option<&str>,
+    aggregate: Option<&FormulaPreviewAggregate>,
+    max_points: Option<usize>,
+    replace: bool,
+    cancelled: CancelCheck,
+) -> Result<FormulaPreview, String> {
+    let col = match (formula, aggregate) {
+        (Some(_), Some(_)) => return Err("BAD_REQUEST: send either formula or aggregate, not both".to_string()),
+        (None, None) => return Err("BAD_REQUEST: send formula or aggregate".to_string()),
+        (Some(f), None) => match formula_gate(&data.headers, f, replace) {
+            Ok((compiled, src_idx)) => eval_formula_column(data, &compiled, &src_idx, cancelled)?,
+            Err(issue) => {
+                let converted = (issue.code == formula_diagnostics::ROUND_EXCEL)
+                    .then(|| formula_diagnostics::convert_legacy_round(f))
+                    .filter(|c| c != f && formula_gate(&data.headers, c, replace).is_ok());
+                return Ok(FormulaPreview::refused(issue, converted));
+            }
+        },
+        (None, Some(a)) => {
+            let op = MultiOperation { op_type: a.op_type.clone(), decimals: a.decimals };
+            match check_multi_operation(&data.headers, &a.sources, &op, !replace) {
+                Ok(idx) => compute_multi_column(data, &idx, &op, cancelled)?,
+                Err(issue) => return Ok(FormulaPreview::refused(issue, None)),
+            }
+        }
+    };
+    if cancelled() {
+        return Err(FORMULA_PREVIEW_CANCELLED.to_string());
+    }
+
+    let (mut min, mut max, mut sum, mut present) = (f64::INFINITY, f64::NEG_INFINITY, 0.0f64, 0usize);
+    for &v in &col {
+        if v.is_nan() {
+            continue;
+        }
+        present += 1;
+        sum += v;
+        min = min.min(v);
+        max = max.max(v);
+    }
+    let some = |v: f64| (present > 0).then_some(v);
+    let stats = FormulaPreviewStats {
+        min: some(min),
+        max: some(max),
+        mean: some(sum / present.max(1) as f64),
+        rows: col.len(),
+        missing: col.len() - present,
+    };
+
+    let points = max_points
+        .unwrap_or(FORMULA_PREVIEW_DEFAULT_POINTS)
+        .clamp(2, FORMULA_PREVIEW_MAX_POINTS);
+    let ts_at = |k: usize| data.timestamps[k].clone().unwrap_or_default();
+    let val_at = |k: usize, _c: usize| col[k];
+    let (timestamps, mut series) = chart_query::decimate(col.len(), 1, &ts_at, &val_at, points);
+    let values = series.pop().unwrap_or_default();
+
+    Ok(FormulaPreview {
+        ok: true,
+        issues: Vec::new(),
+        stats: Some(stats),
+        timestamps,
+        values,
+        period: dataset_period_text(data),
+        functions: FORMULA_FUNCTIONS,
+        limits: FormulaPreviewLimits { max_len: MAX_FORMULA_LEN, max_depth: MAX_FORMULA_DEPTH },
+        converted_formula: None,
+    })
+}
+
+/// `[earliest, latest]` row by parsed time (`ts_parsed`, so string order and
+/// unparseable rows can't skew it), each written as that row's own timestamp
+/// text — the format `timestamps` uses. `None` when no row has a parseable
+/// time, or the chosen row has no text.
+fn dataset_period_text(data: &ColumnarData) -> Option<[String; 2]> {
+    let mut first: Option<(i64, usize)> = None;
+    let mut last: Option<(i64, usize)> = None;
+    for (r, &us) in data.ts_parsed.iter().enumerate() {
+        if us == TS_MISSING {
+            continue;
+        }
+        if first.is_none_or(|(m, _)| us < m) {
+            first = Some((us, r));
+        }
+        if last.is_none_or(|(m, _)| us > m) {
+            last = Some((us, r));
+        }
+    }
+    let text = |r: usize| data.timestamps.get(r).cloned().flatten();
+    Some([text(first?.1)?, text(last?.1)?])
+}
+
+/// Latest `requestId` seen by `preview_formula` (0 = none yet). A running
+/// preview whose own id is no longer the latest stops at its next chunk.
+static FORMULA_PREVIEW_LATEST: AtomicU64 = AtomicU64::new(0);
+
+/// Record `id` as the latest preview request (called as the request arrives,
+/// before it is queued for evaluation).
+fn register_preview_request(token: &AtomicU64, id: Option<u64>) {
+    if let Some(id) = id {
+        token.store(id, AtomicOrdering::SeqCst);
+    }
+}
+
+/// Session-level `preview_formula` (testable without Tauri). Read-only; runs
+/// under a READ lock so chart queries keep going. `request` = the token and
+/// this request's id: the preview is `Err(FORMULA_PREVIEW_CANCELLED)` as soon
+/// as the token holds a different id (checked on entry and once per chunk).
+fn preview_formula_in_state(
+    state: &AppState,
+    formula: Option<&str>,
+    aggregate: Option<&FormulaPreviewAggregate>,
+    max_points: Option<usize>,
+    expected: Option<u64>,
+    replace: bool,
+    request: Option<(&AtomicU64, u64)>,
+) -> Result<FormulaPreview, String> {
+    let cancelled = move || request.is_some_and(|(token, id)| token.load(AtomicOrdering::Relaxed) != id);
+    if cancelled() {
+        return Err(FORMULA_PREVIEW_CANCELLED.to_string());
+    }
+    let lock = state.0.read().map_err(|e| e.to_string())?;
+    let session = lock.as_ref().ok_or_else(|| missing_session_error(expected))?;
+    check_expected_generation(expected, session.generation)?;
+    build_formula_preview_with(&session.data, formula, aggregate, max_points, replace, &cancelled)
+}
+
+/// Live check + preview for the Formula editor (debounced while typing).
+///
+/// Send EITHER `formula` (the text as stored, `$Tag` / `${…}`) OR
+/// `aggregate` (`{ type, sources, decimals? }`, an Average/Median/Sum block).
+/// The verdict, issue code and message are exactly what Create / Save
+/// answer; the response is bounded (stats + ≤ `maxPoints` points, default
+/// 600, max 2000). A refusal is `ok: false` with `issues`, never an `Err`;
+/// `Err` is reserved for `BAD_REQUEST:` (neither / both inputs), "No data
+/// loaded", `STALE_SESSION` (`expectedGeneration` is not the loaded
+/// dataset's — nothing about another project's data is answered) and
+/// `CANCELLED:` (below).
+///
+/// * `replace` (optional, default `false`): send the SAME value the editor
+///   will send as `replace` on Save — `true` when editing / restoring an
+///   existing sensor. Then the create-only refusals are skipped exactly as
+///   Save skips them (`agg_too_few` for a legacy one-source block, `div_zero`),
+///   so preview and Save never disagree.
+/// * `requestId` (optional): a fresh id per call (a counter is fine; it may
+///   restart when the window reloads — "latest" means "last to arrive", not
+///   "largest"). A preview still running when a call with a different id
+///   arrives stops at its next 16,384-row chunk and answers
+///   `Err("CANCELLED: a newer formula preview replaced this one")` — ignore
+///   it (the newer call's answer is coming). Calls without `requestId` are
+///   never cancelled and don't cancel anything. One token for the app: only
+///   one editor previews at a time.
+///
+/// Keys keep Tauri's default camelCase like the other special-sensor
+/// commands (`expectedGeneration` is what `bindToGeneration` stamps; a
+/// snake_case rename would silently drop it and lose the stale guard):
+/// `{ formula?, aggregate?, maxPoints?, expectedGeneration?, replace?, requestId? }`.
+///
+/// `async` + `spawn_blocking`: the evaluation walks every row (in parallel),
+/// so it must not run on the main thread.
+#[tauri::command]
+async fn preview_formula(
+    formula: Option<String>,
+    aggregate: Option<FormulaPreviewAggregate>,
+    max_points: Option<usize>,
+    expected_generation: Option<u64>,
+    replace: Option<bool>,
+    request_id: Option<u64>,
+    app: tauri::AppHandle,
+) -> Result<FormulaPreview, String> {
+    register_preview_request(&FORMULA_PREVIEW_LATEST, request_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        preview_formula_in_state(
+            &state,
+            formula.as_deref(),
+            aggregate.as_ref(),
+            max_points,
+            expected_generation,
+            replace.unwrap_or(false),
+            request_id.map(|id| (&FORMULA_PREVIEW_LATEST, id)),
+        )
+    })
+    .await
+    .map_err(|e| format!("Formula preview failed: {e}"))?
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+struct LegacyFormulaConversion {
+    formula: String,
+    changed: bool,
+}
+
+/// Rewrite every spreadsheet-order `round(x, n)` in a stored formula to the
+/// engine form `round(x * 10^n) / 10^n` (`round(x)` for n = 0) — user
+/// decision 2026-10-09, run when an old workspace is reopened so its special
+/// sensors restore instead of hitting the `round_excel` refusal. Pure text
+/// (no dataset, no generation); a formula without such a call comes back
+/// unchanged with `changed: false`. A call whose `n` is not a whole number
+/// 0..=15 is left alone (still refused). Uses the same call scan as the
+/// refusal, so conversion and refusal never disagree.
+///
+/// A formula over the size / bracket-depth limits comes back unchanged
+/// (`changed: false`): it is refused anyway, and this sync command must not
+/// scan an unbounded text on the main thread. The conversion itself can push
+/// a formula that was just inside the limits over them (`round($A, 2)` ->
+/// `round($A * 100) / 100` is longer, and can add up to 2 bracket levels);
+/// the result is not re-checked here — every caller re-gates it (a replay
+/// through `evaluate_formula` answers its `Formula too long …` / nesting
+/// error; `validate_formula` / `preview_formula` answer `too_long` /
+/// `too_deep`).
+#[tauri::command]
+fn convert_legacy_formula(formula: String) -> LegacyFormulaConversion {
+    if formula_limit_issue(&formula).is_some() {
+        return LegacyFormulaConversion { formula, changed: false };
+    }
+    let converted = formula_diagnostics::convert_legacy_round(&formula);
+    let changed = converted != formula;
+    LegacyFormulaConversion { formula: converted, changed }
 }
 
 #[tauri::command]
@@ -8329,6 +9114,8 @@ pub fn run() {
             get_dataset_time_bounds,
             evaluate_formula,
             validate_formula,
+            preview_formula,
+            convert_legacy_formula,
             extract_formula_refs,
             rename_formula_refs,
             train_individual_model,
