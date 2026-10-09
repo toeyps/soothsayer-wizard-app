@@ -173,6 +173,18 @@ const subtractRelativeAmount = (end: Date, unit: RelativeRangeUnit, n: number): 
 // (the chart consumes the bounded `columnar` feed instead).
 const EMPTY_RECORDS: CsvRecord[] = [];
 
+/** Opens a date input's native picker from its calendar button. `showPicker()`
+ *  is missing on older engines and throws when the engine refuses it (no user
+ *  activation, input disabled); falling back to focus at least puts the caret
+ *  in the field so the date can be typed. */
+const openNativePicker = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    try {
+        if (typeof input.showPicker === 'function') { input.showPicker(); return; }
+    } catch { /* fall through to focus */ }
+    input.focus();
+};
+
 // Build the gutter element split.js inserts between panels. We use a wider
 // hit-target (12px) with a thin centered line so the resize handle is easy
 // to grab without dominating the layout visually.
@@ -1248,15 +1260,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // collapse/expand changes whether the split should exist at all.
     const leftColumnRef = useRef<HTMLDivElement>(null);
     const rightColumnRef = useRef<HTMLDivElement>(null);
-    // Lets the `.timebar-range` row's Start/End datetime-local inputs open
-    // the native picker directly on click, instead of relying on the
-    // browser-drawn `::-webkit-calendar-picker-indicator` pseudo-element
-    // (styled in App.css, but how visible that ends up is entirely up to
-    // WebView2's own rendering of it — reported hard to see on the
-    // Build Model page's matching inputs, 2026-09-16; this row's own
-    // Calendar icon used to carry the click handler per-input until the
-    // 2026-10-02 visual-refresh rebuild moved to one shared leading icon,
-    // see the `.timebar` JSX below).
+    // Lets the `.timebar-range` row's per-side calendar buttons open the
+    // native picker of their Start/End datetime-local input, instead of
+    // relying on the browser-drawn `::-webkit-calendar-picker-indicator`
+    // pseudo-element (hidden in App.css — how visible it ends up is up to
+    // WebView2). 2026-10-09: back to one working calendar button PER input
+    // (the 2026-10-02 single leading icon was decorative, and the end side
+    // had none — see the `.timebar` JSX below).
     const timeRangeStartRef = useRef<HTMLInputElement>(null);
     const timeRangeEndRef = useRef<HTMLInputElement>(null);
     const slotLTRef = useRef<HTMLDivElement>(null);
@@ -2515,8 +2525,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 version; only the JSX shape and class names changed. See
                 docs/PROJECT_HANDOVER.md's matching entry. */}
             <div className="timebar">
+                {/* 2026-10-09 (real-app feedback): each side gets its OWN
+                    calendar button that opens THAT input's native picker --
+                    the old single leading icon was decorative (clicking it did
+                    nothing) and the end date had none. Clicking the date text
+                    itself is plain native editing again (type the digits). */}
                 <div className="timebar-range">
-                    <Calendar size={14} />
                     <input
                         ref={timeRangeStartRef}
                         type="datetime-local"
@@ -2525,10 +2539,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             handleFiltersChange({ ...filters, timestampStart: e.target.value });
                             setRelativeRangeApplied(false);
                         }}
-                        onClick={() => timeRangeStartRef.current?.showPicker?.()}
                         placeholder="Start Date"
                         aria-label="Start date"
                     />
+                    <button
+                        type="button"
+                        className="timebar-cal"
+                        aria-label="Pick start date"
+                        title="Pick start date"
+                        onClick={() => openNativePicker(timeRangeStartRef.current)}
+                    >
+                        <Calendar size={13} aria-hidden="true" />
+                    </button>
                     <span className="timebar-range-sep">→</span>
                     <input
                         ref={timeRangeEndRef}
@@ -2538,10 +2560,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             handleFiltersChange({ ...filters, timestampEnd: e.target.value });
                             setRelativeRangeApplied(false);
                         }}
-                        onClick={() => timeRangeEndRef.current?.showPicker?.()}
                         placeholder="End Date"
                         aria-label="End date"
                     />
+                    <button
+                        type="button"
+                        className="timebar-cal"
+                        aria-label="Pick end date"
+                        title="Pick end date"
+                        onClick={() => openNativePicker(timeRangeEndRef.current)}
+                    >
+                        <Calendar size={13} aria-hidden="true" />
+                    </button>
                 </div>
 
                 <span className="timebar-hint">Last</span>

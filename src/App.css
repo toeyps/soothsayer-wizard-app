@@ -2107,7 +2107,7 @@ body {
     transition: all 0.12s ease;
 }
 
-.scatter-regl-tool:hover:not(:disabled) {
+.scatter-regl-tool:hover:not(:disabled):not([aria-disabled="true"]) {
     border-color: var(--accent-color);
     background: var(--accent-muted);
     color: var(--accent-color);
@@ -2119,7 +2119,8 @@ body {
     color: var(--accent-color);
 }
 
-.scatter-regl-tool:disabled {
+.scatter-regl-tool:disabled,
+.scatter-regl-tool[aria-disabled="true"] {
     color: var(--text-faint);
     cursor: not-allowed;
 }
@@ -3686,7 +3687,7 @@ body {
     border: 1px solid var(--border);
     border-radius: 9px;
     height: 30px;
-    padding: 0 4px 0 10px;
+    padding: 0 4px 0 6px;
     color: var(--text-faint);
 }
 .timebar-range input {
@@ -3698,9 +3699,8 @@ body {
     outline: none;
     color: var(--text-primary);
 }
-/* The row already shows one shared Calendar icon in front of both inputs
-   and opens the native picker via a click handler on the input itself
-   (see Dashboard.tsx's comment above this row) — without this, the
+/* Each input has its own `.timebar-cal` button right after it that opens
+   the native picker (2026-10-09; see Dashboard.tsx) — without this, the
    browser also draws its OWN calendar icon inside each (too-narrow)
    input, colliding with the date text. Same fix as `.date-input-wrapper`
    above. */
@@ -3708,6 +3708,22 @@ body {
     opacity: 0;
     pointer-events: none;
 }
+.timebar-cal {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.timebar-cal:hover { color: var(--accent-color); background: var(--accent-muted); }
+.timebar-cal:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
 .timebar-range-sep {
     color: var(--text-faint);
     font-size: 12px;

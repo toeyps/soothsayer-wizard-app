@@ -256,6 +256,59 @@ describe('PairPlotCell', () => {
         expect(lastInstance!.reset).toHaveBeenCalledTimes(2);
     });
 
+    describe('zoom reporting (drives the toolbox ↺ enabled / "Nothing to reset" state)', () => {
+        // Data extent of baseProps: X (A) 1..3, Y (B) 10..30.
+        const view = (x: [number, number], y: [number, number]) => act(() => {
+            lastInstance!.__subs.view({ xScale: { domain: () => x }, yScale: { domain: () => y } });
+        });
+
+        it('reports zoomed when the view leaves the full extent, and back when it returns — only on a change', () => {
+            const onZoomChange = vi.fn();
+            render(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} />);
+            view([1, 3], [10, 30]);
+            expect(onZoomChange).not.toHaveBeenCalled();
+
+            view([1.5, 2.5], [10, 30]);
+            expect(onZoomChange).toHaveBeenLastCalledWith(expect.any(String), true);
+            const id = onZoomChange.mock.calls[0][0];
+            view([1.6, 2.4], [12, 28]);
+            expect(onZoomChange).toHaveBeenCalledTimes(1);
+
+            view([1, 3], [10, 30]);
+            expect(onZoomChange).toHaveBeenLastCalledWith(id, false);
+            expect(onZoomChange).toHaveBeenCalledTimes(2);
+        });
+
+        it('a reset reports not-zoomed', () => {
+            const onZoomChange = vi.fn();
+            const { rerender } = render(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} resetTick={0} />);
+            view([2, 3], [10, 30]);
+            const id = onZoomChange.mock.calls[0][0];
+            rerender(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} resetTick={1} />);
+            expect(onZoomChange).toHaveBeenLastCalledWith(id, false);
+        });
+
+        it('keeps ONE id per instance even when the cell switches sensors while zoomed, so the reset clears the same id it reported', () => {
+            const onZoomChange = vi.fn();
+            const { rerender } = render(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} resetTick={0} />);
+            view([2, 3], [10, 30]);
+            const id = onZoomChange.mock.calls[0][0];
+            // Same instance (the matrix keys cells by index), different sensors.
+            rerender(<PairPlotCell {...baseProps} sensorY="A" sensorX="B" onZoomChange={onZoomChange} resetTick={0} />);
+            rerender(<PairPlotCell {...baseProps} sensorY="A" sensorX="B" onZoomChange={onZoomChange} resetTick={1} />);
+            expect(onZoomChange).toHaveBeenLastCalledWith(id, false);
+        });
+
+        it('unmounting a zoomed cell reports not-zoomed (nothing left to reset there)', () => {
+            const onZoomChange = vi.fn();
+            const { unmount } = render(<PairPlotCell {...baseProps} onZoomChange={onZoomChange} />);
+            view([2, 3], [10, 30]);
+            const id = onZoomChange.mock.calls[0][0];
+            unmount();
+            expect(onZoomChange).toHaveBeenLastCalledWith(id, false);
+        });
+    });
+
     it('renders X/Y axis sensor-name labels when show*Label is true', () => {
         render(<PairPlotCell {...baseProps} showXLabel showYLabel />);
         expect(screen.getByText('A')).toBeTruthy();

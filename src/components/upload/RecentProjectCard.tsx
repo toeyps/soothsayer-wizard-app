@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Check, Pencil, Trash2, TriangleAlert, X } from 'lucide-react';
 import type { WorkspaceMetadata } from '../../types';
 import { mono, type Tokens } from './uploadTheme';
@@ -40,6 +40,9 @@ export default function RecentProjectCard({ T, project, preview = false, active 
 }
 
 const noop = () => {};
+
+interface PressRecord { inActions: boolean; touch: boolean; actionsShown: boolean }
+const NO_PRESS: PressRecord = { inActions: false, touch: false, actionsShown: false };
 
 /**
  * "n failure groups" with a colour square per group (up to three, the
@@ -122,6 +125,25 @@ function InteractiveProjectCard({
   // (unmounting the focused input may fire a blur that would otherwise commit
   // the text the user just cancelled).
   const editDoneRef = useRef(false);
+  /** The time / Rename / Delete cell. Nothing that happens inside it may ever
+   *  open the project (2026-10-09 real-app bug: clicking Rename or Delete in
+   *  the Tauri/WebView2 app opened the workspace instead). */
+  const actionsCellRef = useRef<HTMLDivElement>(null);
+  /** Where the current pointer press started, recorded in the capture phase
+   *  before anything re-renders: a press that began inside the actions cell
+   *  must not open the project even if the browser retargets its `click` to
+   *  the card (mousedown and mouseup on different elements → the click goes
+   *  to their common ancestor). */
+  const pressRef = useRef<PressRecord>(NO_PRESS);
+  const cardRef = useRef<HTMLDivElement>(null);
+  /** Detaches the window listeners that forget an abandoned press. */
+  const stopWatchingPressRef = useRef<(() => void) | null>(null);
+  const clearPress = () => {
+    pressRef.current = NO_PRESS;
+    stopWatchingPressRef.current?.();
+    stopWatchingPressRef.current = null;
+  };
+  useEffect(() => () => { stopWatchingPressRef.current?.(); }, []);
 
   useEffect(() => {
     if (!editing) setDraft(name);
@@ -169,6 +191,57 @@ function InteractiveProjectCard({
   const hasFgChip = recentProjectFgChip(project) !== null;
   const highlighted = active || hover || focusWithin;
 
+  const recordPress = (e: ReactPointerEvent<HTMLDivElement>) => {
+    clearPress();
+    if (e.button !== 0) return; // only a primary press is followed by a click
+    const target = e.target;
+    const inActions = !!actionsCellRef.current && target instanceof Node && actionsCellRef.current.contains(target);
+    pressRef.current = { inActions, touch: e.pointerType === 'touch', actionsShown: showActions };
+    if (!inActions) return;
+    // A press in the actions cell that never turns into a click on this card
+    // (released outside it, or cancelled by a touch scroll) must not linger
+    // and swallow a later click.
+    const onUp = (ev: PointerEvent) => {
+      const card = cardRef.current;
+      if (!card || !(ev.target instanceof Node) || !card.contains(ev.target)) clearPress();
+      else stop();
+    };
+    const onCancel = () => clearPress();
+    const stop = () => {
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onCancel, true);
+    };
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onCancel, true);
+    stopWatchingPressRef.current = stop;
+  };
+
+  /** Card click = open, unless the click (or the press that produced it) is
+   *  in the actions cell. Keyboard activation of the "Open …" button has
+   *  `detail === 0` and no press, so it is never blocked by a stale record. */
+  const handleCardClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const press = pressRef.current;
+    clearPress();
+    if (editing || confirming) return;
+    if (e.target instanceof Node && actionsCellRef.current?.contains(e.target)) return;
+    if (e.detail > 0 && press.inActions) return;
+    onOpen();
+  };
+
+  /** Rename / Delete. A finger tap has no hover: when it lands on the still
+   *  invisible actions it only reveals them (by focusing the button) instead
+   *  of starting a rename or a delete the user could not see. */
+  const runAction = (e: ReactMouseEvent<HTMLButtonElement>, action: () => void) => {
+    e.stopPropagation();
+    const press = pressRef.current;
+    clearPress(); // the press is used up here; the card never sees this click
+    if (e.detail > 0 && press.touch && press.inActions && !press.actionsShown) {
+      e.currentTarget.focus();
+      return;
+    }
+    action();
+  };
+
   const iconBtn: CSSProperties = {
     width: 28, height: 28, border: 'none', background: 'none', borderRadius: 7,
     color: T.textFaint, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
@@ -176,13 +249,19 @@ function InteractiveProjectCard({
 
   return (
     <div
+      ref={cardRef}
       data-testid="project-card"
       data-project-id={project.id}
       // Grid columns live in App.css (`.fg-recent-card`), not inline, so the
       // narrow-list container query can drop the chip's column.
       className={`fg-recent-card${hasFgChip ? ' fg-recent-card--chip' : ''}`}
-      onClick={() => { if (!editing && !confirming) onOpen(); }}
+      onClick={handleCardClick}
+      onPointerDownCapture={recordPress}
       onMouseEnter={() => setHover(true)}
+      // Re-asserts hover after a spurious mouseleave (WebView2 can report one
+      // while the pointer is still over the card); setState bails out when
+      // nothing changes, so this costs nothing while hovering.
+      onMouseMove={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setFocusWithin(true)}
       onBlur={(e) => {
@@ -265,12 +344,26 @@ function InteractiveProjectCard({
       )}
 
       {/* Time and actions share one cell: actions take over on hover/focus,
-          but stay in the DOM (and the tab order) the whole time. */}
-      <div style={{ display: 'grid', alignItems: 'center', justifyItems: 'end', position: 'relative', zIndex: 1 }}>
+          but stay in the DOM (and the tab order) the whole time.
+          2026-10-09 real-app bug (reproduced in Chromium): while the actions
+          were shown, the time label (opacity 0) sat ON TOP of the Rename /
+          Delete buttons -- an element with opacity < 1 forms a stacking
+          context and paints above a plain sibling at opacity 1 -- so a
+          click on the pencil or the trash hit the invisible "2 h ago" and
+          bubbled to the card: "open". Now the label never takes clicks,
+          the buttons sit on their own layer above it, the buttons are always
+          hit-testable (only their visibility follows hover/focus), and the
+          whole cell is a no-open zone (see handleCardClick). */}
+      <div
+        ref={actionsCellRef}
+        data-testid="project-card-actions"
+        style={{ display: 'grid', alignItems: 'center', justifyItems: 'end', position: 'relative', zIndex: 1, cursor: 'default' }}
+      >
         {!confirming && !editing && (
           <span style={{
             gridArea: '1 / 1', fontFamily: mono, fontSize: 11, color: T.textFaint, whiteSpace: 'nowrap',
             opacity: showActions ? 0 : 1, transition: 'opacity 120ms ease',
+            pointerEvents: 'none',
           }}>
             {formatRelativeTime(project.lastModified)}
           </span>
@@ -298,19 +391,20 @@ function InteractiveProjectCard({
         {!editing && !confirming && (
           <span style={{
             gridArea: '1 / 1', display: 'flex', gap: 2,
-            opacity: showActions ? 1 : 0, pointerEvents: showActions ? 'auto' : 'none',
+            position: 'relative', zIndex: 1,
+            opacity: showActions ? 1 : 0,
             transition: 'opacity 120ms ease',
           }}>
             <button
               type="button" title="Rename project" aria-label={`Rename project ${name}`}
-              onClick={(e) => { e.stopPropagation(); startEdit(); }}
+              onClick={(e) => runAction(e, startEdit)}
               style={iconBtn}
             >
               <Pencil size={14} />
             </button>
             <button
               type="button" title="Delete project" aria-label={`Delete project ${name}`}
-              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+              onClick={(e) => runAction(e, () => setConfirming(true))}
               style={{ ...iconBtn, color: showActions ? T.danger : T.textFaint }}
             >
               <Trash2 size={14} />

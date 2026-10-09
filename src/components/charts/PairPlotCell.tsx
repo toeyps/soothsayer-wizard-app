@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, useId, useCallback, memo } from 'react';
 import createScatterplot from 'regl-scatterplot';
 import { scaleLinear } from 'd3-scale';
 import type { CsvRecord } from '../../types';
@@ -90,6 +90,28 @@ interface PairPlotCellProps {
      *  camera back to the full data extent. Allows a single toolbox
      *  button to broadcast a reset to every cell at once. */
     resetTick: number;
+    /** Called with `true` when the user zooms/pans this cell away from its
+     *  full data extent and `false` once it is back (reset, rebuilt, or
+     *  unmounted) — lets the toolbox say "Nothing to reset" honestly. Only
+     *  called on a change. `cellId` is this component INSTANCE's own
+     *  `useId()`, not derived from its sensors: the matrix keys cells by
+     *  index, so one instance can switch sensors while its camera stays
+     *  zoomed, and a sensor-derived id would leave the old id stuck in the
+     *  parent's zoomed set. Read through a ref, so a new callback identity
+     *  never rebuilds the WebGL instance. */
+    onZoomChange?: (cellId: string, zoomed: boolean) => void;
+}
+
+/** True when a view domain is no longer the full data extent (zoomed in/out
+ *  or panned). The tolerance absorbs float noise from the camera maths. */
+export function isViewAwayFromExtent(
+    xDomain: readonly number[], yDomain: readonly number[],
+    b: { xLo: number; xHi: number; yLo: number; yHi: number },
+): boolean {
+    const tolX = Math.abs(b.xHi - b.xLo || 1) * 1e-4;
+    const tolY = Math.abs(b.yHi - b.yLo || 1) * 1e-4;
+    return Math.abs(xDomain[0] - b.xLo) > tolX || Math.abs(xDomain[1] - b.xHi) > tolX
+        || Math.abs(yDomain[0] - b.yLo) > tolY || Math.abs(yDomain[1] - b.yHi) > tolY;
 }
 
 /**
@@ -120,7 +142,9 @@ function PairPlotCell({
     data, headers, sensorY, sensorX, isTimeAxis,
     showXAxis, showYAxis, showXLabel, showYLabel,
     tool, clusters, onLasso, onHover, pointColor, resetTick,
+    onZoomChange,
 }: PairPlotCellProps) {
+    const cellId = useId();
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     /** scatter-point index → original CSV row index (skips rows with null values). */
@@ -143,6 +167,15 @@ function PairPlotCell({
      *  reset effect from firing on initial mount (when tick=0) and from
      *  re-firing if React re-runs the effect for unrelated reasons. */
     const lastResetTickRef = useRef(0);
+    /** Whether this cell currently reports itself as zoomed/panned. */
+    const zoomedRef = useRef(false);
+    const onZoomChangeRef = useRef(onZoomChange);
+    onZoomChangeRef.current = onZoomChange;
+    const reportZoomed = useCallback((zoomed: boolean) => {
+        if (zoomedRef.current === zoomed) return;
+        zoomedRef.current = zoomed;
+        onZoomChangeRef.current?.(cellId, zoomed);
+    }, [cellId]);
 
     const [innerDims, setInnerDims] = useState({ width: 0, height: 0 });
     const [wrapperDims, setWrapperDims] = useState({ width: 0, height: 0 });
@@ -254,6 +287,7 @@ function PairPlotCell({
             const [vxMin, vxMax] = xScale.domain();
             const [vyMin, vyMax] = yScale.domain();
             setVisibleBounds({ xMin: vxMin, xMax: vxMax, yMin: vyMin, yMax: vyMax });
+            reportZoomed(isViewAwayFromExtent([vxMin, vxMax], [vyMin, vyMax], dataBoundsRef.current));
         });
 
         // @ts-expect-error – lib type/runtime mismatch on event name
@@ -299,6 +333,8 @@ function PairPlotCell({
             resetDraw();
             inst.destroy();
             setSc(null);
+            // A rebuilt (or unmounted) instance starts at the default camera.
+            reportZoomed(false);
         };
         // We deliberately don't depend on the callback props — they may
         // change identity every render and would force a costly recreate.
@@ -440,8 +476,9 @@ function PairPlotCell({
             sc.reset();
             const { xLo, xHi, yLo, yHi } = dataBoundsRef.current;
             setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
+            reportZoomed(false);
         }
-    }, [sc, resetTick]);
+    }, [sc, resetTick, reportZoomed]);
 
     // (Selection sync used to live here. Highlight now happens via the
     // cluster-driven `valueA` re-upload + palette swap above.)

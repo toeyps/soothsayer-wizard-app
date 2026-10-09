@@ -3232,44 +3232,64 @@ describe('Dashboard', () => {
         });
     });
 
-    // Visual refresh Phase 5 (2026-10-02): the Time range bar was rebuilt
-    // into the approved prototype's unified `.timebar` row -- a single
-    // leading Calendar icon in front of both Start/End inputs (matching
-    // `.timebar-range`), not a per-input icon-with-click-handler. Opening
-    // the native datetime-local picker now happens by clicking the INPUT
-    // itself (`onClick={() => ref.current?.showPicker?.()}`), which is both
-    // a bigger, more discoverable target than the old small icon and still
-    // covers the same "the picker-indicator is hard to see" regression this
-    // originally fixed.
-    describe('TIME RANGE date inputs (opens the native datetime-local picker on click)', () => {
-        it('clicking the Start/End Date input opens the native picker', () => {
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+    // 2026-10-09 (real-app feedback): the Time range bar's single leading
+    // Calendar icon was decorative -- clicking it did nothing -- and the end
+    // date had no icon at all, so the only way to open the picker was to click
+    // the date text. Now each side has its OWN calendar button right after its
+    // input that opens THAT input's native picker; clicking the text is plain
+    // native editing again (typing works, no picker pops over it).
+    describe('TIME RANGE date inputs (a calendar button per side opens its native picker)', () => {
+        const render1 = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
 
+        it('the Start calendar button opens the Start picker, the End one the End picker', () => {
+            render1();
+            const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
+            const endInput = screen.getByPlaceholderText('End Date') as HTMLInputElement;
+            const showPickerStart = vi.fn();
+            const showPickerEnd = vi.fn();
+            (startInput as any).showPicker = showPickerStart;
+            (endInput as any).showPicker = showPickerEnd;
+
+            fireEvent.click(screen.getByRole('button', { name: 'Pick start date' }));
+            expect(showPickerStart).toHaveBeenCalledTimes(1);
+            expect(showPickerEnd).not.toHaveBeenCalled();
+
+            fireEvent.click(screen.getByRole('button', { name: 'Pick end date' }));
+            expect(showPickerEnd).toHaveBeenCalledTimes(1);
+            expect(showPickerStart).toHaveBeenCalledTimes(1);
+        });
+
+        it('clicking the date text does NOT pop the picker over it (typing stays possible) and typing still changes the period', () => {
+            render1();
             const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
             const showPickerStart = vi.fn();
             (startInput as any).showPicker = showPickerStart;
             fireEvent.click(startInput);
-            expect(showPickerStart).toHaveBeenCalledTimes(1);
+            expect(showPickerStart).not.toHaveBeenCalled();
 
+            fireEvent.change(startInput, { target: { value: '2024-01-02T03:04' } });
+            expect(startInput.value).toBe('2024-01-02T03:04');
+        });
+
+        it('falls back to focusing the input when showPicker() is unsupported or refused', () => {
+            render1();
+            const startInput = screen.getByPlaceholderText('Start Date') as HTMLInputElement;
             const endInput = screen.getByPlaceholderText('End Date') as HTMLInputElement;
-            const showPickerEnd = vi.fn();
-            (endInput as any).showPicker = showPickerEnd;
-            fireEvent.click(endInput);
-            expect(showPickerEnd).toHaveBeenCalledTimes(1);
+            (startInput as any).showPicker = undefined;
+            expect(() => fireEvent.click(screen.getByRole('button', { name: 'Pick start date' }))).not.toThrow();
+            expect(document.activeElement).toBe(startInput);
+
+            (endInput as any).showPicker = () => { throw new DOMException('not allowed', 'NotAllowedError'); };
+            expect(() => fireEvent.click(screen.getByRole('button', { name: 'Pick end date' }))).not.toThrow();
+            expect(document.activeElement).toBe(endInput);
         });
 
-        it('does not throw when showPicker() is unsupported (older WebView2/browser)', () => {
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
-            const startInput = screen.getByPlaceholderText('Start Date');
-            expect(() => fireEvent.click(startInput)).not.toThrow();
-        });
-
-        it('renders one shared Calendar icon in front of the Start/End inputs inside the `.timebar-range` pill', () => {
-            renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+        it('layout inside the `.timebar-range` pill: start input, its calendar, the arrow, end input, its calendar', () => {
+            render1();
             const wrapper = screen.getByPlaceholderText('Start Date').closest('.timebar-range')!;
-            const children = Array.from(wrapper.children);
-            expect(children[0].tagName.toLowerCase()).toBe('svg');
-            expect(children[1].tagName).toBe('INPUT');
+            const shape = Array.from(wrapper.children).map(c =>
+                c.tagName === 'INPUT' ? 'input' : c.classList.contains('timebar-cal') ? 'cal' : c.classList.contains('timebar-range-sep') ? 'sep' : c.tagName.toLowerCase());
+            expect(shape).toEqual(['input', 'cal', 'sep', 'input', 'cal']);
         });
     });
 

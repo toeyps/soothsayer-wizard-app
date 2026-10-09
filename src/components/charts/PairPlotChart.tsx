@@ -204,6 +204,29 @@ function focusFirstTool(el: HTMLElement | null) {
     el?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
 }
 
+const RESET_VIEW_TITLE = 'Reset zoom and pan — every cell back to its full data range (clusters stay)';
+const RESET_VIEW_IDLE_TITLE = 'Nothing to reset — zoom (scroll) or pan a cell first';
+
+/** The toolbox ↺: resets the zoom/pan of every cell (matrix and enlarged
+ *  view) — nothing else; clusters stay (the legend's own × / Clear removes
+ *  them). While no cell is zoomed or panned it stays visible but inert and
+ *  its tooltip says so (`aria-disabled`, not `disabled`, so the tooltip
+ *  still shows). */
+function ResetViewButton({ canReset, onReset }: { canReset: boolean; onReset: () => void }) {
+    return (
+        <button
+            type="button"
+            onClick={canReset ? onReset : undefined}
+            className="scatter-regl-tool"
+            aria-disabled={!canReset}
+            aria-label="Reset zoom and pan"
+            title={canReset ? RESET_VIEW_TITLE : RESET_VIEW_IDLE_TITLE}
+        >
+            <RotateCcw size={13} />
+        </button>
+    );
+}
+
 function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     // Customer item 3: axis hover cards and the hover tooltip resolve labels through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
@@ -223,6 +246,24 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
      *  `sc.reset()` once when it changes. Lets the toolbox broadcast a
      *  reset action to every WebGL canvas without holding refs to them all. */
     const [resetTick, setResetTick] = useState(0);
+    /** Ids (each cell instance's own `useId`) of the cells — matrix and
+     *  enlarged view — currently zoomed or panned away from their full
+     *  extent. Empty = the ↺ button has nothing to undo and says so instead
+     *  of silently doing nothing. 2026-10-09 real-app report "↺ does
+     *  nothing": verified in Chromium that ↺ DOES restore a zoomed or panned
+     *  cell; with nothing zoomed (the default — lasso mode, no wheel zoom
+     *  yet) it has no visible effect, and since customer batch phase 2 it no
+     *  longer clears clusters either, so the click looked dead. */
+    const [zoomedCells, setZoomedCells] = useState<ReadonlySet<string>>(() => new Set());
+    const handleZoomChange = useCallback((cellId: string, zoomed: boolean) => {
+        setZoomedCells(prev => {
+            if (prev.has(cellId) === zoomed) return prev;
+            const next = new Set(prev);
+            if (zoomed) next.add(cellId); else next.delete(cellId);
+            return next;
+        });
+    }, []);
+    const canResetView = zoomedCells.size > 0;
     /** Inspect-mode toggle. When true every cell shows an overlay that
      *  intercepts clicks → opens the enlarged view dialog. Auto-disabled
      *  after one click so the cursor returns to normal interactions. */
@@ -370,13 +411,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                 >
                     <Search size={13} />
                 </button>
-                <button
-                    onClick={handleResetView}
-                    className="scatter-regl-tool"
-                    title="Reset view (zoom and pan) — clusters stay"
-                >
-                    <RotateCcw size={13} />
-                </button>
+                <ResetViewButton canReset={canResetView} onReset={handleResetView} />
             </div>
 
             {/* Cluster legend — chips in the strip above the matrix, left of
@@ -428,6 +463,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         data={data}
                                         headers={headers}
                                         sensorX={sensorX}
+                                        onZoomChange={handleZoomChange}
                                         sensorY={sensorY}
                                         showXAxis={i === n - 1}
                                         showYAxis={false}
@@ -482,6 +518,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                 headers={headers}
                                 sensorY={sensorY}
                                 isTimeAxis
+                                onZoomChange={handleZoomChange}
                                 showXAxis={i === n - 1}
                                 showYAxis={false}
                                 showXLabel={false}
@@ -586,13 +623,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                         </button>
                                     </>
                                 )}
-                                <button
-                                    onClick={handleResetView}
-                                    className="scatter-regl-tool"
-                                    title="Reset view (zoom and pan) — clusters stay"
-                                >
-                                    <RotateCcw size={13} />
-                                </button>
+                                <ResetViewButton canReset={canResetView} onReset={handleResetView} />
                                 <button
                                     onClick={() => setExpanded(null)}
                                     className="scatter-regl-tool"
@@ -616,6 +647,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                     sensorY={expanded.sensorY}
                                     sensorX={expanded.kind === 'scatter' ? expanded.sensorX : undefined}
                                     isTimeAxis={expanded.kind === 'time'}
+                                    onZoomChange={handleZoomChange}
                                     showXAxis
                                     showYAxis
                                     showXLabel

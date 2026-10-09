@@ -19,9 +19,22 @@ vi.mock('../components/sensor/ColourPicker', async (importOriginal) => {
 
 const cellCalls: any[] = [];
 // memo'd like the real PairPlotCell, so "does this re-render the WebGL cells?" is observable.
-vi.mock('../components/charts/PairPlotCell', async () => ({
-    default: (await import('react')).memo((props: any) => {
+vi.mock('../components/charts/PairPlotCell', async () => {
+  const React = await import('react');
+  // Mirrors the real cell's zoom contract: reports under its own per-instance
+  // useId, and a bumped resetTick reports "not zoomed" under that same id.
+  return {
+    default: React.memo((props: any) => {
         cellCalls.push(props);
+        const id = React.useId();
+        const lastTick = React.useRef(props.resetTick);
+        React.useEffect(() => {
+            if (props.resetTick > lastTick.current) {
+                lastTick.current = props.resetTick;
+                props.onZoomChange?.(id, false);
+            }
+        }, [props.resetTick]);
+        React.useEffect(() => () => props.onZoomChange?.(id, false), []);
         const key = `${props.sensorY}-${props.sensorX ?? 'time'}`;
         return (
             <div data-testid={`cell-${key}`}>
@@ -43,10 +56,13 @@ vi.mock('../components/charts/PairPlotCell', async () => ({
                 >
                     {`hover-${key}`}
                 </button>
+                <button onClick={() => props.onZoomChange?.(id, true)}>{`zoom-${key}`}</button>
+                <button onClick={() => props.onZoomChange?.(id, false)}>{`unzoom-${key}`}</button>
             </div>
         );
     }),
-}));
+  };
+});
 
 class MockResizeObserver {
     observe = vi.fn();
@@ -57,6 +73,9 @@ class MockResizeObserver {
 import PairPlotChart from '../components/charts/PairPlotChart';
 import ClusterLegend from '../components/charts/ClusterLegend';
 import { hexToRgba } from '../components/charts/pairPlotColors';
+
+const RESET_TITLE = 'Reset zoom and pan — every cell back to its full data range (clusters stay)';
+const IDLE_TITLE = 'Nothing to reset — zoom (scroll) or pan a cell first';
 
 const headers = ['A', 'B'];
 const data = [
@@ -426,9 +445,10 @@ describe('PairPlotChart', () => {
         it('toolbox ↺ resets the view only — clusters stay, every cell gets the bumped resetTick', () => {
             render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
             fireEvent.click(screen.getByText('lasso-A-B'));
+            fireEvent.click(screen.getByText('zoom-A-B'));
 
             cellCalls.length = 0;
-            fireEvent.click(screen.getByTitle('Reset view (zoom and pan) — clusters stay'));
+            fireEvent.click(screen.getByTitle(RESET_TITLE));
 
             expect(chipNames()).toEqual(['Cluster 1']);
             expect(cellCalls.length).toBeGreaterThan(0);
@@ -650,8 +670,12 @@ describe('PairPlotChart', () => {
                 const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
                 fireEvent.click(screen.getByText('lasso-A-B'));
                 const modal = openEnlarged(container);
-                fireEvent.click(within(modal).getByTitle('Reset view (zoom and pan) — clusters stay'));
+                // A zoomed matrix cell (still mounted behind the dialog) arms the dialog's ↺ too.
+                fireEvent.click(screen.getByText('zoom-A-B'));
+                cellCalls.length = 0;
+                fireEvent.click(within(modal).getByTitle(RESET_TITLE));
                 expect(chipNames()).toEqual(['Cluster 1']);
+                expect(cellCalls.some(c => c.resetTick === 1)).toBe(true);
             });
         });
 
@@ -851,3 +875,55 @@ describe('PairPlotChart', () => {
     });
 
 });
+
+// 2026-10-09 real-app feedback: "the ↺ button does nothing". Besides the
+// cell-side redraw fix (PairPlotCell.test.tsx), the button now says when it
+// has nothing to undo instead of silently doing nothing.
+describe('PairPlotChart — toolbox ↺ (reset zoom and pan)', () => {
+    const resetBtn = () => screen.getAllByRole('button', { name: 'Reset zoom and pan' })[0];
+
+    it('is inert with a "Nothing to reset" tooltip while no cell is zoomed or panned', () => {
+        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        const btn = resetBtn();
+        expect(btn.getAttribute('aria-disabled')).toBe('true');
+        expect(btn.getAttribute('title')).toBe(IDLE_TITLE);
+        cellCalls.length = 0;
+        fireEvent.click(btn);
+        expect(cellCalls.every(c => c.resetTick === 0)).toBe(true);
+    });
+
+    it('becomes active once any cell reports a zoom/pan, and says exactly what it resets', () => {
+        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        fireEvent.click(screen.getByText('zoom-B-time'));
+        const btn = resetBtn();
+        expect(btn.getAttribute('aria-disabled')).toBe('false');
+        expect(btn.getAttribute('title')).toBe(RESET_TITLE);
+    });
+
+    it('goes back to "Nothing to reset" when every zoomed cell reports it is back at full range', () => {
+        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        fireEvent.click(screen.getByText('zoom-A-B'));
+        fireEvent.click(screen.getByText('zoom-B-time'));
+        fireEvent.click(screen.getByText('unzoom-A-B'));
+        expect(resetBtn().getAttribute('aria-disabled')).toBe('false');
+        fireEvent.click(screen.getByText('unzoom-B-time'));
+        expect(resetBtn().getAttribute('aria-disabled')).toBe('true');
+    });
+
+    it('every cell gets the shared onZoomChange', () => {
+        render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        expect(cellCalls.length).toBeGreaterThan(0);
+        expect(cellCalls.every(c => typeof c.onZoomChange === 'function')).toBe(true);
+    });
+
+    it('does not get stuck enabled when a zoomed cell switches sensors (cells are keyed by index): zoom, swap sensors, reset -> "Nothing to reset"', () => {
+        const { rerender } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
+        fireEvent.click(screen.getByText('zoom-A-B'));
+        expect(resetBtn().getAttribute('aria-disabled')).toBe('false');
+        rerender(<PairPlotChart data={data} sensors={['B', 'A']} headers={headers} />);
+        expect(resetBtn().getAttribute('aria-disabled')).toBe('false');
+        fireEvent.click(resetBtn());
+        expect(resetBtn().getAttribute('aria-disabled')).toBe('true');
+    });
+});
+
