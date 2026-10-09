@@ -564,12 +564,13 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
 
         b.resolve();
         await settle(10);
-        expect(bmw().getByText('#1: 500.0 – 600.0')).toBeTruthy();
+        expect(bmw().getByTestId('cluster-pill-0').textContent).toBe('#1: 500 – ');
+        expect((bmw().getByTestId('cluster-bound-0') as HTMLInputElement).value).toBe('600');
         a.resolve(); // c1's stale TAG2 reply arrives last
         await settle(10);
         const header = bmw().getByTestId('cluster-slider').querySelector('.pm-cluster-slider-header')!;
-        expect(header.textContent).toContain('500.0');
-        expect(header.textContent).toContain('900.0');
+        expect(header.textContent).toContain('500');
+        expect(header.textContent).toContain('900');
         expect(header.textContent).toContain('TAG1');
     });
 
@@ -623,7 +624,8 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
         }
         hold.resolve();
         await settle(10);
-        expect(bmw().getByText('#1: 500.0 – 600.0')).toBeTruthy();
+        expect(bmw().getByTestId('cluster-pill-0').textContent).toBe('#1: 500 – ');
+        expect((bmw().getByTestId('cluster-bound-0') as HTMLInputElement).value).toBe('600');
         expect(bmw().queryByText('edited')).toBeNull();
     });
 
@@ -673,6 +675,36 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
         const ranges = diskModel('c1').clusterRanges;
         expect(diskModel('c1').criteriaSensor).toBe('TAG3');
         expect(ranges.every((r: any) => r.min >= 500 && r.max <= 900)).toBe(true);
+    });
+
+    // 2026-10-09 (real-app test, item 7): the optional criteria sensor could not be cleared.
+    // Through the REAL picker: the trigger's × clears it, the count drops to one cluster (the
+    // only valid shape without a criteria sensor), the section stays open, Save writes it.
+    it('FIXED (2026-10-09): the criteria sensor is cleared with the trigger\'s ×, leaving a valid one-cluster model', async () => {
+        writeDisk(wsState([dashModel({
+            id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            clusterRanges: [{ min: 0, max: 3 }, { min: 3, max: 6 }, { min: 6, max: 10 }],
+        })]));
+        await mountBuildModel();
+        openSettings();
+        await waitFor(() => expect(bmw().getByTestId('cluster-slider')).toBeTruthy());
+        await act(async () => { fireEvent.click(bmw().getByRole('button', { name: 'Clear criteria sensor' })); });
+        expect(bmw().getByRole('button', { name: 'criteria sensor' }).textContent).toBe('None');
+        expect(bmw().getByTestId('cluster-slider-empty').textContent).toMatch(/One cluster/);
+        expect(bmw().queryByRole('button', { name: 'Clear criteria sensor' })).toBeNull();
+        await clickSave();
+        expect(diskModel('c1')).toMatchObject({ criteriaSensor: '', numClusters: 1, clusterRanges: [] });
+        expect(bmw().getByTestId('add-model-form')).toBeTruthy(); // still open after the save
+    });
+
+    it('picking the criteria sensor that was the last missing item keeps "Model settings" open', async () => {
+        writeDisk(wsState([dashModel({ id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2' })])); // 3 clusters, no criteria
+        await mountBuildModel();
+        expect(bmw().getByTestId('settings-to-fix').textContent).toBe('1 to fix'); // auto-open: 2+ clusters need a criteria sensor
+        await pickSingleSensor('None', 'TAG3');
+        expect(bmw().queryByTestId('settings-to-fix')).toBeNull();
+        expect(bmw().getByTestId('add-model-form')).toBeTruthy();
+        await waitFor(() => expect(bmw().getByTestId('cluster-slider')).toBeTruthy());
     });
 
     it('FIXED (2026-09-30): stepping the cluster count resizes the ranges array to match', async () => {

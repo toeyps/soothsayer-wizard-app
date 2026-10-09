@@ -112,6 +112,52 @@ describe('Individual charts', () => {
         expect(o.yAxis.max).toBeGreaterThan(710); // headroom above the tallest bar / curve
     });
 
+    // 🆕 2026-10-09 (real-app report): the Distribution chart's top y label read
+    // "1,713.8000000000002" — the axis max was the raw max × 1.1, printed unformatted.
+    it('Distribution: the y max is a nice round count and every value-axis label goes through the app formatter', () => {
+        const p = ind();
+        const h = { ...p.histogram!, counts: [10, 150, 1558, 130, 10] }; // 1558 × 1.1 = 1713.8000000000002
+        const o: any = buildDistributionOption(h, [], '°C');
+        expect(o.yAxis.max).toBe(1800); // 1713.8 rounded up to the 200-step nice tick
+        expect(o.yAxis.axisLabel.formatter(1713.8000000000002)).toBe('1,713.8');
+        expect(o.xAxis.axisLabel.formatter(0.30000000000000004)).toBe('0.3');
+        expect(o.yAxis.axisLabel.color).toBe(CHART.textSecondary); // the formatter keeps the look
+    });
+
+    it('a narrow axis keeps neighbouring tick labels distinct (never a fixed 3-decimal cap)', () => {
+        const lines = [{ name: 'V', values: [1, 2], color: '#fff' }];
+        const timestamps = ['2026-01-01 00:00:00', '2026-01-01 01:00:00'];
+        const narrow: any = buildTimeSeriesOption({ timestamps, lines, yRange: [100, 100.001] });
+        const f = narrow.yAxis.axisLabel.formatter;
+        expect(f(100.0002)).toBe('100.0002');
+        expect(f(100.0004)).toBe('100.0004');
+        expect(f(100)).toBe('100');
+        const tiny: any = buildTimeSeriesOption({ timestamps, lines, yRange: [0.001, 0.002] });
+        expect(tiny.yAxis.axisLabel.formatter(0.0012)).toBe('0.0012');
+        expect(tiny.yAxis.axisLabel.formatter(0.0014)).toBe('0.0014');
+        expect(tiny.yAxis.axisLabel.formatter(0.1 * 0.003 + 0.0009)).toBe('0.0012'); // noise trimmed
+        // a long bin edge on a wide axis reads short; a near-zero tick is "0", never "-0"
+        const wide: any = buildTimeSeriesOption({ timestamps, lines, yRange: [0, 50] });
+        expect(wide.yAxis.axisLabel.formatter(12.345678912)).toBe('12.3');
+        expect(wide.yAxis.axisLabel.formatter(-1e-17)).toBe('0');
+    });
+
+    it('every VALUE axis of the workbench charts formats its labels; time / category axes never get a number formatter', () => {
+        const noisy = 0.1 * 3; // 0.30000000000000004
+        const ts: any = buildTimeSeriesOption({ timestamps: ['2026-01-01 00:00:00', '2026-01-01 01:00:00'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
+        expect(ts.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
+        expect(ts.xAxis.axisLabel?.formatter).toBeUndefined();
+        const cat: any = buildTimeSeriesOption({ timestamps: ['a', 'b'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
+        expect(cat.xAxis.axisLabel.formatter).toBeUndefined();
+        const fit: any = buildFitScatterOption(rel().fit_scatter!, '°C');
+        expect(fit.xAxis.axisLabel.formatter(noisy)).toBe('0.3');
+        expect(fit.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
+        const c = clu();
+        const cl: any = buildClusterOption(c.cluster_scatter!, (c.stats as ClusteringStats).clusters, { x: 'X', y: 'Y' });
+        expect(cl.xAxis.axisLabel.formatter(noisy)).toBe('0.3');
+        expect(cl.yAxis.axisLabel.formatter(noisy)).toBe('0.3');
+    });
+
     it('Distribution: the custom bar series draws a rect spanning its bin edges', () => {
         const p = ind();
         const o: any = buildDistributionOption(p.histogram!, [], '');

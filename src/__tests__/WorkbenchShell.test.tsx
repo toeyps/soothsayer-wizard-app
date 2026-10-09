@@ -5,94 +5,11 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => <div data-testid="echarts-mock" data-series={props.option?.series?.length ?? 0} />,
 }));
 
-import WorkbenchStepBar, { workbenchStepLooks, STEP_ORDER, type StepInput, type StepKey, type StepLook } from '../components/windows/workbench/WorkbenchStepBar';
 import { PageSwitch, StaleBanner } from '../components/windows/workbench/WorkbenchShellParts';
 import ChartCard, { LegendItem } from '../components/windows/workbench/ChartCard';
 import { SensorPickerSingle } from '../components/sensor/SensorPicker';
 
 afterEach(cleanup);
-
-const input = (over: Partial<StepInput> = {}): StepInput => ({
-    rcState: 'set', hasModel: true, settingsReady: true, trained: false, stale: false, complete: false, healthValid: null, ...over,
-});
-const looks = (over: Partial<StepInput> = {}) => STEP_ORDER.map(s => workbenchStepLooks(input(over))[s.key]);
-
-describe('workbenchStepLooks (the mockup\'s rules)', () => {
-    it('Running condition not set -> step 1 is next, everything else waits; invalid period -> step 1 is red', () => {
-        expect(looks({ rcState: 'unset' })).toEqual(['now', 'todo', 'todo', 'todo', 'todo']);
-        expect(looks({ rcState: 'invalid' })).toEqual(['bad', 'todo', 'todo', 'todo', 'todo']);
-    });
-
-    it('no model selected -> only the workspace step can be done', () => {
-        expect(looks({ hasModel: false })).toEqual(['done', 'todo', 'todo', 'todo', 'todo']);
-    });
-
-    it('settings still to fix -> Model settings is the step to do, Train waits', () => {
-        expect(looks({ settingsReady: false })).toEqual(['done', 'now', 'todo', 'todo', 'todo']);
-    });
-
-    it('never trained -> Train is next', () => {
-        expect(looks()).toEqual(['done', 'done', 'now', 'todo', 'todo']);
-    });
-
-    it('stale -> Train is next again and the health steps wait (set points are kept, not erased)', () => {
-        expect(looks({ trained: true, stale: true })).toEqual(['done', 'done', 'now', 'todo', 'todo']);
-    });
-
-    it('trained and fresh -> Health set points is next; known verdicts move it to done / red', () => {
-        expect(looks({ trained: true })).toEqual(['done', 'done', 'done', 'now', 'todo']);
-        expect(looks({ trained: true, healthValid: true })).toEqual(['done', 'done', 'done', 'done', 'todo']);
-        expect(looks({ trained: true, healthValid: false })).toEqual(['done', 'done', 'done', 'bad', 'todo']);
-    });
-
-    it('complete -> everything done, whatever the verdict says', () => {
-        expect(looks({ trained: true, complete: true, healthValid: false })).toEqual(['done', 'done', 'done', 'done', 'done']);
-    });
-
-    it('a model stale AND complete on disk is not Complete (the Complete step needs a fresh fit)', () => {
-        expect(looks({ trained: true, stale: true, complete: true })[4]).toBe('todo');
-    });
-});
-
-describe('WorkbenchStepBar', () => {
-    const allDone = Object.fromEntries(STEP_ORDER.map(s => [s.key, 'done'])) as Record<StepKey, StepLook>;
-
-    it('renders the five steps in order, each a button, numbered unless done (tick) or bad (!)', () => {
-        const l = { ...allDone, train: 'now', 'health-set-points': 'bad', complete: 'todo' } as Record<StepKey, StepLook>;
-        render(<WorkbenchStepBar looks={l} current={[]} onStep={() => {}} />);
-        const buttons = within(screen.getByTestId('wb-steps')).getAllByRole('button');
-        expect(buttons.map(b => b.textContent)).toEqual(['Running condition', 'Model settings', '3Train', '!Health set points', '5Complete']);
-        expect(screen.getByTestId('wb-step-running-condition').querySelector('.wb2-sn svg')).not.toBeNull();
-    });
-
-    it('every step reports its key when clicked', () => {
-        const onStep = vi.fn();
-        render(<WorkbenchStepBar looks={allDone} current={[]} onStep={onStep} />);
-        for (const { key } of STEP_ORDER) fireEvent.click(screen.getByTestId(`wb-step-${key}`));
-        expect(onStep.mock.calls.map(c => c[0])).toEqual(STEP_ORDER.map(s => s.key));
-    });
-
-    it('a disabled step cannot be clicked and explains why; the current steps are highlighted', () => {
-        const onStep = vi.fn();
-        render(
-            <WorkbenchStepBar
-                looks={allDone}
-                current={['model-settings', 'train']}
-                disabled={{ 'health-set-points': true }}
-                disabledTitle={{ 'health-set-points': 'Re-train first' }}
-                onStep={onStep}
-            />,
-        );
-        const h = screen.getByTestId('wb-step-health-set-points') as HTMLButtonElement;
-        expect(h.disabled).toBe(true);
-        expect(h.title).toBe('Re-train first');
-        fireEvent.click(h);
-        expect(onStep).not.toHaveBeenCalled();
-        expect(screen.getByTestId('wb-step-model-settings').getAttribute('aria-current')).toBe('step');
-        expect(screen.getByTestId('wb-step-train').className).toContain('wb2-stp--cur');
-        expect(screen.getByTestId('wb-step-complete').getAttribute('aria-current')).toBeNull();
-    });
-});
 
 describe('PageSwitch', () => {
     const base = { page: 'model' as const, modelFitDone: false, healthDone: false, healthDisabled: false, onPage: () => {} };

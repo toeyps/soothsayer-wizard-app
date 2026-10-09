@@ -54,6 +54,41 @@ export const CLUSTER_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43
 
 export const FONT = 'Inter, system-ui, sans-serif';
 
+/*
+ * Tick labels of VALUE axes (2026-10-09). A computed axis min/max (a histogram's max × 1.1, a
+ * nice-extent step like 0.1 × 3) used to print float noise such as "1,713.8000000000002".
+ * The labels must also stay DISTINCT however narrow the axis is, so they are never rounded to a
+ * fixed 3 decimals (0.0012 / 0.0014 would both read "0.001"). Never use these on a time or
+ * category axis.
+ */
+const groupedNumber = (v: number, maxDecimals: number): string =>
+    new Intl.NumberFormat('en-US', { maximumFractionDigits: Math.max(0, Math.min(20, maxDecimals)) }).format(v);
+/** Drops float noise only (12 significant digits); `|| 0` turns -0 into 0. */
+const denoise = (v: number): number => Number(v.toPrecision(12)) || 0;
+
+/** An auto-scaled value axis (ECharts picks the ticks): noise trimmed, thousands grouped,
+ *  every real decimal kept. */
+export function fmtAxisValue(v: number): string {
+    if (!Number.isFinite(v)) return '';
+    return groupedNumber(denoise(v), 20);
+}
+
+/** A value axis whose min/max the chart sets: decimals follow the tick step (about a fifth of
+ *  the span) plus one spare, so neighbouring ticks never print the same text and a long bin
+ *  edge reads short ("12.3", not "12.345678912"). */
+export function axisValueFormatter(min: number, max: number): (v: number) => string {
+    const span = Math.abs(max - min);
+    if (!(span > 0) || !Number.isFinite(span)) return fmtAxisValue;
+    const step = span / 5;
+    const decimals = Math.max(0, -Math.floor(Math.log10(step))) + 1;
+    return (v: number) => {
+        if (!Number.isFinite(v)) return '';
+        // A tick that is zero up to float noise reads "0", never "-0" or "0.00000000000000006".
+        const x = Math.abs(v) < step * 1e-9 ? 0 : denoise(v);
+        return groupedNumber(x, decimals);
+    };
+}
+
 /** Number formatting used by every workbench readout (matches the mockup's `fmt`). */
 export function fmtNum(v: number | null | undefined): string {
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';

@@ -236,7 +236,7 @@ afterEach(() => {
 
 describe('(1) models whose record carries an empty clusterRanges list stay Trained across a window reopen', () => {
     it('Clustering with no criteria sensor and `clusterRanges: []`', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', clusterRanges: [], rcMode: 'clustering', individualChecked: false })])));
+        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', numClusters: 1, clusterRanges: [], rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();
         expect(pill()).toBe('Trained');
@@ -296,8 +296,11 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
     // only merges draft fields when a draft is actually pending for that
     // model id (`effectiveModelFor`) — with no draft, it trains against the
     // persisted `m` directly, unmodified.
+    // 2026-10-09: `numClusters: 1` — with no criteria sensor only ONE cluster can train (Rust
+    // rejects n_clusters > 1 without one), and the Workbench now blocks 2+ with no criteria as an
+    // item to fix. The 3 stored default ranges are still there, which is what this pins.
     it('Clustering created on the Dashboard with Y picked (3 default cluster ranges, no criteria)', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', rcMode: 'clustering', individualChecked: false })])));
+        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', numClusters: 1, rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         await clickTrain();
         expect(h.invokes.some(c => c.cmd === 'compute_clustering_preview')).toBe(true);
@@ -320,7 +323,7 @@ describe('(2) a successful Train with no pending draft leaves the model Trained-
     });
 
     it('control: the same clustering model trains fresh once a draft edit is committed with it (the workaround users would stumble on)', async () => {
-        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', rcMode: 'clustering', individualChecked: false })])));
+        writeDisk(wsState(currentFg([dashModel({ id: 'c1', kind: 'clustering', ySensor: 'TAG3', numClusters: 1, rcMode: 'clustering', individualChecked: false })])));
         await mountBuildModel();
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
         fireEvent.change(screen.getByPlaceholderText('e.g. Bearing vibration model'), { target: { value: 'QA model edited' } });

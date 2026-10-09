@@ -18,7 +18,7 @@ import { computeTrainFingerprint, isModelTrainedFresh as trainedFreshFor } from 
 import { buildPreviewFilterPayload } from "../../utils/trainingScope";
 import { applyIncompleteRule } from "../../utils/incompleteRule";
 import { isModelStale as isModelStaleFor, modelDotState, modelSetPointFlag, NOT_TRAINED_BLOCK_REASON, type ModelDotState, type SetPointFlag } from "../../utils/modelStatus";
-import { HEALTH_DEFAULT_MAX_POINTS, relationshipLambda, testPeriodsWireFor } from "../../utils/healthRequest";
+import { CLUSTERS_NEED_CRITERIA, HEALTH_DEFAULT_MAX_POINTS, relationshipLambda, testPeriodsWireFor } from "../../utils/healthRequest";
 import { ensureHealthSetPoints } from "../../utils/healthSetPoints";
 import { completeModel, parseHealthError } from "../../utils/completeModel";
 import { commitHealthVerdict, commitSetPoints, MARK_COMPLETE_CLOSE_WAIT, persistModelComplete } from "../../utils/healthPersist";
@@ -33,7 +33,7 @@ import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { useRowCountPreview } from "./useRowCountPreview";
 import { SensorPickerModal } from "./SensorPickers";
 import { SensorInline, SensorLabel } from "../sensor/SensorLabel";
-import { SensorMetaContext, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
+import { SensorMetaContext, fmtNum, fmtNumExact, fmtNumText, sensorHaystack, sensorTitle, useLayeredSensorLookup } from "../sensor/sensorInfo";
 import TimePeriodsEditor from "./TimePeriodsEditor";
 import TestPeriodsEditor from "./TestPeriodsEditor";
 import { TrainHighlightWarnings } from "./RunningConditionParts";
@@ -43,7 +43,6 @@ import { useSubModelFits } from "./useSubModelFits";
 import ModelFitPage from "./workbench/ModelFitPage";
 import { CLUSTER_COLORS as CLUSTER_PALETTE } from "./workbench/chartTheme";
 import HealthScorePage from "./workbench/HealthScorePage";
-import WorkbenchStepBar, { workbenchStepLooks, type StepKey } from "./workbench/WorkbenchStepBar";
 import { PageSwitch, SaveErrorNotice, StaleBanner } from "./workbench/WorkbenchShellParts";
 import { buildCheckLines, healthVerdict, sameSetPoints, verdictOfIssues, type HealthVerdict } from "./workbench/healthChecks";
 import type { SaveInfo, WorkbenchPage } from "./workbench/workbenchTypes";
@@ -94,6 +93,30 @@ const UNCATEGORIZED = 'Uncategorized';
 const DEFAULT_CLUSTER_RANGES = [
     { min: 0, max: 33 }, { min: 33, max: 66 }, { min: 66, max: 100 },
 ];
+
+
+/** A typed number whose commas are thousands separators only ("1,234.5", "-12,000"). */
+const THOUSANDS_GROUPED = /^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$/;
+
+/** Decimals in a number's shortest JS form ("33.6" → 1); scientific counts as "long". */
+const shortDecimals = (v: number): number => {
+    const s = String(v);
+    return /e/i.test(s) ? Infinity : (s.split('.')[1]?.length ?? 0);
+};
+/** Up to this many decimals a stored cluster boundary reads as a value someone TYPED and is
+ *  shown in full; more is float noise from auto-dividing or dragging (33.333333333333336). */
+const TYPED_DECIMALS_MAX = 10;
+/** A cluster boundary for display (2026-10-09): every decimal of a typed-looking value
+ *  (`fmtNumExact`, never rounded), the app's `fmtNum` for a computed one. */
+function fmtClusterBound(v: number): string {
+    return shortDecimals(v) <= TYPED_DECIMALS_MAX ? fmtNumExact(v) : fmtNum(v);
+}
+/** The same boundary as plain input text (no thousands separators — an `<input>` value). */
+function clusterBoundInputText(v: number): string {
+    if (shortDecimals(v) <= TYPED_DECIMALS_MAX) return String(v);
+    const a = Math.abs(v);
+    return String(Number(a !== 0 && a < 0.001 ? v.toPrecision(3) : v.toFixed(3)));
+}
 
 // A group's colour comes from `getFgGroupColor` (utils/failureGroupColor.ts),
 // the one rule the Dashboard and the Import page's recent-project chip use too.
@@ -572,6 +595,13 @@ export default function BuildModelWindow() {
      *  training-scope filter changes. Mirrors PredictiveModelBuild.tsx's own
      *  `criteriaStats` effect; `null` while unset/loading, same as there. */
     const [criteriaStats, setCriteriaStats] = useState<SensorStats | null>(null);
+    /** Cluster-range boundary being typed (2026-10-09): `idx` = the boundary between cluster
+     *  idx+1 and idx+2. `initial` is the text the box showed on focus (an unchanged box
+     *  commits nothing, so a rounded readout of a dragged value is never written back). */
+    const [boundaryEdit, setBoundaryEdit] = useState<{ modelId: string; idx: number; text: string; initial: string; error: string | null } | null>(null);
+    /** The exact text of each boundary the user typed (`modelId:idx`), shown while the stored
+     *  number still equals it — a typed "33.60" keeps its "33.60" (never rounded). Session only. */
+    const [typedBoundaryText, setTypedBoundaryText] = useState<Record<string, { value: number; text: string }>>({});
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     // Customer item 3: every sensor label / picker in this window resolves through this lookup.
@@ -823,6 +853,9 @@ export default function BuildModelWindow() {
                 setSelectedSensorKey(null);
                 setActiveTab({});
                 setSettingsOpenOverride({});
+                // A half-typed cluster boundary (or its error) belongs to the old workspace.
+                setBoundaryEdit(null);
+                setTypedBoundaryText({});
                 setSearchQuery('');
                 setSidebarFilter('all');
                 setLeftGroupBy('fg');
@@ -1141,8 +1174,16 @@ export default function BuildModelWindow() {
     // them. A draft also never carries `category`: category is per SENSOR
     // and saves instantly from the detail header (see `changeCategory`).
     const draftOf = (m: FailureModel): ModelDraft => drafts[m.id] ?? draftFromModel(m);
-    const patchDraft = (m: FailureModel, patch: Partial<ModelDraft>) =>
+    /** Raw draft write (no side effects) — the cluster auto-divide effect uses this. */
+    const writeDraft = (m: FailureModel, patch: Partial<ModelDraft>) =>
         setDrafts(prev => ({ ...prev, [m.id]: { ...(prev[m.id] ?? draftFromModel(m)), ...patch } }));
+    /** A user edit in "Model settings". It also pins the section open when it was only open
+     *  because something was missing (2026-10-09): fixing the last missing item (e.g. picking the
+     *  criteria sensor) must not collapse the section under the user's hands. */
+    const patchDraft = (m: FailureModel, patch: Partial<ModelDraft>) => {
+        writeDraft(m, patch);
+        setSettingsOpenOverride(prev => (m.id in prev ? prev : { ...prev, [m.id]: true }));
+    };
 
     /** Category of the model's sensor across every FG (never per-model any more). */
     const categoryOf = (m: FailureModel): ModelCategory | null => sensorCategory(allModels, modelSensorKey(m));
@@ -1202,6 +1243,8 @@ export default function BuildModelWindow() {
             m.kind === 'individual' ? (m.targetSensor ?? '') !== '' :
             m.kind === 'relationship' ? (m.targetSensor ?? '') !== '' && d.predictors.length >= 1 :
             (m.xSensor ?? '') !== '' && d.y !== '' && (!d.criteria || d.ranges.every(r => r.min !== null && r.max !== null))
+            // 2+ clusters are split by the criteria sensor — Rust rejects n_clusters > 1 without one.
+            && (!!d.criteria || d.numClusters <= 1)
         );
         if (!ok) return 'Fill in the required fields above first';
         // A Custom model's own test periods are saved with Save changes: an invalid
@@ -1230,6 +1273,7 @@ export default function BuildModelWindow() {
         if (m.kind === 'clustering') {
             if (!d.y) items.push('Pick a Y sensor');
             if (d.criteria && !d.ranges.every(r => r.min !== null && r.max !== null)) items.push('Fill in the cluster ranges');
+            if (!d.criteria && d.numClusters > 1) items.push(CLUSTERS_NEED_CRITERIA);
         }
         if (d.runningConditionMode === 'custom') {
             const badTest = testPeriodsError(d.customTestPeriods);
@@ -2225,9 +2269,14 @@ export default function BuildModelWindow() {
             min: lo + step * i,
             max: lo + step * (i + 1),
         }));
-        patchDraft(activeModel, { ranges });
+        writeDraft(activeModel, { ranges });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, numClustersForActive, clusterRangesLenForActive, criteriaStats, persistedClusterKeyForActive]);
+
+    // A cluster boundary being typed never survives a model switch: a valid one was already
+    // committed to its own model by the box's blur (which fires before the click that switches);
+    // an invalid one (and its error) is dropped, never shown on — or written into — another model.
+    useEffect(() => { setBoundaryEdit(null); }, [activeModel?.id]);
 
     // ---- Running condition: row-count previews (2026-10-03) ----
     // Two instances of the same hook: one for the PERSISTED condition (the
@@ -2599,13 +2648,58 @@ export default function BuildModelWindow() {
         const lo = criteriaStats.min;
         const hi = criteriaStats.max;
         const span = hi - lo;
-        const fmt = (v: number | null) =>
-            v == null ? '—' : Math.abs(v) >= 100 ? v.toFixed(1) : Math.abs(v) >= 10 ? v.toFixed(2) : v.toFixed(3);
         const pctOf = (v: number) => Math.max(0, Math.min(100, ((v - lo) / span) * 100));
         const ranges = d.ranges;
+        // A boundary the user typed shows exactly as typed while it is still the stored value.
+        const typedOf = (i: number, v: number | null) => {
+            const t = typedBoundaryText[`${m.id}:${i}`];
+            return t && v !== null && t.value === v ? t.text : null;
+        };
+        const fmt = (v: number | null, typedIdx?: number) => {
+            if (v == null) return '—';
+            const t = typedIdx === undefined ? null : typedOf(typedIdx, v);
+            return t !== null ? fmtNumText(t) : fmtClusterBound(v);
+        };
+        const edit = boundaryEdit && boundaryEdit.modelId === m.id ? boundaryEdit : null;
+        const errorId = `cluster-bound-error-${m.id}`;
+        /** Typed boundary `idx` (between cluster idx+1 and idx+2): Enter / blur commit, Esc reverts.
+         *  Must stay strictly between its neighbours and inside the criteria sensor's [min, max];
+         *  anything else shows the inline error and is not committed. */
+        const commitBoundary = (idx: number) => {
+            if (!edit || edit.idx !== idx) return;
+            const text = edit.text.trim();
+            if (text === edit.initial.trim()) { setBoundaryEdit(null); return; }
+            // A comma is only a thousands separator ("1,234.5"); anything else ("33,6") is a
+            // decimal comma and would silently become 336 if stripped — refuse it instead.
+            if (text.includes(',') && !THOUSANDS_GROUPED.test(text)) {
+                setBoundaryEdit({ ...edit, error: 'Use . for decimals (e.g. 33.6).' });
+                return;
+            }
+            const clean = text.replace(/,/g, '');
+            const v = clean === '' ? NaN : Number(clean);
+            if (!Number.isFinite(v)) { setBoundaryEdit({ ...edit, error: 'Enter a number.' }); return; }
+            const current = draftOf(m).ranges;
+            const key = `${m.id}:${idx}`;
+            // The same number typed another way ("4" -> "4.0"): keep the typed form, but no draft.
+            if (v === (current[idx]?.max ?? hi)) {
+                setTypedBoundaryText(prev => ({ ...prev, [key]: { value: v, text: clean } }));
+                setBoundaryEdit(null);
+                return;
+            }
+            const low = Math.max(lo, current[idx]?.min ?? lo);
+            const high = Math.min(hi, current[idx + 1]?.max ?? hi);
+            if (!(v > low && v < high)) {
+                setBoundaryEdit({ ...edit, error: `Enter a value between ${fmt(low, idx - 1)} and ${fmt(high, idx + 1)} — boundaries stay in order inside the ${sensorLabel(d.criteria)} range.` });
+                return;
+            }
+            patchDraft(m, { ranges: current.map((r, i) => (i === idx ? { ...r, max: v } : i === idx + 1 ? { ...r, min: v } : r)) });
+            setTypedBoundaryText(prev => ({ ...prev, [key]: { value: v, text: clean } }));
+            setBoundaryEdit(null);
+        };
 
         const startSplitDrag = (idx: number, e: React.MouseEvent) => {
             e.preventDefault();
+            setBoundaryEdit(null); // a drag replaces whatever was being typed
             const track = (e.currentTarget.parentElement) as HTMLDivElement | null;
             if (!track) return;
             const rect = track.getBoundingClientRect();
@@ -2650,7 +2744,7 @@ export default function BuildModelWindow() {
                                 key={`seg-${i}`}
                                 className="pm-cluster-slider-segment"
                                 style={{ left: `${pctOf(segLo)}%`, width: `${pctOf(segHi) - pctOf(segLo)}%`, background: color }}
-                                title={`Cluster ${i + 1}: ${fmt(segLo)} – ${fmt(segHi)}`}
+                                title={`Cluster ${i + 1}: ${fmt(segLo, i - 1)} – ${fmt(segHi, i)}`}
                             >
                                 <span className="pm-cluster-slider-seg-label">#{i + 1}</span>
                             </div>
@@ -2669,22 +2763,54 @@ export default function BuildModelWindow() {
                                 aria-valuemin={lo}
                                 aria-valuemax={hi}
                                 aria-valuenow={splitVal}
-                                title={`${fmt(splitVal)}`}
+                                title={`${fmt(splitVal, i)}`}
                             />
                         );
                     })}
                 </div>
+                {/* Value pills (2026-10-09): every inner boundary is typeable — the upper bound of
+                    clusters 1..N-1 is an input (the next pill's lower bound mirrors it); the
+                    outer bounds are the criteria sensor's own min / max and stay read-only. */}
                 <div className="pm-cluster-slider-values">
                     {ranges.map((r, i) => {
                         const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
+                        const last = i === ranges.length - 1;
+                        const upper = r.max ?? hi;
+                        const editing = edit && edit.idx === i ? edit : null;
+                        const shown = typedOf(i, upper) ?? clusterBoundInputText(upper);
                         return (
-                            <span key={`pill-${i}`} className="pm-cluster-slider-pill">
+                            <span key={`pill-${i}`} className="pm-cluster-slider-pill" data-testid={`cluster-pill-${i}`}>
                                 <span className="pm-cluster-range-dot" style={{ background: color }} />
-                                #{i + 1}: {fmt(r.min)} – {fmt(r.max)}
+                                #{i + 1}: {fmt(r.min ?? lo, i - 1)} –{' '}
+                                {last ? fmt(upper) : (
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        className={`pm-cluster-bound-input${editing?.error ? ' pm-cluster-bound-input--bad' : ''}`}
+                                        data-testid={`cluster-bound-${i}`}
+                                        aria-label={`Boundary between cluster ${i + 1} and ${i + 2}`}
+                                        aria-invalid={editing?.error ? true : undefined}
+                                        aria-describedby={editing?.error ? errorId : undefined}
+                                        value={editing ? editing.text : shown}
+                                        onFocus={() => { if (!editing) setBoundaryEdit({ modelId: m.id, idx: i, text: shown, initial: shown, error: null }); }}
+                                        onChange={e => {
+                                            const text = e.target.value;
+                                            setBoundaryEdit(prev => ({ modelId: m.id, idx: i, initial: prev && prev.modelId === m.id && prev.idx === i ? prev.initial : shown, text, error: null }));
+                                        }}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') { e.preventDefault(); commitBoundary(i); }
+                                            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setBoundaryEdit(null); }
+                                        }}
+                                        onBlur={() => commitBoundary(i)}
+                                    />
+                                )}
                             </span>
                         );
                     })}
                 </div>
+                {edit?.error && (
+                    <div id={errorId} role="alert" className="f4-req-note" data-testid="cluster-bound-error">{edit.error}</div>
+                )}
             </div>
         );
     };
@@ -2819,7 +2945,11 @@ export default function BuildModelWindow() {
                             single
                             allowNone
                             value={d.criteria}
-                            onSelect={criteria => patchDraft(m, { criteria })}
+                            // Cleared (None or the trigger's ×, 2026-10-09): without a criteria
+                            // sensor there is only one cluster (every row) — Rust rejects 2+ — so
+                            // the count drops to 1 in the same draft edit and the model stays
+                            // trainable. Its ranges are dropped on Save (`draftFields`).
+                            onSelect={criteria => patchDraft(m, criteria ? { criteria } : { criteria: '', numClusters: 1 })}
                             noun="criteria sensor"
                             placeholder="None"
                         />
@@ -3500,20 +3630,6 @@ export default function BuildModelWindow() {
         );
     };
 
-    /** Step-bar click: jump to the page / section that step lives on. */
-    const goToStep = (key: StepKey) => {
-        if (key === 'running-condition') { setRcFilterOpen(true); return; }
-        if (!activeModel) return;
-        if (key === 'model-settings') {
-            setPage(activeModel, 'model');
-            setSettingsOpenOverride(prev => ({ ...prev, [activeModel.id]: true }));
-            return;
-        }
-        if (key === 'train') { setPage(activeModel, 'model'); trainSensorBtnRef.current?.focus(); return; }
-        // 'health-set-points' and 'complete' both live on the Health score page.
-        if (healthPageBlock(activeModel) === null) setPage(activeModel, 'health');
-    };
-
     /** The detail header's sensor-level Train (customer items 8 + 9): one primary
      *  "▶ Train sensor · n of m" that trains every model of the sensor that needs
      *  it (I → R → C, up-to-date ones skipped), a ▾ menu (Re-train all / Train
@@ -3772,32 +3888,6 @@ export default function BuildModelWindow() {
     };
 
 
-    // Header step bar: looks from the ONE status rule, jumps via `goToStep`.
-    const activeDetailPage = activeModel ? pageOf(activeModel) : 'model';
-    const stepLooks = workbenchStepLooks({
-        rcState: rcStepState,
-        hasModel: !!activeModel,
-        settingsReady: !!activeModel && buildBlockReason(activeModel) === null,
-        trained: !!activeModel?.lastTrainedAt,
-        stale: !!activeModel && isModelStale(activeModel),
-        complete: !!activeModel && isModelDone(activeModel),
-        // Rust's verdict on the set points: valid -> done, something rejected ->
-        // red, only empty fields -> still "now".
-        healthValid: activeVerdict === 'valid' ? true : activeVerdict === 'bad' ? false : null,
-    });
-    const stepCurrent: StepKey[] = !activeModel ? [] : activeDetailPage === 'health' ? ['health-set-points'] : ['model-settings', 'train'];
-    const stepHealthBlock = activeModel ? healthPageBlock(activeModel) : 'Select a model first';
-    const stepDisabled: Partial<Record<StepKey, boolean>> = {
-        'model-settings': !activeModel,
-        train: !activeModel,
-        'health-set-points': stepHealthBlock !== null,
-        complete: stepHealthBlock !== null,
-    };
-    const stepDisabledTitle: Partial<Record<StepKey, string>> = {
-        'health-set-points': stepHealthBlock ?? undefined,
-        complete: stepHealthBlock ?? undefined,
-    };
-
     // The settings modal's own view: its draft once edited, else the persisted
     // values. Only the modal reads these — everything above (Step-1 card, gate,
     // models) stays on the persisted state.
@@ -3822,19 +3912,9 @@ export default function BuildModelWindow() {
                 <h2 className="pointer-events-none" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
                     Build Model — Overview
                 </h2>
-                {/* Step bar (2026-10-04): Running condition -> Model settings -> Train ->
-                    Health set points -> Complete. Overview only. Every step is a button
-                    (the `data-tauri-drag-region` above applies to this bar's own element
-                    only, never to its children, so the buttons stay clickable). */}
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
-                    <WorkbenchStepBar
-                        looks={stepLooks}
-                        current={stepCurrent}
-                        disabled={stepDisabled}
-                        disabledTitle={stepDisabledTitle}
-                        onStep={goToStep}
-                    />
-                </div>
+                {/* The 5-step progress bar that sat here was removed on 2026-10-09 at the
+                    user's request: building a model goes back and forth all the time, so
+                    a linear progress did not fit. The header is title + Close only. */}
                 <button onClick={handleClose} className="scatter-regl-btn scatter-regl-btn-icon" title="Close">
                     <X size={14} />
                 </button>

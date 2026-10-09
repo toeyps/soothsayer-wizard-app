@@ -2008,6 +2008,25 @@ body {
     border-radius: 12px;
     padding: 2px 9px;
 }
+/* Typeable inner boundary inside a value pill (2026-10-09) — exact values without dragging. */
+.pm-cluster-bound-input {
+    width: 9ch;
+    min-width: 0;
+    height: 20px;
+    padding: 0 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    user-select: text;
+    -webkit-user-select: text;
+}
+.pm-cluster-bound-input:hover { border-color: var(--accent-color); }
+.pm-cluster-bound-input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 2px var(--accent-muted); }
+.pm-cluster-bound-input--bad,
+.pm-cluster-bound-input--bad:focus { border-color: var(--danger); }
 
 .pm-chart-placeholder {
     flex: 1;
@@ -5134,21 +5153,6 @@ body {
    ===================================================================== */
 .wb2-sp { flex: 1; }
 
-/* header step bar: every step is a button */
-.wb2-steps { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 12px; font-weight: 500; }
-.wb2-steps > li { display: flex; align-items: center; }
-.wb2-sline { width: 22px; height: 1px; background: var(--border-strong); flex-shrink: 0; }
-.wb2-stp { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; color: var(--text-secondary); cursor: pointer; padding: 4px 6px; border-radius: 8px; font: inherit; font-weight: 500; white-space: nowrap; }
-.wb2-stp:hover:not(:disabled) { background: var(--hover-bg); }
-.wb2-stp:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
-.wb2-stp:disabled { cursor: not-allowed; opacity: 0.5; }
-.wb2-stp--cur { background: var(--accent-muted); color: var(--text-primary); }
-.wb2-sn { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 600 10.5px var(--mono); background: var(--surface-hi); color: var(--text-faint); flex-shrink: 0; }
-.wb2-stp--done .wb2-sn { background: var(--ok); color: #04130a; }
-.wb2-stp--now { color: var(--text-primary); }
-.wb2-stp--now .wb2-sn { background: var(--accent-color); color: #06111f; }
-.wb2-stp--bad .wb2-sn { background: var(--danger); color: #ffffff; }
-
 /* page switch, right side of the detail header */
 .wb2-pages { display: flex; gap: 6px; }
 .wb2-pg { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--input-bg); border-radius: 8px; font: inherit; font-size: 12px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
@@ -5609,6 +5613,32 @@ body {
 .pk-trigger--sm { height: 24px; padding: 0 6px; border-radius: 6px; font-size: 11px; }
 .pk-trigger--sm .sl-desc { font-size: 11px; }
 .pk-trigger--sm .sl-tag { font-size: 10px; }
+/* Optional single picker (`allowNone`): a clear × over the trigger's right side, left of the
+   chevron. The wrapper keeps the trigger's own sizing (it fills the field like the bare trigger). */
+.pk-trigger-wrap { position: relative; display: flex; width: 100%; min-width: 0; }
+/* room for the × between the label and the chevron (the chevron stays where it always is) */
+.pk-trigger--clearable > :first-child { margin-right: 22px; }
+.pk-trigger--sm.pk-trigger--clearable > :first-child { margin-right: 18px; }
+.pk-clear {
+    position: absolute;
+    top: 50%;
+    right: 28px;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+}
+.pk-trigger-wrap--sm .pk-clear { right: 24px; width: 16px; height: 16px; }
+.pk-clear:hover,
+.pk-clear:focus-visible { color: var(--text-primary); background: var(--hover-bg); }
+.pk-clear:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 1px; }
 .pk-pop {
     display: flex;
     flex-direction: column;

@@ -214,6 +214,51 @@ describe('SensorPickerSingle', () => {
         expect(trigger().querySelector('.pk-ph--none')?.textContent).toBe('None');
     });
 
+    // 🆕 2026-10-09 (real-app test): an optional picker can be cleared from its trigger.
+    it('allowNone + a value: a × on the trigger clears it without opening the list, and focus stays on the trigger', () => {
+        const onSelect = vi.fn();
+        render(<Single allowNone placeholder="None" initial="TT101" onSelect={onSelect} />);
+        const x = screen.getByRole('button', { name: 'Clear Y sensor' });
+        expect(x.closest('.pk-trigger')).toBeNull(); // a sibling of the trigger, never a button inside a button
+        expect(x.closest('.pk-trigger-wrap')).toBe(trigger().parentElement);
+        expect(trigger().classList.contains('pk-trigger--clearable')).toBe(true);
+        fireEvent.click(x);
+        expect(onSelect).toHaveBeenCalledWith('');
+        expect(document.querySelector('.pk-pop')).toBeNull();
+        expect(trigger().querySelector('.pk-ph--none')?.textContent).toBe('None');
+        expect(screen.queryByRole('button', { name: 'Clear Y sensor' })).toBeNull(); // nothing left to clear
+        expect(trigger().classList.contains('pk-trigger--clearable')).toBe(false);
+        expect(document.activeElement).toBe(trigger());
+    });
+
+    it('the × also closes an open popover; it is not offered when empty, when disabled, or without allowNone', () => {
+        const onSelect = vi.fn();
+        render(<Single allowNone initial="TT101" onSelect={onSelect} />);
+        fireEvent.click(trigger());
+        expect(document.querySelector('.pk-pop')).not.toBeNull();
+        const x = screen.getByRole('button', { name: 'Clear Y sensor' });
+        fireEvent.mouseDown(x);
+        fireEvent.click(x);
+        expect(document.querySelector('.pk-pop')).toBeNull();
+        expect(onSelect).toHaveBeenCalledWith('');
+        cleanup();
+        render(<Single allowNone initial="TT101" disabled />);
+        expect(screen.queryByRole('button', { name: 'Clear Y sensor' })).toBeNull();
+        cleanup();
+        render(<Single initial="TT101" />);
+        expect(screen.queryByRole('button', { name: 'Clear Y sensor' })).toBeNull();
+        expect(trigger().parentElement?.classList.contains('pk-trigger-wrap')).toBe(false);
+    });
+
+    it('allowNone keeps the same trigger element when a value is picked (no re-mount, focus is not lost)', () => {
+        render(<Single allowNone placeholder="None" />);
+        const before = trigger();
+        fireEvent.click(before);
+        fireEvent.click(findPickerRow('PT201'));
+        expect(trigger()).toBe(before);
+        expect(screen.getByRole('button', { name: 'Clear Y sensor' })).toBeTruthy();
+    });
+
     it('without allowNone there is no "None" row', () => {
         render(<Single />);
         fireEvent.click(trigger());

@@ -61,7 +61,6 @@ const ALLOW_UNSTYLED = new Set<string>([
     'scatter-regl-axes',               // inline-styled SVG overlay (ScatterChart)
     'scatter-regl-canvas-wrap',        // inline-styled wrapper (ScatterChart)
     'wb2-card--normal',                // default ChartCard size = the base `.wb2-card` look
-    'wb2-stp--todo',                   // default step look = the base `.wb2-stp` look
 ]);
 
 /** Dynamic suffix families: prefix -> every value the code can produce. */
@@ -75,7 +74,6 @@ const DYNAMIC_ENUMS: Record<string, readonly string[]> = {
     'f4-crow--': ['bad', 'ovl'],                                                 // TimePeriodsEditor rowClass
     'f4-cmsg--': ['bad', 'ovl'],                                                 // TimePeriodsEditor message(…, 'cmsg')
     'wb2-card--': ['tall', 'xtall', 'hs'],                                       // ChartCardSize minus 'normal'
-    'wb2-stp--': ['done', 'now', 'bad', 'cur'],                                  // StepLook minus 'todo'
     'hs-chk--': ['ok', 'need', 'bad'],
     'hs-sc--': ['ok', 'warn', 'danger'],
     'gutter-': ['horizontal', 'vertical'],                                       // split.js

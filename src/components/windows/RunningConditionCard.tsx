@@ -16,8 +16,8 @@ import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
  * modal all stay in BuildModelWindow. Train/Test validation (2026-10-07): the
  * "Which time" row became "Train" (required) + "Test" (Known problem hatched,
  * event time shown), and the strip draws train on the top lane, test on the
- * bottom lane. (The header step bar that used to live
- * here is now `workbench/WorkbenchStepBar.tsx`, 2026-10-04.)
+ * bottom lane. (The header step bar that once lived here moved out on
+ * 2026-10-04 and was removed altogether on 2026-10-09 at the user's request.)
  */
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
