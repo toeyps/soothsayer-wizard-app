@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Trash2, Lock, Search, Undo2, Pencil } from "lucide-react";
+import { Trash2, Lock, Search, Undo2, Pencil, AlertTriangle } from "lucide-react";
 import { FailureModel, SensorMetadata, SpecialSensorRecipe } from "../../types";
 import { buildSpecialSensorUsage, describeEditLock, usageFor, SpecialSensorUsage } from "../../utils/specialSensorDeps";
 import { describeRecipe } from "../../utils/specialSensorDescribe";
@@ -42,6 +42,16 @@ interface Props {
     onSaveEdit: (next: { recipe: SpecialSensorRecipe; metadata: SensorMetadata; renamedFrom?: string }) => void;
     savingEdit: boolean;
     editError: string | null;
+    /** Special sensors whose recipe could not be rebuilt this session (no
+     *  column): tag key (trimmed, lower-case) -> why, or null for "no specific
+     *  reason". Their formula / sources stay editable even when a model uses
+     *  them (only the name is locked then) -- otherwise a locked sensor with a
+     *  refused recipe could never be fixed. Null / omitted = unknown (nothing
+     *  is unlocked). */
+    unrestored?: Map<string, string | null> | null;
+    /** The Rust dataset generation the window is bound to -- pins the editor's
+     *  live formula check (`validate_formula`'s `expectedGeneration`). */
+    generation?: number;
 }
 
 /** One line saying why the delete button is off — the short version that fits
@@ -62,7 +72,7 @@ function blockedSummary(usage: SpecialSensorUsage): string | null {
 export default function ManageSpecialSensors({
     recipes, sensorMetadata, models, usageKnown = true, runningConditionFilters,
     selectedSensors, formulaRefs, onDelete, pendingDelete, onUndo,
-    availableSensors, editingTag, onEdit, onSaveEdit, savingEdit, editError,
+    availableSensors, editingTag, onEdit, onSaveEdit, savingEdit, editError, unrestored, generation,
 }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedTag, setExpandedTag] = useState<string | null>(null);
@@ -139,6 +149,12 @@ export default function ManageSpecialSensors({
                     // frozen (a model uses it, or one built on it does). The
                     // description / unit / component stay editable.
                     const lockMessage = info.editLock.locked ? describeEditLock(info.editLock) : null;
+                    // Its recipe could not be rebuilt this session: it has no
+                    // data until fixed, and the editor lets the formula be
+                    // fixed even under a lock (the name stays locked).
+                    const unrestoredKey = recipe.tag.trim().toLowerCase();
+                    const notRestored = !!unrestored?.has(unrestoredKey);
+                    const notRestoredReason = unrestored?.get(unrestoredKey) ?? null;
                     // Deletion stays off until the reference lookup has
                     // actually answered — see `formulaRefs` above — and until
                     // the models / running condition are known fresh.
@@ -179,6 +195,19 @@ export default function ManageSpecialSensors({
                                 </div>
 
                                 <div className="flex items-center gap-1.5 shrink-0">
+                                    {notRestored && (
+                                        <span
+                                            data-testid={`not-restored-${recipe.tag}`}
+                                            title={notRestoredReason
+                                                ? `No data: ${notRestoredReason}. Edit it to fix the formula.`
+                                                : 'No data: it could not be rebuilt. Edit it to fix the formula.'}
+                                            className="flex items-center gap-1 px-1.5 py-0.5 rounded"
+                                            style={{ fontSize: '10px', color: 'var(--warn)', border: '1px solid var(--warn)' }}
+                                        >
+                                            <AlertTriangle size={9} />
+                                            No data — fix formula
+                                        </span>
+                                    )}
                                     {info.onChart && (
                                         <span className="px-1.5 py-0.5 rounded" style={{ fontSize: '10px', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
                                             on chart
@@ -269,7 +298,9 @@ export default function ManageSpecialSensors({
                                         )}
                                         {lockMessage && (
                                             <div data-testid={`edit-lock-${recipe.tag}`}>
-                                                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Name and formula are locked:</span>{' '}
+                                                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+                                                    {notRestored ? 'Name is locked:' : 'Name and formula are locked:'}
+                                                </span>{' '}
                                                 {lockMessage}
                                             </div>
                                         )}
@@ -291,6 +322,8 @@ export default function ManageSpecialSensors({
                                     saving={savingEdit}
                                     error={editError}
                                     lockMessage={lockMessage}
+                                    restore={notRestored ? { reason: notRestoredReason } : null}
+                                    generation={generation}
                                 />
                             )}
                         </div>

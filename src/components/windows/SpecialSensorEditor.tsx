@@ -9,6 +9,7 @@ import { useFormulaValidation, formulaIssue as issueFor } from "../../hooks/useF
 import { ButtonBuilder, BASE_OP_IDS, ComponentSelect } from "./SensorTooling";
 import { nameProblem } from "../../utils/specialSensorNaming";
 import { describeRecipe } from "../../utils/specialSensorDescribe";
+import { stableJson } from "../../utils/specialSensorEdit";
 
 /**
  * Edit one special sensor in place.
@@ -34,6 +35,24 @@ import { describeRecipe } from "../../utils/specialSensorDescribe";
  * and Save sends the STORED recipe back unchanged with only the description /
  * unit / component the user edited. The caller still re-checks the lock inside
  * its queue; this is the friendly half, not the enforcement.
+ *
+ * Not restored (2026-10-08): when `restore` is set the sensor's recipe could
+ * not be rebuilt this session (Rust refuses it now, or a source is gone) and
+ * it has no data. Its formula / sources are then editable EVEN UNDER a lock --
+ * otherwise a locked sensor with a refused recipe was a dead end -- and only
+ * the name stays locked (models point at it by name). An amber note says why.
+ * The unlock is LATCHED for the edit session (2026-10-08 review): if `restore`
+ * goes away while the form is open (the check briefly can't answer, or another
+ * mutation re-ran it) the typed formula stays editable and is what Save sends
+ * -- it used to flip to the locked view and Save silently sent the stored,
+ * broken recipe, dropping the fix. The caller decides again inside its queue.
+ * Likewise a lock that arrives AFTER the calculation was edited keeps the typed
+ * values (with a warning) instead of falling into the metadata-only submit.
+ *
+ * Calculation untouched (2026-10-08): Save sends the STORED recipe (under the
+ * new name on a rename) rather than one rebuilt from the form -- the engine's
+ * rebuild of an operation config is not guaranteed to be byte-identical, and
+ * the caller's "nothing but the description changed" shortcut compares recipes.
  *
  * An operation-kind recipe (`sum(...)`, `a + 10`, ...) is edited with the
  * SAME single-sensor-vs-combine button UI Create uses (`ButtonBuilder`),
@@ -69,6 +88,12 @@ interface Props {
     /** Set while the sensor is locked (see the edit-lock note above): the
      *  plain-language reason, shown in a banner. */
     lockMessage?: string | null;
+    /** Set when the sensor's recipe could not be rebuilt this session (it has
+     *  no data): `reason` is the backend's message, or null. Unlocks the
+     *  formula / sources even under `lockMessage` (the name stays locked). */
+    restore?: { reason: string | null } | null;
+    /** Dataset generation the window is bound to (pins the live formula check). */
+    generation?: number;
 }
 
 const fieldStyle: React.CSSProperties = {
@@ -107,9 +132,16 @@ function seedFromRecipe(recipe: SpecialSensorRecipe): CalculationEngineSeed | un
 }
 
 export default function SpecialSensorEditor({
-    recipe, sensorMetadata, availableSensors, onCancel, onSave, saving, error, lockMessage,
+    recipe, sensorMetadata, availableSensors, onCancel, onSave, saving, error, lockMessage, restore, generation,
 }: Props) {
-    const locked = !!lockMessage;
+    // The name is frozen by any lock; the values only by a lock on a sensor
+    // that HAS data (see `restore`).
+    const nameLocked = !!lockMessage;
+    // Latched: once this edit session knew the sensor could not be restored,
+    // a `restore` that disappears later does not re-lock the typed values.
+    const [latchedRestore, setLatchedRestore] = useState(restore ?? null);
+    useEffect(() => { if (restore) setLatchedRestore(restore); }, [restore]);
+    const activeRestore = restore ?? latchedRestore;
     const meta = sensorMetadata?.find(m => m.tag.toLowerCase() === recipe.tag.toLowerCase());
     const [description, setDescription] = useState(meta?.description ?? '');
     const [unit, setUnit] = useState(meta?.unit ?? '');
@@ -121,8 +153,8 @@ export default function SpecialSensorEditor({
     // ---- Name (rename support) ---------------------------------------------
     const [tag, setTag] = useState(recipe.tag);
     const trimmedTag = tag.trim();
-    const tagChanged = !locked && trimmedTag !== recipe.tag;
-    const tagError = locked ? null : !trimmedTag
+    const tagChanged = !nameLocked && trimmedTag !== recipe.tag;
+    const tagError = nameLocked ? null : !trimmedTag
         ? 'Name is required'
         : tagChanged && availableSensors.some(
             s => s.toLowerCase() !== recipe.tag.toLowerCase() && s.toLowerCase() === trimmedTag.toLowerCase(),
@@ -140,12 +172,11 @@ export default function SpecialSensorEditor({
     // computed successfully when it was saved. A text whose own check failed
     // blocks Save; a text not checked yet does not (the recompute refuses a
     // bad formula anyway, with the same message, through `error`).
-    const formulaCheck = useFormulaValidation();
+    const formulaCheck = useFormulaValidation({ generation });
     const setFormula = (text: string) => {
         setFormulaText(text);
         formulaCheck.schedule(text.trim(), 400);
     };
-    const formulaError = isFormula && !locked ? issueFor(formula.trim(), formulaCheck.validated) : null;
 
     // ---- Operation-kind editing: the same engine + button UI as Create -----
     const [sources, setSources] = useState<string[]>(recipe.kind === 'operation' ? recipe.sourceSensors : []);
@@ -198,12 +229,30 @@ export default function SpecialSensorEditor({
     // unrelated re-render would look like the calculation just changed.
     const buildResult = useMemo(() => engine.build(), [engine.build]);
 
+    // ---- Was the calculation itself edited? ---------------------------------
+    // Compared with what the form showed when it opened (for an operation: the
+    // engine's own first build, so an engine that does not rebuild the stored
+    // config byte-for-byte does not count as an edit).
+    const initialBuild = useRef<string | null>(null);
+    if (initialBuild.current === null) initialBuild.current = stableJson(buildResult);
+    const calcEdited = isFormula
+        ? formula.trim() !== (recipe.kind === 'formula' ? recipe.formula.trim() : '')
+        : sources.join('\u0000') !== (recipe.kind === 'operation' ? recipe.sourceSensors : []).join('\u0000')
+            || stableJson(buildResult) !== initialBuild.current;
+    // Values frozen: a lock on a sensor that HAS data -- unless the user had
+    // already changed the calculation before the lock showed up (then the typed
+    // values stay, under a warning; the caller refuses the save with its reason).
+    const locked = nameLocked && !activeRestore && !calcEdited;
+    const lockedAfterEdit = nameLocked && !activeRestore && calcEdited;
+
     // Name + Description + Unit + Component are all required before saving
     // is allowed — mirrors the same rule Create enforces (see
     // AddSensorWindow's `missingCreateFields`), so a sensor can't leave this
     // form half-described either.
+    const formulaError = isFormula && !locked ? issueFor(formula.trim(), formulaCheck.validated) : null;
+
     const missingFields = [
-        !locked && !trimmedTag && 'a name',
+        !nameLocked && !trimmedTag && 'a name',
         !description.trim() && 'a description',
         !unit.trim() && 'a unit',
         !component.trim() && 'a component',
@@ -229,32 +278,40 @@ export default function SpecialSensorEditor({
             });
             return;
         }
+        // A name-locked sensor (one being restored) keeps its stored tag exactly.
+        const savedTag = nameLocked ? recipe.tag : trimmedTag;
         const nextMetadata: SensorMetadata = {
-            ...(meta ?? { tag: trimmedTag, description: '', unit: '', component: '' }),
-            tag: trimmedTag,
+            ...(meta ?? { tag: savedTag, description: '', unit: '', component: '' }),
+            tag: savedTag,
             description: description.trim(),
             unit: unit.trim(),
             component: component.trim() || 'Uncategorized',
         };
 
         let nextRecipe: SpecialSensorRecipe;
-        if (isFormula) {
-            nextRecipe = { kind: 'formula', tag: trimmedTag, formula: formula.trim() };
+        if (!calcEdited) {
+            // The calculation was not touched: send what is stored (renamed
+            // when the name changed), never a re-derivation of it.
+            nextRecipe = recipe.kind === 'operation'
+                ? { ...recipe, tag: savedTag, operationConfig: { ...recipe.operationConfig, customName: savedTag } }
+                : { ...recipe, tag: savedTag };
+        } else if (isFormula) {
+            nextRecipe = { kind: 'formula', tag: savedTag, formula: formula.trim() };
         } else if (buildResult.kind === 'legacy') {
             nextRecipe = {
                 kind: 'operation',
-                tag: trimmedTag,
+                tag: savedTag,
                 sourceSensors: sources,
                 // The name is forced back so a recomputation can never rename
                 // the column out from under everything pointing at it.
-                operationConfig: { ...buildResult.config, customName: trimmedTag },
+                operationConfig: { ...buildResult.config, customName: savedTag },
             };
         } else if (buildResult.kind === 'formula') {
             // Picking a formula-backed shortcut (or leaving the operator
             // chain active) resolves to a formula, not an operation config --
             // the saved recipe's kind follows that, exactly like creating a
             // new sensor this way would.
-            nextRecipe = { kind: 'formula', tag: trimmedTag, formula: buildResult.expression };
+            nextRecipe = { kind: 'formula', tag: savedTag, formula: buildResult.expression };
         } else {
             return; // canSave already guards this; nothing to submit.
         }
@@ -271,6 +328,38 @@ export default function SpecialSensorEditor({
                 className="rounded px-3 py-3 flex flex-col gap-3"
                 style={{ backgroundColor: 'var(--surface-hi)', border: '1px solid var(--border)' }}
             >
+                {activeRestore && (
+                    <div
+                        role="note"
+                        data-testid="restore-note"
+                        className="rounded px-2.5 py-2"
+                        style={{ fontSize: '11.5px', color: 'var(--text-primary)', border: '1px solid var(--warn)', backgroundColor: 'var(--card-bg)' }}
+                    >
+                        <span style={{ fontWeight: 600, color: 'var(--warn)' }}>This sensor could not be restored:</span>{' '}
+                        {(activeRestore.reason ?? 'its calculation could not be run on this dataset').replace(/[.\s]+$/, '')}.{' '}
+                        {isFormula ? 'Fix the formula to restore it.' : 'Fix its calculation or sources to restore it.'}
+                        {nameLocked && ' Models that use it are set back to Incomplete and must be trained again.'}
+                        {nameLocked && (
+                            <div style={{ marginTop: 3, color: 'var(--text-secondary)' }}>
+                                Its name stays locked while it is in use.
+                            </div>
+                        )}
+                    </div>
+                )}
+                {lockedAfterEdit && (
+                    <div
+                        role="note"
+                        data-testid="edit-lock-late"
+                        className="rounded px-2.5 py-2"
+                        style={{ fontSize: '11.5px', color: 'var(--text-primary)', border: '1px solid var(--warn)', backgroundColor: 'var(--card-bg)' }}
+                    >
+                        <span style={{ fontWeight: 600, color: 'var(--warn)' }}>This sensor is now locked.</span>{' '}
+                        {lockMessage}
+                        <div style={{ marginTop: 3, color: 'var(--text-secondary)' }}>
+                            Your change to its calculation is kept here but cannot be saved. Cancel to discard it.
+                        </div>
+                    </div>
+                )}
                 {locked && (
                     <div
                         role="note"
@@ -286,16 +375,16 @@ export default function SpecialSensorEditor({
                     </div>
                 )}
                 <div>
-                    <span style={labelStyle}>Name {!locked && <span style={{ color: 'var(--danger)' }}>*</span>}</span>
+                    <span style={labelStyle}>Name {!nameLocked && <span style={{ color: 'var(--danger)' }}>*</span>}</span>
                     <input
                         aria-label="Name"
-                        value={locked ? recipe.tag : tag}
+                        value={nameLocked ? recipe.tag : tag}
                         onChange={e => setTag(e.target.value)}
-                        readOnly={locked}
-                        aria-readonly={locked || undefined}
-                        style={{ ...fieldStyle, ...(tagError ? { border: '1px solid var(--danger)' } : null), ...(locked ? { opacity: 0.7, cursor: 'not-allowed' } : null) }}
+                        readOnly={nameLocked}
+                        aria-readonly={nameLocked || undefined}
+                        style={{ ...fieldStyle, ...(tagError ? { border: '1px solid var(--danger)' } : null), ...(nameLocked ? { opacity: 0.7, cursor: 'not-allowed' } : null) }}
                     />
-                    {locked ? null : tagError ? (
+                    {nameLocked ? null : tagError ? (
                         <p role="alert" style={{ fontSize: '11px', color: 'var(--danger)', marginTop: 3 }}>{tagError}</p>
                     ) : (
                         <p style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: 3 }}>

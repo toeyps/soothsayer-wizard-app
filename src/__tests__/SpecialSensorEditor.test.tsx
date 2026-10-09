@@ -451,6 +451,128 @@ describe('SpecialSensorEditor', () => {
         });
     });
 
+    // 2026-10-08 (review S1): a sensor whose recipe Rust now refuses could not
+    // be rebuilt on reopen. Under a lock that was a dead end -- formula frozen,
+    // Save re-sent the refused recipe. Now the values unlock; the name does not.
+    describe('not restored (restore set)', () => {
+        const lockMessage = 'Used by 1 model: Pump model (Individual). Remove it from those models first, then you can edit it.';
+        const REASON = 'Formula error: round($TAG1, 2) does not round to 2 decimal places. Write round($TAG1 * 100) / 100 instead.';
+        const broken: SpecialSensorRecipe = { kind: 'formula', tag: 'special A', formula: 'round($TAG1, 2)' };
+
+        it('LOCKED + not restored: the amber note quotes the reason, the formula is editable, the Name stays read-only, no lock banner', () => {
+            renderEditor({ recipe: broken, lockMessage, restore: { reason: REASON } });
+            const note = screen.getByTestId('restore-note');
+            expect(note.textContent).toContain(
+                `This sensor could not be restored: ${REASON.replace(/\.$/, '')}. Fix the formula to restore it. Models that use it are set back to Incomplete and must be trained again.`,
+            );
+            expect(note.textContent).toContain('Its name stays locked while it is in use.');
+            expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+            expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+            expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        });
+
+        it('a fixed formula is saved under the SAME name, with no renamedFrom', () => {
+            const { props } = renderEditor({ recipe: broken, lockMessage, restore: { reason: REASON } });
+            fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'renamed' } }); // read-only: ignored
+            fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1 * 100) / 100' } });
+            fireEvent.click(save());
+            const arg = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0];
+            expect(arg.recipe).toEqual({ kind: 'formula', tag: 'special A', formula: 'round($TAG1 * 100) / 100' });
+            expect(arg.renamedFrom).toBeUndefined();
+            expect(arg.metadata.tag).toBe('special A');
+        });
+
+        it('a description-only save sends the stored formula text unchanged (the caller then skips the recompute)', () => {
+            const { props } = renderEditor({ recipe: broken, lockMessage, restore: { reason: REASON } });
+            fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Rounded' } });
+            fireEvent.click(save());
+            const arg = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0];
+            expect(arg.recipe).toEqual(broken);
+            expect(arg.metadata.description).toBe('Rounded');
+        });
+
+        it('NOT locked + not restored: the note has no models sentence and the Name stays editable', () => {
+            renderEditor({ recipe: broken, restore: { reason: null } });
+            const note = screen.getByTestId('restore-note');
+            expect(note.textContent).toContain('This sensor could not be restored: its calculation could not be run on this dataset. Fix the formula to restore it.');
+            expect(note.textContent).not.toMatch(/trained again/);
+            expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(false);
+        });
+
+        it('an operation sensor that was not restored gets its source picker back and a matching note', () => {
+            renderEditor({ recipe: operationRecipe, sensorMetadata: [], lockMessage, restore: { reason: 'Sensor not found: TAG2' } });
+            expect(screen.getByTestId('restore-note').textContent).toContain('Sensor not found: TAG2. Fix its calculation or sources to restore it.');
+            expect(screen.getByLabelText('Add a source sensor')).toBeTruthy();
+            expect(screen.getByLabelText('Remove TAG2')).toBeTruthy();
+        });
+
+        // MUST-FIX 1c (2026-10-08 review): `restore` can disappear while the
+        // form is open (the session check briefly can't answer, or re-ran).
+        // It used to flip the editor to the locked view, and Save then sent
+        // the STORED broken recipe -- silently dropping the typed fix.
+        it('restore going away mid-edit keeps the typed formula editable, and Save sends the TYPED formula (never the stored one)', () => {
+            const { props, rerender } = renderEditor({ recipe: broken, lockMessage, restore: { reason: REASON } });
+            fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1 * 100) / 100' } });
+            rerender(<SpecialSensorEditor {...props} restore={null} />);
+            const formula = screen.getByLabelText('Formula') as HTMLTextAreaElement;
+            expect(formula.readOnly).toBe(false);
+            expect(formula.value).toBe('round($TAG1 * 100) / 100');
+            expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+            expect(screen.getByTestId('restore-note')).toBeTruthy(); // latched for the session
+            fireEvent.click(save());
+            expect((props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe)
+                .toEqual({ kind: 'formula', tag: 'special A', formula: 'round($TAG1 * 100) / 100' });
+        });
+
+        it('restore going away before anything was typed also stays unlocked for the session (the caller re-checks)', () => {
+            const { props, rerender } = renderEditor({ recipe: broken, lockMessage, restore: { reason: REASON } });
+            rerender(<SpecialSensorEditor {...props} restore={null} />);
+            expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        });
+
+        it('a lock that arrives AFTER the calculation was edited keeps the typed values under a warning and sends them (no silent metadata-only save)', () => {
+            const { props, rerender } = renderEditor({ lockMessage: null });
+            fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 5' } });
+            rerender(<SpecialSensorEditor {...props} lockMessage={lockMessage} />);
+            expect(screen.getByTestId('edit-lock-late').textContent).toContain('This sensor is now locked.');
+            expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+            const formula = screen.getByLabelText('Formula') as HTMLTextAreaElement;
+            expect(formula.value).toBe('$TAG1 * 5');
+            fireEvent.click(save());
+            expect((props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0].recipe)
+                .toEqual({ kind: 'formula', tag: 'special A', formula: '$TAG1 * 5' });
+        });
+
+        // SHOULD-FIX 3: the caller's "nothing but the description changed"
+        // shortcut compares recipes; an engine that rebuilds an operation
+        // config differently from what is stored made a unit-only save of a
+        // not-restored operation sensor recompute (and fail) anyway.
+        it('an untouched OPERATION calculation sends the STORED recipe object, even when the engine would rebuild it differently', () => {
+            const legacy: SpecialSensorRecipe = {
+                kind: 'operation',
+                tag: 'Shifted',
+                sourceSensors: ['GONE'],
+                // `multiOp` is leftover junk next to the single op: the engine
+                // never produces it, so a rebuild would not be equivalent.
+                operationConfig: { mode: 'single', singleOp: { type: 'add', value: 10 }, multiOp: { type: 'sum' }, customName: 'Shifted' },
+            };
+            const { props } = renderEditor({ recipe: legacy, sensorMetadata: [], lockMessage, restore: { reason: 'Sensor not found: GONE' } });
+            fillRequiredFields();
+            fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+            fireEvent.click(save());
+            const arg = (props.onSave as ReturnType<typeof vi.fn>).mock.calls[0][0];
+            expect(arg.recipe).toEqual(legacy);
+            expect(arg.metadata.unit).toBe('kPa');
+        });
+
+        it('LOCKED + healthy (no restore) is unchanged: banner, read-only formula, no note', () => {
+            renderEditor({ lockMessage, restore: null });
+            expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+            expect(screen.queryByTestId('restore-note')).toBeNull();
+            expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
+        });
+    });
+
     // 2026-10-08: the editor never validated; a bad formula could be saved and
     // the failure only surfaced (if at all) after the recompute.
     describe('formula validation (validate_formula)', () => {
@@ -477,6 +599,35 @@ describe('SpecialSensorEditor', () => {
                 await act(async () => { await vi.advanceTimersByTimeAsync(400); });
                 expect(screen.queryByTestId('formula-error')).toBeNull();
                 expect(save().disabled).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        // 2026-10-08: the live check is pinned to the window's dataset, and a
+        // STALE_SESSION answer is "no information" -- never a red formula error.
+        it('sends expectedGeneration when the window has one; a STALE_SESSION reply shows no formula error and does not block Save', async () => {
+            vi.useFakeTimers();
+            try {
+                mockInvoke.mockImplementation(async () => { throw 'STALE_SESSION: the dataset changed since this window was opened'; });
+                renderEditor({ generation: 7 });
+                fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+                await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+                expect(mockInvoke).toHaveBeenCalledWith('validate_formula', { formula: '$TAG1 * 3', expectedGeneration: 7 });
+                expect(screen.queryByTestId('formula-error')).toBeNull();
+                expect(save().disabled).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('without a generation the check is sent exactly as before (no expectedGeneration key)', async () => {
+            vi.useFakeTimers();
+            try {
+                renderEditor();
+                fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+                await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+                expect(mockInvoke).toHaveBeenCalledWith('validate_formula', { formula: '$TAG1 * 3' });
             } finally {
                 vi.useRealTimers();
             }

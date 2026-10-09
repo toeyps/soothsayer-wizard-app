@@ -350,6 +350,47 @@ export function describeEditLock(lock: EditLock): string {
     return sentences.join(' ');
 }
 
+/**
+ * Special sensors that have NO column in the Rust session right now, split the
+ * same way the reopen replay (`replaySpecialSensorRecipes`) splits them:
+ *
+ *   failed  -- its own recipe could not be computed (a source column is gone,
+ *              or -- since 2026-10-08 -- a formula Rust now refuses, such as
+ *              `round($A, 2)`). Only fixing THIS recipe brings it back.
+ *   skipped -- built on a special sensor that has no column itself. Its own
+ *              recipe may be fine; it comes back when the one it reads is
+ *              fixed (an edit recomputes everything downstream).
+ *
+ * Decided from what the session actually holds (`get_all_sensors`), not from a
+ * list handed over at open time: it stays right after a fix in this window,
+ * across a window reopen, and never needs the replay result to travel between
+ * windows. `formulaRefs` is Rust's `extract_formula_refs`, keyed like
+ * `buildSpecialSensorUsage`'s. Tags are compared trimmed and case-insensitively.
+ */
+export interface UnrestoredSpecialSensors {
+    failed: string[];
+    skipped: string[];
+}
+
+export function findUnrestoredSpecialSensors(args: {
+    recipes: SpecialSensorRecipe[];
+    sessionColumns: string[];
+    formulaRefs: Map<string, string[]>;
+}): UnrestoredSpecialSensors {
+    const { recipes, sessionColumns, formulaRefs } = args;
+    const present = new Set(sessionColumns.map(key));
+    const missing = new Set(recipes.filter(r => !present.has(key(r.tag))).map(r => key(r.tag)));
+    const failed: string[] = [];
+    const skipped: string[] = [];
+    for (const recipe of recipes) {
+        if (!missing.has(key(recipe.tag))) continue;
+        const blocked = recipeInputs(recipe, formulaRefs)
+            .some(input => key(input) !== key(recipe.tag) && missing.has(key(input)));
+        (blocked ? skipped : failed).push(recipe.tag);
+    }
+    return { failed, skipped };
+}
+
 /** Look up one sensor's usage, tolerating case differences in the tag. */
 export function usageFor(
     usage: Map<string, SpecialSensorUsage>,

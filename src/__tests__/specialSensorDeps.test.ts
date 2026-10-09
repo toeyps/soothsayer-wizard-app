@@ -8,6 +8,7 @@ import {
     orderRecipesByDependency,
     reorderRecipesByTags,
     describeEditLock,
+    findUnrestoredSpecialSensors,
 } from '../utils/specialSensorDeps';
 
 function makeModel(overrides: Partial<FailureModel> = {}): FailureModel {
@@ -554,5 +555,41 @@ describe('describeEditLock -- wording', () => {
         const msg = describeEditLock(usage.get('generator active power')!.editLock);
         expect(msg).toMatch(/Used by 1 model: Untitled model \(Individual\) and the running condition\./);
         expect(msg).toMatch(/from those models and the running condition first/);
+    });
+});
+
+// 2026-10-08 (review S1): which special sensors have no column in the session,
+// split like the reopen replay splits them.
+describe('findUnrestoredSpecialSensors', () => {
+    const f = (tag: string, formula: string): SpecialSensorRecipe => ({ kind: 'formula', tag, formula });
+    const recipes: SpecialSensorRecipe[] = [
+        f('Ok', '$RAW * 2'),
+        f('Bad', 'round($RAW, 2)'),
+        f('OnBad', '${Bad} + 1'),
+        f('OnOnBad', '${OnBad} * 3'),
+        { kind: 'operation', tag: 'Gone src', sourceSensors: ['RAW', 'REMOVED'], operationConfig: { mode: 'multi', multiOp: { type: 'sum' } } },
+        { kind: 'operation', tag: 'On gone', sourceSensors: ['Gone src'], operationConfig: { mode: 'single', singleOp: { type: 'add', value: 1 } } },
+    ];
+    const refs = new Map([
+        ['ok', ['RAW']], ['bad', ['RAW']], ['onbad', ['Bad']], ['ononbad', ['OnBad']],
+    ]);
+
+    it('failed = no column and nothing it reads is missing; skipped = built on a missing special sensor (transitively too)', () => {
+        const out = findUnrestoredSpecialSensors({ recipes, sessionColumns: ['timestamp', 'RAW', 'Ok'], formulaRefs: refs });
+        expect(out.failed).toEqual(['Bad', 'Gone src']);
+        expect(out.skipped).toEqual(['OnBad', 'OnOnBad', 'On gone']);
+    });
+
+    it('everything present: nothing reported; tags are matched trimmed and case-insensitively', () => {
+        const out = findUnrestoredSpecialSensors({
+            recipes, formulaRefs: refs,
+            sessionColumns: ['timestamp', 'RAW', ' ok ', 'BAD', 'onbad', 'OnOnBad', 'gone SRC', 'On gone'],
+        });
+        expect(out).toEqual({ failed: [], skipped: [] });
+    });
+
+    it('a missing raw source makes the recipe FAILED (fixing it is the only way back), not skipped', () => {
+        const out = findUnrestoredSpecialSensors({ recipes: [recipes[4]], sessionColumns: ['timestamp', 'RAW'], formulaRefs: new Map() });
+        expect(out).toEqual({ failed: ['Gone src'], skipped: [] });
     });
 });

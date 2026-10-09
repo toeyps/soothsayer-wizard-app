@@ -38,9 +38,12 @@ export interface UseFormulaEditorReturn {
  */
 export function useFormulaEditor(
   availableSensors: string[],
+  options: { generation?: number } = {},
 ): UseFormulaEditorReturn {
   const [formula, setFormulaRaw] = useState('');
-  const { validated, isValidating, schedule } = useFormulaValidation();
+  // Pinned to the window's dataset generation, like the Manage editor's check:
+  // a window left over from another project never checks against its columns.
+  const { validated, isValidating, schedule } = useFormulaValidation({ generation: options.generation });
   const validationResult = validated?.result ?? null;
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [autocompleteFilter, setAutocompleteFilter] = useState('');

@@ -445,6 +445,31 @@ export interface FailureGroupStateChangedPayload extends FailureGroupStateSlice 
     origin?: string;
 }
 
+/** Payload of the cross-window 'update-special-sensor' event (Add Sensor
+ *  window -> Dashboard): an edit of a special sensor that kept its tag. */
+export interface UpdateSpecialSensorPayload {
+    recipe: SpecialSensorRecipe;
+    metadata: SensorMetadata;
+    /** Tags whose columns were recomputed (empty for a metadata-only save). */
+    recomputed: string[];
+    /** Present only when the edit made the stored order an invalid build order. */
+    recipeOrder?: string[];
+    workspaceId?: string;
+    generation?: number;
+    /**
+     * 2026-10-08: the edit FIXED a sensor that could not be restored this
+     * session (it had no column). Its values -- and those of everything built
+     * on it -- are new, but a model's train fingerprint does not include
+     * special-sensor recipes, so the Dashboard sets every model that trains on
+     * one of `affectedTags` back to Incomplete and out of date in one write
+     * (`demoteModelsTrainedOnSensors`). Never set for a description-only save.
+     */
+    repaired?: boolean;
+    /** With `repaired`: the fixed sensor and every special sensor built on it
+     *  (recomputed or still broken). */
+    affectedTags?: string[];
+}
+
 type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';
 
 /**

@@ -11,7 +11,7 @@ import {
     CsvMetadata, SensorMetadata, CsvRecord, SensorOperationConfig, SpecialSensorRecipe,
     WorkspaceState, DashboardLayoutSizes, DashboardSlot, DashboardPanel, DashboardSlotMap,
     FailureGroup, FailureModel, ModelKind, ModelCategory, AlarmLevel, ScatterAxisPins, TimeHighlight, ValueHighlight, LineTaggedPoint,
-    FailureGroupStateSlice, FailureGroupStateChangedPayload, WorkspaceSensorFilter,
+    FailureGroupStateSlice, FailureGroupStateChangedPayload, WorkspaceSensorFilter, UpdateSpecialSensorPayload,
 } from '../../types';
 import type { DashboardDataFilter } from '../../types/commands';
 // `DashboardSlotMap` is no longer persisted in WorkspaceState (drag-and-drop
@@ -37,6 +37,7 @@ import { useSensorMetaMap, normalizeSensorTag } from '../../hooks/useSensorMetaM
 import { renameTagInArray, renameTagInRecord, renameTagInModels, renameTagInRunningConditionFilters, removeTagsFromFilters } from '../../utils/specialSensorRename';
 import { mergeIntoPlot, type AddSensorSelectionPayload } from '../../utils/specialSensorPlot';
 import { reorderRecipesByTags } from '../../utils/specialSensorDeps';
+import { demoteModelsTrainedOnSensors } from '../../utils/specialSensorRepair';
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { message } from '@tauri-apps/plugin-dialog';
@@ -1533,9 +1534,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             // sensor` instead (below), which is where every tag-keyed piece
             // of this file's own state gets re-keyed. This listener only
             // ever sees an edit that keeps the same tag.
-            unlistenUpdate = subscribe<{ recipe: SpecialSensorRecipe; metadata: SensorMetadata; recipeOrder?: string[]; workspaceId?: string }>('update-special-sensor', (event) => {
+            unlistenUpdate = subscribe<Partial<UpdateSpecialSensorPayload>>('update-special-sensor', (event) => {
                 if (!forThisWorkspace(event.payload)) return;
-                const { recipe, metadata, recipeOrder } = event.payload ?? {};
+                const { recipe, metadata, recipeOrder, repaired, affectedTags } = event.payload ?? {};
                 if (!recipe) return;
                 debugLog('Dashboard received update-special-sensor', event.payload);
                 const isTarget = (tag: string) => tag.trim().toLowerCase() === recipe.tag.trim().toLowerCase();
@@ -1550,6 +1551,25 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             ? prev.map(m => (isTarget(m.tag) ? metadata : m))
                             : [...prev, metadata]
                     ));
+                }
+                // 2026-10-08: the edit FIXED a sensor that could not be
+                // restored. Its values (and those of everything built on it)
+                // are new, and no train fingerprint covers special-sensor
+                // recipes -- so every model that trains on one of them goes
+                // back to Incomplete and out of date, in ONE write computed
+                // against what is on disk (`demoteModelsTrainedOnSensors`).
+                // Broadcast by `persistFailureGroupStateFrom` like every
+                // other Dashboard FG write. A description-only save never
+                // carries `repaired`.
+                if (repaired === true && Array.isArray(affectedTags) && affectedTags.length > 0) {
+                    persistFailureGroupStateFrom(disk => ({
+                        groups: disk.groups,
+                        models: demoteModelsTrainedOnSensors(
+                            disk.models,
+                            { runningConditionFilters: disk.runningConditionFilters },
+                            affectedTags,
+                        ).models,
+                    }));
                 }
                 setDataRevision(n => n + 1);
             });

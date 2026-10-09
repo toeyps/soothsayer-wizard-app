@@ -84,12 +84,23 @@ async function restoreSpecialSensors(recipes: SpecialSensorRecipe[], generation:
       skipped.length > 0
         ? `Skipped because they are built on a sensor that couldn't be restored: ${skipped.join(', ')}.`
         : null,
+      // What to DO (2026-10-08): the fix is editing the broken recipe, and it
+      // works even when a model uses the sensor (only its name stays locked).
+      failed.length > 0
+        ? `To fix: on the Dashboard open Add Special Sensor > Manage and edit ${failed.length === 1 ? 'it' : 'each one'} (pencil) to correct the formula.`
+          // Only true for a skipped sensor whose OWN recipe is still accepted
+          // (2026-10-08 review): one that is refused too is then listed in
+          // Manage as needing its own fix.
+          + (skipped.length > 0
+            ? ' Fixing it also rebuilds the skipped ones whose own formulas are still accepted; any that are not are then marked in Manage to fix the same way.'
+            : '')
+        : null,
     ].filter(Boolean);
     reportError(
       'special-sensor-restore',
       parts.join(' '),
       'A source sensor may have been renamed or removed since they were created, or the formula is no longer accepted. ' +
-        'They have no data until fixed in Special Sensors > Manage, and are left off the chart.'
+        'They have no data and are left off the chart until fixed. Models that use a fixed sensor are set back to Incomplete and must be trained again.'
     );
   }
   return [...failed, ...skipped];

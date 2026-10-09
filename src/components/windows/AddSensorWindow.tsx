@@ -6,16 +6,20 @@ import { emit } from "@tauri-apps/api/event";
 import { subscribe } from "../../utils/tauriEvents";
 import {
     FailureModel, FailureGroupStateChangedPayload, SensorMetadata, SensorOperationConfig,
-    SpecialSensorRecipe, WorkspaceSensorFilter,
+    SpecialSensorRecipe, UpdateSpecialSensorPayload, WorkspaceSensorFilter,
 } from "../../types";
 import SensorExplorer from "./SensorExplorer";
 import SensorTooling from "./SensorTooling";
 import ManageSpecialSensors from "./ManageSpecialSensors";
 import { debugLog } from "../../utils/debugLog";
 import {
-    buildSpecialSensorUsage, reorderRecipesByTags, usageFor, SpecialSensorUsage,
+    buildSpecialSensorUsage, findUnrestoredSpecialSensors, reorderRecipesByTags, usageFor, SpecialSensorUsage,
+    UnrestoredSpecialSensors,
 } from "../../utils/specialSensorDeps";
-import { EditFailureState, runSpecialSensorEdit, SpecialSensorEditError } from "../../utils/specialSensorEdit";
+import {
+    EditFailureState, EditOutcome, recipesEquivalent, runSpecialSensorEdit, SpecialSensorEditError,
+} from "../../utils/specialSensorEdit";
+import { demoteModelsTrainedOnSensors } from "../../utils/specialSensorRepair";
 import {
     renameTagInArray, renameTagInModels, renameTagInRunningConditionFilters,
 } from "../../utils/specialSensorRename";
@@ -112,6 +116,68 @@ function describeUsage(usages: SpecialSensorUsage[]): string {
         if (u.runningCondition) parts.push('the workspace Running condition');
     }
     return parts.join('; ');
+}
+
+const tagKey = (tag: string) => tag.trim().toLowerCase();
+
+/**
+ * Which special sensors have no column in the Rust session right now -- asked
+ * of the session itself (`get_all_sensors`), see `findUnrestoredSpecialSensors`.
+ * Null when the session can't say: nothing is loaded (no columns at all), or
+ * the reply is not a list. "Unknown" never unlocks anything.
+ */
+async function readUnrestored(
+    inv: Invoker,
+    recipes: SpecialSensorRecipe[],
+    formulaRefs: Map<string, string[]> | null,
+): Promise<{ result: UnrestoredSpecialSensors; columns: string[]; refs: Map<string, string[]> } | null> {
+    const columns = await inv('get_all_sensors', {});
+    if (!Array.isArray(columns) || columns.length === 0) return null;
+    let refs = formulaRefs;
+    if (!refs) {
+        const formulas = recipes.filter(r => r.kind === 'formula') as Array<Extract<SpecialSensorRecipe, { kind: 'formula' }>>;
+        refs = new Map();
+        if (formulas.length > 0) {
+            const out = await inv('extract_formula_refs', { formulas: formulas.map(r => r.formula) });
+            if (!Array.isArray(out)) return null;
+            formulas.forEach((r, i) => refs!.set(tagKey(r.tag), Array.isArray(out[i]) ? (out[i] as string[]) : []));
+        }
+    }
+    const cols = columns as string[];
+    return { result: findUnrestoredSpecialSensors({ recipes, sessionColumns: cols, formulaRefs: refs }), columns: cols, refs };
+}
+
+/** Why a sensor whose replay failed can't be computed, in the backend's words
+ *  where it has some: `validate_formula` runs the same gate the recompute does.
+ *  Null when no specific reason can be given. */
+async function restoreReason(inv: Invoker, recipe: SpecialSensorRecipe, columns: string[]): Promise<string | null> {
+    if (recipe.kind === 'operation') {
+        const have = new Set(columns.map(tagKey));
+        const missing = (recipe.sourceSensors ?? []).filter(s => !have.has(tagKey(s)));
+        return missing.length > 0 ? `Sensor not found: ${missing.join(', ')}` : null;
+    }
+    try {
+        const out = await inv('validate_formula', { formula: recipe.formula }) as { valid?: unknown; error?: unknown } | null;
+        if (out && out.valid === false && typeof out.error === 'string' && out.error) return out.error;
+    } catch (err) {
+        if (isSessionLostError(err)) throw err;
+    }
+    return null;
+}
+
+/** The toast after a successful repair: what came back, what still needs
+ *  fixing (and why), and how many models must be trained again. */
+function describeRepair(
+    tag: string,
+    restoredDownstream: number,
+    stillBroken: Array<{ tag: string; reason: string }>,
+    retrainCount: number | null,
+): string {
+    const parts = [`Restored ${tag}${restoredDownstream > 0 ? ` and ${restoredDownstream} sensor(s) built on it` : ''}.`];
+    for (const b of stillBroken) parts.push(`${b.tag} still needs fixing: ${b.reason.replace(/[.\s]+$/, '')}.`);
+    if (retrainCount === null) parts.push('Models that use it are set back to Incomplete — train them again.');
+    else if (retrainCount > 0) parts.push(`${retrainCount} model(s) set back to Incomplete — train them again.`);
+    return parts.join(' ');
 }
 
 export default function AddSensorWindow() {
@@ -221,6 +287,23 @@ export default function AddSensorWindow() {
     // (Only a UI hint -- every mutation re-reads references itself, inside the
     // queue, instead of trusting this cache.)
     const [formulaRefs, setFormulaRefs] = useState<Map<string, string[]> | null>(null);
+    // Which formula TEXT (per tag key) `formulaRefs` was read for. The
+    // "which sensors have no data" check below runs on `recipes` AND
+    // `formulaRefs`; right after `recipes` changes the refs are still the old
+    // list's (their lookup is async), and checking with them flickered the
+    // badge / unlock. It only runs once the refs cover every formula as it is.
+    const formulaRefsSourceRef = useRef<Map<string, string>>(new Map());
+    // Special sensors whose recipe could not be rebuilt in this session (the
+    // reopen replay failed on them: a removed source, or a formula Rust now
+    // refuses) -- tag key -> why, or null for "no specific reason". Null while
+    // unknown. Read from the session itself, not handed over by the main
+    // window (see `readUnrestored`). Such a sensor's formula/sources can be
+    // edited even when a model uses it -- otherwise a locked sensor with a
+    // refused recipe could never be fixed. Its NAME stays locked.
+    const [unrestored, setUnrestored, unrestoredRef] = useRefState<Map<string, string | null> | null>(null);
+    // Bumped after every edit, so the check above runs again (a fix creates the
+    // column; a failed one leaves it missing).
+    const [sessionCheck, setSessionCheck] = useState(0);
 
     // ---- The serial queue ---------------------------------------------------
     // Create, edit/rename and delete-commit all read the session, write
@@ -348,6 +431,7 @@ export default function AddSensorWindow() {
         setEditingTag(null);
         setEditError(null);
         setFormulaRefs(null);
+        setUnrestored(null);
         setFailureKnown(false);
         if (toastTimer.current) clearTimeout(toastTimer.current);
         setToast(null);
@@ -554,6 +638,7 @@ export default function AddSensorWindow() {
     useEffect(() => {
         const formulaRecipes = recipes.filter(r => r.kind === 'formula');
         if (formulaRecipes.length === 0) {
+            formulaRefsSourceRef.current = new Map();
             setFormulaRefs(new Map());
             return;
         }
@@ -564,6 +649,7 @@ export default function AddSensorWindow() {
                     formulas: formulaRecipes.map(r => (r as { formula: string }).formula),
                 });
                 if (cancelled) return;
+                formulaRefsSourceRef.current = new Map(formulaRecipes.map(r => [r.tag.trim().toLowerCase(), (r as { formula: string }).formula]));
                 setFormulaRefs(new Map(formulaRecipes.map((r, i) => [r.tag.trim().toLowerCase(), refs[i] ?? []])));
             } catch (err) {
                 console.error('Failed to read formula references:', err);
@@ -574,6 +660,57 @@ export default function AddSensorWindow() {
         })();
         return () => { cancelled = true; };
     }, [recipes]);
+
+    // Which special sensors have no column in the session (see `unrestored`).
+    // Cheap in the usual case: one `get_all_sensors`; the generation and the
+    // per-sensor reasons are only asked for when something is missing.
+    useEffect(() => {
+        if (formulaRefs === null) return;
+        if (recipes.length === 0) { setUnrestored(new Map()); return; }
+        // The refs must be the CURRENT recipes' (see `formulaRefsSourceRef`);
+        // when they are not, their own lookup is still running and will
+        // re-trigger this effect when it lands.
+        const source = formulaRefsSourceRef.current;
+        const refsCurrent = recipes.every(r => r.kind !== 'formula' || source.get(tagKey(r.tag)) === r.formula);
+        if (!refsCurrent) return;
+        let cancelled = false;
+        const epoch = epochRef.current;
+        const generation = generationRef.current;
+        // Unlocking a sensor's formula is only ever decided against the
+        // dataset this window is bound to; a window that was never told its
+        // generation cannot pin that, so nothing is unlocked.
+        if (generation === undefined) { setUnrestored(null); return; }
+        const stillHere = () => !cancelled && epoch === epochRef.current;
+        // Pinned like every other command of this window: `validate_formula`
+        // (the reasons) refuses with STALE_SESSION against another dataset.
+        const inv = bindToGeneration((cmd, args) => invoke<unknown>(cmd, args), generation);
+        (async () => {
+            try {
+                const read = await readUnrestored(inv, recipes, formulaRefs);
+                if (!stillHere()) return;
+                if (!read) { setUnrestored(null); return; }
+                const { failed } = read.result;
+                if (failed.length === 0) { setUnrestored(new Map()); return; }
+                // Only unlock against the dataset this window is bound to: a
+                // session that is already someone else's says nothing about ours.
+                const current = await invoke<number | null>('get_session_generation');
+                if (!stillHere()) return;
+                if (current !== generation) { setUnrestored(null); return; }
+                const reasons = new Map<string, string | null>();
+                for (const tag of failed) {
+                    const recipe = recipes.find(r => sameTag(r.tag, tag));
+                    reasons.set(tagKey(tag), recipe ? await restoreReason(inv, recipe, read.columns) : null);
+                    if (!stillHere()) return;
+                }
+                setUnrestored(reasons);
+            } catch (err) {
+                console.warn('Could not check which special sensors have data:', err);
+                if (stillHere()) setUnrestored(null);
+            }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [recipes, formulaRefs, sessionCheck]);
 
     // ---- Delete: commit (runs INSIDE the queue) -------------------------------
 
@@ -819,8 +956,12 @@ export default function AddSensorWindow() {
             // treated as locked (a guess of "nothing uses it" is how a trained
             // model goes stale).
             let failureState: EditFailureState;
+            // The workspace Running condition as read (full rows: the repair
+            // demotion needs the condition values, not just the sensor names).
+            let freshRc: WorkspaceSensorFilter[] = [];
             try {
                 const fresh = await readFailureState(ctx);
+                freshRc = fresh.rc;
                 setModels(fresh.models);
                 setRunningConditionFilters(fresh.rc);
                 setFailureKnown(true);
@@ -840,15 +981,78 @@ export default function AddSensorWindow() {
                 if (collides) throw new Error(`"${newTag}" is already in use by another sensor.`);
             }
 
-            const outcome = await runSpecialSensorEdit({
-                recipes: recipesRef.current,
-                next: next.recipe,
-                oldTag,
-                invoker: inv,
-                failureState,
-            });
+            // 2026-10-08: a save that changes neither the name nor what the
+            // sensor computes is a description / unit / component change --
+            // nothing to recompute. Recomputing anyway re-sent the stored recipe
+            // to Rust, so a sensor whose recipe Rust now refuses (it could not
+            // be restored on reopen) could not even have its description saved.
+            const stored = recipesRef.current.find(r => sameTag(r.tag, newTag));
+            const unchanged = !oldTag && !!stored && recipesEquivalent(stored, next.recipe);
+
+            // A sensor whose replay FAILED this session (no column) may have its
+            // formula / sources fixed even when a model uses it: the lock exists
+            // to keep a trained model's inputs stable, and this one has no values
+            // at all until its recipe is fixed. Re-checked here against the
+            // session itself, not trusted from the list on screen. Never a
+            // rename (the models still point at the name) -- a rename keeps
+            // the full lock.
+            //
+            // Pinned to the window's dataset (review S1): the session must be
+            // the generation this window is bound to, or "it has no column"
+            // could be about another project's data -- no unlock then.
+            let repairing = false;
+            let missingBefore: string[] = [];
+            // Asked when the list says it has no data, and also when the list
+            // can't say right now (null): the editor keeps a repair session
+            // unlocked through such a gap, so the decision is made here.
+            const listed = unrestoredRef.current;
+            if (!oldTag && !unchanged && stored && (listed === null || listed.has(tagKey(newTag)))
+                && ctx.generation !== undefined) {
+                const current = await inv('get_session_generation', {});
+                assertCurrent(ctx);
+                if (current === ctx.generation) {
+                    const read = await readUnrestored(inv, recipesRef.current, null);
+                    assertCurrent(ctx);
+                    repairing = !!read && read.result.failed.some(t => sameTag(t, newTag));
+                    if (repairing && read) missingBefore = [...read.result.failed, ...read.result.skipped];
+                }
+            }
+
+            const outcome: EditOutcome = unchanged && stored
+                ? {
+                    nextInputs: [],
+                    downstream: [],
+                    renamedDownstream: [],
+                    recipe: stored,
+                    metadataOnly: true,
+                    applyEdit: list => list.map(r => (sameTag(r.tag, newTag) ? stored : r)),
+                }
+                : await runSpecialSensorEdit({
+                    recipes: recipesRef.current,
+                    next: next.recipe,
+                    oldTag,
+                    invoker: inv,
+                    // No lock check for a repair (see above): the recompute is
+                    // still generation-pinned, and a failure removes the
+                    // columns it created (`repair`) instead of recomputing
+                    // the known-bad originals.
+                    failureState: repairing ? undefined : failureState,
+                    repair: repairing ? { missingBefore } : undefined,
+                });
             assertCurrent(ctx);
             const { downstream, renamedDownstream, recipeOrder, applyEdit } = outcome;
+            const stillBroken = outcome.stillBroken ?? [];
+            // A repair gives the sensor and everything built on it NEW values:
+            // the Dashboard sets every model that trains on one of them back
+            // to Incomplete and out of date (one disk-derived write). The count
+            // shown here is the same rule run on the models just read fresh.
+            const affectedTags = repairing && !outcome.metadataOnly ? [next.recipe.tag, ...downstream.map(r => r.tag)] : [];
+            // null = the models could not be read (the Dashboard still demotes
+            // against disk; the toast then just says so without a number).
+            const retrainCount = affectedTags.length === 0 ? 0
+                : failureState.known
+                    ? demoteModelsTrainedOnSensors(failureState.models, { runningConditionFilters: freshRc }, affectedTags).retrain.length
+                    : null;
             // What was really saved: for a metadata-only save of a locked
             // sensor, the stored recipe untouched.
             const savedRecipe = outcome.recipe;
@@ -887,14 +1091,18 @@ export default function AddSensorWindow() {
                     generation: ctx.generation,
                 });
             } else {
-                await emit('update-special-sensor', {
+                const payload: UpdateSpecialSensorPayload = {
                     recipe: savedRecipe,
                     metadata: next.metadata,
-                    recomputed: outcome.metadataOnly ? [] : [next.recipe.tag, ...downstream.map(r => r.tag)],
+                    recomputed: outcome.metadataOnly
+                        ? []
+                        : [next.recipe.tag, ...downstream.map(r => r.tag)].filter(t => !stillBroken.some(b => sameTag(b.tag, t))),
                     recipeOrder,
                     workspaceId: ctx.workspaceId,
                     generation: ctx.generation,
-                });
+                    ...(affectedTags.length > 0 ? { repaired: true, affectedTags } : {}),
+                };
+                await emit('update-special-sensor', payload);
             }
 
             // LAST: everything above succeeded and the Dashboard now knows the
@@ -920,6 +1128,8 @@ export default function AddSensorWindow() {
                 showToast(
                     oldTag
                         ? `Renamed "${oldTag}" to "${newTag}"${downstream.length > 0 ? ` — updated ${downstream.length} sensor(s) built on it` : ''}`
+                        : repairing
+                            ? describeRepair(next.recipe.tag, downstream.length - stillBroken.length, stillBroken, retrainCount)
                         : downstream.length > 0
                             ? `Updated ${next.recipe.tag} — recomputed ${downstream.length} sensor(s) built on it`
                             : `Updated ${next.recipe.tag}`,
@@ -938,6 +1148,12 @@ export default function AddSensorWindow() {
                 if (err.inconsistent.length > 0) {
                     message += ` The previous values of ${err.inconsistent.join(', ')} could not be restored, `
                         + 'so they may show wrong numbers. Reopen the workspace to rebuild them.';
+                }
+                if (err.leftover.length > 0) {
+                    // These had NO values before the edit -- there is nothing
+                    // "previous" to restore, only values of the refused change.
+                    message += ` ${err.leftover.join(', ')} had no values before this change, and the values it produced `
+                        + 'could not be removed again, so they may show numbers from the refused change. Reopen the workspace to clear them.';
                 }
                 if (err.touched && isCurrent(ctx)) {
                     // Some columns were overwritten (then rolled back): charts
@@ -960,7 +1176,13 @@ export default function AddSensorWindow() {
                 console.error('Edit failed:', err);
                 if (epoch === epochRef.current) setEditError(errorText(err));
             })
-            .finally(() => { if (epoch === epochRef.current) setSavingEdit(false); });
+            .finally(() => {
+                if (epoch !== epochRef.current) return;
+                setSavingEdit(false);
+                // Which sensors have data may have changed (a fixed recipe now
+                // has its column) -- look again.
+                setSessionCheck(n => n + 1);
+            });
     };
 
     const handleClose = async () => {
@@ -1359,6 +1581,7 @@ export default function AddSensorWindow() {
                         onComponentChange={setComponent}
                         nameError={nameError}
                         onFormulaIssueChange={setFormulaIssue}
+                        generation={generationRef.current}
                     />
                 </div>
             </div>
@@ -1382,6 +1605,8 @@ export default function AddSensorWindow() {
                         onSaveEdit={handleSaveEdit}
                         savingEdit={savingEdit}
                         editError={editError}
+                        unrestored={unrestored}
+                        generation={generationRef.current}
                     />
                 </div>
             )}

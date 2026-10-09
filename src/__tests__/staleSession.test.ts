@@ -35,17 +35,20 @@ describe('bindToGeneration', () => {
         return { calls, invoker };
     };
 
-    it('stamps expectedGeneration (camelCase) on exactly the three guarded commands', async () => {
+    // 2026-10-08: `validate_formula` joined them (read-only, but it must not
+    // check a formula against another project's columns).
+    it('stamps expectedGeneration (camelCase) on exactly the four guarded commands', async () => {
         const { calls, invoker } = recorder();
         const bound = bindToGeneration(invoker, 7);
         await bound('evaluate_formula', { formula: '$A', customName: 'X' });
         await bound('calculate_new_sensor', { sensors: ['A'], config: {} });
         await bound('remove_sensor_columns', { names: ['X'] });
+        await bound('validate_formula', { formula: '$A' });
         await bound('extract_formula_refs', { formulas: ['$A'] });
         await bound('rename_formula_refs', { formula: '$A', oldName: 'A', newName: 'B' });
         expect(calls.map(c => [c.cmd, c.args.expectedGeneration])).toEqual([
             ['evaluate_formula', 7], ['calculate_new_sensor', 7], ['remove_sensor_columns', 7],
-            ['extract_formula_refs', undefined], ['rename_formula_refs', undefined],
+            ['validate_formula', 7], ['extract_formula_refs', undefined], ['rename_formula_refs', undefined],
         ]);
         expect(calls.every(c => !('expected_generation' in c.args))).toBe(true);
         // The caller's own arguments are kept.

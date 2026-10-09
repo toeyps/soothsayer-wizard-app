@@ -332,3 +332,99 @@ describe('recipesEquivalent', () => {
         expect(recipesEquivalent(SUM('S', ['a']), withName)).toBe(true);
     });
 });
+
+// 2026-10-08 (review MUST-FIX 1): REPAIR mode -- the edited sensor had no
+// column (its recipe was refused on reopen) and everything built on it was
+// skipped. A rollback must REMOVE what the edit created (recomputing the
+// known-bad original is refused before it writes and left the rejected fix's
+// values behind), and a downstream sensor that is broken on its OWN is not a
+// reason to throw the fix away.
+describe('runSpecialSensorEdit -- repair mode', () => {
+    /** A session holding only `present`'s columns (the broken ones were never built). */
+    async function partialSession(present: SpecialSensorRecipe[]) {
+        return session(present);
+    }
+    const badA = F('A', 'round($TAG1, 2)');
+
+    it('chained, both broken: A is saved, B (own formula refused) is reported in stillBroken with Rust\'s reason, and nothing is removed', async () => {
+        const badB = F('B', 'round(${A}, 2)');
+        const rust = await partialSession([]);
+        const outcome = await run(rust, { recipes: [badA, badB], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A', 'B'] } });
+        expect(rust.has('A')).toBe(true);
+        expect(rust.has('B')).toBe(false);
+        expect(outcome.stillBroken).toEqual([{ tag: 'B', reason: expect.stringMatching(/does not round to 2 decimal places/) }]);
+        expect(outcome.downstream.map(r => r.tag)).toEqual(['B']);
+        expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
+        // The stored list keeps B's recipe as it is -- only A changed.
+        expect(outcome.applyEdit([badA, badB])).toEqual([F('A', '$TAG1 * 3'), badB]);
+    });
+
+    it('a sensor built on a still-broken one is reported as such and never attempted', async () => {
+        const badB = F('B', 'round(${A}, 2)');
+        const onB = F('C', '${B} + 1');
+        const rust = await partialSession([]);
+        const outcome = await run(rust, { recipes: [badA, badB, onB], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A', 'B', 'C'] } });
+        expect(outcome.stillBroken?.map(b => b.tag)).toEqual(['B', 'C']);
+        expect(outcome.stillBroken?.[1].reason).toBe('built on "B", which still needs fixing');
+        expect(rust.cmds('evaluate_formula').map(c => c.args.customName)).toEqual(['A', 'B']); // C never tried
+    });
+
+    it('downstream that is FIXED by the repair comes back too (stillBroken empty)', async () => {
+        const rust = await partialSession([]);
+        const outcome = await run(rust, { recipes: [badA, F('B', '${A} + 1')], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A', 'B'] } });
+        expect(outcome.stillBroken).toEqual([]);
+        expect(rust.has('B')).toBe(true);
+    });
+
+    it('the fix itself refused: nothing written, nothing to roll back', async () => {
+        const rust = await partialSession([]);
+        const err = await run(rust, { recipes: [badA], next: F('A', 'round($TAG1, 3)'), repair: { missingBefore: ['A'] } })
+            .catch(e => e as SpecialSensorEditError);
+        expect(err).toBeInstanceOf(SpecialSensorEditError);
+        expect((err as SpecialSensorEditError).touched).toBe(false);
+        expect(rust.has('A')).toBe(false);
+        expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
+    });
+
+    it('a failure AFTER the fix was written REMOVES the column the fix created (never recomputes the refused original) and restores what it overwrote', async () => {
+        // C was built on an earlier A and still has its column; its recompute fails once.
+        const C = F('C', '${A} * 2');
+        const rust = await session([F('A', '$TAG1'), C]);
+        await rust.invoke('remove_sensor_columns', { names: ['A'] }); // A's column is gone (refused on reopen)
+        rust.calls.length = 0;
+        rust.failOn('evaluate_formula', a => a.customName === 'C' && a.replace === true && a.formula === '${A} * 2', 'injected');
+        const before = rust.resolvedValues('C');
+        const err = await run(rust, { recipes: [badA, C], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A'] } })
+            .catch(e => e as SpecialSensorEditError);
+        expect(err).toBeInstanceOf(SpecialSensorEditError);
+        const e = err as SpecialSensorEditError;
+        expect(e.touched).toBe(true);
+        expect(e.rolledBack).toBe(true);
+        expect(e.leftover).toEqual([]);
+        expect(rust.has('A')).toBe(false);
+        expect(rust.cmds('remove_sensor_columns').map(c => c.args.names)).toEqual([['A']]);
+        expect(rust.cmds('evaluate_formula').some(c => c.args.formula === 'round($TAG1, 2)')).toBe(false);
+        expect(rust.resolvedValues('C')).toEqual(before);
+    });
+
+    it('when the created column cannot be removed it is reported as `leftover` (it had no values before), not as "previous values"', async () => {
+        const C = F('C', '${A} * 2');
+        const rust = await session([F('A', '$TAG1'), C]);
+        await rust.invoke('remove_sensor_columns', { names: ['A'] });
+        rust.calls.length = 0;
+        rust.failOn('evaluate_formula', a => a.customName === 'C' && a.replace === true, 'injected');
+        rust.failOn('remove_sensor_columns', () => true, 'disk on fire', false);
+        const e = await run(rust, { recipes: [badA, C], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A'] } })
+            .catch(x => x as SpecialSensorEditError) as SpecialSensorEditError;
+        expect(e.leftover).toEqual(['A']);
+        expect(e.inconsistent).toEqual([]);
+        expect(e.rolledBack).toBe(false);
+    });
+
+    it('is never combined with a rename', async () => {
+        const rust = await partialSession([]);
+        await expect(run(rust, { recipes: [badA], next: F('A2', '$TAG1 * 3'), oldTag: 'A', repair: { missingBefore: ['A'] } }))
+            .rejects.toThrow(/can't be renamed/);
+        expect(rust.calls.filter(c => c.args?.replace)).toHaveLength(0);
+    });
+});

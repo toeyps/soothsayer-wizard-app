@@ -2381,6 +2381,85 @@ describe('Dashboard', () => {
             });
         });
 
+        // 2026-10-08 (review MUST-FIX 2): repairing a special sensor that could
+        // not be restored changes the values every model using it trained on,
+        // and the train fingerprint does not cover special-sensor recipes.
+        describe('"update-special-sensor" with repaired: true', () => {
+            const baseModel = {
+                groupNos: [1], kind: 'individual' as const, category: 'performance' as const, notes: '', predictorSensors: [],
+                xSensor: '', ySensor: '', individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100_000,
+                clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [], filterTimePeriods: [],
+                runningConditionMode: 'workspace' as const, customRunningConditionFilters: [], customRunningConditionCombine: 'and' as const,
+            };
+            const onCalc = { ...baseModel, id: 'm-calc', name: 'On CALC1', targetSensor: 'CALC1', status: true,
+                lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp-old', healthVerdict: 'valid' as const,
+                healthSetPoints: { kind: 'individual', lower: 1, upper: 9 } };
+            const onDep = { ...baseModel, id: 'm-dep', name: 'On CALC2', targetSensor: 'CALC2', status: true,
+                lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp-dep' };
+            const other = { ...baseModel, id: 'm-other', name: 'On TAG1', targetSensor: 'TAG1', status: true,
+                lastTrainedAt: '2026-10-01T00:00:00Z', trainedFingerprint: 'fp-other' };
+            const fgState = { groups: [{ no: 1, name: 'Group A' }], models: [onCalc, onDep, other] };
+            const fire = async (extra: Record<string, unknown>) => {
+                await act(async () => {
+                    for (const cb of listenCallbacks['update-special-sensor'] ?? []) {
+                        cb({ payload: { workspaceId: 'ws1', recipe: { kind: 'formula', tag: 'CALC1', formula: '$TAG1 * 5' },
+                            metadata: { tag: 'CALC1', description: 'Fixed', unit: 'bar', component: 'Pump' }, ...extra } });
+                    }
+                });
+            };
+
+            it('sets every model trained on the repaired sensor (or one built on it) back to Incomplete AND out of date, in ONE disk-derived write, keeping set points / lastTrainedAt, and broadcasts it', async () => {
+                const initial = makeInitialState({ failureGroupState: fgState });
+                seedDisk(initial);
+                renderDashboard({ initialState: initial });
+                await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+                mockUpdateWorkspaceData.mockClear();
+                mockEmit.mockClear();
+
+                await fire({ recomputed: ['CALC1', 'CALC2'], repaired: true, affectedTags: ['CALC1', 'CALC2'] });
+
+                expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
+                const state = await last(mockUpdateWorkspaceData.mock.results)!.value;
+                const byId = Object.fromEntries(state.failureGroupState.models.map((m: any) => [m.id, m]));
+                for (const id of ['m-calc', 'm-dep']) {
+                    expect(byId[id].status).toBe(false);
+                    expect(byId[id].trainedFingerprint).toBeUndefined(); // stale -> Mark complete needs a re-train
+                    expect(byId[id].lastTrainedAt).toBe('2026-10-01T00:00:00Z');
+                }
+                expect(byId['m-calc'].healthSetPoints).toEqual(onCalc.healthSetPoints);
+                expect(byId['m-calc'].healthVerdict).toBeUndefined();
+                expect(byId['m-other']).toEqual(other); // untouched
+                expect(state.failureGroupState.groups).toEqual(fgState.groups);
+                await waitFor(() => expect(mockEmit).toHaveBeenCalledWith('failure-group-state-changed', expect.objectContaining({
+                    workspaceId: 'ws1', origin: 'dashboard',
+                })));
+            });
+
+            it('a description-only save (no `repaired`) touches no model -- no failure-group write at all', async () => {
+                const initial = makeInitialState({ failureGroupState: fgState });
+                seedDisk(initial);
+                renderDashboard({ initialState: initial });
+                await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+                mockUpdateWorkspaceData.mockClear();
+
+                await fire({ recomputed: [] });
+
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+
+            it('a payload for another workspace is ignored (no write)', async () => {
+                const initial = makeInitialState({ failureGroupState: fgState });
+                seedDisk(initial);
+                renderDashboard({ initialState: initial });
+                await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+                mockUpdateWorkspaceData.mockClear();
+
+                await fire({ workspaceId: 'other-ws', repaired: true, affectedTags: ['CALC1'] });
+
+                expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
+            });
+        });
+
         it('"update-special-sensor" makes the chart and scatter refetch, even though the query itself has not changed (the column was recomputed in the Rust session under the same name)', async () => {
             renderDashboard({
                 initialState: makeInitialState({

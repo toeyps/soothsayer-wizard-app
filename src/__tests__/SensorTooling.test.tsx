@@ -447,6 +447,36 @@ describe('SensorTooling', () => {
             expect(screen.getByText('Referenced sensors:')).toBeTruthy();
         });
 
+        // Review N3 (2026-10-08): the last finished check used to stay on screen
+        // next to newly edited text for the ~500 ms debounce.
+        it('the "Valid formula" / red verdict is shown only for the text it was checked for -- it disappears on the next keystroke and returns with the new check', async () => {
+            vi.useFakeTimers();
+            mockInvoke.mockImplementation(async (_cmd: string, args: any) => (
+                args.formula.includes('foo(')
+                    ? { valid: false, error: "Formula error: unknown function 'foo'.", referenced_sensors: ['A'] }
+                    : { valid: true, error: null, referenced_sensors: ['A'] }
+            ));
+            render(<SensorTooling {...makeProps({ selectedSensors: ['A', 'B'] })} />);
+            fireEvent.click(screen.getByText('Edit as text instead'));
+            const textarea = screen.getByPlaceholderText('= $SensorA + $SensorB * 2');
+
+            fireEvent.change(textarea, { target: { value: '$A + 1', selectionStart: 6 } });
+            await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+            expect(screen.getByText(/Valid formula/)).toBeTruthy();
+
+            fireEvent.change(textarea, { target: { value: 'foo($A)', selectionStart: 7 } });
+            expect(screen.queryByText(/Valid formula/)).toBeNull(); // not about this text
+            await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+            expect(screen.getByText("Formula error: unknown function 'foo'.")).toBeTruthy();
+
+            fireEvent.change(textarea, { target: { value: 'foo($A) + 1', selectionStart: 11 } });
+            expect(screen.queryByText("Formula error: unknown function 'foo'.")).toBeNull();
+
+            // Back to the exact text that was checked: its verdict applies again.
+            fireEvent.change(textarea, { target: { value: 'foo($A)', selectionStart: 7 } });
+            expect(screen.getByText("Formula error: unknown function 'foo'.")).toBeTruthy();
+        });
+
         it('toggles the syntax-help panel', () => {
             render(<SensorTooling {...makeProps({ selectedSensors: ['A'] })} />);
             fireEvent.click(screen.getByText('Edit as text instead'));

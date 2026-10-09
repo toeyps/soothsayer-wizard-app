@@ -54,8 +54,10 @@ export function isSessionLostError(err: unknown): boolean {
     return err instanceof StaleSessionError || err instanceof TaskAbortedError;
 }
 
-/** The commands that take `expectedGeneration`. */
-const GENERATION_GUARDED = new Set(['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns']);
+/** The commands that take `expectedGeneration`. `validate_formula` joined them
+ *  on 2026-10-08: read-only, but a window bound to an older dataset would
+ *  otherwise check a formula against ANOTHER project's columns. */
+const GENERATION_GUARDED = new Set(['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'validate_formula']);
 
 /**
  * Wrap `invoker` so every guarded command carries `expectedGeneration`, and a

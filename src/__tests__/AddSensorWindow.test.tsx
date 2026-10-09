@@ -1390,7 +1390,11 @@ describe('AddSensorWindow: rename drops the OLD column, last', () => {
         errSpy.mockRestore();
     });
 
-    it('C: refuses to edit while the "what depends on this" lookup has failed -- it could not rewrite dependents it does not know about, then drop the old column from under them', async () => {
+    // 2026-10-08: while the lookup is down every sensor shows locked (a guess of
+    // "nothing depends on it" is unsafe), so the rename never leaves the editor;
+    // what DOES leave it -- a description-only save -- no longer recomputes at
+    // all, so it needs no lookup and goes through without touching a column.
+    it('C: while the "what depends on this" lookup has failed the name cannot change (held locked), and a description-only save still goes through without touching any column', async () => {
         const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const rust = fakeRust({ derived: ['A', 'B'] });
         mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
@@ -1402,9 +1406,13 @@ describe('AddSensorWindow: rename drops the OLD column, last', () => {
         await act(async () => { fireEvent.click(screen.getByLabelText('Edit A')); });
         fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'A2' } });
         fillEditor();
+        expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('A'); // read-only while unknown
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
         await flush();
-        expect(screen.getByRole('alert').textContent).toMatch(/Still working out which sensors/);
+        expect(mockEmit).not.toHaveBeenCalledWith('rename-special-sensor', expect.anything());
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: recA, recomputed: [], metadata: expect.objectContaining({ tag: 'A', description: 'A description' }),
+        }));
         expect(rust.names('remove_sensor_columns')).toHaveLength(0);
         expect(rust.names('evaluate_formula')).toHaveLength(0);
         errSpy.mockRestore();
@@ -2647,5 +2655,306 @@ describe('AddSensorWindow: bound to the dataset generation', () => {
             await deliver({ workspaceId: 'ws-A', generation: g + 1 });
             expect(lostBanner()).toBeNull();
         });
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// 2026-10-08 (review S1) -- a special sensor whose recipe could not be rebuilt
+// on reopen (Rust now refuses it, e.g. `round($TAG1, 2)`) has no column. Under
+// the edit lock that used to be a dead end: formula frozen, Delete off. Now its
+// formula/sources can be fixed (generation-pinned, rolled back on failure); the
+// NAME stays locked; a healthy locked sensor is unchanged; a description-only
+// save never re-sends the refused recipe.
+// ═════════════════════════════════════════════════════════════════════════
+describe('AddSensorWindow: fixing a special sensor that could not be restored', () => {
+    const usingA = {
+        id: 'm1', groupNos: [1], name: 'Uses A', kind: 'individual', category: null,
+        notes: '', status: true, targetSensor: 'A', predictorSensors: [], xSensor: '', ySensor: '',
+        individualChecked: true, rcMode: null, scatterXSensor: '', relModelName: '', relStiffness: 100000,
+        clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
+        filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
+    };
+    const usingH = { ...usingA, id: 'm2', name: 'Uses H', targetSensor: 'H' };
+    const badA = { kind: 'formula' as const, tag: 'A', formula: 'round($TAG1, 2)' };
+    const healthyH = { kind: 'formula' as const, tag: 'H', formula: '$TAG1 * 2' };
+    const onA = { kind: 'formula' as const, tag: 'B', formula: '${A} + 1' };
+    const ROUND_MSG = 'Formula error: round($TAG1, 2) does not round to 2 decimal places. Write round($TAG1 * 100) / 100 instead.';
+    const ROUND_TEXT = ROUND_MSG.replace(/\.$/, '');
+    const meta = [
+        { tag: 'A', description: 'Rounded', unit: 'bar', component: 'Uncategorized' },
+        { tag: 'B', description: 'On A', unit: 'bar', component: 'Uncategorized' },
+        { tag: 'H', description: 'Healthy', unit: 'bar', component: 'Uncategorized' },
+    ];
+    const WRITES = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns'];
+
+    async function open(payload: Record<string, unknown>, rustOpts: Parameters<typeof fakeRust>[0] = {}) {
+        const rust = fakeRust(rustOpts);
+        mockInvoke.mockImplementation(rust.invoke);
+        // Bound to the live dataset generation, as the real Dashboard sends it:
+        // a repair is only ever unlocked against the window's own dataset.
+        await openWindow({ workspaceId: 'ws-1', sensors: ['TAG1', 'TAG2', 'A', 'B', 'H'], sensorMetadata: meta, generation: rust.inner.generation(), ...payload });
+        await goManage();
+        await flush();
+        rust.calls.length = 0;
+        return rust;
+    }
+    const edit = async (tag: string) => { await act(async () => { fireEvent.click(screen.getByLabelText(`Edit ${tag}`)); }); await flush(); };
+    const save = async () => { await act(async () => { fireEvent.click(screen.getByText('Save changes')); }); await flush(40); };
+
+    it('LOCKED + not restored: row flagged, editor unlocks the formula (not the name) with the amber note; the fix recomputes it with replace, reaches the Dashboard, and the flag goes away', async () => {
+        disk.models = [usingA];
+        const rust = await open({ specialSensorRecipes: [badA], models: [usingA] });
+        expect(screen.getByTestId('not-restored-A').getAttribute('title')).toContain(ROUND_TEXT);
+
+        await edit('A');
+        expect(screen.getByTestId('restore-note').textContent).toContain(
+            `This sensor could not be restored: ${ROUND_TEXT}. Fix the formula to restore it. Models that use it are set back to Incomplete and must be trained again.`,
+        );
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1 * 100) / 100' } });
+        await save();
+
+        const evals = rust.calls.filter(c => c.cmd === 'evaluate_formula');
+        expect(evals.map(c => c.args)).toEqual([{ formula: 'round($TAG1 * 100) / 100', customName: 'A', replace: true, expectedGeneration: rust.inner.generation() }]);
+        expect(rust.has('A')).toBe(true);
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: { kind: 'formula', tag: 'A', formula: 'round($TAG1 * 100) / 100' }, recomputed: ['A'], workspaceId: 'ws-1',
+            repaired: true, affectedTags: ['A'],
+        }));
+        expect(mockEmit.mock.calls.some(c => c[0] === 'rename-special-sensor')).toBe(false);
+        expect(screen.getByRole('status').textContent).toMatch(/Restored A\. 1 model\(s\) set back to Incomplete — train them again\./);
+        expect(screen.queryByTestId('not-restored-A')).toBeNull();
+        // Fixed = has data again = the normal lock is back.
+        await edit('A');
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
+    });
+
+    it('fixing it also rebuilds what was skipped because it was built on it (only the broken one is flagged)', async () => {
+        const usingB = { ...usingA, targetSensor: 'B' };
+        disk.models = [usingB];
+        const rust = await open({ specialSensorRecipes: [badA, onA], models: [usingB] });
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+        expect(screen.queryByTestId('not-restored-B')).toBeNull();
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+        await save();
+        expect(rust.calls.filter(c => c.cmd === 'evaluate_formula').map(c => c.args.customName)).toEqual(['A', 'B']);
+        expect(rust.has('A')).toBe(true);
+        expect(rust.has('B')).toBe(true);
+        expect(screen.getByRole('status').textContent).toMatch(/Restored A and 1 sensor\(s\) built on it\. 1 model\(s\) set back to Incomplete — train them again\./);
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recomputed: ['A', 'B'], repaired: true, affectedTags: ['A', 'B'],
+        }));
+    });
+
+    it('DESCRIPTION-only save of a locked, not-restored sensor works: nothing is sent to Rust, the Dashboard gets the stored recipe and nothing recomputed', async () => {
+        disk.models = [usingA];
+        const rust = await open({ specialSensorRecipes: [badA], models: [usingA] });
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Rounded pressure' } });
+        await save();
+        expect(rust.calls.filter(c => WRITES.includes(c.cmd))).toHaveLength(0);
+        expect(screen.queryAllByRole('alert')).toHaveLength(0);
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: badA, recomputed: [], metadata: expect.objectContaining({ tag: 'A', description: 'Rounded pressure' }),
+        }));
+        // Nothing was recomputed, so no model is touched (MUST-FIX 2).
+        const sent = mockEmit.mock.calls.find(c => c[0] === 'update-special-sensor')![1];
+        expect(sent.repaired).toBeUndefined();
+        expect(sent.affectedTags).toBeUndefined();
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy(); // still no data -- only the text changed
+    });
+
+    it('DESCRIPTION-only save of an UNUSED not-restored sensor no longer fails on the refused recipe', async () => {
+        const rust = await open({ specialSensorRecipes: [badA] });
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+        await save();
+        expect(rust.calls.filter(c => WRITES.includes(c.cmd))).toHaveLength(0);
+        expect(screen.queryAllByRole('alert')).toHaveLength(0);
+        expect(screen.getByRole('status').textContent).toMatch(/Updated A/);
+    });
+
+    it('a "fix" Rust still refuses shows its message, writes nothing, and keeps the sensor flagged', async () => {
+        disk.models = [usingA];
+        const rust = await open({ specialSensorRecipes: [badA], models: [usingA] });
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1, 3)' } });
+        await save(); // before the debounced check could block it
+        expect(screen.getAllByRole('alert').map(a => a.textContent).join(' ')).toMatch(/round\(\$TAG1, 3\) does not round to 3 decimal places/);
+        expect(rust.has('A')).toBe(false);
+        expect(mockEmit.mock.calls.some(c => c[0] === 'update-special-sensor')).toBe(false);
+        await act(async () => { fireEvent.click(screen.getByText('Cancel')); });
+        await flush();
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+    });
+
+    it('LOCKED + healthy stays fully locked next to a broken one', async () => {
+        disk.models = [usingA, usingH];
+        await open({ specialSensorRecipes: [healthyH, badA], models: [usingA, usingH] }, { derived: ['H'] });
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+        expect(screen.queryByTestId('not-restored-H')).toBeNull();
+        await edit('H');
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+        expect(screen.queryByTestId('restore-note')).toBeNull();
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
+    });
+
+    it('a session that is not the window’s dataset (generation pin) unlocks nothing', async () => {
+        disk.models = [usingA];
+        const rust = fakeRust();
+        mockInvoke.mockImplementation(rust.invoke);
+        await openWindow({ workspaceId: 'ws-1', sensors: ['TAG1', 'A'], sensorMetadata: meta, specialSensorRecipes: [badA], models: [usingA], generation: rust.inner.generation() + 5 });
+        await goManage();
+        await flush();
+        expect(screen.queryByTestId('not-restored-A')).toBeNull();
+        await edit('A');
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+    });
+
+    it('bound to the live generation: the reason check and the fix both carry expectedGeneration', async () => {
+        disk.models = [usingA];
+        const rust = fakeRust();
+        mockInvoke.mockImplementation(rust.invoke);
+        const g = rust.inner.generation();
+        await openWindow({ workspaceId: 'ws-1', sensors: ['TAG1', 'A'], sensorMetadata: meta, specialSensorRecipes: [badA], models: [usingA], generation: g });
+        await goManage();
+        await flush();
+        expect(rust.calls.find(c => c.cmd === 'validate_formula')?.args).toEqual({ formula: 'round($TAG1, 2)', expectedGeneration: g });
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+        await save();
+        expect(rust.calls.filter(c => c.cmd === 'evaluate_formula').map(c => c.args.expectedGeneration)).toEqual([g]);
+        expect(rust.has('A')).toBe(true);
+    });
+    // MUST-FIX 1 (2026-10-08 review): A = round($TAG1, 2) is refused on reopen,
+    // B = round(${A}, 2) is skipped, a model uses B. Fixing A must keep the fix
+    // even though B's OWN formula is refused too -- B is reported and shows up
+    // as broken on its own; nothing typed is lost and A is not rolled back.
+    it('CHAINED, both broken: fixing A saves A, reports B as still needing a fix (with Rust\'s reason), and B is then flagged on its own', async () => {
+        const badB = { kind: 'formula' as const, tag: 'B', formula: 'round(${A}, 2)' };
+        const usingB = { ...usingA, id: 'mB', name: 'Uses B', targetSensor: 'B' };
+        disk.models = [usingB];
+        const rust = await open({ specialSensorRecipes: [badA, badB], models: [usingB] });
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+        expect(screen.queryByTestId('not-restored-B')).toBeNull(); // skipped, not failed
+
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+        await save();
+
+        expect(screen.queryAllByRole('alert')).toHaveLength(0);
+        expect(rust.has('A')).toBe(true);
+        expect(rust.has('B')).toBe(false);
+        expect(rust.calls.filter(c => c.cmd === 'remove_sensor_columns')).toHaveLength(0); // no rollback
+        const status = screen.getByRole('status').textContent ?? '';
+        expect(status).toMatch(/Restored A\. B still needs fixing: .*does not round to 2 decimal places.*\. 1 model\(s\) set back to Incomplete — train them again\.$/);
+        expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+            recipe: { kind: 'formula', tag: 'A', formula: '$TAG1 * 3' },
+            recomputed: ['A'],
+            repaired: true,
+            affectedTags: ['A', 'B'],
+        }));
+        await flush();
+        expect(screen.queryByTestId('not-restored-A')).toBeNull();
+        expect(screen.getByTestId('not-restored-B').getAttribute('title')).toMatch(/does not round to 2 decimal places/);
+        // B can now be fixed the same way.
+        await edit('B');
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round(${A} * 100) / 100' } });
+        await save();
+        expect(rust.has('B')).toBe(true);
+        expect(screen.queryByTestId('not-restored-B')).toBeNull();
+    });
+
+    // MUST-FIX 1a: when a repair fails AFTER the fix was written (here: a
+    // sensor built on A that HAD a column cannot be recomputed), the rollback
+    // REMOVES A's new column -- recomputing A's original recipe is refused by
+    // Rust before it writes, which used to leave the rejected fix's values in
+    // place, so A looked healthy, the lock came back and Save silently sent
+    // the stored broken recipe.
+    it('a failed repair leaves NO column for A (removed, not "recomputed from the original"), keeps A flagged and the typed fix in the form', async () => {
+        disk.models = [usingA];
+        const onA2 = { kind: 'formula' as const, tag: 'C', formula: '${A} * 2' };
+        const rust = await open({ specialSensorRecipes: [badA, onA2], models: [usingA] }, { derived: ['C'] });
+        rust.inner.failOn('evaluate_formula', a => a.customName === 'C' && a.replace === true, 'injected');
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+        await save();
+
+        const alert = screen.getAllByRole('alert').map(a => a.textContent).join(' ');
+        expect(alert).toMatch(/Could not recompute "C"/);
+        expect(alert).not.toMatch(/previous values/);
+        expect(rust.has('A')).toBe(false);
+        expect(rust.calls.filter(c => c.cmd === 'remove_sensor_columns').map(c => c.args.names)).toEqual([['A']]);
+        // The original, refused recipe is never re-sent as a "rollback".
+        expect(rust.calls.filter(c => c.cmd === 'evaluate_formula' && c.args.formula === 'round($TAG1, 2)')).toHaveLength(0);
+        expect(mockEmit.mock.calls.some(c => c[0] === 'update-special-sensor')).toBe(false);
+        await flush();
+        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+        // Still the repair form, with what the user typed.
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).value).toBe('$TAG1 * 3');
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+    });
+
+    // SHOULD-FIX 1: the in-queue re-check is generation-pinned. Here the
+    // window unlocked A against its own dataset, but by the time Save runs the
+    // session answers a DIFFERENT generation: nothing is unlocked -- the normal
+    // lock refuses the formula change and no column is written.
+    it('in-queue re-check: a session generation that is not the window\'s unlocks nothing (the lock refuses, nothing is written)', async () => {
+        disk.models = [usingA];
+        const rust = await open({ specialSensorRecipes: [badA], models: [usingA] });
+        await edit('A');
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 3' } });
+        const g = rust.inner.generation();
+        mockInvoke.mockImplementation(async (cmd: string, args?: any) => (
+            cmd === 'get_session_generation' ? g + 1 : rust.invoke(cmd, args)
+        ));
+        await save();
+        expect(screen.getAllByRole('alert').map(a => a.textContent).join(' ')).toMatch(/Can't change the formula, operation or sources of "A"/);
+        expect(rust.calls.filter(c => WRITES.includes(c.cmd))).toHaveLength(0);
+        expect(mockEmit.mock.calls.some(c => c[0] === 'update-special-sensor')).toBe(false);
+    });
+
+    it('a window that was never told its generation unlocks nothing (no badge, normal lock)', async () => {
+        disk.models = [usingA];
+        await open({ specialSensorRecipes: [badA], models: [usingA], generation: undefined });
+        expect(screen.queryByTestId('not-restored-A')).toBeNull();
+        await edit('A');
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+    });
+
+    // SHOULD-FIX 3: a not-restored OPERATION sensor whose stored config the
+    // editor's engine would not rebuild byte-for-byte: a unit-only save must
+    // still be metadata-only (the stored recipe, nothing sent to Rust).
+    it('UNIT-only save of a not-restored OPERATION sensor is metadata-only even when the engine would rebuild its config differently', async () => {
+        const badOp = {
+            kind: 'operation' as const, tag: 'OP', sourceSensors: ['GONE'],
+            operationConfig: { mode: 'single' as const, singleOp: { type: 'add' as const, value: 10 }, multiOp: { type: 'sum' as const }, customName: 'OP' },
+        };
+        const usingOp = { ...usingA, id: 'mOp', name: 'Uses OP', targetSensor: 'OP' };
+        disk.models = [usingOp];
+        const rust = await open({
+            specialSensorRecipes: [badOp], models: [usingOp],
+            sensorMetadata: [...meta, { tag: 'OP', description: 'Shifted', unit: 'bar', component: 'Uncategorized' }],
+        });
+        expect(screen.getByTestId('not-restored-OP').getAttribute('title')).toContain('Sensor not found: GONE');
+        await edit('OP');
+        fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
+        await save();
+        expect(rust.calls.filter(c => WRITES.includes(c.cmd))).toHaveLength(0);
+        expect(screen.queryAllByRole('alert')).toHaveLength(0);
+        const sent = mockEmit.mock.calls.find(c => c[0] === 'update-special-sensor')![1];
+        expect(sent.recipe).toEqual(badOp);
+        expect(sent.recomputed).toEqual([]);
+        expect(sent.repaired).toBeUndefined();
+        expect(sent.metadata).toMatchObject({ tag: 'OP', unit: 'kPa' });
     });
 });

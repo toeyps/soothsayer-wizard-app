@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { FormulaValidationResult } from '../types/calculationEngine';
+import { bindToGeneration, isStaleSessionText, StaleSessionError } from '../utils/staleSession';
 
 /** One finished `validate_formula` round trip, tagged with the text it checked. */
 export interface ValidatedFormula {
@@ -32,7 +33,18 @@ function isValidationResult(x: unknown): x is FormulaValidationResult {
  * old text can never mark the current text valid or invalid. Callers decide
  * what the current text's state is with `formulaIssue()`.
  */
-export function useFormulaValidation(): UseFormulaValidationReturn {
+export interface UseFormulaValidationOptions {
+  /** The Rust dataset generation the caller is bound to. Sent as
+   *  `expectedGeneration`, so a window left over from another project checks
+   *  nothing against the wrong columns; Rust then answers STALE_SESSION, which
+   *  is "no information" here -- never a red formula error. Omitted = the
+   *  check is not pinned (old behaviour). */
+  generation?: number;
+}
+
+export function useFormulaValidation(options: UseFormulaValidationOptions = {}): UseFormulaValidationReturn {
+  const generationRef = useRef(options.generation);
+  generationRef.current = options.generation;
   const [validated, setValidated] = useState<ValidatedFormula | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -42,10 +54,15 @@ export function useFormulaValidation(): UseFormulaValidationReturn {
     setIsValidating(true);
     let result: FormulaValidationResult | null;
     try {
-      const reply = await invoke<FormulaValidationResult>('validate_formula', { formula: expr });
+      const call = bindToGeneration((cmd, args) => invoke<unknown>(cmd, args), generationRef.current);
+      const reply = await call('validate_formula', { formula: expr });
       result = isValidationResult(reply) ? reply : null;
     } catch (err) {
-      result = { valid: false, error: String(err), referenced_sensors: [] };
+      // The dataset this caller is bound to is gone: that says nothing about
+      // the formula itself (the window's own stale-session handling covers it).
+      result = err instanceof StaleSessionError || isStaleSessionText(err)
+        ? null
+        : { valid: false, error: err instanceof Error ? err.message : String(err), referenced_sensors: [] };
     }
     if (mySeq !== seq.current) return; // a newer text was scheduled meanwhile
     setIsValidating(false);

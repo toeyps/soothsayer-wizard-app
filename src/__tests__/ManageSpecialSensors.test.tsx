@@ -233,3 +233,49 @@ describe('ManageSpecialSensors -- edit lock', () => {
         expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
     });
 });
+
+// 2026-10-08 (review S1): a sensor whose recipe could not be rebuilt this
+// session is flagged on its row, and its editor unlocks the formula even under
+// a lock (only the name stays locked). A healthy locked one is unchanged.
+describe('ManageSpecialSensors -- not restored', () => {
+    const usesA = makeModel({ targetSensor: 'special A' });
+    const usesC = makeModel({ id: 'm2', name: 'Pump model', targetSensor: 'special C' });
+    const specialC: SpecialSensorRecipe = { kind: 'formula', tag: 'special C', formula: 'round($11PT1214A.PV, 2)' };
+    const REASON = 'Formula error: round($11PT1214A.PV, 2) does not round to 2 decimal places.';
+    const refs = new Map([['special a', ['11PT1214A.PV']], ['special c', ['11PT1214A.PV']]]);
+
+    it('flags ONLY the not-restored row, with the reason in its tooltip', () => {
+        renderList({ recipes: [specialA, specialC], formulaRefs: refs, unrestored: new Map([['special c', REASON]]) });
+        const badge = screen.getByTestId('not-restored-special C');
+        expect(badge.textContent).toContain('No data — fix formula');
+        expect(badge.getAttribute('title')).toContain(REASON);
+        expect(screen.queryByTestId('not-restored-special A')).toBeNull();
+    });
+
+    it('both locked by models: the not-restored one opens with an editable formula and the note; the healthy one keeps the full lock', () => {
+        const props = { recipes: [specialA, specialC], formulaRefs: refs, models: [usesA, usesC], unrestored: new Map([['special c', REASON]]) };
+        const { rerender, props: full } = renderList({ ...props, editingTag: 'special C' });
+        expect(screen.getByTestId('restore-note').textContent).toContain(REASON);
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
+        expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+        expect(screen.queryByTestId('edit-lock-banner')).toBeNull();
+
+        rerender(<ManageSpecialSensors {...full} editingTag="special A" />);
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+        expect(screen.queryByTestId('restore-note')).toBeNull();
+        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(true);
+    });
+
+    it('the expanded row says only the NAME is locked for a not-restored sensor, and Delete stays off while a model uses it', () => {
+        renderList({ recipes: [specialC], formulaRefs: refs, models: [usesC], unrestored: new Map([['special c', null]]) });
+        fireEvent.click(screen.getByText('Used by 1 model'));
+        expect(screen.getByTestId('edit-lock-special C').textContent).toMatch(/^Name is locked:/);
+        expect(deleteButton('special C').disabled).toBe(true);
+    });
+
+    it('unknown (null) unlocks nothing', () => {
+        renderList({ recipes: [specialC], formulaRefs: refs, models: [usesC], unrestored: null, editingTag: 'special C' });
+        expect(screen.queryByTestId('not-restored-special C')).toBeNull();
+        expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
+    });
+});

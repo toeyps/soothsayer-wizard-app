@@ -64,6 +64,20 @@ describe('useFormulaEditor', () => {
         expect(result.current.isValidating).toBe(false);
     });
 
+    it('pins the live check to the window\'s dataset generation when given one (Create tab), and treats a STALE_SESSION reply as no information', async () => {
+        mockInvoke.mockResolvedValue({ valid: true, error: null, referenced_sensors: ['SensorA'] });
+        const { result } = renderHook(() => useFormulaEditor(sensors, { generation: 7 }));
+        act(() => result.current.setFormula('$SensorA + 1'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+        expect(mockInvoke).toHaveBeenCalledWith('validate_formula', { formula: '$SensorA + 1', expectedGeneration: 7 });
+
+        mockInvoke.mockRejectedValueOnce('STALE_SESSION: the dataset changed');
+        act(() => result.current.setFormula('$SensorA + 2'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+        // No red verdict for a stale window: whatever is shown must not be an invalid result.
+        expect(result.current.validationResult?.valid === false).toBe(false);
+    });
+
     it('does not validate an empty/whitespace formula', async () => {
         const { result } = renderHook(() => useFormulaEditor(sensors));
         act(() => result.current.setFormula('   '));

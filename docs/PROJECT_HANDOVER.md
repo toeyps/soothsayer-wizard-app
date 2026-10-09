@@ -4030,3 +4030,149 @@ No code changed, nothing committed.
 - The two ui-design-reviewer runs on the part mockups keep going. Their must-fixes go to the integration run.
 - Saved as a standing preference in memory.
 - **🆕 2026-10-08 — แก้บัค special sensor ที่ QA พบ (rust-agent + fe-logic-agent) + code review** · **Rust** (`lib.rs`): gate เดียว `compile_formula` (parse + ลองคำนวณครั้งเดียวด้วยค่า sensor = 1.0) ใช้ทั้ง validate / create / edit / replay — ชื่อหรือฟังก์ชันที่ไม่รู้จักถูกปฏิเสธพร้อมข้อความบอกวิธีแก้ (เช่น "unknown name 'pi'. Write pi() for π.") แทนการได้ sensor ว่าง · `round($A, 2)` (sensor ก่อน ตัวเลขหลัง) ถูกปฏิเสธพร้อมคำแนะนำ `round($A * 100) / 100` (round(x), round(0.01,$A), round($A,$B) ยังใช้ได้) · เพิ่ม `ln` (`log` = ฐาน 10 เหมือนเดิม) · slab ตามขนาดสูตร (Spread หลายร้อย sensor ได้) · ชื่อตัวแปรภายในสั้น `_N` + กันชนกับข้อความผู้ใช้ (สูตรยาว ~4096 ได้) · nesting limit ของ fasteval 128 · ย้าย module QA ไป lib.rs · **Frontend**: แก้ source ของ Sum/Average/Median/Spread แล้วยังเป็น op เดิม (`sourceChangeEffect` ใช้ทั้ง Create และ Edit) · wrap ปัดทศนิยมเป็น `round(x * 10^n) / 10^n` · `useFormulaValidation` (ใหม่) แสดง error สีแดงใต้ช่องสูตรและปิด Save/Add เมื่อสูตรผิด · `utils/formulaRefs.ts` (ใหม่) ชิปชื่อ sensor ใช้ไวยากรณ์เดียวกับ Rust · คำอธิบาย recipe บอกจำนวนทศนิยม · Help: log/ln/pi()/e()/round/SI suffix/−A^2 · `specialSensorReplay` คืน error ต่อ tag และ `DataUploadPage` แสดงตอนเปิด workspace (โหลดไม่พัง) · fake Rust ใน test ตรงกับ gate ใหม่ · ผมแก้เอง: un-ignore Rust test e02 ให้ตรง wrap ใหม่ + ขอบช่อง Name ใช้ `border` (กัน React warning) · **ผล**: QA bug test ทั้งหมดผ่าน ไม่มีตัวที่ถูกปิด (Rust 31/31, TS 3 it.fails → it) · tsc ผ่าน, vitest 3229 ผ่าน + 1 expected-fail, cargo lib 589 + integration ผ่าน · manual plan SPC-26..30, EDT-42..46 (EDT-13 → EDT-42), 337 ข้อ · **code review**: ไม่มี MUST-FIX · SHOULD-FIX: (S1) recipe เก่าที่เคย "ได้ค่า" แต่ตอนนี้ถูกปฏิเสธ (`round($A, 2)` พิมพ์เอง, `$A (1 - $B)`) — ถ้า model/Running condition ใช้ sensor นั้น สูตรถูกล็อกจึงแก้ไม่ได้ และลบไม่ได้; (S2) `check_formula_limits` ไม่นับ `[` `]` → วงเล็บเหลี่ยมซ้อน ~127 ชั้นอาจ stack overflow ใน debug (`tauri dev`) · NIT: validate บอก "Valid" กับสูตรที่ไม่มี sensor แต่ Add ล้ม, comment เรื่อง `&&`/`||` ผิด, ป้าย Valid/error ค้างกับข้อความเก่า ~500 ms, validate ไม่มี expectedGeneration · ปุ่มที่สร้างสูตรด้วยปุ่ม (`round(0.01, expr)` แบบเก่า) ยังผ่าน → กระทบเฉพาะสูตรที่พิมพ์เอง · commit นี้ = checkpoint ก่อนแก้ S1/S2 · ยังไม่ได้ลองในแอปจริง · ไม่ push
+
+## 🆕 2026-10-08 — User decision (item 6 calculator): Average/Median stay aggregate blocks
+- The user approved the agent's proposal: Average and Median remain aggregate blocks (sources can be added or removed, and the kind is kept) instead of expanding to tokens.
+- Why: an Average skips missing values, while an expanded (A+B+C)/3 gives an empty row whenever any source is missing, so the result would change.
+- Sum, Spread, |A−B| and Efficiency % still expand to editable tokens.
+- Forwarded to the integration run and the run-B reviewer. The user also asked for item 5 (FG step 3) first, so the integration run now publishes B1 before A.
+
+## 🆕 2026-10-08 — ui-design-reviewer on run A (items 3+4): needs fixes, direction approved
+**Rulings on the four hard spots**
+- (a) Tag-point box: the description gets its own segment, at least 200 px in Consolas; the box is capped at about 320 px.
+- (b) Scatter Y title `vertical-rl`: OK, with max-height set to the plot height.
+- (c) FG rows stay stacked, matching the Sensor tab rows exactly.
+- (d) Neutral text, with the swatch carrying the colour.
+
+**Open questions**
+- Coloured text: dropped.
+- Filter whose sensor left the chart:
+  - kept, with a solid-amber row note and the actions "Show on chart" and "Remove";
+  - verified in code (`Dashboard.tsx:1856` `wireValueFilters`): **the filter still applies**.
+- One predictor: the selector is disabled and keeps showing its value.
+- Excluded sensors: hidden, plus a scope line.
+- Thousands separators: one formatter, never used in inputs or CSV.
+
+**Must-fix**
+1. Inline narrow rule: hide the tag below about 150 px; the component chip goes under the trigger in rows narrower than about 480 px.
+2. Popover `min(420px, 92vw)`, modal 520 px; drop the unit chip in narrow rows (same-prefix descriptions became identical).
+3. The Filter removed-from-chart style and placement.
+4. The colour popover's focus ring is hidden by the selected ring → use a box-shadow for "current".
+5. Missing states:
+   - Filter `between` at narrow width;
+   - locked special-sensor sources;
+   - a real frozen "By value" disabled state;
+   - the popover flipping up near the bottom.
+6. Tag-line contrast is 2.8:1 → use `--text-secondary`. This is a token decision for the lead's sign-off at SPEC FINAL.
+
+**Should-fix:** combobox ARIA, the colour popover's Tab behaviour and 24 px hit area, "None" styling, dropping the kind suffixes on field labels, `SensorLabel` `size=lg` / `muted`, and a check with the installed fonts.
+
+**Couldn't check:** real WebView2 rendering (`vertical-rl` ellipsis, ECharts truncate, real panel widths).
+
+All of the above was forwarded to the integration run (merged full-app mockup).
+
+## 🆕 2026-10-08 — ui-design-reviewer on run B (items 5 / 6 / 8+9): needs one fix round, nothing structural
+**Item 5**
+- The recent-project chip goes on the shipped 0.9.0 `RecentProjectCard`; the mock drew it on an old layout.
+- No "Build Model →" primary in the FG footer: keep header-only navigation.
+- One primary per page.
+- Remove group → toast with Undo.
+- No 📁 emoji; use the lucide icon.
+- The sheet returns focus on Esc.
+- Rail-last tab order on all steps.
+
+**Item 6**
+- Text mode / recipe loading must accept every engine function. The mock rejected pow, sin, sign, int and pi(), so recipes saved today would fail to load.
+- The error lists the engine's own function list, from Rust.
+- Drop the hard 32-source cap (dev removed SlabOverflow). Add `too_deep` (64).
+- "Back to keys" is never disabled: it discards the text and goes back to the last valid tokens.
+- The lock is neutral grey and shown once.
+- Formula text never breaks inside a tag.
+- Round is set in one place.
+- `round(m, x)` is accepted in text mode.
+- Legacy Sum recipes open as expanded tokens.
+- A special sensor used by another special sensor is locked.
+- Aggregate wording is in user terms.
+
+**Items 8+9**
+- The close-during-run dialog must survive queue progress.
+- The Health banner counts this run only.
+- Train all is secondary.
+- STALE_SESSION is all `--danger`, using the shipped wording.
+- "Up to date" rows are grey.
+- A disabled "Next" gets its reason.
+- Fix the mock counts.
+- Mark complete keeps the shipped button style.
+- "Remove from run" keeps the model's status.
+
+**Deviations accepted:**
+- 3-cluster keypad;
+- variadic min/max;
+- rail-last tab order (app-wide);
+- Round on aggregates, stored as the operation's own decimals, not a round() wrap;
+- the queue locks settings;
+- a neutral 0-groups chip.
+
+All of the above was forwarded to the integration run.
+
+## 🆕 2026-10-08 — Merged mockup: B1 (item 5, FG as Import step 3) live in the full-app mockup
+- Published as a new version of https://claude.ai/artifact/K1wTJLmv1ZV8teegUV6u4Q. Press "Reset" in the badge once if the old mockup was opened before.
+- What is in it:
+  - Step 3 in the real Import flow, with a 4-step rail.
+  - Skip → a dashed "Skipped · 0 groups" marker.
+  - The Dashboard lands on the FG tab with a callout and "Assign sensors →".
+  - Assign mode: a bar in the Sensor tab, and the shipped sheet with the target group pinned.
+  - Recent-project chips on the shipped Welcome. The seed has 3 projects: 4 groups, no groups, and saved before the change.
+- Deviation from the run-B review: the shipped Dashboard header has NO Build Model button; its only entry is the FG-tab footer. The footer "Build Model →" is kept, and it is disabled at 0 models with a reason.
+- Next in the merge run: A, then B2, then B3.
+
+## 🆕 2026-10-08 — Merged mockup: A (items 3+4) live (artifact K1wTJ… version 6, seed v5)
+- The sensor label, picker and colour picker are applied in place across:
+  - the Dashboard Sensor, FG, Selected, Filter and Highlights tabs;
+  - the line, scatter and pair-plot charts;
+  - Build Model: list, header, predictors modal, Clustering fields, running condition and the Fit X selector;
+  - Special Sensors: explorer and Manage.
+- The seed adds a Thai/spaced tag and 3 special sensors (1 locked). The badge has an "Installed fonts" toggle.
+- Reviewer must-fixes applied. The tag line in `--text-secondary` is still flagged pending the lead's sign-off.
+- Deferred to B2: special-sensor source chips and the locked-sources state.
+- Skipped nice-to-haves: the sub-models modal, the alarm popover header and the toast label.
+- Next: B2, then B3.
+
+## 🆕 2026-10-08 — Merged mockup: B2 (item 6 calculator) live (artifact K1wTJ… version 7, seed v6)
+- The calculator now runs inside the real Add Special Sensor window. Create and Manage → Edit both use it.
+- What it does:
+  - The keypad has 10 functions; templates expand to tokens, while Average/Median stay a standalone block.
+  - Round is set in one place and stored as `round(0.1, …)`.
+  - Edit as text accepts every engine function, shows a red error with the engine's list, and offers "Discard text · back to keys".
+  - Limits come from the mock `preview_formula`: too_long 4096 and too_deep 64.
+- Seeded states:
+  - a locked sensor (neutral pill);
+  - an unknown source with Replace…;
+  - an Average block that another special sensor uses, so its Delete is disabled with a reason;
+  - Delete + 8 s Undo.
+- Narrow layout below about 600 px.
+- The legacy Sum path is coded, but no seeded recipe uses it.
+- The seed's unknown-source case triggers the app's real "couldn't be restored" toast when GEG-4 opens; this is expected.
+- Next: B3.
+
+## 🆕 2026-10-08 — Merged mockup complete: A + B1 + B2 + B3 (artifact K1wTJ… version 8, seed v8)
+- All four parts are live in the full-app mockup. B3 adds:
+  - Train all (secondary) with a preflight and a run strip;
+  - queued and running locks, with Remove from run;
+  - the close-during-run dialog;
+  - the header "Train sensor" with a ▾ menu;
+  - the Set-points-needed filter and the Health banner;
+  - STALE_SESSION (badge "Data change" tool);
+  - the 0-ready project.
+- Deviations:
+  - The FG-footer Build Model is kept (it is the only entry point).
+  - The tag uses `--text-secondary`, pending the lead's sign-off.
+  - The can't-train text reuses the shipped "…fields above first", which reads oddly in the modal.
+- Data and contract needs found:
+  - `WorkspaceMetadata.failureGroupCount` and `failureGroupNos`;
+  - **`SensorOperationConfig.multiOp.decimals` (a Rust change)** for rounded aggregates;
+  - `preview_formula`, returning stats, issue codes and the engine function list.
+- Mockup shortcut: a module-level sensor-meta registry. A real build would use props.
+- Harness: scratchpad `cur2/`.
+- Final ui-design-reviewer on the merged app: started, then STOPPED because the usage limit was reached. Re-run it next session, then write the SPEC FINALs in `docs/design/handoff/`.
+- **🆕 2026-10-08/09 — Special sensor: แก้ตาม code review รอบ 2–3 (ซ่อม sensor ที่กู้คืนไม่ได้ + model กลับเป็น Incomplete)** · **ปัญหา (review รอบ 2)**: สูตรเก่าที่พิมพ์เองแบบ `round($A, 2)` / `$A (1 - $B)` ตอนนี้ถูก gate ปฏิเสธ → เปิด workspace แล้ว sensor กู้คืนไม่ได้ และถ้า model ใช้อยู่ สูตรถูกล็อก แก้/ลบไม่ได้ · **ผมตัดสินใจ**: sensor ที่ "กู้คืนไม่ได้" (ไม่มีคอลัมน์ใน session — ตรวจจาก Rust session ผ่าน `findUnrestoredSpecialSensors`) ปลดล็อกการแก้สูตร/source (ห้ามเปลี่ยนชื่อ, ลบยังไม่ได้ถ้า model ใช้) + ป้าย "No data — fix formula" + โน้ตสีเหลืองบอกเหตุผลจาก Rust · แก้แค่ description/unit/component ไม่คำนวณใหม่ (ส่ง recipe เดิม) · **review รอบ 3 MUST-FIX ที่แก้แล้ว**: (1) repair mode ใน `runSpecialSensorEdit`: ตัวที่ซ่อมคำนวณก่อน, ตัวที่สร้างต่อซึ่งไม่มีคอลัมน์มาก่อนแล้วยังผิด → ไม่ fatal ("B still needs fixing: …"), ถ้า fatal ให้ `remove_sensor_columns` คอลัมน์ที่เพิ่งสร้าง (ไม่พยายามคำนวณสูตรเดิมที่รู้ว่าผิด), editor ไม่ทิ้งสูตรที่พิมพ์ถ้าสถานะล็อกเปลี่ยนกลางทาง; (2) ซ่อมสำเร็จ → Dashboard handler `update-special-sensor` (`repaired: true` + `affectedTags` + workspaceId) ใช้ `demoteModelsTrainedOnSensors` (`src/utils/specialSensorRepair.ts`) ใน `persistFailureGroupStateFrom`: model ที่ train บน sensor นั้นหรือที่สร้างต่อจากมัน → `status:false`, ล้าง `trainedFingerprint`/`healthVerdict`/`testsChangedAt` (เก็บ `lastTrainedAt`/set points/export) → stale ต้อง train ใหม่ก่อน Mark complete · SHOULD-FIX ที่แก้: การตรวจซ้ำในคิวผูก generation, ป้ายไม่กระพริบจาก refs เก่า, sensor แบบ operation แก้ unit ไม่คำนวณใหม่ · Rust: นับ `[ ]` `{ }` ในเพดานความลึก 64, สูตรที่ไม่มี sensor ถูกบอกว่าผิดตั้งแต่ validate, `validate_formula` รับ `expectedGeneration` (optional) — หน้าต่างที่ค้างจากโปรเจกต์อื่นไม่ขึ้น error แดงผิดๆ (ผมเพิ่มส่วนแท็บ Create เอง) · **review รอบยืนยัน**: ไม่มี MUST-FIX · ที่ค้าง (ไม่บล็อก): ไม่มี automated test สำหรับป้ายกระพริบ (race, ดูด้วยตา), ลำดับ rollback (comment), จำนวน model ในข้อความนับตัวที่ Incomplete อยู่แล้วด้วย, race ข้ามหน้าต่างถ้า Train ใน Build Model ระหว่างซ่อม (กลุ่ม race ข้ามหน้าต่างเดิม) · tsc ผ่าน, vitest 3282 ผ่าน + 1 expected-fail, cargo lib 594 + integration ผ่าน, vite build ผ่าน · manual plan EDT-47→49, EDT-48 ปรับ, ใหม่ EDT-50/51 (342 ข้อ) · session หยุดกลางคัน 1 ครั้งเพราะชนลิมิต (ไม่มีงานเสีย) · ยังไม่ได้ลองในแอปจริง · ไม่ push

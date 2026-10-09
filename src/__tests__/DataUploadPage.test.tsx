@@ -944,6 +944,10 @@ describe('F. Load workspace flow', () => {
       expect(errors).toHaveLength(1);
       expect(errors[0].message).toContain("couldn't be restored: BROKEN1");
       expect(errors[0].message).toMatch(/Skipped.*DEP1/);
+      // Never promises the skipped ones come back on their own: only those
+      // whose own formula is still accepted do (2026-10-08 review).
+      expect(errors[0].message).toMatch(/To fix: .*Manage.*correct the formula\. Fixing it also rebuilds the skipped ones whose own formulas are still accepted; any that are not are then marked in Manage to fix the same way\./);
+      expect(errors[0].message).not.toMatch(/come back by themselves/);
 
       const stateArg = onDataReady.mock.calls[0][1];
       expect(stateArg.selectedSensors).toEqual(['sensor_a', 'CALC1']);
@@ -984,6 +988,10 @@ describe('F. Load workspace flow', () => {
       expect(errors).toHaveLength(1);
       expect(errors[0].source).toBe('special-sensor-restore');
       expect(errors[0].message).toContain(`couldn't be restored: CIRCLE (${PI_MSG})`);
+      // ...and says what to DO about it (review S1, 2026-10-08): the fix is
+      // editing the formula in Manage, which works even under a model's lock.
+      expect(errors[0].message).toContain('To fix: on the Dashboard open Add Special Sensor > Manage and edit it (pencil) to correct the formula.');
+      expect(errors[0].message).not.toMatch(/skipped ones/);
       const stateArg = onDataReady.mock.calls[0][1];
       expect(stateArg.selectedSensors).toEqual(['sensor_a']);
       expect(stateArg.specialSensorRecipes.map((r: any) => r.tag)).toEqual(['CIRCLE', 'CALC1']);

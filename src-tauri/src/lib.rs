@@ -4290,6 +4290,35 @@ mod special_sensor_tests {
     }
 
     #[test]
+    fn validate_formula_honours_an_optional_expected_generation() {
+        let state = app_state(5);
+        // Old callers (no generation) and a matching one get the verdict.
+        let v = validate_formula_in_state(&state, "$A + 1", None).unwrap();
+        assert!(v.valid && v.error.is_none());
+        let v = validate_formula_in_state(&state, "$nope", Some(5)).unwrap();
+        assert_eq!(v.error.as_deref(), Some("Sensor not found: nope"));
+        // A window bound to another dataset gets STALE_SESSION, not a verdict.
+        for bad in [4u64, 6] {
+            assert_eq!(validate_formula_in_state(&state, "$A + 1", Some(bad)).unwrap_err(), STALE_SESSION_ERROR);
+        }
+        // No dataset: the old text without a generation, stale with one.
+        let empty = AppState(RwLock::new(None));
+        assert_eq!(validate_formula_in_state(&empty, "$A", None).unwrap_err(), "No data loaded");
+        assert_eq!(validate_formula_in_state(&empty, "$A", Some(1)).unwrap_err(), STALE_SESSION_ERROR);
+        // Size limits are still checked first.
+        let deep = format!("{}$A{}", "[".repeat(65), "]".repeat(65));
+        assert!(validate_formula_in_state(&state, &deep, Some(5)).unwrap_err().contains("too deeply nested"));
+    }
+
+    #[test]
+    fn validate_refuses_a_formula_with_no_sensor_reference_like_create_does() {
+        let v = validate_formula_against(&dataset(), "1 + 2");
+        assert!(!v.valid);
+        assert_eq!(v.error.as_deref(), Some(FORMULA_NO_REFS_ERROR));
+        assert!(v.referenced_sensors.is_empty());
+    }
+
+    #[test]
     fn a_stale_caller_is_rejected_even_when_the_formula_or_config_is_invalid() {
         // The guard runs before the compute, so a stale window never even
         // reaches name/collision validation of the new dataset.
@@ -4744,7 +4773,10 @@ mod special_sensor_tests {
 
     #[test]
     fn an_error_hidden_behind_a_condition_still_refuses_the_formula() {
-        // Row values decide whether `nope` is ever reached.
+        // fasteval does NOT short-circuit `&&` / `||`: it evaluates every
+        // operand first and only then combines the values, so `nope($A)` is
+        // reached on every row whatever `$A > 2` gives -- and the trial
+        // evaluation in `compile_formula` refuses it before any row is read.
         let data = dataset_with(&["A"], vec![vec![0.0, 5.0]]);
         let err = compute_formula_sensor(&data, "($A > 2) && nope($A)", Some("Z"), false).unwrap_err();
         assert!(err.contains("unknown function 'nope'"), "{err}");
@@ -4831,12 +4863,32 @@ mod special_sensor_tests {
         assert_eq!(col, vec![1.0, 2.0, 3.0]);
         let signs = format!("{}$A", "-".repeat(MAX_FORMULA_DEPTH as usize));
         assert!(compute_formula_sensor(&dataset(), &signs, Some("Z"), false).is_ok());
+
+        // `(` and `[` interleaved, 64 levels in all: still within budget.
+        let d = MAX_FORMULA_DEPTH as usize;
+        let open: String = (0..d).map(|i| if i % 2 == 0 { '(' } else { '[' }).collect();
+        let close: String = (0..d).rev().map(|i| if i % 2 == 0 { ')' } else { ']' }).collect();
+        let (_, col) = compute_formula_sensor(&dataset(), &format!("{open}$A{close}"), Some("Z"), false).unwrap();
+        assert_eq!(col, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn square_brackets_past_the_apps_limit_are_refused_before_fasteval() {
+        // Before brackets were counted, 65..=127 `[` reached fasteval's
+        // recursive parse/eval (its limit is 2 * MAX_FORMULA_DEPTH).
+        let d = MAX_FORMULA_DEPTH as usize + 1;
+        let deep = format!("{}$A{}", "[".repeat(d), "]".repeat(d));
+        let err = compute_formula_sensor(&dataset(), &deep, Some("Z"), false).unwrap_err();
+        assert!(err.contains("too deeply nested"), "{err}");
+        let deepest = format!("{}$A{}", "[".repeat(127), "]".repeat(127));
+        let err = compute_formula_sensor(&dataset(), &deepest, Some("Z"), false).unwrap_err();
+        assert!(err.contains("too deeply nested"), "{err}");
     }
 
     #[test]
     fn validate_gives_the_same_verdict_and_message_as_compute() {
         let data = dataset();
-        for f in ["$A + $B", "$A * pi", "round($A, 2)", "$A +", "$nope + 1", "ln($A)", "$A(2)"] {
+        for f in ["$A + $B", "$A * pi", "round($A, 2)", "$A +", "$nope + 1", "ln($A)", "$A(2)", "1 + 2"] {
             let v = validate_formula_against(&data, f);
             match compute_formula_sensor(&data, f, Some("Z"), false) {
                 Ok(_) => assert!(v.valid && v.error.is_none(), "{f}: {:?}", v.error),
@@ -5012,10 +5064,17 @@ struct FormulaValidationResult {
     referenced_sensors: Vec<String>,
 }
 
-/// Bound on formula source length + brace/paren nesting depth — a cheap
+/// Bound on formula source length + bracket nesting depth — a cheap
 /// DoS guard so a pathological string can't make `fasteval::Parser`
 /// allocate unbounded stack/Slab. Real formulas top out around a few
 /// hundred chars; 4 KB / 64 levels is an enormous headroom.
+///
+/// `(`, `[` and `{` all share ONE depth budget: fasteval treats `[ ]` exactly
+/// like `( )` (a nested group, parsed and evaluated recursively), and `{` is
+/// the `${Sensor Name}` reference form. Counting only `(` would let a
+/// 127-deep `[[[…]]]` through to fasteval's recursive parse/eval (its depth
+/// limit here is `2 * MAX_FORMULA_DEPTH`), deep enough to overflow the
+/// Windows main-thread stack in a debug build.
 const MAX_FORMULA_LEN: usize = 4096;
 const MAX_FORMULA_DEPTH: i32 = 64;
 
@@ -5031,13 +5090,13 @@ fn check_formula_limits(formula: &str) -> Result<(), String> {
     let mut max_depth: i32 = 0;
     for c in formula.chars() {
         match c {
-            '(' | '{' => {
+            '(' | '[' | '{' => {
                 depth += 1;
                 if depth > max_depth {
                     max_depth = depth;
                 }
             }
-            ')' | '}' => {
+            ')' | ']' | '}' => {
                 depth -= 1;
             }
             _ => {}
@@ -5091,6 +5150,24 @@ mod check_formula_limits_tests {
     fn counts_curly_braces_toward_the_same_depth_budget_as_parens() {
         let formula = "{".repeat(MAX_FORMULA_DEPTH as usize + 1);
         assert!(check_formula_limits(&formula).is_err());
+    }
+
+    #[test]
+    fn counts_square_brackets_toward_the_same_depth_budget_as_parens() {
+        // fasteval parses `[ ]` as a group exactly like `( )`.
+        let over = format!("{}$A{}", "[".repeat(MAX_FORMULA_DEPTH as usize + 1), "]".repeat(MAX_FORMULA_DEPTH as usize + 1));
+        let err = check_formula_limits(&over).unwrap_err();
+        assert!(err.contains("too deeply nested"), "{err}");
+        let at = format!("{}$A{}", "[".repeat(MAX_FORMULA_DEPTH as usize), "]".repeat(MAX_FORMULA_DEPTH as usize));
+        assert!(check_formula_limits(&at).is_ok());
+    }
+
+    #[test]
+    fn mixed_bracket_kinds_add_up_in_one_budget() {
+        // 33 `(` + 32 `[` interleaved = 65 levels: over the cap even though
+        // neither kind alone is.
+        let open: String = (0..MAX_FORMULA_DEPTH + 1).map(|i| if i % 2 == 0 { '(' } else { '[' }).collect();
+        assert!(check_formula_limits(&format!("{open}$A")).is_err());
     }
 
     #[test]
@@ -5452,16 +5529,37 @@ fn round_order_message(x: &str, n: &str, x_is_simple: bool) -> String {
     }
 }
 
+/// Refusal for a formula with no `$A` / `${Name}` at all (a constant is not a
+/// sensor) — shared by `validate_formula` and `compute_formula_sensor`.
+const FORMULA_NO_REFS_ERROR: &str =
+    "Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.";
+
+/// `expected_generation` (JS key `expectedGeneration`, Tauri's default
+/// camelCase like the other special-sensor commands — see
+/// `remove_sensor_columns`): optional; when `Some(g)` and `g` is not the
+/// current session generation, `STALE_SESSION_ERROR` is returned instead of a
+/// verdict about another workspace's dataset. Read-only either way.
 #[tauri::command]
 fn validate_formula(
     formula: String,
+    expected_generation: Option<u64>,
     state: State<AppState>,
 ) -> Result<FormulaValidationResult, String> {
-    check_formula_limits(&formula)?;
+    validate_formula_in_state(&state, &formula, expected_generation)
+}
+
+/// Session-level `validate_formula` (testable without a Tauri `State`).
+fn validate_formula_in_state(
+    state: &AppState,
+    formula: &str,
+    expected: Option<u64>,
+) -> Result<FormulaValidationResult, String> {
+    check_formula_limits(formula)?;
 
     let state_lock = state.0.read().map_err(|e| e.to_string())?;
-    let session = state_lock.as_ref().ok_or("No data loaded")?;
-    Ok(validate_formula_against(&session.data, &formula))
+    let session = state_lock.as_ref().ok_or_else(|| missing_session_error(expected))?;
+    check_expected_generation(expected, session.generation)?;
+    Ok(validate_formula_against(&session.data, formula))
 }
 
 /// Pure core of `validate_formula`: the same checks that
@@ -5474,6 +5572,13 @@ fn validate_formula_against(data: &ColumnarData, formula: &str) -> FormulaValida
         if !referenced_sensors.contains(&name) {
             referenced_sensors.push(name);
         }
+    }
+    if referenced_sensors.is_empty() {
+        return FormulaValidationResult {
+            valid: false,
+            error: Some(FORMULA_NO_REFS_ERROR.to_string()),
+            referenced_sensors,
+        };
     }
 
     // 2. Check all referenced sensors exist in loaded data — through the same
@@ -5510,7 +5615,7 @@ fn compute_formula_sensor(
 
     // 1. Extract sensor references from formula
     if extract_sensor_refs(formula).is_empty() {
-        return Err("Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.".to_string());
+        return Err(FORMULA_NO_REFS_ERROR.to_string());
     }
 
     // 2. Resolve every distinct sensor to a column (all of them must exist).
@@ -5566,8 +5671,14 @@ fn compute_formula_sensor(
             Ok(result) if result.is_finite() => new_col.push(result),
             // NaN / Infinity (0/0, 1/0, sqrt of a negative, ...) → missing
             Ok(_) => new_col.push(f64::NAN),
-            // A name that only fails on some rows (behind `&&` / `||`):
-            // refuse the whole formula rather than empty those rows.
+            // Defence only -- not expected to happen. Whether evaluation
+            // errors depends on the formula's names and argument counts, never
+            // on row values: the namespace answers by name + arity alone, and
+            // fasteval evaluates every operand eagerly (`&&` / `||` combine
+            // values already computed; nothing short-circuits). So the trial
+            // evaluation in `compile_formula` already met any error a row
+            // could. If that ever changes, refuse the whole formula rather
+            // than empty some rows.
             Err(e) => {
                 return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names))
             }

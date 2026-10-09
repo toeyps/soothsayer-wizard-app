@@ -3,6 +3,7 @@ import { SensorOperationConfig, SensorMetadata } from "../../types";
 import { useCalculationEngine, FORMULA_MULTI_IDS, PAIRWISE_ONLY_IDS, sourceChangeEffect } from "../../hooks/useCalculationEngine";
 import type { UseCalculationEngineReturn } from "../../hooks/useCalculationEngine";
 import { useFormulaEditor } from "../../hooks/useFormulaEditor";
+import type { FormulaValidationResult } from "../../types/calculationEngine";
 import { findOperation, OPERATION_HINTS } from "../../config/operations";
 import {
   Star,
@@ -13,6 +14,9 @@ import {
 
 interface SensorToolingProps {
   selectedSensors: string[];
+  /** The Rust dataset generation this window is bound to; pins the live
+   *  formula check (STALE_SESSION = no information, never a red error). */
+  generation?: number;
   sensorMetadata: SensorMetadata[] | null;
   onConfigChange: (config: SensorOperationConfig | null) => void;
   onRemoveSensor: (sensor: string) => void;
@@ -66,11 +70,13 @@ export default function SensorTooling({
   onComponentChange,
   nameError,
   onFormulaIssueChange,
+  generation,
 }: SensorToolingProps) {
   const engine = useCalculationEngine(selectedSensors);
   // Autocomplete suggests ONLY the checked sensors so users can't reference
   // sensors they haven't pulled into the Target Sensors panel.
-  const formulaEditor = useFormulaEditor(selectedSensors);
+  const formulaEditor = useFormulaEditor(selectedSensors, { generation });
+  const formulaVerdict = useCurrentVerdict(formulaEditor.validationResult, formulaEditor.formula);
 
   const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
   const [openChainDropdown, setOpenChainDropdown] = useState<number | null>(null);
@@ -242,6 +248,7 @@ export default function SensorTooling({
         {engine.mode === "formula" && (
           <AdvancedMode
             formulaEditor={formulaEditor}
+            verdict={formulaVerdict}
             showSyntaxHelp={showSyntaxHelp}
             setShowSyntaxHelp={setShowSyntaxHelp}
           />
@@ -743,14 +750,36 @@ function buildPreviewText(
  * Formula editor -- power-user escape hatch, reached via "Edit as text instead"
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * The last finished `validate_formula` result -- but only while it still
+ * belongs to the text on screen. The hook keeps the last result until the next
+ * check (up to ~500 ms after a keystroke), so "Valid formula" or a red error
+ * used to sit next to newly edited text it was never about (review N3,
+ * 2026-10-08). A result is recorded with the text current when it ARRIVED:
+ * the hook drops any reply whose request was overtaken by a newer edit, so
+ * that text is exactly the one it checked.
+ */
+function useCurrentVerdict(result: FormulaValidationResult | null, formula: string): FormulaValidationResult | null {
+  const [checked, setChecked] = useState<{ result: FormulaValidationResult | null; text: string }>({ result, text: formula });
+  if (checked.result !== result) {
+    // Derived state: React re-renders straight away with the new record.
+    setChecked({ result, text: formula });
+    return result;
+  }
+  return result && checked.text === formula ? result : null;
+}
+
 interface AdvancedModeProps {
   formulaEditor: ReturnType<typeof useFormulaEditor>;
+  /** The validation result for the CURRENT text, or null (see `useCurrentVerdict`). */
+  verdict: FormulaValidationResult | null;
   showSyntaxHelp: boolean;
   setShowSyntaxHelp: (show: boolean) => void;
 }
 
 function AdvancedMode({
   formulaEditor,
+  verdict,
   showSyntaxHelp,
   setShowSyntaxHelp,
 }: AdvancedModeProps) {
@@ -807,17 +836,17 @@ function AdvancedMode({
         </div>
       )}
 
-      {formulaEditor.validationResult && (
+      {verdict && (
         <div
           className={`text-xs mt-0 p-2 rounded border ${
-            formulaEditor.validationResult.valid
+            verdict.valid
               ? "bg-green-900/20 border-green-700 text-green-400"
               : "bg-red-900/20 border-red-700 text-red-400"
           }`}
         >
-          {formulaEditor.validationResult.valid
+          {verdict.valid
             ? `Valid formula -- references ${formulaEditor.referencedSensors.length} sensor(s)`
-            : formulaEditor.validationResult.error}
+            : verdict.error}
         </div>
       )}
 
