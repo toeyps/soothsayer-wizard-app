@@ -5,6 +5,7 @@ import {
     HEALTH_DEFAULT_MAX_POINTS,
     buildHealthPreviewRequest,
     buildModelFilesRequest,
+    CLUSTERS_NEED_CRITERIA,
     healthInputsMissing,
     healthRequestKey,
     healthSetPointsToWire,
@@ -198,6 +199,16 @@ describe('buildHealthPreviewRequest', () => {
         expect(buildHealthPreviewRequest({ model: mk({ id: 'a', kind: 'relationship', targetSensor: 'T', predictorSensors: [] }), fg: fg(), headers: HEADERS })).toBeNull();
         expect(buildHealthPreviewRequest({ model: mk({ id: 'a', kind: 'clustering', xSensor: 'X', ySensor: '' }), fg: fg(), headers: HEADERS })).toBeNull();
         expect(healthInputsMissing(mk({ id: 'a', kind: 'clustering', xSensor: '', ySensor: 'Y' }))).toMatch(/X sensor/);
+    });
+
+    // 2026-10-09: mirrors Rust's "criteria_sensor is required when n_clusters > 1".
+    it('Clustering with 2+ clusters and no criteria sensor is missing an input (no request); 1 cluster or a criteria sensor is fine', () => {
+        const base = { id: 'c', kind: 'clustering' as const, xSensor: 'X', ySensor: 'Y' };
+        expect(healthInputsMissing(mk({ ...base, numClusters: 2, criteriaSensor: '' }))).toBe(CLUSTERS_NEED_CRITERIA);
+        expect(healthInputsMissing(mk({ ...base, numClusters: 3, criteriaSensor: '  ' }))).toBe(CLUSTERS_NEED_CRITERIA);
+        expect(buildHealthPreviewRequest({ model: mk({ ...base, numClusters: 2, criteriaSensor: '' }), fg: fg(), headers: HEADERS })).toBeNull();
+        expect(healthInputsMissing(mk({ ...base, numClusters: 1, criteriaSensor: '' }))).toBeNull();
+        expect(healthInputsMissing(mk({ ...base, numClusters: 2, criteriaSensor: 'C', clusterRanges: [{ min: 0, max: 1 }, { min: 1, max: 2 }] }))).toBeNull();
     });
 
     it('healthRequestKey is stable for equal requests and differs when a set point changes', () => {

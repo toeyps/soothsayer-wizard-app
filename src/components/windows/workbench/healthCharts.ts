@@ -10,7 +10,7 @@ import type {
 } from '../../../types/health';
 import { testNumberFor } from '../../../utils/timePeriods';
 import { parseLocal } from '../periodDisplay';
-import { CHART, CLUSTER_COLORS, FONT, fmtNum } from './chartTheme';
+import { CHART, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 
 /*
  * Pure ECharts option builders for the Build Model Workbench's health charts
@@ -68,6 +68,17 @@ const axisCommon = {
     axisLine: { lineStyle: { color: CHART.gridLine } },
     axisTick: { show: false },
 };
+/** `axisCommon` for a VALUE axis: tick labels through the app's number formatter, so a
+ *  computed min/max never shows float noise ("1,713.8000000000002" on the Distribution chart). */
+export const valueAxisCommon = {
+    ...axisCommon,
+    axisLabel: { ...axisCommon.axisLabel, formatter: fmtAxisValue },
+};
+/** `valueAxisCommon` for a value axis whose min/max the chart sets: label decimals follow the
+ *  tick step, so a narrow axis keeps distinct labels and a long bin edge reads short. */
+export function fixedValueAxisCommon(min: number, max: number) {
+    return { ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: axisValueFormatter(min, max) } };
+}
 
 export interface TimeLine {
     name: string;
@@ -384,7 +395,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
             nameTextStyle: { color: CHART.textSecondary, fontSize: 10 },
             min: yMin,
             max: yMax,
-            ...axisCommon,
+            ...fixedValueAxisCommon(yMin, yMax),
             splitLine: { show: true, lineStyle: { color: CHART.splitLine } },
         },
         series,
@@ -427,7 +438,9 @@ export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], uni
     const curve = h.curve.map((c, i) => [(h.bin_edges[i] + h.bin_edges[i + 1]) / 2, c]);
     const xMin = h.bin_edges[0];
     const xMax = h.bin_edges[h.bin_edges.length - 1];
-    const yMax = Math.max(...h.counts, ...h.curve, 1) * 1.1;
+    // 10 % headroom, rounded up to a nice tick so the top label is a round count (it was a raw
+    // max × 1.1 — "1,713.8000000000002" on screen, 2026-10-09).
+    const yMax = niceExtent(0, Math.max(...h.counts, ...h.curve, 1) * 1.1)[1];
     return {
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
@@ -444,14 +457,14 @@ export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], uni
             nameGap: 22,
             nameTextStyle: { color: CHART.textSecondary, fontSize: 10 },
             scale: true,
-            ...axisCommon,
+            ...fixedValueAxisCommon(xMin, xMax),
             splitLine: { show: false },
         },
         yAxis: {
             type: 'value',
             min: 0,
             max: yMax,
-            ...axisCommon,
+            ...fixedValueAxisCommon(0, yMax),
             splitLine: { show: true, lineStyle: { color: CHART.splitLine } },
         },
         series: [
@@ -558,8 +571,8 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string) {
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
-        xAxis: { type: 'value', name: fit.x_sensor, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...axisCommon, splitLine: { show: false } },
-        yAxis: { type: 'value', name: yName, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...axisCommon, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
+        xAxis: { type: 'value', name: fit.x_sensor, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, splitLine: { show: false } },
+        yAxis: { type: 'value', name: yName, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
         series: [
             { ...common, name: 'Actual', data: actual, itemStyle: { color: CHART.actual, opacity: 0.45 } },
             { ...common, name: 'Relation model', data: predicted, itemStyle: { color: CHART.predicted, opacity: 0.6 } },
@@ -694,8 +707,8 @@ export function buildClusterOption(scatter: HealthClusterScatter, clusters: Clus
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
-        xAxis: { type: 'value', name: names.x, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...axisCommon, splitLine: { show: false } },
-        yAxis: { type: 'value', name: names.y, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...axisCommon, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
+        xAxis: { type: 'value', name: names.x, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, splitLine: { show: false } },
+        yAxis: { type: 'value', name: names.y, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, scale: true, ...valueAxisCommon, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
         series: [...pointSeries, ...rings, centres],
     };
 }

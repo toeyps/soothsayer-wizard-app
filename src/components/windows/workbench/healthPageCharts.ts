@@ -10,7 +10,7 @@ import type {
     IndividualHealthSetPoints,
     RelationshipHealthSetPoints,
 } from '../../../types';
-import { CHART, CLUSTER_COLORS, FONT } from './chartTheme';
+import { CHART, CLUSTER_COLORS, FONT, axisValueFormatter } from './chartTheme';
 import { buildTimeSeriesOption, ellipseSeries, niceExtent, type HLine, type TimeScopes } from './healthCharts';
 
 /*
@@ -238,8 +238,8 @@ export function buildClusterSetPointOption(
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }],
-        xAxis: { type: 'value', name: names.x, min: xMin, max: xMax, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, axisLabel: { color: CHART.textSecondary, fontSize: 10 }, axisLine: { lineStyle: { color: CHART.gridLine } }, axisTick: { show: false }, splitLine: { show: false } },
-        yAxis: { type: 'value', name: names.y, min: yMin, max: yMax, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, axisLabel: { color: CHART.textSecondary, fontSize: 10 }, axisLine: { lineStyle: { color: CHART.gridLine } }, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
+        xAxis: { type: 'value', name: names.x, min: xMin, max: xMax, nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, axisLabel: { color: CHART.textSecondary, fontSize: 10, formatter: axisValueFormatter(xMin, xMax) }, axisLine: { lineStyle: { color: CHART.gridLine } }, axisTick: { show: false }, splitLine: { show: false } },
+        yAxis: { type: 'value', name: names.y, min: yMin, max: yMax, nameLocation: 'middle', nameGap: 44, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 }, axisLabel: { color: CHART.textSecondary, fontSize: 10, formatter: axisValueFormatter(yMin, yMax) }, axisLine: { lineStyle: { color: CHART.gridLine } }, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: CHART.splitLine } } },
         series: [
             {
                 type: 'scatter' as const,

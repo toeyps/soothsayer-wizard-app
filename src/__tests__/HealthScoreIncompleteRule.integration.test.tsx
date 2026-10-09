@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 /*
  * Health score QA sweep (2026-10-04) — "Incomplete immediately" end to end, and
  * the ONE status truth across the Dashboard Failure Groups panel, the Build
- * Model list dot, the kind tab pill, the page switch and the step bar.
+ * Model list dot, the kind tab pill, and the page switch (the header step bar was removed 2026-10-09).
  *
  * Every trigger the SPEC lists (training period, Running condition Workspace /
  * Custom, condition edit, AND/OR, "no condition", periods, predictors, Y /
@@ -107,7 +107,6 @@ function expectStaleUi() {
     expect(h.disabled).toBe(true);
     expect(h.title).toBe('Re-train first');
     expect(bmw().getByTestId('stale-banner')).toBeTruthy();
-    expect((bmw().getByTestId('wb-step-health-set-points') as HTMLButtonElement).disabled).toBe(true);
 }
 
 describe('workspace Running condition triggers (Apply in the modal)', () => {
@@ -335,7 +334,7 @@ describe('NOT triggers: the model stays Complete', () => {
     });
 });
 
-describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch, step bar', () => {
+describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch', () => {
     it('never trained -> trained (needs set points) -> invalid set point -> valid -> complete -> complete-but-changed -> stale', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null } })]));
         // strip the train record: "never trained"
@@ -346,13 +345,12 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch, step
         await mountWindows();
         selectSensor('tag1');
         openDashFgTab();
-        const step = (k: string) => bmw().getByTestId(`wb-step-${k}`).getAttribute('data-look');
 
         // never trained
         expect(dashDot(1, 'tag1', 'individual')).toBe('none');
         expect(bmwDot('i1').state).toBe('none');
         expect((bmw().getByTestId('page-health') as HTMLButtonElement).title).toBe('Train the model first');
-        expect(step('train')).not.toBe('done');
+        expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
 
         // trained, set points empty
         await train();
@@ -364,18 +362,16 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch, step
         // the yellow "need" dot there, same colour as the Build Model list (it used to be the
         // plain "trained" dot because the verdict only lived in the Build Model window).
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('need'));
-        expect(step('train')).toBe('done');
+        expect(bmw().getByTestId('page-model-done')).toBeTruthy();
 
         // an invalid set point -> "Fix set point" (red) in Build Model
         await enterSp({ 'sp-lower': '49', 'sp-upper': '90' });
         await waitFor(() => expect(bmw().getByTestId('tab-status-i1').textContent).toBe('Fix set point'));
         expect(bmwDot('i1').colour).not.toBe(trainedColour);
-        expect(step('health-set-points')).toBe('bad');
 
         // valid
         await enterSp({ 'sp-lower': '10' });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
-        expect(step('health-set-points')).toBe('done');
         expect(bmwDot('i1').colour).toBe(trainedColour);
 
         // complete
@@ -384,7 +380,6 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch, step
         await waitFor(() => expect(bmw().getByTestId('save-ok')).toBeTruthy());
         expect(bmwDot('i1').state).toBe('complete');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
-        expect(step('complete')).toBe('done');
         expect(bmw().getByTestId('page-health-done')).toBeTruthy();
 
         // complete but changed after saving: still Complete everywhere + the hint
@@ -401,7 +396,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, tab pill, page switch, step
         await applyWorkspaceRc(m => { fireEvent.change(m.getByPlaceholderText('value'), { target: { value: '30' } }); });
         expect(bmwDot('i1').state).toBe('stale');
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('none'));
-        expect(step('train')).not.toBe('done');
+        expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
     });
 
     // Was a KNOWN GAP (LOW, "not done" in the 3b-2 handover entry): Build Model showed a

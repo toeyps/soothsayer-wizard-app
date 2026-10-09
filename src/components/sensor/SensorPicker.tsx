@@ -327,37 +327,64 @@ export function SensorPickerSingle({
     const empty = !value;
     const isOn = useCallback((t: string) => t === value, [value]);
     const title = disabled && disabledReason ? disabledReason : value ? sensorTitle(lookup(value)) : undefined;
+    // An optional picker (`allowNone`) with a value gets a visible × on the trigger, so clearing
+    // does not need opening the list and finding "None" (2026-10-09, user report on the
+    // Clustering "Criteria sensor (optional)" field). It is a SIBLING of the trigger (a button
+    // cannot hold a button), laid over the trigger's right side by `.pk-trigger-wrap`.
+    const clearable = !!allowNone && !empty && !disabled;
     const cls = [
         'pk-trigger',
         compact ? 'pk-trigger--sm' : '',
         required && empty && !disabled ? 'req' : '',
         warn ? 'warn' : '',
+        clearable ? 'pk-trigger--clearable' : '',
         className,
     ].filter(Boolean).join(' ');
+    const clearLabel = `Clear ${ariaLabel ?? 'sensor'}`;
+    const trigger = (
+        <button
+            ref={trig}
+            id={id}
+            type="button"
+            className={cls}
+            aria-haspopup="dialog"
+            aria-expanded={!!rect}
+            aria-label={ariaLabel}
+            disabled={disabled}
+            title={title}
+            onClick={() => (rect ? close() : open())}
+            onKeyDown={e => {
+                if ((e.key === 'ArrowDown' || e.key === ' ') && !rect) { e.preventDefault(); open(); }
+            }}
+        >
+            {value
+                ? <SensorInline tag={value} fit />
+                : <span className={`pk-ph${allowNone && !required && !disabled && placeholder === 'None' ? ' pk-ph--none' : ''}`}>
+                    {disabled && disabledReason ? disabledReason : placeholder}
+                </span>}
+            <ChevronDown size={compact ? 12 : 14} className="pk-chev" aria-hidden="true" />
+        </button>
+    );
     return (
         <>
-            <button
-                ref={trig}
-                id={id}
-                type="button"
-                className={cls}
-                aria-haspopup="dialog"
-                aria-expanded={!!rect}
-                aria-label={ariaLabel}
-                disabled={disabled}
-                title={title}
-                onClick={() => (rect ? close() : open())}
-                onKeyDown={e => {
-                    if ((e.key === 'ArrowDown' || e.key === ' ') && !rect) { e.preventDefault(); open(); }
-                }}
-            >
-                {value
-                    ? <SensorInline tag={value} fit />
-                    : <span className={`pk-ph${allowNone && !required && !disabled && placeholder === 'None' ? ' pk-ph--none' : ''}`}>
-                        {disabled && disabledReason ? disabledReason : placeholder}
-                    </span>}
-                <ChevronDown size={compact ? 12 : 14} className="pk-chev" aria-hidden="true" />
-            </button>
+            {allowNone ? (
+                // Always wrapped when `allowNone` (not only while there is a value), so picking a
+                // sensor never re-mounts the trigger and loses its focus.
+                <span className={`pk-trigger-wrap${compact ? ' pk-trigger-wrap--sm' : ''}`}>
+                    {trigger}
+                    {clearable && (
+                        <button
+                            type="button"
+                            className="pk-clear"
+                            aria-label={clearLabel}
+                            title={clearLabel}
+                            onClick={() => { if (rect) close(false); onSelect(''); trig.current?.focus(); }}
+                        >
+                            <X size={compact ? 11 : 13} aria-hidden="true" />
+                        </button>
+                    )}
+                </span>
+            ) : trigger}
             {rect && (
                 <AnchoredPopover
                     anchorRect={rect}

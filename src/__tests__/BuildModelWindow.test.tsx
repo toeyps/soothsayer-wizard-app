@@ -867,7 +867,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
 
         it('runs compute_clustering_preview for a Clustering model and shows Rows/Clusters', async () => {
-            const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 3 });
+            const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 1 }); // no criteria sensor -> one cluster (Rust needs a criteria sensor for 2+)
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
             statefulUpdateMock([clu]);
@@ -877,7 +877,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             });
             expect(mockInvoke).toHaveBeenCalledWith('compute_clustering_preview', expect.objectContaining({ first_sensor: 'TAG1', second_sensor: 'TAG2' }));
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-            expect(healthCalls()[0]).toMatchObject({ kind: 'clustering', first_sensor: 'TAG1', second_sensor: 'TAG2', n_clusters: 3 });
+            expect(healthCalls()[0]).toMatchObject({ kind: 'clustering', first_sensor: 'TAG1', second_sensor: 'TAG2', n_clusters: 1 });
             expect(screen.getByTestId('chart-card-cl')).toBeTruthy();
             expect(screen.getByTestId('cluster-summary')).toBeTruthy();
         });
@@ -968,7 +968,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             const health = screen.getByTestId('page-health') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
             expect(health.title).toMatch(/Train the model/);
-            expect((screen.getByTestId('wb-step-complete') as HTMLButtonElement).title).toMatch(/Train the model/);
         });
     });
 
@@ -1060,7 +1059,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.queryByText('✓ Mark complete')).toBeNull();
             const health = screen.getByTestId('page-health') as HTMLButtonElement;
             expect(health.disabled).toBe(true);
-            expect((screen.getByTestId('wb-step-complete') as HTMLButtonElement).disabled).toBe(true);
         });
 
         it('a Complete model shows "Mark incomplete" on the Health score page, and clicking it un-marks the model (status only; its files and set points stay)', async () => {
@@ -1172,7 +1170,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData(); // fully configured, gate satisfied, but never trained
             expect((screen.getByTestId('page-health') as HTMLButtonElement).disabled).toBe(true);
-            expect((screen.getByTestId('wb-step-complete') as HTMLButtonElement).disabled).toBe(true);
             expect(screen.queryByTestId('mark-complete')).toBeNull();
             expect(exportCalls()).toHaveLength(0);
         });
@@ -1822,6 +1819,9 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
 });
 
 describe('Cluster-range slider (2026-09-30 port)', () => {
+    const pill = (i: number) => screen.getByTestId(`cluster-pill-${i}`).textContent;
+    const bound = (i: number) => screen.getByTestId(`cluster-bound-${i}`) as HTMLInputElement;
+
     it('is always visible: shows the "no criteria sensor" empty state when none is picked, and never fetches stats for it', async () => {
         const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: '', numClusters: 3 });
         render(<BuildModelWindow />);
@@ -1885,8 +1885,9 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         openSettings();
         await flush(); // compute_sensor_stats resolves with the default beforeEach {min:0,max:10,...}
         expect(screen.getByTestId('cluster-slider')).toBeTruthy();
-        expect(screen.getByText('#1: 0.000 – 5.000')).toBeTruthy();
-        expect(screen.getByText('#2: 5.000 – 10.00')).toBeTruthy();
+        expect(pill(0)).toBe('#1: 0 – ');
+        expect(bound(0).value).toBe('5');
+        expect(pill(1)).toBe('#2: 5 – 10');
 
         const handle = screen.getByRole('slider');
         const track = handle.parentElement as HTMLElement;
@@ -1896,8 +1897,220 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         fireEvent.mouseDown(handle);
         fireEvent.mouseMove(document, { clientX: 160 }); // 80% of 200px -> value 8 of [0, 10]
         fireEvent.mouseUp(document);
-        expect(screen.getByText('#1: 0.000 – 8.000')).toBeTruthy();
-        expect(screen.getByText('#2: 8.000 – 10.00')).toBeTruthy();
+        expect(bound(0).value).toBe('8');
+        expect(pill(1)).toBe('#2: 8 – 10');
+    });
+
+    // 🆕 2026-10-09 (real-app test, item 7): the optional criteria sensor must be clearable.
+    // Without one there is only one cluster (Rust rejects n_clusters > 1 with no criteria
+    // sensor), so clearing it drops the count to 1 in the same draft edit.
+    it('clearing the criteria sensor (None / ×) leaves a valid one-cluster model; Save writes no criteria and no ranges', async () => {
+        const clu = makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 3, clusterRanges: [{ min: 0, max: 4 }, { min: 4, max: 7 }, { min: 7, max: 10 }],
+        });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        statefulUpdateMock([clu]);
+        openSettings();
+        await flush();
+        expect(screen.getByTestId('cluster-slider')).toBeTruthy();
+        fireEvent.change(screen.getByDisplayValue('TAG3'), { target: { value: '' } }); // the picker's onSelect('')
+        expect(sensorPickerModalProps.filter(p => p.noun === 'criteria sensor').pop().value).toBe('');
+        expect(screen.getByTestId('cluster-slider-empty').textContent).toMatch(/One cluster/);
+        expect(screen.getByRole('button', { name: 'Fewer clusters' }).nextElementSibling!.textContent).toBe('1');
+        expect(screen.queryByTestId('settings-to-fix')).toBeNull();
+        await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+        const m = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+        expect(m).toMatchObject({ criteriaSensor: '', numClusters: 1, clusterRanges: [] });
+    });
+
+    it('2+ clusters with no criteria sensor is an item to fix (Train would be refused); setting Clusters to 1 clears it', async () => {
+        const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: '', numClusters: 2 });
+        render(<BuildModelWindow />);
+        await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+        openSettings();
+        expect(screen.getByTestId('settings-to-fix').textContent).toBe('1 to fix');
+        expect(screen.getAllByText('Pick a criteria sensor for 2+ clusters (or set Clusters to 1)').length).toBeGreaterThan(0);
+        expect(trainSensorBtn().disabled).toBe(true);
+        fireEvent.click(screen.getByRole('button', { name: 'Fewer clusters' }));
+        expect(screen.queryByTestId('settings-to-fix')).toBeNull();
+        expect(trainSensorBtn().disabled).toBe(false);
+    });
+
+    // 🆕 2026-10-09 (real-app test, item 8): exact boundaries must be typeable — dragging
+    // slowly takes too long. Inner boundaries are inputs; Enter / blur commit, Esc reverts.
+    describe('typed cluster boundaries', () => {
+        const THREE = () => makeModel({
+            id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+            numClusters: 3, clusterRanges: [{ min: 0, max: 4 }, { min: 4, max: 7 }, { min: 7, max: 10 }],
+        });
+        const mountThree = async (clu = THREE()) => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu] } });
+            statefulUpdateMock([clu]);
+            openSettings();
+            await flush(); // criteria stats: [0, 10]
+        };
+        const typeBound = (i: number, text: string, key?: 'Enter' | 'Escape') => {
+            fireEvent.focus(bound(i));
+            fireEvent.change(bound(i), { target: { value: text } });
+            if (key) fireEvent.keyDown(bound(i), { key });
+        };
+        const save = async () => {
+            await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+            return (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[0];
+        };
+
+        it('only the inner boundaries are inputs (N-1); the outer bounds are the sensor range, read-only', async () => {
+            await mountThree();
+            expect(screen.getAllByRole('textbox', { name: /^Boundary between cluster/ })).toHaveLength(2);
+            expect(bound(0).getAttribute('aria-label')).toBe('Boundary between cluster 1 and 2');
+            expect(screen.queryByTestId('cluster-bound-2')).toBeNull();
+            expect(pill(2)).toBe('#3: 7 – 10');
+        });
+
+        it('Enter commits a typed value exactly as typed (never rounded), moves the handle and the next cluster, and Save writes it', async () => {
+            await mountThree();
+            typeBound(0, '3.250', 'Enter');
+            expect(bound(0).value).toBe('3.250');
+            expect(pill(1)).toBe('#2: 3.250 – ');
+            expect(screen.getAllByRole('slider')[0].getAttribute('aria-valuenow')).toBe('3.25');
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
+            const m = await save();
+            expect(m.clusterRanges).toEqual([{ min: 0, max: 3.25 }, { min: 3.25, max: 7 }, { min: 7, max: 10 }]);
+        });
+
+        it('blur commits too', async () => {
+            await mountThree();
+            typeBound(1, '8.5');
+            fireEvent.blur(bound(1));
+            expect(pill(2)).toBe('#3: 8.5 – 10');
+            expect((await save()).clusterRanges[1]).toEqual({ min: 4, max: 8.5 });
+        });
+
+        it('a value out of order or outside the sensor range shows an inline error and is NOT committed; Esc reverts', async () => {
+            await mountThree();
+            typeBound(0, '7.5', 'Enter'); // past the next boundary (7)
+            expect(screen.getByTestId('cluster-bound-error').textContent).toMatch(/between 0 and 7/);
+            expect(screen.getByTestId('cluster-bound-error').getAttribute('role')).toBe('alert');
+            expect(bound(0).getAttribute('aria-invalid')).toBe('true');
+            expect(pill(1)).toBe('#2: 4 – '); // nothing moved
+            fireEvent.blur(bound(0));
+            expect(screen.getByTestId('cluster-bound-error')).toBeTruthy(); // blur does not commit it either
+            expect(screen.queryByText('edited')).toBeNull(); // no draft was made
+
+            typeBound(0, '-1', 'Enter'); // below the criteria sensor's min
+            expect(screen.getByTestId('cluster-bound-error').textContent).toMatch(/between 0 and 7/);
+            typeBound(0, 'abc', 'Enter');
+            expect(screen.getByTestId('cluster-bound-error').textContent).toBe('Enter a number.');
+
+            fireEvent.keyDown(bound(0), { key: 'Escape' });
+            expect(bound(0).value).toBe('4');
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
+        });
+
+        it('a decimal comma ("3,6") is refused with "Use . for decimals" — it is never read as 36', async () => {
+            await mountThree();
+            typeBound(0, '3,6', 'Enter');
+            expect(screen.getByTestId('cluster-bound-error').textContent).toBe('Use . for decimals (e.g. 33.6).');
+            expect(pill(1)).toBe('#2: 4 – ');
+            typeBound(0, '33,6', 'Enter');
+            expect(screen.getByTestId('cluster-bound-error').textContent).toBe('Use . for decimals (e.g. 33.6).');
+            expect(screen.queryByText('edited')).toBeNull();
+        });
+
+        it('a thousands-grouped value ("1,234.5") is accepted as 1234.5', async () => {
+            mockInvoke.mockImplementation((cmd: string, args?: any) => (cmd === 'compute_sensor_stats'
+                ? Promise.resolve({ mean: 5000, sd: 1, min: 0, max: 10000, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 })
+                : defaultInvoke(cmd, args)));
+            await mountThree(makeModel({
+                id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+                numClusters: 3, clusterRanges: [{ min: 0, max: 1000 }, { min: 1000, max: 2000 }, { min: 2000, max: 10000 }],
+            }));
+            typeBound(0, '1,234.5', 'Enter');
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
+            expect(pill(1)).toBe('#2: 1,234.5 – ');
+            expect((await save()).clusterRanges[0]).toEqual({ min: 0, max: 1234.5 });
+        });
+
+        it('the same number typed another way ("4" -> "4.0") keeps the typed form but makes no draft', async () => {
+            await mountThree();
+            typeBound(0, '4.0', 'Enter');
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
+            expect(bound(0).value).toBe('4.0');
+            expect(pill(1)).toBe('#2: 4.0 – ');
+            expect(screen.queryByText('edited')).toBeNull();
+        });
+
+        it('a pending boundary never leaks into another model: a valid one commits to its own model on blur, an invalid one is dropped', async () => {
+            const c1 = THREE();
+            const c2 = makeModel({ ...THREE(), id: 'c2', xSensor: 'TAG2', ySensor: 'TAG1', name: 'Model Two' });
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [c1, c2] } });
+            statefulUpdateMock([c1, c2]);
+            const select = async (tag: string) => {
+                fireEvent.click(screen.getByTestId(`sensor-list-row-fg:1-${tag}`));
+                await flush();
+                openSettings();
+                await flush();
+            };
+            await select('tag1');
+
+            // invalid pending text + its error, then another model is selected
+            typeBound(0, '99', 'Enter');
+            expect(screen.getByTestId('cluster-bound-error')).toBeTruthy();
+            await select('tag2');
+            expect(screen.getByRole('heading', { name: 'Pump Temp' })).toBeTruthy(); // really on c2 now
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
+            expect(bound(0).value).toBe('4');
+            await select('tag1');
+            expect(screen.getByRole('heading', { name: 'Pump Pressure' })).toBeTruthy();
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull(); // the invalid edit was dropped, not kept for c1
+            expect(bound(0).value).toBe('4');
+
+            // valid pending text: the box's blur (fires before the click that switches) commits it to c1 only
+            typeBound(0, '3.5');
+            fireEvent.blur(bound(0));
+            await select('tag2');
+            expect(bound(0).value).toBe('4');
+            expect(screen.queryByText('edited')).toBeNull(); // c2 has no draft
+            await select('tag1');
+            expect(bound(0).value).toBe('3.5');
+            expect(screen.getByText('edited')).toBeTruthy();
+            await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
+            const models = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models;
+            expect(models.find((x: any) => x.id === 'c1').clusterRanges[0]).toEqual({ min: 0, max: 3.5 });
+            expect(models.find((x: any) => x.id === 'c2').clusterRanges[0]).toEqual({ min: 0, max: 4 });
+        });
+
+        it('the same value as a neighbour is refused (boundaries stay strictly increasing)', async () => {
+            await mountThree();
+            typeBound(1, '4', 'Enter');
+            expect(screen.getByTestId('cluster-bound-error').textContent).toMatch(/between 4 and 10/);
+        });
+
+        it('a computed boundary (float noise) reads rounded, and focusing then leaving it unchanged writes nothing', async () => {
+            await mountThree(makeModel({
+                id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
+                numClusters: 3, clusterRanges: [{ min: 0, max: 10 / 3 }, { min: 10 / 3, max: 20 / 3 }, { min: 20 / 3, max: 10 }],
+            }));
+            expect(bound(0).value).toBe('3.333');
+            expect(pill(1)).toBe('#2: 3.333 – ');
+            fireEvent.focus(bound(0));
+            fireEvent.blur(bound(0));
+            expect(screen.queryByText('edited')).toBeNull();
+        });
+
+        it('dragging after an invalid entry drops the pending text and its error', async () => {
+            await mountThree();
+            typeBound(0, '99', 'Enter');
+            expect(screen.getByTestId('cluster-bound-error')).toBeTruthy();
+            fireEvent.mouseDown(screen.getAllByRole('slider')[0]);
+            fireEvent.mouseUp(document);
+            expect(screen.queryByTestId('cluster-bound-error')).toBeNull();
+            expect(bound(0).value).toBe('4');
+        });
     });
 
     it('App.css gives Clustering its own row-aligned grid and a scrollable Custom running-condition editor', () => {
@@ -2269,11 +2482,11 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     });
 });
 
-// 🆕 2026-10-03 [Running condition Step 1]: header step bar, the Step-1 card
+// 🆕 2026-10-03 [Running condition Step 1]: the Step-1 card (the header step bar was removed 2026-10-09)
 // (replaces the one-line rcbar), the redesigned settings modal and its live
 // row-count preview (compute_sensor_stats, reflects the DRAFT). The draft /
 // Apply guarantees themselves are tested in the describe above.
-describe('Running condition Step 1 — step bar, card, settings modal preview (2026-10-03)', () => {
+describe('Running condition Step 1 — header, card, settings modal preview (2026-10-03)', () => {
     const periods = [
         { id: 'p1', start: '2026-01-01T00:00', end: '2026-03-31T23:59' },
         { id: 'p2', start: '2026-04-15T00:00', end: '' },
@@ -2287,46 +2500,34 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
     const unsetFg = (extra: Record<string, any> = {}) => setFg({ runningConditionFilters: [], runningConditionTimePeriods: [], ...extra });
     const statsCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats').map(c => c[1] as any);
     const state = () => screen.getByTestId('rc-card').getAttribute('data-state');
-    const STEP_KEYS = ['running-condition', 'model-settings', 'train', 'health-set-points', 'complete'] as const;
-    const stepLooks = () => STEP_KEYS.map(k => screen.getByTestId(`wb-step-${k}`).getAttribute('data-look'));
 
-    describe('header step bar', () => {
-        it('Set, model never trained: Running condition + Model settings done, Train is next, the rest waits', async () => {
+    // 2026-10-09: the 5-step progress bar in the window header was removed at the
+    // user's request (building goes back and forth; a linear progress did not fit).
+    describe('window header (no step bar)', () => {
+        it('shows only the title and Close — no step bar — while the Step-1 card stays', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
-            expect(stepLooks()).toEqual(['done', 'done', 'now', 'todo', 'todo']);
-            expect(screen.getByTestId('wb-steps').closest('[data-tauri-drag-region]')).not.toBeNull(); // it lives in the window header
+            expect(screen.queryByTestId('wb-steps')).toBeNull();
+            expect(screen.queryByRole('list', { name: 'Build steps' })).toBeNull();
+            expect(document.querySelector('[data-testid^="wb-step-"]')).toBeNull();
+            const header = screen.getByText('Build Model — Overview').closest('[data-tauri-drag-region]') as HTMLElement;
+            expect(header).not.toBeNull();
+            expect(within(header).getAllByRole('button').map(b => b.getAttribute('title'))).toEqual(['Close']);
+            expect(screen.getByTestId('rc-card')).toBeTruthy();
+            expect(screen.queryByText(/Open full view/)).toBeNull();
         });
 
-        it('Not set: step 1 is what to do next; Invalid period: step 1 is red; the rest waits', async () => {
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: unsetFg() });
-            expect(stepLooks()).toEqual(['now', 'todo', 'todo', 'todo', 'todo']);
-            cleanup();
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: setFg({ runningConditionTimePeriods: [{ id: 'x', start: '2026-02-01T00:00', end: '2026-01-05T00:00' }] }) });
-            expect(stepLooks()).toEqual(['bad', 'todo', 'todo', 'todo', 'todo']);
-        });
-
-        it('follows the PERSISTED condition: a draft in the modal does not move the step bar until Apply', async () => {
+        it('the Step-1 card follows the PERSISTED condition: a draft in the modal does not change it until Apply', async () => {
             // A train period is required to train (2026-10-07); periods alone never make the condition "set".
             const fg = unsetFg({ runningConditionTimePeriods: ALL_TIME_TRAIN });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
             statefulUpdateMock(fg.models, fg);
             fireEvent.click(screen.getByTestId('rc-mode-none')); // the unset workspace auto-opened the modal
-            expect(stepLooks()).toEqual(['now', 'todo', 'todo', 'todo', 'todo']);
+            expect(state()).toBe('unset');
             fireEvent.click(screen.getByTestId('rc-apply'));
             await flush();
-            expect(stepLooks()).toEqual(['done', 'done', 'now', 'todo', 'todo']);
-        });
-
-        it('stays on screen (with the Step-1 card) on both Workbench pages - there is no separate full-view page to hide it on any more', async () => {
-            render(<BuildModelWindow />);
-            await deliverData({ failureGroupState: setFg() });
-            expect(screen.getByTestId('wb-steps')).toBeTruthy();
-            expect(screen.getByTestId('rc-card')).toBeTruthy();
-            expect(screen.queryByText(/Open full view/)).toBeNull();
+            expect(state()).toBe('set');
         });
     });
 
@@ -2758,12 +2959,12 @@ describe('Running condition Step 1 — step bar, card, settings modal preview (2
     });
 
     it('App.css defines the new blocks (and the old rcbar / collapsible-header rules are gone)', () => {
-        for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.wb2-steps', '.rcm-body', '.rcm-per', '.rcm-mcard', '.rcm-cond', '.rcm-joinbtn', '.rcm-preview', '.bmw-modal--rc']) {
+        for (const sel of ['.rcc-card', '.rcc-card--req', '.rcc-card--bad', '.rcc-card--ok', '.rcm-body', '.rcm-per', '.rcm-mcard', '.rcm-cond', '.rcm-joinbtn', '.rcm-preview', '.bmw-modal--rc']) {
             expect(() => cssBlock(sel), sel).not.toThrow();
         }
         expect(cssBlock('.bmw-modal--rc')).toMatch(/display:\s*flex/);
         expect(cssBlock('.rcm-body')).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 340px/);
-        for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow']) {
+        for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline']) {
             expect(() => cssBlock(gone), gone).toThrow();
         }
     });
@@ -3033,7 +3234,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
 });
 
 // 🆕 2026-10-04 (health score phase 3b-1): the Workbench's two pages per model.
-// Shell (step bar, page switch, list hide/show, dots, stale banner, overlay) and
+// Shell (page switch, list hide/show, dots, stale banner, overlay — the header step bar was removed 2026-10-09) and
 // the Model fit page wired to `useHealthPreview` / the shared Sub-models modal.
 // The pure chart builders and the presentational pieces have their own files
 // (healthCharts.test.ts, WorkbenchShell.test.tsx, ModelFitPage.test.tsx,
@@ -3050,70 +3251,6 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extraFg } }, payload);
     };
-
-    describe('header step bar', () => {
-        it('has five steps in order, each a button', async () => {
-            await mount([makeModel()]);
-            const bar = screen.getByTestId('wb-steps');
-            expect(within(bar).getAllByRole('button').map(b => b.textContent)).toEqual(['Running condition', 'Model settings', '3Train', '4Health set points', '5Complete']);
-        });
-
-        it('Running condition opens the existing Step-1 modal', async () => {
-            await mount([makeModel()]);
-            expect(screen.queryByRole('dialog', { name: 'Running condition' })).toBeNull();
-            fireEvent.click(screen.getByTestId('wb-step-running-condition'));
-            expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
-        });
-
-        it('Model settings opens the settings section (and returns to the Model fit page); Train stays on that page', async () => {
-            const m = withTrained(makeModel());
-            await mount([m]);
-            await chartsReady();
-            fireEvent.click(screen.getByTestId('page-health'));
-            expect(screen.getByTestId('health-page')).toBeTruthy();
-            expect(screen.queryByTestId('add-model-form')).toBeNull();
-            fireEvent.click(screen.getByTestId('wb-step-model-settings'));
-            expect(screen.queryByTestId('health-page')).toBeNull();
-            expect(screen.getByTestId('add-model-form')).toBeTruthy();
-            fireEvent.click(screen.getByTestId('page-health'));
-            fireEvent.click(screen.getByTestId('wb-step-train'));
-            expect(screen.queryByTestId('health-page')).toBeNull();
-        });
-
-        it('Health set points and Complete open the Health score page', async () => {
-            await mount([withTrained(makeModel())]);
-            await chartsReady();
-            fireEvent.click(screen.getByTestId('wb-step-health-set-points'));
-            expect(screen.getByTestId('health-page')).toBeTruthy();
-            fireEvent.click(screen.getByTestId('wb-step-model-settings'));
-            fireEvent.click(screen.getByTestId('wb-step-complete'));
-            expect(screen.getByTestId('health-page')).toBeTruthy();
-        });
-
-        it('Health set points and Complete are disabled while the model is stale, with the reason', async () => {
-            await mount([{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]);
-            for (const k of ['health-set-points', 'complete']) {
-                const b = screen.getByTestId(`wb-step-${k}`) as HTMLButtonElement;
-                expect(b.disabled).toBe(true);
-                expect(b.title).toBe('Re-train first');
-            }
-            expect(screen.getByTestId('wb-step-train').getAttribute('data-look')).toBe('now');
-        });
-
-        it('highlights the page on screen: Model settings + Train on Model fit, Health set points on Health score', async () => {
-            await mount([withTrained(makeModel())]);
-            await chartsReady();
-            const cur = () => ['model-settings', 'train', 'health-set-points'].filter(k => screen.getByTestId(`wb-step-${k}`).getAttribute('aria-current') === 'step');
-            expect(cur()).toEqual(['model-settings', 'train']);
-            fireEvent.click(screen.getByTestId('page-health'));
-            expect(cur()).toEqual(['health-set-points']);
-        });
-
-        it('a Complete model reads all five steps as done', async () => {
-            await mount([withTrained(makeModel({ status: true }))]);
-            expect(['running-condition', 'model-settings', 'train', 'health-set-points', 'complete'].map(k => screen.getByTestId(`wb-step-${k}`).getAttribute('data-look'))).toEqual(['done', 'done', 'done', 'done', 'done']);
-        });
-    });
 
     describe('page switch', () => {
         it('shows "1 Model fit" and "2 Health score"; Health score is disabled for a model that was never trained', async () => {
@@ -3344,7 +3481,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         });
 
         it('Clustering: the cluster scatter with SD rings and a cluster summary card', async () => {
-            await mount([withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2' }))]);
+            await mount([withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 1 }))]);
             await chartsReady();
             expect(screen.getByTestId('chart-card-cl')).toBeTruthy();
             expect(screen.getByTestId('cluster-summary')).toBeTruthy();
@@ -3595,7 +3732,7 @@ describe('Health score page - draft set points and when they are persisted (heal
         });
 
         it('a discrete action (a quick button) commits at once - no blur needed', async () => {
-            const c = withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 2 }));
+            const c = withTrained(makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 1 }));
             await hsMount([c]);
             await openHealthPage();
             mockUpdateWorkspaceData.mockClear();
@@ -3993,16 +4130,15 @@ describe('Health score page - Mark incomplete and "Changed after saving"', () =>
     });
 });
 
-describe('Health score page - status pills, dots and the step bar follow the verdict Rust gave', () => {
-    it('trained with empty set points: tab pill "Set points needed" (yellow dot, step "now")', async () => {
+describe('Health score page - status pills and dots follow the verdict Rust gave', () => {
+    it('trained with empty set points: tab pill "Set points needed" (yellow dot)', async () => {
         await hsMount([HS_IND({ healthSetPoints: HS_EMPTY_IND })]);
         await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Set points needed'));
         expect(screen.getByTestId('tab-status-m1').className).toMatch(/f4-pill--warn/);
         expect(screen.getByTestId('sensor-kind-badge-dot-m1').className).toMatch(/f4-kb-dot--need/);
-        expect(screen.getByTestId('wb-step-health-set-points').getAttribute('data-look')).toBe('now');
     });
 
-    it('a rejected set point: "Fix set point" (red pill, red dot, step "bad"); the central dot state stays "trained"', async () => {
+    it('a rejected set point: "Fix set point" (red pill, red dot); the central dot state stays "trained"', async () => {
         await hsMount([HS_IND({ healthSetPoints: { kind: 'individual', lower: 3, upper: 9, masterLower: null, masterUpper: null } })]);
         await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Fix set point'));
         expect(screen.getByTestId('tab-status-m1').className).toMatch(/f4-pill--bad/);
@@ -4010,17 +4146,15 @@ describe('Health score page - status pills, dots and the step bar follow the ver
         expect(dot.className).toMatch(/f4-kb-dot--bad/);
         expect(dot.getAttribute('data-state')).toBe('trained');
         expect(screen.getByTestId('sensor-kind-badge-m1').title).toMatch(/Fix set point/);
-        expect(screen.getByTestId('wb-step-health-set-points').getAttribute('data-look')).toBe('bad');
     });
 
-    it('valid set points: the pill is "Trained" and the step done; typing a bad value turns it red live', async () => {
+    it('valid set points: the pill is "Trained"; typing a bad value turns it red live', async () => {
         await hsMount([HS_IND()]);
-        await waitFor(() => expect(screen.getByTestId('wb-step-health-set-points').getAttribute('data-look')).toBe('done'));
+        await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Trained'));
         expect(screen.getByTestId('tab-status-m1').textContent).toBe('Trained');
         await openHealthPage();
         hsType('sp-lower', '3');
         await waitFor(() => expect(screen.getByTestId('tab-status-m1').textContent).toBe('Fix set point'));
-        expect(screen.getByTestId('wb-step-health-set-points').getAttribute('data-look')).toBe('bad');
     });
 
     it('a stale model keeps the central stale state - no "set points" pill on top of "Re-train"', async () => {

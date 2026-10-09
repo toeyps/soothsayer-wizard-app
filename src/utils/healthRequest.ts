@@ -98,8 +98,14 @@ export function healthInputsMissing(model: FailureModel): string | null {
         return (model.predictorSensors ?? []).length > 0 ? null : 'Add at least 1 predictor.';
     }
     if (!nonEmpty(model.xSensor)) return 'Pick the X sensor.';
-    return nonEmpty(model.ySensor) ? null : 'Pick the Y sensor.';
+    if (!nonEmpty(model.ySensor)) return 'Pick the Y sensor.';
+    // Rust: `criteria_sensor is required when n_clusters > 1` (2026-10-09).
+    return (model.numClusters ?? 3) > 1 && !nonEmpty(model.criteriaSensor) ? CLUSTERS_NEED_CRITERIA : null;
 }
+
+/** A Clustering model with 2+ clusters needs a criteria sensor to split its rows (Rust rejects
+ *  `n_clusters > 1` without one). One message for every place that checks it. */
+export const CLUSTERS_NEED_CRITERIA = 'Pick a criteria sensor for 2+ clusters (or set Clusters to 1)';
 
 /** The model's EFFECTIVE test periods (workspace list in Workspace mode, its
  *  own `customTestPeriods` in Custom mode) as the `test_periods` wire list, or

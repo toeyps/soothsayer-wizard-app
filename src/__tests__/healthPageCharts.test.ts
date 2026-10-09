@@ -81,6 +81,12 @@ describe('buildClusterSetPointOption (points + 1x, 3x and N x rings of EVERY clu
     const cl = (sp: any, hover: number | null = null) => buildClusterSetPointOption(cluSeries, clusters, sp, { x: 'X', y: 'Y' }, hover) as any;
     const ringNames = (opt: any) => opt.series.filter((s: any) => s.type === 'custom').map((s: any) => s.name);
 
+    it('its nice-extent axis bounds never print float noise: both value axes format their labels (2026-10-09)', () => {
+        const opt = cl({ kind: 'clustering', outerSd: null });
+        expect(opt.xAxis.axisLabel.formatter(0.1 * 3)).toBe('0.3');
+        expect(opt.yAxis.axisLabel.formatter(1713.8000000000002)).toBe('1,713.8');
+    });
+
     it('without N: two rings (1x, 3x) per cluster', () => {
         expect(ringNames(cl({ kind: 'clustering', outerSd: null }))).toEqual([
             'Cluster 1 1× SD', 'Cluster 1 3× SD', 'Cluster 2 1× SD', 'Cluster 2 3× SD',
